@@ -347,6 +347,9 @@ impl RMain {
             session_mode,
         )));
 
+        // Initialize the GD context on this thread
+        graphics_device::init_graphics_device();
+
         let main = RMain::get_mut();
 
         let mut r_args = r_args.clone();

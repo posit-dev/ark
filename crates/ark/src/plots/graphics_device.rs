@@ -4,6 +4,8 @@
 // Copyright (C) 2022-2024 by Posit Software, PBC
 //
 
+use std::cell::Cell;
+use std::cell::RefCell;
 ///
 /// The Positron Graphics Device.
 ///
@@ -53,7 +55,6 @@ use libr::pGEcontext;
 use libr::R_NilValue;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
-use once_cell::sync::Lazy;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::unwrap;
@@ -61,103 +62,109 @@ use uuid::Uuid;
 
 use crate::r_task;
 
+thread_local! {
+  // Safety: Set once by `RMain` on initialization
+  pub static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
+}
+
 const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 
-macro_rules! trace {
-    ($($tts:tt)*) => {{
-        let message = format!($($tts)*);
-        log::info!("[graphics] {}", message);
-    }}
+// Expose thread initialization via function so we can keep the structs private
+pub(crate) fn init_graphics_device() {
+    DEVICE_CONTEXT.set(Default::default())
 }
 
 #[derive(Debug, Default)]
 #[allow(non_snake_case)]
 struct DeviceCallbacks {
-    pub activate: Option<unsafe extern "C" fn(pDevDesc)>,
-    pub deactivate: Option<unsafe extern "C" fn(pDevDesc)>,
-    pub holdflush: Option<unsafe extern "C" fn(pDevDesc, i32) -> i32>,
-    pub mode: Option<unsafe extern "C" fn(i32, pDevDesc)>,
-    pub newPage: Option<unsafe extern "C" fn(pGEcontext, pDevDesc)>,
+    pub activate: Cell<Option<unsafe extern "C" fn(pDevDesc)>>,
+    pub deactivate: Cell<Option<unsafe extern "C" fn(pDevDesc)>>,
+    pub holdflush: Cell<Option<unsafe extern "C" fn(pDevDesc, i32) -> i32>>,
+    pub mode: Cell<Option<unsafe extern "C" fn(i32, pDevDesc)>>,
+    pub newPage: Cell<Option<unsafe extern "C" fn(pGEcontext, pDevDesc)>>,
 }
 
 #[derive(Default)]
 struct DeviceContext {
     // Tracks whether the graphics device has changes.
-    pub _changes: bool,
+    pub _changes: Cell<bool>,
 
     // Tracks whether or not the current plot page has ever been written to.
-    pub _new_page: bool,
+    pub _new_page: Cell<bool>,
 
     // Tracks the current graphics device mode.
-    pub _mode: i32,
+    pub _mode: Cell<i32>,
 
     // The 'holdflush' flag, as normally handled via a device's 'holdflush()'
     // callback. If 'dev.hold()' has been set, we want to avoid rendering
     // new plots.
-    pub _holdflush: i32,
-
-    // Whether we're currently rendering a plot. Mainly used to avoid
-    // recursive plot invocations.
-    pub _rendering: bool,
+    pub _holdflush: Cell<i32>,
 
     // The ID associated with the current plot page. Used primarily
     // for accessing indexed plots, e.g. for the Plots pane history.
-    pub _id: Option<String>,
+    pub _id: RefCell<Option<String>>,
 
     // A map, mapping plot IDs to the communication channels used
     // for communicating their rendered results to the frontend.
-    pub _channels: HashMap<String, CommSocket>,
+    pub _channels: RefCell<HashMap<String, CommSocket>>,
 
     // The device callbacks, which are patched into the device.
     pub _callbacks: DeviceCallbacks,
 }
 
 impl DeviceContext {
-    pub fn holdflush(&mut self, holdflush: i32) {
-        self._holdflush = holdflush;
+    pub fn holdflush(&self, holdflush: i32) {
+        self._holdflush.replace(holdflush);
     }
 
-    pub fn mode(&mut self, mode: i32, _dev: pDevDesc) {
-        self._mode = mode;
-        self._changes = self._changes || mode != 0;
+    pub fn mode(&self, mode: i32, _dev: pDevDesc) {
+        // Refcell safety: Only called on the R thread and we make sure not to
+        // recurse into `DeviceContext` methods.
+        self._mode.replace(mode);
+
+        let old = self._changes.get();
+        self._changes.replace(old || mode != 0);
     }
 
-    pub fn new_page(&mut self, _dd: pGEcontext, _dev: pDevDesc) {
+    pub fn new_page(&self, _dd: pGEcontext, _dev: pDevDesc) {
         // Create a new id for this new plot page and note that this is a new page
         let id = Uuid::new_v4().to_string();
-        self._id = Some(id.clone());
-        self._new_page = true;
+        self._id.replace(Some(id));
+        self._new_page.replace(true);
     }
 
     pub fn on_did_execute_request(
-        &mut self,
+        &self,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         dynamic_plots: bool,
     ) {
         // After R code has completed execution, we use this to check if any graphics
         // need to be created
-        if self._changes {
-            self._changes = false;
+        let changed = self._changes.replace(false);
+        if changed {
             self.process_changes(comm_manager_tx, iopub_tx, dynamic_plots);
         }
     }
 
-    pub fn on_process_events(&mut self) {
+    pub fn on_process_events(&self) {
         // Don't try to render a plot if we're currently drawing.
-        if self._mode != 0 {
+        if self._mode.get() != 0 {
             return;
         }
 
         // Don't try to render a plot if the 'holdflush' flag is set.
-        if self._holdflush > 0 {
+        if self._holdflush.get() > 0 {
             return;
         }
 
         // Collect existing channels into a vector of tuples.
         // Necessary for handling Select in a clean way.
-        let channels = self._channels.clone();
-        let channels = channels.iter().collect::<Vec<_>>();
+        let channels = {
+            // Refcell Safety: Clone the hashmap so we don't hold a reference for too long
+            let channels = self._channels.borrow().clone();
+            channels.into_iter().collect::<Vec<_>>()
+        };
 
         // Check for incoming plot render requests.
         let mut select = Select::new();
@@ -171,8 +178,8 @@ impl DeviceContext {
             return;
         });
 
-        let plot_id = unsafe { channels.get_unchecked(selection.index()).0 };
-        let socket = unsafe { channels.get_unchecked(selection.index()).1 };
+        let plot_id = unsafe { &channels.get_unchecked(selection.index()).0 };
+        let socket = unsafe { &channels.get_unchecked(selection.index()).1 };
         let message = unwrap!(selection.recv(&socket.incoming_rx), Err(error) => {
             log::error!("{}", error);
             return;
@@ -185,7 +192,7 @@ impl DeviceContext {
     }
 
     fn handle_rpc(
-        &mut self,
+        &self,
         message: PlotBackendRequest,
         plot_id: &String,
     ) -> anyhow::Result<PlotBackendReply> {
@@ -225,18 +232,19 @@ impl DeviceContext {
     }
 
     fn process_changes(
-        &mut self,
+        &self,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
         dynamic_plots: bool,
     ) {
-        let id = unwrap!(self._id.clone(), None => {
+        // Refcell Safety: Short borrows in the file.
+        let id = unwrap!(self._id.borrow().clone(), None => {
             log::error!("Unexpected uninitialized `id`.");
             return;
         });
 
-        if self._new_page {
-            self._new_page = false;
+        let new_page = self._new_page.replace(false);
+        if new_page {
             self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx, dynamic_plots);
         } else {
             self.process_update_plot(id.as_str(), iopub_tx, dynamic_plots);
@@ -244,7 +252,7 @@ impl DeviceContext {
     }
 
     fn process_new_plot(
-        &mut self,
+        &self,
         id: &str,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
@@ -257,7 +265,7 @@ impl DeviceContext {
         }
     }
 
-    fn process_new_plot_positron(&mut self, id: &str, comm_manager_tx: Sender<CommManagerEvent>) {
+    fn process_new_plot_positron(&self, id: &str, comm_manager_tx: Sender<CommManagerEvent>) {
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -271,10 +279,13 @@ impl DeviceContext {
         }
 
         // Save our new socket.
-        self._channels.insert(id.to_string(), socket.clone());
+        // Refcell Safety: Short borrows in the file.
+        self._channels
+            .borrow_mut()
+            .insert(id.to_string(), socket.clone());
     }
 
-    fn process_new_plot_jupyter_protocol(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
+    fn process_new_plot_jupyter_protocol(&self, id: &str, iopub_tx: Sender<IOPubMessage>) {
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -304,7 +315,7 @@ impl DeviceContext {
     }
 
     fn process_update_plot(
-        &mut self,
+        &self,
         id: &str,
         iopub_tx: Sender<IOPubMessage>,
         positron_connected: bool,
@@ -316,9 +327,12 @@ impl DeviceContext {
         }
     }
 
-    fn process_update_plot_positron(&mut self, id: &str) {
+    fn process_update_plot_positron(&self, id: &str) {
+        // Refcell Safety: Make sure not to call other methods from this whole block.
+        let channels = self._channels.borrow();
+
         // Find our socket
-        let socket = unwrap!(self._channels.get(id), None => {
+        let socket = unwrap!(channels.get(id), None => {
             // If socket doesn't exist, bail, nothing to update (should be rare, likely a bug?)
             log::error!("Can't find socket to update with id: {id}.");
             return;
@@ -335,7 +349,7 @@ impl DeviceContext {
             .or_log_error("Failed to send update message for id {id}.");
     }
 
-    fn process_update_plot_jupyter_protocol(&mut self, id: &str, iopub_tx: Sender<IOPubMessage>) {
+    fn process_update_plot_jupyter_protocol(&self, id: &str, iopub_tx: Sender<IOPubMessage>) {
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -359,7 +373,7 @@ impl DeviceContext {
             .or_log_warning(&format!("Could not publish update display data on IOPub."));
     }
 
-    fn create_display_data_plot(&mut self, id: &str) -> Result<serde_json::Value, anyhow::Error> {
+    fn create_display_data_plot(&self, id: &str) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
         let width = 800;
         let height = 600;
@@ -377,7 +391,7 @@ impl DeviceContext {
     }
 
     fn render_plot(
-        &mut self,
+        &self,
         plot_id: &str,
         width: i64,
         height: i64,
@@ -387,7 +401,6 @@ impl DeviceContext {
         // Render the plot to file.
         // TODO: Is it possible to do this without writing to file; e.g. could
         // we instead write to a connection or something else?
-        self._rendering = true;
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.renderPlot")
                 .param("id", plot_id)
@@ -398,7 +411,6 @@ impl DeviceContext {
                 .call()?
                 .to::<String>()
         });
-        self._rendering = false;
 
         let image_path = unwrap!(image_path, Err(error) => {
             bail!("Failed to render plot with id {plot_id} due to: {error}.");
@@ -417,8 +429,6 @@ impl DeviceContext {
         Ok(data)
     }
 }
-
-static mut DEVICE_CONTEXT: Lazy<DeviceContext> = Lazy::new(|| DeviceContext::default());
 
 // TODO: This macro needs to be updated every time we introduce support
 // for a new graphics device. Is there a better way?
@@ -451,7 +461,7 @@ macro_rules! with_device {
 }
 
 pub unsafe fn on_process_events() {
-    DEVICE_CONTEXT.on_process_events();
+    DEVICE_CONTEXT.with_borrow(|cell| cell.on_process_events());
 }
 
 pub unsafe fn on_did_execute_request(
@@ -459,63 +469,70 @@ pub unsafe fn on_did_execute_request(
     iopub_tx: Sender<IOPubMessage>,
     dynamic_plots: bool,
 ) {
-    DEVICE_CONTEXT.on_did_execute_request(comm_manager_tx, iopub_tx, dynamic_plots);
+    DEVICE_CONTEXT
+        .with_borrow(|cell| cell.on_did_execute_request(comm_manager_tx, iopub_tx, dynamic_plots));
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by
 // copying the graphics display list to a new plot device, and then closing that device.
 unsafe extern "C" fn gd_activate(dev: pDevDesc) {
-    trace!("gd_activate");
+    log::trace!("gd_activate");
 
-    if let Some(callback) = DEVICE_CONTEXT._callbacks.activate {
-        callback(dev);
-    }
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        if let Some(callback) = cell._callbacks.activate.get() {
+            callback(dev);
+        }
+    });
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by
 // copying the graphics display list to a new plot device, and then closing that device.
 unsafe extern "C" fn gd_deactivate(dev: pDevDesc) {
-    trace!("gd_deactivate");
+    log::trace!("gd_deactivate");
 
-    if let Some(callback) = DEVICE_CONTEXT._callbacks.deactivate {
-        callback(dev);
-    }
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        if let Some(callback) = cell._callbacks.deactivate.get() {
+            callback(dev);
+        }
+    });
 }
 
 unsafe extern "C" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> i32 {
-    trace!("gd_hold_flush");
+    log::trace!("gd_hold_flush");
 
-    if let Some(callback) = DEVICE_CONTEXT._callbacks.holdflush {
-        holdflush = callback(dev, holdflush);
-    }
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        if let Some(callback) = cell._callbacks.holdflush.get() {
+            holdflush = callback(dev, holdflush);
+        }
 
-    DEVICE_CONTEXT.holdflush(holdflush);
-    holdflush
+        cell.holdflush(holdflush);
+        holdflush
+    })
 }
 
 // mode = 0, graphics off
 // mode = 1, graphics on
 // mode = 2, graphical input on (ignored by most drivers)
 unsafe extern "C" fn gd_mode(mode: i32, dev: pDevDesc) {
-    trace!("gd_mode: {}", mode);
+    log::trace!("gd_mode: {mode}");
 
-    // invoke the regular callback
-    if let Some(callback) = DEVICE_CONTEXT._callbacks.mode {
-        callback(mode, dev);
-    }
-
-    DEVICE_CONTEXT.mode(mode, dev);
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        if let Some(callback) = cell._callbacks.mode.get() {
+            callback(mode, dev);
+        }
+        cell.mode(mode, dev);
+    });
 }
 
 unsafe extern "C" fn gd_new_page(dd: pGEcontext, dev: pDevDesc) {
-    trace!("gd_new_page");
+    log::trace!("gd_new_page");
 
-    // invoke the regular callback
-    if let Some(callback) = DEVICE_CONTEXT._callbacks.newPage {
-        callback(dd, dev);
-    }
-
-    DEVICE_CONTEXT.new_page(dd, dev);
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        if let Some(callback) = cell._callbacks.newPage.get() {
+            callback(dd, dev);
+        }
+        cell.new_page(dd, dev);
+    });
 }
 
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
@@ -549,23 +566,26 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
         (*ge_device).displayListOn = 1;
         // (*ge_device).recordGraphics = 1;
 
-        // device description struct
-        let callbacks = &mut DEVICE_CONTEXT._callbacks;
+        DEVICE_CONTEXT.with_borrow(|cell| {
+            let callbacks = &cell._callbacks;
 
-        callbacks.activate = (*device).activate;
-        (*device).activate = Some(gd_activate);
+            // Safety: The callbacks are stored in simple cells.
 
-        callbacks.deactivate = (*device).deactivate;
-        (*device).deactivate = Some(gd_deactivate);
+            callbacks.activate.replace((*device).activate);
+            (*device).activate = Some(gd_activate);
 
-        callbacks.holdflush = (*device).holdflush;
-        (*device).holdflush = Some(gd_hold_flush);
+            callbacks.deactivate.replace((*device).deactivate);
+            (*device).deactivate = Some(gd_deactivate);
 
-        callbacks.mode = (*device).mode;
-        (*device).mode = Some(gd_mode);
+            callbacks.holdflush.replace((*device).holdflush);
+            (*device).holdflush = Some(gd_hold_flush);
 
-        callbacks.newPage = (*device).newPage;
-        (*device).newPage = Some(gd_new_page);
+            callbacks.mode.replace((*device).mode);
+            (*device).mode = Some(gd_mode);
+
+            callbacks.newPage.replace((*device).newPage);
+            (*device).newPage = Some(gd_new_page);
+        });
     });
 
     Ok(R_NilValue)
@@ -581,7 +601,7 @@ unsafe extern "C" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 
 #[harp::register]
 unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> anyhow::Result<SEXP> {
-    let id = unwrap!(DEVICE_CONTEXT._id.clone(), None => {
+    let id = unwrap!(DEVICE_CONTEXT.with_borrow(|cell| cell._id.borrow().clone()), None => {
         return Ok(Rf_ScalarLogical(0));
     });
 
