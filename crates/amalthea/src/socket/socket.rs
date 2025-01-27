@@ -62,6 +62,24 @@ impl Socket {
                 .map_err(|err| Error::CreateSocketFailed(name.clone(), err))?;
         }
 
+        if name == "IOPub" && kind == zmq::SocketType::SUB {
+            // For the client side of IOPub (in tests and eventually kallichore), we need
+            // to subscribe our SUB to messages from the XPUB on the server side. We use
+            // `""` to subscribe to all message types, there is no reason to filter any
+            // out. It is very important that we subscribe BEFORE we `connect()`. If we
+            // don't subscribe first, then the XPUB on the server side can come online
+            // first and processes our `connect()` before we've actually subscribed, which
+            // causes the welcome message the XPUB sends us to get dropped, preventing us
+            // from correctly starting up, because we block until we've received that
+            // welcome message. In the link below, you can see proof that zmq only sends
+            // the welcome message out when it processes our `connect()` call, so if we
+            // aren't subscribed by that point, we miss it.
+            // https://github.com/zeromq/libzmq/blob/34f7fa22022bed9e0e390ed3580a1c83ac4a2834/src/xpub.cpp#L56-L65
+            socket
+                .set_subscribe(b"")
+                .map_err(|err| Error::CreateSocketFailed(name.clone(), err))?;
+        }
+
         // If this is a debug build, set `ZMQ_ROUTER_MANDATORY` on all `ROUTER`
         // sockets, so that we get errors instead of silent message drops for
         // unroutable messages.
@@ -195,33 +213,5 @@ impl Socket {
 
     pub fn has_incoming_data(&self) -> zmq::Result<bool> {
         self.poll_incoming(0)
-    }
-
-    /// Subscribes a SUB socket to messages from an XPUB socket.
-    ///
-    /// Use `b""` to subscribe to all messages.
-    ///
-    /// Note that this needs to be called *after* the socket connection is
-    /// established on both ends.
-    pub fn subscribe(&self, subscription: &[u8]) -> Result<(), Error> {
-        let socket_type = match self.socket.get_socket_type() {
-            Ok(socket_type) => socket_type,
-            Err(err) => return Err(Error::ZmqError(self.name.clone(), err)),
-        };
-
-        if socket_type != zmq::SocketType::SUB {
-            return Err(crate::anyhow!(
-                "Can't subscribe on a non-SUB socket. This socket is a {socket_type:?}."
-            ));
-        }
-
-        // Currently, all SUB sockets subscribe to all topics; in theory
-        // frontends could subscribe selectively, but in practice all known
-        // Jupyter frontends subscribe to all topics and just ignore topics
-        // they don't recognize.
-        match self.socket.set_subscribe(subscription) {
-            Ok(_) => Ok(()),
-            Err(err) => Err(Error::ZmqError(self.name.clone(), err)),
-        }
     }
 }

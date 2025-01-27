@@ -182,15 +182,10 @@ impl DummyFrontend {
         )
         .unwrap();
 
-        // Subscribe to IOPub! Server's XPUB socket will receive a notification of
-        // our subscription with `subscription`, then will publish an IOPub `Welcome`
-        // message, sending back our `subscription`.
-        iopub_socket.subscribe(b"").unwrap();
-
-        // Immediately block until we've received the IOPub welcome message.
-        // This confirms that we've fully subscribed and avoids dropping any
-        // of the initial IOPub messages that a server may send if we start
-        // perform requests immediately.
+        // Immediately block until we've received the IOPub welcome message from the XPUB
+        // server side socket. This confirms that we've fully subscribed and avoids
+        // dropping any of the initial IOPub messages that a server may send if we start
+        // to perform requests immediately (in particular, busy/idle messages).
         // https://github.com/posit-dev/ark/pull/577
         assert_matches!(Self::recv(&iopub_socket), Message::Welcome(data) => {
             assert_eq!(data.content.subscription, String::from(""));
