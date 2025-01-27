@@ -50,7 +50,7 @@ use crate::r_task;
 // previously crashed without going through `anyhow` which always creates a
 // backtrace. Backtraces would flood the logs with irrelevant information.
 pub(crate) enum RequestResponse {
-    Crashed,
+    Disabled,
     Result(anyhow::Result<LspResponse>),
 }
 
@@ -60,7 +60,7 @@ macro_rules! cast_response {
         match $target {
             RequestResponse::Result(Ok($pat(resp))) => Ok(resp),
             RequestResponse::Result(Err(err)) => Err(new_jsonrpc_error(format!("{err:?}"))),
-            RequestResponse::Crashed => Err(new_jsonrpc_error(String::from(
+            RequestResponse::Disabled => Err(new_jsonrpc_error(String::from(
                 "The LSP server has crashed and is now shut down!",
             ))),
             _ => panic!("Unexpected variant while casting to {}", stringify!($pat)),
@@ -146,7 +146,7 @@ struct Backend {
 impl Backend {
     async fn request(&self, request: LspRequest) -> RequestResponse {
         if LSP_HAS_CRASHED.load(Ordering::Acquire) {
-            return RequestResponse::Crashed;
+            return RequestResponse::Disabled;
         }
 
         let (response_tx, mut response_rx) =

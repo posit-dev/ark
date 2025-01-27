@@ -300,8 +300,19 @@ fn main() -> anyhow::Result<()> {
     // keeps running in an unstable state as all communications with this
     // thread will error out or panic.
     // https://stackoverflow.com/questions/35988775/how-can-i-cause-a-panic-on-a-thread-to-immediately-end-the-main-thread
+    //
+    // A better way to manage panics on background threads would be to ensure
+    // that we join all spawned threads up to the main thread.
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic_info| {
+        // We don't want the threads managed by a Tokio runtime to `abort()` the
+        // process since their panics are caught and handled in other ways.
+        // This escape hatch is a hack that will also be activated by other
+        // Tokio contexts than just the LSP.
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return;
+        }
+
         let info = panic_info.payload();
 
         let loc = if let Some(location) = panic_info.location() {
