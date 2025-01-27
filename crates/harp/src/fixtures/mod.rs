@@ -23,7 +23,7 @@ use crate::R_MAIN_THREAD_ID;
 
 // FIXME: Needs to be a reentrant lock for idle tasks. We can probably do better
 // though.
-pub static mut R_TEST_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+pub static R_TEST_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
 
 static INIT: Once = Once::new();
 
@@ -35,7 +35,7 @@ static INIT: Once = Once::new();
 /// `ark::r_task()` in Ark tests so that Ark initialisation also takes place.
 #[cfg(test)]
 pub(crate) fn r_task<F: FnOnce()>(f: F) {
-    let guard = unsafe { R_TEST_LOCK.lock() };
+    let guard = R_TEST_LOCK.lock();
 
     r_test_init();
     f();
