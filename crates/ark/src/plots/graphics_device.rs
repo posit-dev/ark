@@ -118,8 +118,6 @@ impl DeviceContext {
     }
 
     pub fn mode(&self, mode: i32, _dev: pDevDesc) {
-        // Refcell safety: Only called on the R thread and we make sure not to
-        // recurse into `DeviceContext` methods.
         self._mode.replace(mode);
 
         let old = self._changes.get();
