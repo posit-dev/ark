@@ -48,7 +48,7 @@ pub unsafe fn r_register_routines() {
     });
 
     // Now unwrap the definitions from our thread-safe type
-    let unwrapped: Vec<R_CallMethodDef> = R_ROUTINES
+    let routines: Vec<R_CallMethodDef> = R_ROUTINES
         .lock()
         .unwrap()
         .iter()
@@ -58,7 +58,7 @@ pub unsafe fn r_register_routines() {
     R_registerRoutines(
         info,
         std::ptr::null(),
-        unwrapped.as_ptr(),
+        routines.as_ptr(),
         std::ptr::null(),
         std::ptr::null(),
     );
