@@ -231,13 +231,16 @@ impl DummyFrontend {
     }
 
     pub fn recv(socket: &Socket) -> Message {
-        // It's important to wait with a timeout because the kernel thread might
-        // have panicked, preventing it from sending the expected message. The
-        // tests would then hang indefinitely.
+        // It's important to wait with a timeout because the kernel thread might have
+        // panicked, preventing it from sending the expected message. The tests would then
+        // hang indefinitely. We wait a decently long time (10s), as test processes are
+        // run in parallel and we think they seem to slow each other down occasionally
+        // (we've definitely seen false positive failures with a timeout of just 1s,
+        // particularly when running with nextest).
         //
-        // Note that the panic hook will still have run to record the panic, so
-        // we'll get expected panic information in the test output.
-        if socket.poll_incoming(1000).unwrap() {
+        // Note that the panic hook will still have run to record the panic, so we'll get
+        // expected panic information in the test output.
+        if socket.poll_incoming(10000).unwrap() {
             return Message::read_from_socket(socket).unwrap();
         }
 
