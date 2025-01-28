@@ -163,10 +163,6 @@ struct Backend {
 
     /// Tower-LSP's client
     client: Client,
-
-    /// Handle to main loop. Drop it to cancel the loop, all associated tasks,
-    /// and drop all owned state.
-    _main_loop: tokio::task::JoinSet<()>,
 }
 
 impl Backend {
@@ -439,6 +435,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         log::trace!("Connected to LSP at '{}'", address);
         let (read, write) = tokio::io::split(stream);
 
+        let mut main_loop = None;
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
@@ -446,7 +443,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive
-            let main_loop = state.start();
+            main_loop = Some(state.start());
 
             // Forward event channel along to `RMain`.
             // This also updates an outdated channel after a reconnect.
@@ -466,7 +463,6 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
                 shutdown_tx,
                 events_tx,
                 client,
-                _main_loop: main_loop,
             }
         };
 
@@ -500,6 +496,17 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
                     address
                 );
             }
+        }
+
+        match main_loop {
+            Some(mut main_loop) => {
+                log::trace!("LSP main loop shutting down.");
+                main_loop.shutdown().await;
+                log::trace!("LSP main loop shut down.");
+            },
+            None => {
+                log::error!("Expected to have a main loop to shut down");
+            },
         }
     })
 }
