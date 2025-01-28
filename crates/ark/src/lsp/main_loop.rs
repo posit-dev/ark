@@ -279,10 +279,6 @@ impl GlobalState {
                         LspRequest::Initialize(params) => {
                             respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
                         },
-                        LspRequest::Shutdown() => {
-                            // TODO
-                            respond(tx, || Ok(()), LspResponse::Shutdown)?;
-                        },
                         LspRequest::WorkspaceSymbol(params) => {
                             respond(tx, || handlers::handle_symbol(params), LspResponse::WorkspaceSymbol)?;
                         },

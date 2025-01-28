@@ -114,7 +114,6 @@ pub(crate) enum LspNotification {
 #[derive(Debug)]
 pub(crate) enum LspRequest {
     Initialize(InitializeParams),
-    Shutdown(),
     WorkspaceSymbol(WorkspaceSymbolParams),
     DocumentSymbol(DocumentSymbolParams),
     ExecuteCommand(ExecuteCommandParams),
@@ -136,7 +135,6 @@ pub(crate) enum LspRequest {
 #[derive(Debug)]
 pub(crate) enum LspResponse {
     Initialize(InitializeResult),
-    Shutdown(()),
     WorkspaceSymbol(Option<Vec<SymbolInformation>>),
     DocumentSymbol(Option<DocumentSymbolResponse>),
     ExecuteCommand(Option<Value>),
@@ -208,11 +206,9 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        cast_response!(
-            self,
-            self.request(LspRequest::Shutdown()).await,
-            LspResponse::Shutdown
-        )
+        // Don't go through the main loop because we want this request to
+        // succeed even when the LSP has crashed and has been disabled.
+        Ok(())
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
