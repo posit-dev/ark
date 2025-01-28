@@ -22,6 +22,7 @@ use tower_lsp::lsp_types::MessageType;
 use tower_lsp::Client;
 use url::Url;
 
+use super::backend::RequestResponse;
 use crate::lsp;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -370,7 +371,7 @@ impl GlobalState {
     /// world state could be run concurrently. On the other hand, handlers that
     /// manipulate documents (e.g. formatting or refactoring) should not.
     fn spawn_handler<T, Handler>(
-        response_tx: TokioUnboundedSender<anyhow::Result<LspResponse>>,
+        response_tx: TokioUnboundedSender<RequestResponse>,
         handler: Handler,
         into_lsp_response: impl FnOnce(T) -> LspResponse + Send + 'static,
     ) where
@@ -402,14 +403,17 @@ impl GlobalState {
 /// * - `response`: The response wrapped in a `anyhow::Result`. Errors are logged.
 /// * - `into_lsp_response`: A constructor for the relevant `LspResponse` variant.
 fn respond<T>(
-    response_tx: TokioUnboundedSender<anyhow::Result<LspResponse>>,
+    response_tx: TokioUnboundedSender<RequestResponse>,
     response: impl FnOnce() -> anyhow::Result<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
+    let mut crashed = false;
+
     let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(response))
         .map_err(|err| {
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
+            crashed = true;
             anyhow!("Panic occurred while handling request: {err:?}")
         })
         // Unwrap nested Result
@@ -421,6 +425,12 @@ fn respond<T>(
     };
 
     let response = response.map(into_lsp_response);
+
+    let response = if crashed {
+        RequestResponse::Crashed(response)
+    } else {
+        RequestResponse::Result(response)
+    };
 
     // Ignore errors from a closed channel. This indicates the request has
     // been cancelled on the tower-lsp side.
