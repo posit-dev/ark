@@ -414,7 +414,19 @@ fn respond<T>(
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
             crashed = true;
-            anyhow!("Panic occurred while handling request: {err:?}")
+
+            let msg: String = if let Some(msg) = err.downcast_ref::<&str>() {
+                msg.to_string()
+            } else if let Some(msg) = err.downcast_ref::<String>() {
+                msg.clone()
+            } else {
+                String::from("Couldn't retrieve the message.")
+            };
+
+            // This creates an uninformative backtrace that is reported in the
+            // LSP logs. Note that the relevant backtrace is the one created by
+            // our panic hook and reported via the _kernel_ logs.
+            anyhow!("Panic occurred while handling request: {msg}")
         })
         // Unwrap nested Result
         .and_then(|resp| resp);
