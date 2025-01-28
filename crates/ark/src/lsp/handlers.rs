@@ -334,6 +334,7 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<StatementRangeResponse>> {
+    panic!("oh no");
     let uri = &params.text_document.uri;
     let document = state.get_document(uri)?;
 

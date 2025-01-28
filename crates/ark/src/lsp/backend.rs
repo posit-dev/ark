@@ -83,6 +83,7 @@ macro_rules! cast_response {
                     .await;
                 // The backtrace is reported via `err` and eventually shows up
                 // in the LSP logs on the client side
+                let _ = $self.shutdown_tx.send(()).await;
                 Err(new_jsonrpc_error(format!("{err:?}")))
             },
             RequestResponse::Disabled => Err(new_jsonrpc_error(String::from(
@@ -155,6 +156,8 @@ pub(crate) enum LspResponse {
 
 #[derive(Debug)]
 struct Backend {
+    shutdown_tx: tokio::sync::mpsc::Sender<()>,
+
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
@@ -436,6 +439,8 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         log::trace!("Connected to LSP at '{}'", address);
         let (read, write) = tokio::io::split(stream);
 
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+
         let init = |client: Client| {
             let state = GlobalState::new(client.clone());
             let events_tx = state.events_tx();
@@ -458,6 +463,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             });
 
             Backend {
+                shutdown_tx,
                 events_tx,
                 client,
                 _main_loop: main_loop,
@@ -480,12 +486,21 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             .finish();
 
         let server = Server::new(read, write, socket);
-        server.serve(service).await;
 
-        log::trace!(
-            "LSP thread exiting gracefully after connection closed ({:?}).",
-            address
-        );
+        tokio::select! {
+            _ = server.serve(service) => {
+                log::trace!(
+                    "LSP thread exiting gracefully after connection closed ({:?}).",
+                    address
+                );
+            },
+            _ = shutdown_rx.recv() => {
+                log::trace!(
+                    "LSP thread exiting after receiving a shutdown request ({:?}).",
+                    address
+                );
+            }
+        }
     })
 }
 
