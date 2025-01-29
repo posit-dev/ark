@@ -37,7 +37,6 @@ use crate::lsp::state::WorldState;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-#[allow(unused_variables)]
 pub fn completions_from_composite_sources(
     context: &DocumentContext,
     state: &WorldState,
