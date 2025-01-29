@@ -75,10 +75,10 @@ pub fn gather_completion_context<'a>(context: &'a DocumentContext<'a>) -> NodeCo
                 node_text(&grandparent, &context.document.contents).unwrap_or_default();
             grandparent_node = Some(grandparent);
 
-            if let Some(great_grandparent) = grandparent.parent() {
+            if let Some(greatgrandparent) = grandparent.parent() {
                 greatgrandparent_node_text =
-                    node_text(&great_grandparent, &context.document.contents).unwrap_or_default();
-                greatgrandparent_node = Some(great_grandparent);
+                    node_text(&greatgrandparent, &context.document.contents).unwrap_or_default();
+                greatgrandparent_node = Some(greatgrandparent);
             }
         }
     }
@@ -96,36 +96,36 @@ pub fn gather_completion_context<'a>(context: &'a DocumentContext<'a>) -> NodeCo
 }
 
 pub fn check_for_function_value(context: &DocumentContext, node_context: &NodeContext) -> bool {
-    if let Some(parent_node) = node_context.parent_node {
-        if let Some(grandparent_node) = node_context.grandparent_node {
-            if let Some(greatgrandparent_node) = node_context.greatgrandparent_node {
-                if parent_node.is_argument() &&
-                    grandparent_node.is_arguments() &&
-                    greatgrandparent_node.is_call()
-                {
-                    let function_name_node = greatgrandparent_node
-                        .child_by_field_name("function")
-                        .unwrap();
-                    let function_name = context
-                        .document
-                        .contents
-                        .node_slice(&function_name_node)
-                        .ok()
-                        .map(|s| s.to_string());
-
-                    if let Some(ref name) = function_name {
-                        let target_functions =
-                            ["help", "str", "args", "debug", "debugonce", "trace"];
-                        if target_functions.contains(&name.as_str()) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
+    if !matches!(node_context.parent_node, Some(node) if node.is_argument()) {
+        return false;
     }
 
-    false
+    if !matches!(node_context.grandparent_node, Some(node) if node.is_arguments()) {
+        return false;
+    }
+
+    let greatgrandparent_node = match node_context.greatgrandparent_node {
+        Some(node) if node.is_call() => node,
+        _ => return false,
+    };
+
+    let function_name_node = match greatgrandparent_node.child_by_field_name("function") {
+        Some(node) => node,
+        None => return false,
+    };
+
+    let function_name = match context
+        .document
+        .contents
+        .node_slice(&function_name_node)
+        .ok()
+    {
+        Some(slice) => slice.to_string(),
+        None => return false,
+    };
+
+    let target_functions = ["help", "str", "args", "debug", "debugonce", "trace"];
+    target_functions.contains(&function_name.as_str())
 }
 
 pub fn check_for_help(node_context: &NodeContext) -> bool {
