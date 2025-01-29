@@ -10,6 +10,8 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use amalthea::comm::ui_comm::ShowMessageParams as UiShowMessageParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use crossbeam::channel::Sender;
 use serde_json::Value;
 use stdext::result::ResultOrLog;
@@ -69,20 +71,7 @@ macro_rules! cast_response {
             RequestResponse::Result(Err(err)) => Err(new_jsonrpc_error(format!("{err:?}"))),
             RequestResponse::Crashed(err) => {
                 // Notify user that the LSP has crashed and is no longer active
-                $self
-                    .client
-                    .show_message(
-                        MessageType::ERROR,
-                        concat!(
-                            "The R language server has crashed and has been disabled. ",
-                            "Smart features such as completions will no longer work in this session. ",
-                            "Please report this crash to https://github.com/posit-dev/positron/issues ",
-                            "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
-                        ),
-                    )
-                    .await;
-
-                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                report_crash();
 
                 // The backtrace is reported via `err` and eventually shows up
                 // in the LSP logs on the client side
@@ -95,6 +84,26 @@ macro_rules! cast_response {
             _ => panic!("Unexpected variant while casting to {}", stringify!($pat)),
         }
     }};
+}
+
+fn report_crash() {
+    let user_message = concat!(
+        "The R language server has crashed and has been disabled. ",
+        "Smart features such as completions will no longer work in this session. ",
+        "Please report this crash to https://github.com/posit-dev/positron/issues ",
+        "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
+    );
+
+    r_task(|| {
+        let event = UiFrontendEvent::ShowMessage(UiShowMessageParams {
+            message: String::from(user_message),
+        });
+
+        let main = RMain::get();
+        if let Some(ui_comm_tx) = main.get_ui_comm_tx() {
+            ui_comm_tx.send_event(event);
+        }
+    });
 }
 
 #[derive(Debug)]
