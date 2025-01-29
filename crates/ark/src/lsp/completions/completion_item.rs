@@ -185,7 +185,7 @@ pub(super) fn completion_item_from_function(
     let insert_text = sym_quote_invalid(name);
 
     if no_trailing_parens {
-        item.insert_text_format = None;
+        item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
         item.insert_text = Some(insert_text);
     } else {
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
