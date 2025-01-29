@@ -47,8 +47,6 @@ pub fn completions_from_composite_sources(
 
     let mut completions: Vec<CompletionItem> = vec![];
 
-    // TO THINK: also related to doing analysis of the completion site
-    // would this also belong in a hypothetical CompletionOption?
     let root = find_pipe_root(context)?;
 
     // Try argument completions

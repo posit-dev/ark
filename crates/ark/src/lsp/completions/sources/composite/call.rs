@@ -68,9 +68,6 @@ pub(super) fn completions_from_call(
     //    ~~~~
     //
 
-    // JB: this caught my eye when doing the "no trailing parens" work
-    // it's a proper analysis of the completion site, e.g. investigating whether
-    // we know the site is CallNodePositionType::Value
     match call_node_position_type(&context.node, context.point) {
         // We should provide argument completions. Ambiguous states like
         // `fn(arg<tab>)` or `fn(x, arg<tab>)` should still get argument

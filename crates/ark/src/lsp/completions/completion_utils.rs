@@ -1,5 +1,4 @@
 use std::cmp;
-use std::fmt;
 
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
@@ -35,6 +34,7 @@ pub(super) fn log_completions(completions: &Vec<CompletionItem>, source: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub struct NodeContext<'a> {
     pub node: Node<'a>,
     pub node_text: String,
@@ -46,52 +46,9 @@ pub struct NodeContext<'a> {
     pub greatgrandparent_node_text: String,
 }
 
-impl<'a> fmt::Display for NodeContext<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "NodeContext {{")?;
-        writeln!(f, "  node_type: {:?}", self.node.node_type())?;
-        writeln!(f, "  node_text: {:?}", self.node_text)?;
-        writeln!(
-            f,
-            "  parent_node_type: {:?}",
-            self.parent_node
-                .as_ref()
-                .map(|n| n.node_type())
-                .unwrap_or(NodeType::Error)
-        )?;
-        writeln!(f, "  parent_node_text: {:?}", self.parent_node_text)?;
-        writeln!(
-            f,
-            "  grandparent_node_type: {:?}",
-            self.grandparent_node
-                .as_ref()
-                .map(|n| n.node_type())
-                .unwrap_or(NodeType::Error)
-        )?;
-        writeln!(
-            f,
-            "  grandparent_node_text: {:?}",
-            self.grandparent_node_text
-        )?;
-        writeln!(
-            f,
-            "  greatgrandparent_node_type: {:?}",
-            self.greatgrandparent_node
-                .as_ref()
-                .map(|n| n.node_type())
-                .unwrap_or(NodeType::Error)
-        )?;
-        writeln!(
-            f,
-            "  greatgrandparent_node_text: {:?}",
-            self.greatgrandparent_node_text
-        )?;
-        writeln!(f, "}}")
-    }
-}
-
 pub fn gather_completion_context<'a>(context: &'a DocumentContext<'a>) -> NodeContext<'a> {
     let mut node = context.node;
+    // trailing underscore to avoid conflict with the node_text function
     let mut node_text_ = node_text(&node, &context.document.contents).unwrap_or_default();
 
     let mut parent_node = None;
@@ -102,9 +59,9 @@ pub fn gather_completion_context<'a>(context: &'a DocumentContext<'a>) -> NodeCo
     let mut greatgrandparent_node_text = String::new();
 
     if let Some(mut parent) = node.parent() {
-        // deal with the ?pkgname::thingy case
+        // if we are completing "thi" as part of "pkgname::thi", the node we want to
+        // start walking up the AST from is the parent node
         if parent.is_namespace_operator() {
-            log::info!("parent is namespace operator");
             node = parent;
             node_text_ = node_text(&node, &context.document.contents).unwrap_or_default();
             parent = node.parent().unwrap();
@@ -172,21 +129,8 @@ pub fn check_for_function_value(context: &DocumentContext, node_context: &NodeCo
 }
 
 pub fn check_for_help(node_context: &NodeContext) -> bool {
-    if let Some(mut parent_node) = node_context.parent_node {
-        log::info!(
-            "check_for_help: parent_node type: {:?}, text: {:?}",
-            parent_node.node_type(),
-            node_context.parent_node_text
-        );
-
-        // deal with the ?pkgname::thingy case
-        if parent_node.is_namespace_operator() {
-            log::info!("parent_node is namespace operator");
-            parent_node = node_context.grandparent_node.unwrap_or(parent_node);
-        }
-
+    if let Some(parent_node) = node_context.parent_node {
         if parent_node.is_unary_operator() {
-            log::info!("parent_node is unary operator");
             if let NodeType::UnaryOperator(UnaryOperatorType::Help) = parent_node.node_type() {
                 return true;
             }

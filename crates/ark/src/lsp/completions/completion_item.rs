@@ -255,7 +255,6 @@ pub(super) unsafe fn completion_item_from_object(
     no_parens: bool,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
-        //println!("making item from promise with name: {name}, no_parens: {no_parens}");
         return completion_item_from_promise(
             name,
             object,
@@ -445,7 +444,6 @@ pub(super) unsafe fn completion_item_from_symbol(
             return None;
         },
     }
-    //println!("making item from name: {name}, no_parens: {no_parens}");
 
     let object = Rf_findVarInFrame(envir, symbol);
 
