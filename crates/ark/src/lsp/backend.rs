@@ -81,6 +81,9 @@ macro_rules! cast_response {
                         ),
                     )
                     .await;
+
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
                 // The backtrace is reported via `err` and eventually shows up
                 // in the LSP logs on the client side
                 let _ = $self.shutdown_tx.send(()).await;
