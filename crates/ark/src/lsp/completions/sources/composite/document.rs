@@ -24,8 +24,6 @@ use crate::treesitter::NodeTypeExt;
 pub(super) fn completions_from_document(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_keywords()");
-
     // get reference to AST
     let mut node = context.node;
 

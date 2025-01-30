@@ -1,6 +1,3 @@
-use std::cmp;
-
-use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
@@ -9,30 +6,6 @@ use crate::treesitter::node_text;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::UnaryOperatorType;
-
-pub(super) fn log_completions(completions: &Vec<CompletionItem>, source: &str) {
-    let count = completions.len();
-    let display_count = cmp::min(count, 10);
-    log::info!("{} items: {}", source, count);
-
-    let mut insert_text: Vec<String> = completions
-        .iter()
-        .take(display_count)
-        .map(|item| {
-            item.insert_text
-                .clone()
-                .unwrap_or_else(|| item.label.clone())
-        })
-        .collect();
-
-    if count > display_count {
-        insert_text.push(format!("...and {} more", count - display_count));
-    }
-
-    if !insert_text.is_empty() {
-        log::info!("{} insert_text:\n{}", source, insert_text.join("\n"));
-    }
-}
 
 #[allow(dead_code)]
 pub struct NodeContext<'a> {

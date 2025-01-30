@@ -24,17 +24,13 @@ use namespace::completions_from_namespace;
 use string::completions_from_string;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::completion_utils::log_completions;
 use crate::lsp::document_context::DocumentContext;
 
 pub fn completions_from_unique_sources(
     context: &DocumentContext,
     no_trailing_parens: bool,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!(
-        "completions_from_unique_sources(no_trailing_parens: {})",
-        no_trailing_parens
-    );
+    log::info!("completions_from_unique_sources()");
 
     // Try to detect a single colon first, which is a special case where we
     // don't provide any completions
@@ -54,7 +50,6 @@ pub fn completions_from_unique_sources(
 
     // Try `package::prefix` (or `:::`) namespace completions
     if let Some(completions) = completions_from_namespace(context, no_trailing_parens)? {
-        log_completions(&completions, "completions_from_namespace");
         return Ok(Some(completions));
     }
 

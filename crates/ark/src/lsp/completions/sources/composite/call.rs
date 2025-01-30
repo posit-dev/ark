@@ -67,7 +67,6 @@ pub(super) fn completions_from_call(
     // fn(name = value)
     //    ~~~~
     //
-
     match call_node_position_type(&context.node, context.point) {
         // We should provide argument completions. Ambiguous states like
         // `fn(arg<tab>)` or `fn(x, arg<tab>)` should still get argument

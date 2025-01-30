@@ -34,10 +34,7 @@ pub fn completions_from_namespace(
     context: &DocumentContext,
     no_trailing_parens: bool,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!(
-        "completions_from_namespace(no_trailing_parens: {})",
-        no_trailing_parens
-    );
+    log::info!("completions_from_namespace()");
 
     let node = context.node;
 
