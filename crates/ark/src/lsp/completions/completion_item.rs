@@ -252,7 +252,7 @@ pub(super) unsafe fn completion_item_from_object(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    no_parens: bool,
+    no_trailing_parens: bool,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
         return completion_item_from_promise(
@@ -261,7 +261,7 @@ pub(super) unsafe fn completion_item_from_object(
             envir,
             package,
             promise_strategy,
-            no_parens,
+            no_trailing_parens,
         );
     }
 
@@ -271,7 +271,7 @@ pub(super) unsafe fn completion_item_from_object(
     // In other words, when creating a completion item for these functions,
     // we should also figure out where we can receive the help from.
     if Rf_isFunction(object) != 0 {
-        return completion_item_from_function(name, package, no_parens);
+        return completion_item_from_function(name, package, no_trailing_parens);
     }
 
     let mut item = completion_item(name, CompletionData::Object {
@@ -302,7 +302,7 @@ pub(super) unsafe fn completion_item_from_promise(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    no_parens: bool,
+    no_trailing_parens: bool,
 ) -> Result<CompletionItem> {
     if r_promise_is_forced(object) {
         // Promise has already been evaluated before.
@@ -314,7 +314,7 @@ pub(super) unsafe fn completion_item_from_promise(
             envir,
             package,
             promise_strategy,
-            no_parens,
+            no_trailing_parens,
         );
     }
 
@@ -331,7 +331,7 @@ pub(super) unsafe fn completion_item_from_promise(
             envir,
             package,
             promise_strategy,
-            no_parens,
+            no_trailing_parens,
         );
     }
 
@@ -425,7 +425,7 @@ pub(super) unsafe fn completion_item_from_symbol(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    no_parens: bool,
+    no_trailing_parens: bool,
 ) -> Option<Result<CompletionItem>> {
     let symbol = r_symbol!(name);
 
@@ -458,7 +458,7 @@ pub(super) unsafe fn completion_item_from_symbol(
         envir,
         package,
         promise_strategy,
-        no_parens,
+        no_trailing_parens,
     ))
 }
 
