@@ -129,12 +129,22 @@ pub fn check_for_function_value(context: &DocumentContext, node_context: &NodeCo
 }
 
 pub fn check_for_help(node_context: &NodeContext) -> bool {
-    if let Some(parent_node) = node_context.parent_node {
-        if parent_node.is_unary_operator() {
-            if let NodeType::UnaryOperator(UnaryOperatorType::Help) = parent_node.node_type() {
-                return true;
-            }
-        }
+    if node_context.parent_node.is_none() {
+        return false;
     }
-    false
+
+    let parent_node = node_context.parent_node.unwrap();
+
+    if !parent_node.is_unary_operator() {
+        return false;
+    }
+
+    if !matches!(
+        parent_node.node_type(),
+        NodeType::UnaryOperator(UnaryOperatorType::Help)
+    ) {
+        return false;
+    }
+
+    true
 }
