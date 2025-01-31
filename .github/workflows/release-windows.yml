@@ -32,6 +32,12 @@ jobs:
             - name: Checkout sources
               uses: actions/checkout@v4
 
+            - name: Install Rust temporarily pinned to 1.83 (https://github.com/posit-dev/ark/issues/678)
+              uses: dtolnay/rust-toolchain@1.83
+
+            - name: Report Rust version
+              run: rustc --version
+
             - name: Compile ARK
               env:
                   ARK_BUILD_TYPE: ${{ matrix.flavor }}
