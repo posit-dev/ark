@@ -11,22 +11,34 @@ use crate::treesitter::UnaryOperatorType;
 static NO_PARAMETER_HINTS_FUNCTIONS: &[&str] =
     &["args", "debug", "debugonce", "help", "trace", "str"];
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum ParameterHints {
+    Enabled,
+    Disabled,
+}
+
+impl ParameterHints {
+    pub(crate) fn is_enabled(&self) -> bool {
+        matches!(self, ParameterHints::Enabled)
+    }
+}
+
 /// If we end up providing function completions for [Node], should those function
 /// completions automatically add `()` and trigger Parameter Hints?
 ///
 /// The answer is always yes, except for:
 /// - When we are inside special functions, like `debug(acro<>)` or `debugonce(dplyr::acr<>)`
 /// - When we are inside `?`, like `?acr<>` or `method?acr<>`
-pub(crate) fn parameter_hints(node: Node, contents: &Rope) -> bool {
+pub(crate) fn parameter_hints(node: Node, contents: &Rope) -> ParameterHints {
     if is_inside_no_parameter_hints_function(node, contents) {
-        return false;
+        return ParameterHints::Disabled;
     }
 
     if is_inside_help(node) {
-        return false;
+        return ParameterHints::Disabled;
     }
 
-    true
+    ParameterHints::Enabled
 }
 
 fn is_inside_no_parameter_hints_function(node: Node, contents: &Rope) -> bool {

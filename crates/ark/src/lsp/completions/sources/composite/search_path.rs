@@ -21,6 +21,7 @@ use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
+use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::types::PromiseStrategy;
@@ -28,7 +29,7 @@ use crate::lsp::document_context::DocumentContext;
 
 pub(super) fn completions_from_search_path(
     context: &DocumentContext,
-    no_trailing_parens: bool,
+    parameter_hints: ParameterHints,
 ) -> Result<Vec<CompletionItem>> {
     log::info!("completions_from_search_path()");
 
@@ -88,7 +89,7 @@ pub(super) fn completions_from_search_path(
                     envir,
                     name,
                     promise_strategy.clone(),
-                    no_trailing_parens,
+                    parameter_hints,
                 ) else {
                     log::error!("Completion symbol '{symbol}' was unexpectedly not found.");
                     continue;

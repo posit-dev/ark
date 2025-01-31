@@ -58,6 +58,7 @@ mod tests {
     use stdext::assert_match;
 
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::parameter_hints::ParameterHints;
     use crate::lsp::completions::sources::completions_from_unique_sources;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
@@ -115,7 +116,7 @@ mod tests {
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
 
             // Check one level up too
-            let res = completions_from_unique_sources(&context, false).unwrap();
+            let res = completions_from_unique_sources(&context, ParameterHints::Enabled).unwrap();
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })
     }

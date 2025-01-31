@@ -22,18 +22,16 @@ pub(crate) fn provide_completions(
 ) -> Result<Vec<CompletionItem>> {
     log::info!("provide_completions()");
 
-    // TODO!: `parameter_hints()` should return an enum `ParameterHints::Enabled` / `ParameterHints::Disabled`
-    // so call site usage is clearer
-    let no_trailing_parens = !parameter_hints(context.node, &context.document.contents);
+    let parameter_hints = parameter_hints(context.node, &context.document.contents);
 
-    if let Some(completions) = completions_from_unique_sources(context, no_trailing_parens)? {
+    if let Some(completions) = completions_from_unique_sources(context, parameter_hints)? {
         return Ok(completions);
     };
 
     // At this point we aren't in a "unique" completion case, so just return a
     // set of reasonable completions based on loaded packages, the open
     // document, the current workspace, and any call related arguments
-    completions_from_composite_sources(context, state, no_trailing_parens)
+    completions_from_composite_sources(context, state, parameter_hints)
 }
 
 #[cfg(test)]
