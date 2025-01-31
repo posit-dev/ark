@@ -8,9 +8,7 @@
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::completion_utils::check_for_function_value;
-use crate::lsp::completions::completion_utils::check_for_help;
-use crate::lsp::completions::completion_utils::gather_completion_context;
+use crate::lsp::completions::parameter_hints::parameter_hints;
 use crate::lsp::completions::sources::completions_from_composite_sources;
 use crate::lsp::completions::sources::completions_from_unique_sources;
 use crate::lsp::document_context::DocumentContext;
@@ -24,9 +22,9 @@ pub(crate) fn provide_completions(
 ) -> Result<Vec<CompletionItem>> {
     log::info!("provide_completions()");
 
-    let node_context = gather_completion_context(context);
-    let no_trailing_parens =
-        check_for_function_value(context, &node_context) || check_for_help(&node_context);
+    // TODO!: `parameter_hints()` should return an enum `ParameterHints::Enabled` / `ParameterHints::Disabled`
+    // so call site usage is clearer
+    let no_trailing_parens = !parameter_hints(context.node, &context.document.contents);
 
     if let Some(completions) = completions_from_unique_sources(context, no_trailing_parens)? {
         return Ok(completions);
@@ -87,10 +85,27 @@ mod tests {
     #[test]
     fn test_completions_dont_add_parentheses_inside_special_functions_double_colon() {
         r_task(|| {
+            let state = WorldState::default();
+
             let (text, point) = point_from_cursor("debug(base::ab@)");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = provide_completions(&context, &WorldState::default()).unwrap();
+            let completions = provide_completions(&context, &state).unwrap();
+            let completion = find_completion(&completions, "abs");
+
+            assert_eq!(completion.insert_text.unwrap(), String::from("abs"));
+            assert_eq!(
+                completion.insert_text_format.unwrap(),
+                InsertTextFormat::PLAIN_TEXT
+            );
+            assert!(completion.command.is_none());
+
+            // User hasn't typed any namespace name yet, but we show them a completion list
+            // here and they pick from it, so it's a common case
+            let (text, point) = point_from_cursor("debug(base::@)");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = provide_completions(&context, &state).unwrap();
             let completion = find_completion(&completions, "abs");
 
             assert_eq!(completion.insert_text.unwrap(), String::from("abs"));
@@ -126,10 +141,27 @@ mod tests {
     #[test]
     fn test_completions_dont_add_parentheses_for_help_operator_naked() {
         r_task(|| {
+            let state = WorldState::default();
+
+            // Unary help
             let (text, point) = point_from_cursor("?enc@");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = provide_completions(&context, &WorldState::default()).unwrap();
+            let completions = provide_completions(&context, &state).unwrap();
+            let completion = find_completion(&completions, "enc2native");
+
+            assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
+            assert_eq!(
+                completion.insert_text_format.unwrap(),
+                InsertTextFormat::PLAIN_TEXT
+            );
+            assert!(completion.command.is_none());
+
+            // Binary help
+            let (text, point) = point_from_cursor("method?enc@");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = provide_completions(&context, &state).unwrap();
             let completion = find_completion(&completions, "enc2native");
 
             assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
@@ -144,10 +176,42 @@ mod tests {
     #[test]
     fn test_completions_dont_add_parentheses_for_help_operator_double_colon() {
         r_task(|| {
+            let state = WorldState::default();
+
+            // Unary help
             let (text, point) = point_from_cursor("?base::enc@");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = provide_completions(&context, &WorldState::default()).unwrap();
+            let completions = provide_completions(&context, &state).unwrap();
+            let completion = find_completion(&completions, "enc2native");
+
+            assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
+            assert_eq!(
+                completion.insert_text_format.unwrap(),
+                InsertTextFormat::PLAIN_TEXT
+            );
+            assert!(completion.command.is_none());
+
+            // Binary help
+            let (text, point) = point_from_cursor("method?base::enc@");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = provide_completions(&context, &state).unwrap();
+            let completion = find_completion(&completions, "enc2native");
+
+            assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
+            assert_eq!(
+                completion.insert_text_format.unwrap(),
+                InsertTextFormat::PLAIN_TEXT
+            );
+            assert!(completion.command.is_none());
+
+            // User hasn't typed any namespace name yet, but we show them a completion list
+            // here and they pick from it, so it's a common case
+            let (text, point) = point_from_cursor("?base::@");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = provide_completions(&context, &state).unwrap();
             let completion = find_completion(&completions, "enc2native");
 
             assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
