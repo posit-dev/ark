@@ -7,8 +7,11 @@
 
 #![allow(deprecated)]
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use amalthea::comm::ui_comm::ShowMessageParams as UiShowMessageParams;
+use amalthea::comm::ui_comm::UiFrontendEvent;
 use crossbeam::channel::Sender;
 use serde_json::Value;
 use stdext::result::ResultOrLog;
@@ -26,6 +29,7 @@ use tower_lsp::LanguageServer;
 use tower_lsp::LspService;
 use tower_lsp::Server;
 
+use super::main_loop::LSP_HAS_CRASHED;
 use crate::interface::RMain;
 use crate::lsp::handlers::VirtualDocumentParams;
 use crate::lsp::handlers::VirtualDocumentResponse;
@@ -44,24 +48,68 @@ use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
 use crate::r_task;
 
+// This enum is useful for two things. First it allows us to distinguish a
+// normal request failure from a crash. In the latter case we send a
+// notification to the client so the user knows the LSP has crashed.
+//
+// Once the LSP has crashed all requests respond with an error. This prevents
+// any handler from running while we process the message to shut down the
+// server. The `Disabled` enum variant is an indicator of this state. We could
+// have just created an anyhow error passed through the `Result` variant but that
+// would flood the LSP logs with irrelevant backtraces.
+pub(crate) enum RequestResponse {
+    Disabled,
+    Crashed(anyhow::Result<LspResponse>),
+    Result(anyhow::Result<LspResponse>),
+}
+
 // Based on https://stackoverflow.com/a/69324393/1725177
 macro_rules! cast_response {
-    ($target:expr, $pat:path) => {{
+    ($self:expr, $target:expr, $pat:path) => {{
         match $target {
-            Ok($pat(resp)) => Ok(resp),
-            Err(err) => Err(new_jsonrpc_error(format!("{err:?}"))),
+            RequestResponse::Result(Ok($pat(resp))) => Ok(resp),
+            RequestResponse::Result(Err(err)) => Err(new_jsonrpc_error(format!("{err:?}"))),
+            RequestResponse::Crashed(err) => {
+                // Notify user that the LSP has crashed and is no longer active
+                report_crash();
+
+                // The backtrace is reported via `err` and eventually shows up
+                // in the LSP logs on the client side
+                let _ = $self.shutdown_tx.send(()).await;
+                Err(new_jsonrpc_error(format!("{err:?}")))
+            },
+            RequestResponse::Disabled => Err(new_jsonrpc_error(String::from(
+                "The LSP server has crashed and is now shut down!",
+            ))),
             _ => panic!("Unexpected variant while casting to {}", stringify!($pat)),
         }
     }};
 }
 
+fn report_crash() {
+    let user_message = concat!(
+        "The R language server has crashed and has been disabled. ",
+        "Smart features such as completions will no longer work in this session. ",
+        "Please report this crash to https://github.com/posit-dev/positron/issues ",
+        "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
+    );
+
+    r_task(|| {
+        let event = UiFrontendEvent::ShowMessage(UiShowMessageParams {
+            message: String::from(user_message),
+        });
+
+        let main = RMain::get();
+        if let Some(ui_comm_tx) = main.get_ui_comm_tx() {
+            ui_comm_tx.send_event(event);
+        }
+    });
+}
+
 #[derive(Debug)]
 pub(crate) enum LspMessage {
     Notification(LspNotification),
-    Request(
-        LspRequest,
-        TokioUnboundedSender<anyhow::Result<LspResponse>>,
-    ),
+    Request(LspRequest, TokioUnboundedSender<RequestResponse>),
 }
 
 #[derive(Debug)]
@@ -79,7 +127,6 @@ pub(crate) enum LspNotification {
 #[derive(Debug)]
 pub(crate) enum LspRequest {
     Initialize(InitializeParams),
-    Shutdown(),
     WorkspaceSymbol(WorkspaceSymbolParams),
     DocumentSymbol(DocumentSymbolParams),
     ExecuteCommand(ExecuteCommandParams),
@@ -101,7 +148,6 @@ pub(crate) enum LspRequest {
 #[derive(Debug)]
 pub(crate) enum LspResponse {
     Initialize(InitializeResult),
-    Shutdown(()),
     WorkspaceSymbol(Option<Vec<SymbolInformation>>),
     DocumentSymbol(Option<DocumentSymbolResponse>),
     ExecuteCommand(Option<Value>),
@@ -122,6 +168,10 @@ pub(crate) enum LspResponse {
 
 #[derive(Debug)]
 struct Backend {
+    /// Shutdown notifier used to unwind tower-lsp and disconnect from the
+    /// client when an LSP handler panics.
+    shutdown_tx: tokio::sync::mpsc::Sender<()>,
+
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
@@ -131,9 +181,12 @@ struct Backend {
 }
 
 impl Backend {
-    async fn request(&self, request: LspRequest) -> anyhow::Result<LspResponse> {
-        let (response_tx, mut response_rx) =
-            tokio_unbounded_channel::<anyhow::Result<LspResponse>>();
+    async fn request(&self, request: LspRequest) -> RequestResponse {
+        if LSP_HAS_CRASHED.load(Ordering::Acquire) {
+            return RequestResponse::Disabled;
+        }
+
+        let (response_tx, mut response_rx) = tokio_unbounded_channel::<RequestResponse>();
 
         // Relay request to main loop
         self.events_tx
@@ -156,6 +209,7 @@ impl Backend {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         cast_response!(
+            self,
             self.request(LspRequest::Initialize(params)).await,
             LspResponse::Initialize
         )
@@ -166,10 +220,9 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
-        cast_response!(
-            self.request(LspRequest::Shutdown()).await,
-            LspResponse::Shutdown
-        )
+        // Don't go through the main loop because we want this request to
+        // succeed even when the LSP has crashed and has been disabled.
+        Ok(())
     }
 
     async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
@@ -189,6 +242,7 @@ impl LanguageServer for Backend {
         params: WorkspaceSymbolParams,
     ) -> Result<Option<Vec<SymbolInformation>>> {
         cast_response!(
+            self,
             self.request(LspRequest::WorkspaceSymbol(params)).await,
             LspResponse::WorkspaceSymbol
         )
@@ -199,6 +253,7 @@ impl LanguageServer for Backend {
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
         cast_response!(
+            self,
             self.request(LspRequest::DocumentSymbol(params)).await,
             LspResponse::DocumentSymbol
         )
@@ -209,6 +264,7 @@ impl LanguageServer for Backend {
         params: ExecuteCommandParams,
     ) -> jsonrpc::Result<Option<Value>> {
         cast_response!(
+            self,
             self.request(LspRequest::ExecuteCommand(params)).await,
             LspResponse::ExecuteCommand
         )
@@ -232,6 +288,7 @@ impl LanguageServer for Backend {
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         cast_response!(
+            self,
             self.request(LspRequest::Completion(params)).await,
             LspResponse::Completion
         )
@@ -239,6 +296,7 @@ impl LanguageServer for Backend {
 
     async fn completion_resolve(&self, item: CompletionItem) -> Result<CompletionItem> {
         cast_response!(
+            self,
             self.request(LspRequest::CompletionResolve(item)).await,
             LspResponse::CompletionResolve
         )
@@ -246,6 +304,7 @@ impl LanguageServer for Backend {
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         cast_response!(
+            self,
             self.request(LspRequest::Hover(params)).await,
             LspResponse::Hover
         )
@@ -253,6 +312,7 @@ impl LanguageServer for Backend {
 
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         cast_response!(
+            self,
             self.request(LspRequest::SignatureHelp(params)).await,
             LspResponse::SignatureHelp
         )
@@ -263,6 +323,7 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         cast_response!(
+            self,
             self.request(LspRequest::GotoDefinition(params)).await,
             LspResponse::GotoDefinition
         )
@@ -273,6 +334,7 @@ impl LanguageServer for Backend {
         params: GotoImplementationParams,
     ) -> Result<Option<GotoImplementationResponse>> {
         cast_response!(
+            self,
             self.request(LspRequest::GotoImplementation(params)).await,
             LspResponse::GotoImplementation
         )
@@ -283,6 +345,7 @@ impl LanguageServer for Backend {
         params: SelectionRangeParams,
     ) -> Result<Option<Vec<SelectionRange>>> {
         cast_response!(
+            self,
             self.request(LspRequest::SelectionRange(params)).await,
             LspResponse::SelectionRange
         )
@@ -290,6 +353,7 @@ impl LanguageServer for Backend {
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         cast_response!(
+            self,
             self.request(LspRequest::References(params)).await,
             LspResponse::References
         )
@@ -300,6 +364,7 @@ impl LanguageServer for Backend {
         params: DocumentOnTypeFormattingParams,
     ) -> Result<Option<Vec<TextEdit>>> {
         cast_response!(
+            self,
             self.request(LspRequest::OnTypeFormatting(params)).await,
             LspResponse::OnTypeFormatting
         )
@@ -327,6 +392,7 @@ impl Backend {
         params: StatementRangeParams,
     ) -> jsonrpc::Result<Option<StatementRangeResponse>> {
         cast_response!(
+            self,
             self.request(LspRequest::StatementRange(params)).await,
             LspResponse::StatementRange
         )
@@ -337,6 +403,7 @@ impl Backend {
         params: HelpTopicParams,
     ) -> jsonrpc::Result<Option<HelpTopicResponse>> {
         cast_response!(
+            self,
             self.request(LspRequest::HelpTopic(params)).await,
             LspResponse::HelpTopic
         )
@@ -347,6 +414,7 @@ impl Backend {
         params: VirtualDocumentParams,
     ) -> tower_lsp::jsonrpc::Result<VirtualDocumentResponse> {
         cast_response!(
+            self,
             self.request(LspRequest::VirtualDocument(params)).await,
             LspResponse::VirtualDocument
         )
@@ -357,6 +425,7 @@ impl Backend {
         params: InputBoundariesParams,
     ) -> tower_lsp::jsonrpc::Result<InputBoundariesResponse> {
         cast_response!(
+            self,
             self.request(LspRequest::InputBoundaries(params)).await,
             LspResponse::InputBoundaries
         )
@@ -381,6 +450,8 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         log::trace!("Connected to LSP at '{}'", address);
         let (read, write) = tokio::io::split(stream);
 
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
+
         let init = |client: Client| {
             let state = GlobalState::new(client);
             let events_tx = state.events_tx();
@@ -403,6 +474,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             });
 
             Backend {
+                shutdown_tx,
                 events_tx,
                 _main_loop: main_loop,
             }
@@ -424,12 +496,21 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             .finish();
 
         let server = Server::new(read, write, socket);
-        server.serve(service).await;
 
-        log::trace!(
-            "LSP thread exiting gracefully after connection closed ({:?}).",
-            address
-        );
+        tokio::select! {
+            _ = server.serve(service) => {
+                log::trace!(
+                    "LSP thread exiting gracefully after connection closed ({:?}).",
+                    address
+                );
+            },
+            _ = shutdown_rx.recv() => {
+                log::trace!(
+                    "LSP thread exiting after receiving a shutdown request ({:?}).",
+                    address
+                );
+            }
+        }
     })
 }
 
