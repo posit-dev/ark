@@ -18,8 +18,6 @@ use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
 
-use crate::r_task;
-
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
 struct PositronModuleAsset;
@@ -135,7 +133,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
-            r_task::spawn_idle(move || async {
+            crate::r_task::spawn_idle(move || async {
                 log::info!("Watching R modules from sources via cargo manifest");
                 spawn_watcher_thread(root);
             });
