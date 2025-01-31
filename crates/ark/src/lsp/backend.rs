@@ -52,11 +52,11 @@ use crate::r_task;
 // normal request failure from a crash. In the latter case we send a
 // notification to the client so the user knows the LSP has crashed.
 //
-// Once the LSP has crashed all requests respond with an error. This is a
-// workaround, ideally we'd properly shut down the LSP from the server. The
-// `Disabled` enum variant is an indicator of this state. We could have just
-// created an anyhow error passed through the `Resul` variant but that would
-// flood the LSP logs with irrelevant backtraces.
+// Once the LSP has crashed all requests respond with an error. This prevents
+// any handler from running while we process the message to shut down the
+// server. The `Disabled` enum variant is an indicator of this state. We could
+// have just created an anyhow error passed through the `Result` variant but that
+// would flood the LSP logs with irrelevant backtraces.
 pub(crate) enum RequestResponse {
     Disabled,
     Crashed(anyhow::Result<LspResponse>),
@@ -168,13 +168,12 @@ pub(crate) enum LspResponse {
 
 #[derive(Debug)]
 struct Backend {
+    /// Shutdown notifier used to unwind tower-lsp and disconnect from the
+    /// client when an LSP handler panics.
     shutdown_tx: tokio::sync::mpsc::Sender<()>,
 
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
-
-    /// Tower-LSP's client
-    client: Client,
 
     /// Handle to main loop. Drop it to cancel the loop, all associated tasks,
     /// and drop all owned state.
@@ -454,7 +453,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client.clone());
+            let state = GlobalState::new(client);
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive
@@ -477,7 +476,6 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             Backend {
                 shutdown_tx,
                 events_tx,
-                client,
                 _main_loop: main_loop,
             }
         };

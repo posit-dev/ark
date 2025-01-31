@@ -396,7 +396,7 @@ impl GlobalState {
 /// # Arguments
 ///
 /// * - `response_tx`: A response channel for the tower-lsp request handler.
-/// * - `response`: The response wrapped in a `anyhow::Result`. Errors are logged.
+/// * - `response`: A closure producing a response wrapped in a `anyhow::Result`. Errors are logged.
 /// * - `into_lsp_response`: A constructor for the relevant `LspResponse` variant.
 fn respond<T>(
     response_tx: TokioUnboundedSender<RequestResponse>,
