@@ -224,13 +224,13 @@ mod tests {
             assert!(completion.command.is_none());
 
             // Binary help
-            let (text, point) = point_from_cursor("method?enc@");
+            let (text, point) = point_from_cursor("methods?ini@");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = provide_completions(&context, &state).unwrap();
-            let completion = find_completion(&completions, "enc2native");
+            let completion = find_completion(&completions, "initialize");
 
-            assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
+            assert_eq!(completion.insert_text.unwrap(), String::from("initialize"));
             assert_eq!(
                 completion.insert_text_format.unwrap(),
                 InsertTextFormat::PLAIN_TEXT
@@ -259,13 +259,13 @@ mod tests {
             assert!(completion.command.is_none());
 
             // Binary help
-            let (text, point) = point_from_cursor("method?base::enc@");
+            let (text, point) = point_from_cursor("methods?methods::sho@");
             let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = provide_completions(&context, &state).unwrap();
-            let completion = find_completion(&completions, "enc2native");
+            let completion = find_completion(&completions, "show");
 
-            assert_eq!(completion.insert_text.unwrap(), String::from("enc2native"));
+            assert_eq!(completion.insert_text.unwrap(), String::from("show"));
             assert_eq!(
                 completion.insert_text_format.unwrap(),
                 InsertTextFormat::PLAIN_TEXT
