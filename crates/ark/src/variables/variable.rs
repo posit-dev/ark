@@ -99,6 +99,7 @@ impl WorkspaceVariableDisplayValue {
             CLOSXP => Self::from_closure(value),
             ENVSXP => Self::from_env(value),
             LANGSXP => Self::from_language(value),
+            CHARSXP => Self::from_charsxp(value),
             _ if r_is_matrix(value) => Self::from_matrix(value)?,
             RAWSXP | LGLSXP | INTSXP | REALSXP | STRSXP | CPLXSXP => Self::from_default(value)?,
             _ if r_is_s4(value) => Self::from_s4(value)?,
@@ -356,6 +357,10 @@ impl WorkspaceVariableDisplayValue {
         Ok(Self::new(display_value, false))
     }
 
+    fn from_charsxp(_: SEXP) -> Self {
+        Self::new(String::from("<CHARSXP>"), false)
+    }
+
     fn from_default(value: SEXP) -> anyhow::Result<Self> {
         let formatted = FormattedVector::new(RObject::from(value))?;
 
@@ -443,6 +448,11 @@ impl WorkspaceVariableDisplayType {
 
         if r_is_s4(value) {
             return Self::from_class(value, String::from("S4"));
+        }
+
+        // We can't check attributes of CHARSXP, so we just short-circuit here
+        if r_typeof(value) == CHARSXP {
+            return Self::simple(String::from("CHARSXP"));
         }
 
         if r_is_simple_vector(value) {
@@ -2076,6 +2086,20 @@ mod tests {
             let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert!(vars[0].display_value.starts_with("<S4 class"),);
+        })
+    }
+
+    #[test]
+    fn test_charsxp() {
+        r_task(|| {
+            let env = Environment::new_empty().unwrap();
+            let value = harp::parse_eval_base(r#"rlang:::chr_get("foo", 0L)"#).unwrap();
+            env.bind("x".into(), &value);
+
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "<CHARSXP>");
         })
     }
 }

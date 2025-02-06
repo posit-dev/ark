@@ -158,6 +158,11 @@ pub fn r_is_simple_vector(value: SEXP) -> bool {
 ///
 /// Notably returns `false` for 1D arrays and >=3D arrays.
 pub fn r_is_matrix(object: SEXP) -> bool {
+    // We can't check the `dim` attribute for CHARSXP's
+    if r_typeof(object) == CHARSXP {
+        return false;
+    }
+
     let dim = r_dim(object);
 
     if dim == r_null() {
