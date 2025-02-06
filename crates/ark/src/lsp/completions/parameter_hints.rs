@@ -75,6 +75,11 @@ fn is_inside_help(node: Node) -> bool {
         return false;
     };
 
+    // TODO: The situation re binary help is a bit more complex, as there are
+    // cases where you probably *do* want to add parentheses, such as
+    // `method?show("numeric")`. We can revisit this in future.
+    // Good reference for these S4 matters: ?methods::Documentation
+
     matches!(
         parent.node_type(),
         NodeType::UnaryOperator(UnaryOperatorType::Help) |
