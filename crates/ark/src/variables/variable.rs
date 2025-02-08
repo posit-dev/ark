@@ -205,10 +205,14 @@ impl WorkspaceVariableDisplayValue {
 
             if display_value.len() > MAX_DISPLAY_VALUE_LENGTH || display_i.is_truncated {
                 is_truncated = true;
+                break;
             }
         }
 
-        display_value.push(']');
+        if !is_truncated {
+            display_value.push_str("]");
+        }
+
         Self::new(display_value, is_truncated)
     }
 
