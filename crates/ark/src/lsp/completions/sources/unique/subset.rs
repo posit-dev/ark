@@ -14,7 +14,7 @@ use crate::lsp::completions::sources::common::subset::is_within_subset_delimiter
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::node_find_containing_call;
+use crate::treesitter::node_find_parent_call;
 use crate::treesitter::NodeTypeExt;
 
 /// Checks for `[` and `[[` completions when the user is inside a `""`
@@ -65,7 +65,7 @@ fn node_find_object_for_string_subset<'tree>(
         return None;
     }
 
-    let mut node = match node_find_containing_call(node) {
+    let mut node = match node_find_parent_call(node) {
         Some(node) => node,
         None => return None,
     };
@@ -76,7 +76,7 @@ fn node_find_object_for_string_subset<'tree>(
             return None;
         }
 
-        node = match node_find_containing_call(&node) {
+        node = match node_find_parent_call(&node) {
             Some(node) => node,
             None => return None,
         };

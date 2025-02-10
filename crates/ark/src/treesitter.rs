@@ -467,7 +467,7 @@ pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> b
 ///
 /// This works for `Call`, `Subset`, and `Subset2`, which all share the same tree-sitter
 /// structure.
-pub(crate) fn node_find_containing_call<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
+pub(crate) fn node_find_parent_call<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
     // Find the `Argument` node
     let Some(node) = node.parent() else {
         return None;

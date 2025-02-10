@@ -2,7 +2,7 @@ use ropey::Rope;
 use tree_sitter::Node;
 
 use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::node_find_containing_call;
+use crate::treesitter::node_find_parent_call;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -47,7 +47,7 @@ fn is_inside_no_parameter_hints_function(node: Node, contents: &Rope) -> bool {
     let node = skip_namespace_operator(node);
 
     // Assuming we are completing a call argument, find the containing call node
-    let Some(node) = node_find_containing_call(&node) else {
+    let Some(node) = node_find_parent_call(&node) else {
         return false;
     };
 
