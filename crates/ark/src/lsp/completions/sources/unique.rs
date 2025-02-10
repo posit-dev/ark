@@ -24,10 +24,12 @@ use namespace::completions_from_namespace;
 use string::completions_from_string;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::document_context::DocumentContext;
 
 pub fn completions_from_unique_sources(
     context: &DocumentContext,
+    parameter_hints: ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_unique_sources()");
 
@@ -48,7 +50,7 @@ pub fn completions_from_unique_sources(
     }
 
     // Try `package::prefix` (or `:::`) namespace completions
-    if let Some(completions) = completions_from_namespace(context)? {
+    if let Some(completions) = completions_from_namespace(context, parameter_hints)? {
         return Ok(Some(completions));
     }
 

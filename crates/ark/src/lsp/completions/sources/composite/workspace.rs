@@ -15,6 +15,7 @@ use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::completion_item_from_variable;
+use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
@@ -27,6 +28,7 @@ use crate::treesitter::NodeTypeExt;
 pub(super) fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
+    parameter_hints: ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_workspace()");
 
@@ -65,7 +67,7 @@ pub(super) fn completions_from_workspace(
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
-                let mut completion = unwrap!(completion_item_from_function(name, None), Err(error) => {
+                let mut completion = unwrap!(completion_item_from_function(name, None, parameter_hints), Err(error) => {
                     error!("{:?}", error);
                     return;
                 });

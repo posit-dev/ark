@@ -6,6 +6,7 @@
 //
 
 mod completion_item;
+mod parameter_hints;
 mod provide;
 mod resolve;
 mod sources;

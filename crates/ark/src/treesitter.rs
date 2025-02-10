@@ -460,6 +460,40 @@ pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> b
     fun == name
 }
 
+/// This function takes a [Node] that you suspect might be in a call argument position
+/// and walks up the tree, looking for the containing call node
+///
+/// If the [Node] is not a call argument, this returns `None`.
+///
+/// This works for `Call`, `Subset`, and `Subset2`, which all share the same tree-sitter
+/// structure.
+pub(crate) fn node_find_parent_call<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
+    // Find the `Argument` node
+    let Some(node) = node.parent() else {
+        return None;
+    };
+    if !node.is_argument() {
+        return None;
+    }
+
+    // Find the `Arguments` node
+    let Some(node) = node.parent() else {
+        return None;
+    };
+    if !node.is_arguments() {
+        return None;
+    }
+
+    let Some(node) = node.parent() else {
+        return None;
+    };
+    if !node.is_call() && !node.is_subset() && !node.is_subset2() {
+        return None;
+    }
+
+    Some(node)
+}
+
 pub(crate) fn node_arg_value<'tree>(
     args: &Node<'tree>,
     name: &str,

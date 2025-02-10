@@ -14,6 +14,7 @@ use crate::lsp::completions::sources::common::subset::is_within_subset_delimiter
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::node_find_parent_call;
 use crate::treesitter::NodeTypeExt;
 
 /// Checks for `[` and `[[` completions when the user is inside a `""`
@@ -102,35 +103,6 @@ fn node_find_object_for_string_subset<'tree>(
     }
 
     return Some(node);
-}
-
-fn node_find_parent_call<'tree>(x: &Node<'tree>) -> Option<Node<'tree>> {
-    // Find the `Argument` node
-    let Some(x) = x.parent() else {
-        return None;
-    };
-    if !x.is_argument() {
-        return None;
-    }
-
-    // Find the `Arguments` node
-    let Some(x) = x.parent() else {
-        return None;
-    };
-    if !x.is_arguments() {
-        return None;
-    }
-
-    // Find the call node - can be a generic `Call`, `Subset`, or `Subset2`.
-    // All 3 purposefully share the same tree structure.
-    let Some(x) = x.parent() else {
-        return None;
-    };
-    if !x.is_call() && !x.is_subset() && !x.is_subset2() {
-        return None;
-    }
-
-    Some(x)
 }
 
 fn node_is_c_call(x: &Node, contents: &Rope) -> bool {
