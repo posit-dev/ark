@@ -28,21 +28,30 @@
         return(list(error = conditionMessage(config)))
     }
 
-    if (is.null(config) || is.null(config$python)) {
+    # Starting with reticulate v1.41, `py_discover_config()` is NULL if reticulate
+    # didn't find a forced python environment and will eventually use `uv` to
+    # install and manage environments.
+    version <- utils::packageVersion("reticulate")
+    if (version <= "1.40.0" && (is.null(config) || is.null(config$python))) {
         # The front-end will offer to install Python.
         return(list(python = NULL, error = NULL))
     }
 
-    python <- config$python
-    venv <- config$virtualenv
-
     # Check that python can be loaded, if it can't we will throw
     # an error, which is unrecoverable.
     config <- tryCatch({
+        # With reticulate >= v1.41.0, (if the previous config was NULL) this will trigger
+        # an installation of `uv` and the creation of a temporary virtual environment for
+        # the current session.
+        # This may take a while, if `uv` has a lot of work to do (like downloading a bunch of packages).
+        # Positron UI will display a progress bar and handle the timeout.
         reticulate::py_config()
     }, error = function(err) {
         err
     })
+
+    python <- config$python
+    venv <- config$virtualenv
 
     if (inherits(config, "error")) {
         return(list(python = python, venv = venv, error = conditionMessage(config)))
