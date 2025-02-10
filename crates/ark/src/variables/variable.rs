@@ -2092,6 +2092,14 @@ mod tests {
     #[test]
     fn test_charsxp() {
         r_task(|| {
+            // Skip test if rlang is not installed
+            if let Ok(false) = harp::parse_eval_global(r#".ps.is_installed("rlang")"#)
+                .unwrap()
+                .try_into()
+            {
+                return;
+            }
+
             let env = Environment::new_empty().unwrap();
             let value = harp::parse_eval_base(r#"rlang:::chr_get("foo", 0L)"#).unwrap();
             env.bind("x".into(), &value);
