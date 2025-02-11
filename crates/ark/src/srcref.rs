@@ -32,6 +32,12 @@ pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
 }
 
 #[harp::register]
+unsafe extern "C" fn ps_resource_loaded_namespaces() -> anyhow::Result<SEXP> {
+    resource_loaded_namespaces()?;
+    Ok(harp::r_null())
+}
+
+#[harp::register]
 unsafe extern "C" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
     let ns_name: String = RObject::view(ns_name).try_into()?;
     futures::executor::block_on(ns_populate_srcref(ns_name))?;

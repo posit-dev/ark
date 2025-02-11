@@ -2079,7 +2079,10 @@ fn do_resource_namespaces() -> bool {
     let opt: Option<bool> = r_null_or_try_into(harp::get_option("ark.resource_namespaces"))
         .ok()
         .flatten();
-    opt.unwrap_or(true)
+
+    // By default we don't resource namespaces to avoid increased memory usage.
+    // https://github.com/posit-dev/positron/issues/5050
+    opt.unwrap_or(false)
 }
 
 /// Are we auto-printing?
