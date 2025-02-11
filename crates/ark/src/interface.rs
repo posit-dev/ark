@@ -103,6 +103,7 @@ use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
+use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
 use crate::r_task;
 use crate::r_task::BoxFuture;
@@ -443,7 +444,7 @@ impl RMain {
             }
 
             // Register all hooks once all modules have been imported
-            let hook_result = RFunction::from(".ps.register_all_hooks").call();
+            let hook_result = RFunction::from("register_hooks").call_in(ARK_ENVS.positron_ns);
             if let Err(err) = hook_result {
                 log::error!("Error registering some hooks: {err:?}");
             }
