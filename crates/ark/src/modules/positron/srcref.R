@@ -44,3 +44,35 @@ reparse_with_srcref <- function(x, name, uri, line) {
 zap_srcref <- function(x) {
     .ps.Call("ark_zap_srcref", x)
 }
+
+new_ark_debug <- function(fn) {
+  # Signature of `debug()`:
+  # function(fun, text = "", condition = NULL, signature = NULL)
+
+  body(fn) <- bquote({
+    local({
+        # Don't do anything if user has explicitly disabled namespace resourcing
+        if (!.ps.internal(do_resource_namespaces(default = TRUE))) {
+            return() # from local()
+        }
+
+        # Enable namespace resourcing for all future loaded namespaces and
+        # resource already loaded namespaces so we get virtual documents for
+        # step-debugging.
+        options(ark.resource_namespaces = TRUE)
+        .ps.internal(resource_loaded_namespaces())
+    })
+
+    .(body(fn))
+  })
+
+  fn
+}
+
+do_resource_namespaces <- function(default) {
+    getOption("ark.resource_namespaces", default = default)
+}
+
+resource_loaded_namespaces <- function() {
+    .ps.Call("ps_resource_loaded_namespaces")
+}

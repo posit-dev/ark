@@ -7,6 +7,8 @@
 
 register_hooks <- function() {
     rebind("utils", "View", .ps.view_data_frame, namespace = TRUE)
+    rebind("base", "debug", new_ark_debug(base::debug), namespace = TRUE)
+    rebind("base", "debugonce", new_ark_debug(base::debugonce), namespace = TRUE)
     register_getHook_hook()
 }
 
