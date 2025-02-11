@@ -46,33 +46,40 @@ zap_srcref <- function(x) {
 }
 
 new_ark_debug <- function(fn) {
-  # Signature of `debug()`:
-  # function(fun, text = "", condition = NULL, signature = NULL)
+    # Signature of `debug()`:
+    # function(fun, text = "", condition = NULL, signature = NULL)
 
-  body(fn) <- bquote({
-    local({
-        # Don't do anything if user has explicitly disabled namespace resourcing
-        if (!.ps.internal(do_resource_namespaces(default = TRUE))) {
-            return() # from local()
-        }
+    body(fn) <- bquote({
+        local({
+            if (!.ps.internal(do_resource_namespaces(default = TRUE))) {
+                return() # from local()
+            }
 
-        # Enable namespace resourcing for all future loaded namespaces and
-        # resource already loaded namespaces so we get virtual documents for
-        # step-debugging.
-        options(ark.resource_namespaces = TRUE)
-        .ps.internal(resource_loaded_namespaces())
+            pkgs <- loadedNamespaces()
+
+            # Give priority to the namespace of the debugged function
+            env <- topenv(environment(fun))
+            if (isNamespace(env)) {
+                pkgs <- unique(c(getNamespaceName(env), pkgs))
+            }
+
+            # Enable namespace resourcing for all future loaded namespaces and
+            # resource already loaded namespaces so we get virtual documents for
+            # step-debugging.
+            options(ark.resource_namespaces = TRUE)
+            .ps.internal(resource_loaded_namespaces(pkgs))
+        })
+
+        .(body(fn))
     })
 
-    .(body(fn))
-  })
-
-  fn
+    fn
 }
 
 do_resource_namespaces <- function(default) {
     getOption("ark.resource_namespaces", default = default)
 }
 
-resource_loaded_namespaces <- function() {
-    .ps.Call("ps_resource_loaded_namespaces")
+resource_loaded_namespaces <- function(pkgs) {
+    .ps.Call("ps_resource_loaded_namespaces", pkgs)
 }
