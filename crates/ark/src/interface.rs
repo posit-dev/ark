@@ -475,7 +475,7 @@ impl RMain {
             // Namespaces of future loaded packages will be populated on load.
             // (after r_task initialization)
             if do_resource_namespaces() {
-                if let Err(err) = resource_loaded_namespaces() {
+                if let Err(err) = resource_loaded_namespaces(None) {
                     log::error!("Can't populate srcrefs for loaded packages: {err:?}");
                 }
             }
