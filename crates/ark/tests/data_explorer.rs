@@ -1861,3 +1861,28 @@ fn test_frequency_table() {
         });
     });
 }
+
+#[test]
+fn test_row_names_matrix() {
+    let _lock = r_test_lock();
+
+    // Convert mtcars to a matrix
+    let socket =
+        open_data_explorer_from_expression("as.matrix(mtcars)", Some("mtcars_matrix")).unwrap();
+
+    // Check row names are present
+    let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
+        selection: ArraySelection::SelectIndices(DataSelectionIndices {
+            indices: vec![5, 6, 7, 8, 9],
+        }),
+        format_options: default_format_options(),
+    });
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
+            let labels = row_labels.row_labels;
+            assert_eq!(labels[0][0], "Valiant");
+            assert_eq!(labels[0][1], "Duster 360");
+            assert_eq!(labels[0][2], "Merc 240D");
+        }
+    );
+}

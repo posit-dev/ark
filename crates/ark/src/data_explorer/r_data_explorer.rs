@@ -875,6 +875,10 @@ impl RDataExplorer {
     }
 
     fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
+        let row_names = RFunction::new("base", "row.names")
+            .add(self.table.get()?)
+            .call_in(ARK_ENVS.positron_ns)?;
+
         let state = BackendState {
             display_name: self.title.clone(),
             connected: Some(true),
@@ -893,10 +897,7 @@ impl RDataExplorer {
             row_filters: self.row_filters.clone(),
             column_filters: self.col_filters.clone(),
             sort_keys: self.sort_keys.clone(),
-            has_row_labels: match self.table.get()?.attr("row.names") {
-                Some(_) => true,
-                None => false,
-            },
+            has_row_labels: !row_names.is_null(),
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
                     support_status: SupportStatus::Supported,
