@@ -63,6 +63,7 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::tbl_get_column;
+use harp::utils::r_is_null;
 use harp::TableInfo;
 use harp::TableKind;
 use itertools::Itertools;
@@ -897,7 +898,7 @@ impl RDataExplorer {
             row_filters: self.row_filters.clone(),
             column_filters: self.col_filters.clone(),
             sort_keys: self.sort_keys.clone(),
-            has_row_labels: !row_names.is_null(),
+            has_row_labels: !r_is_null(row_names.sexp),
             supported_features: SupportedFeatures {
                 get_column_profiles: GetColumnProfilesFeatures {
                     support_status: SupportStatus::Supported,
