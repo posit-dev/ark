@@ -128,7 +128,7 @@ fn main() -> anyhow::Result<()> {
             },
             "--install" => {
                 install_kernel_spec()?;
-                has_action = true;
+                return Ok(());
             },
             "--help" => {
                 print_usage();

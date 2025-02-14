@@ -15,7 +15,6 @@ use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
-use std::path::PathBuf;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -56,7 +55,6 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::command::r_command;
-use harp::command::r_command_from_path;
 use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
@@ -125,6 +123,7 @@ use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
+use crate::version::r_home_setup;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -376,28 +375,7 @@ impl RMain {
             args.push(CString::new(arg).unwrap().into_raw());
         }
 
-        let r_home = match std::env::var("R_HOME") {
-            Ok(home) => {
-                // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
-                PathBuf::from(home)
-            },
-            Err(_) => {
-                // Get `R_HOME` from `PATH`, via `R`
-                let Ok(result) = r_command_from_path(|command| {
-                    command.arg("RHOME");
-                }) else {
-                    panic!("Can't find R or `R_HOME`");
-                };
-
-                let r_home = String::from_utf8(result.stdout).unwrap();
-                let r_home = r_home.trim();
-
-                // Now set `R_HOME`. From now on, `r_command()` can be used to
-                // run exactly the same R as is running in Ark.
-                unsafe { std::env::set_var("R_HOME", r_home) };
-                PathBuf::from(r_home)
-            },
-        };
+        let r_home = r_home_setup();
 
         // `R_HOME` is now defined no matter what and will be used by
         // `r_command()`. Let's discover the other important environment
