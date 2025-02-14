@@ -7,6 +7,7 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::Sender;
+use harp::utils::r_is_null;
 use harp::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
@@ -97,11 +98,13 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     let main = RMain::get();
 
     let input: RObject = input.try_into()?;
-    let input_code: Option<String> = input.try_into()?;
-
-    let mut comm_id_guard = RETICULATE_COMM_ID.lock().unwrap();
+    let input_code: Option<String> = match r_is_null(input.sexp) {
+        true => None,
+        false => Some(input.try_into()?),
+    };
 
     // If there's an id already registered, we just need to send the focus event
+    let mut comm_id_guard = RETICULATE_COMM_ID.lock().unwrap();
     if let Some(id) = comm_id_guard.deref() {
         // There's a comm_id registered, we just send the focus event
         main.get_comm_manager_tx().send(CommManagerEvent::Message(
