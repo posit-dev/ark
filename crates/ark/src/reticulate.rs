@@ -55,10 +55,18 @@ impl ReticulateService {
 
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
         loop {
-            let msg = unwrap!(self.comm.incoming_rx.recv(), Err(err) => {
+            let msg: CommMsg = unwrap!(self.comm.incoming_rx.recv(), Err(err) => {
                 log::error!("Reticulate: Error while receiving message from frontend: {err:?}");
                 break;
             });
+
+            // Eventually, messages will be sent from R to this comm using
+            // main.get_comm_manager_tx().send()
+            // We want these to be forwarded to the front-end.
+            if let CommMsg::Data(_) = msg {
+                self.comm.outgoing_tx.send(msg)?;
+                continue;
+            }
 
             if let CommMsg::Close = msg {
                 break;
