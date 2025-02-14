@@ -76,6 +76,37 @@ new_ark_debug <- function(fn) {
     fn
 }
 
+new_ark_browser <- function(fn) {
+    browser <- base::browser
+
+    function(text = "", condition = NULL, expr = TRUE, skipCalls = 0L) {
+        local({
+            if (!.ps.internal(do_resource_namespaces(default = TRUE))) {
+                return() # from local()
+            }
+
+            pkgs <- loadedNamespaces()
+
+            # Give priority to the namespace of the calling function
+            env <- topenv(parent.frame())
+            if (isNamespace(env)) {
+                pkgs <- unique(c(getNamespaceName(env), pkgs))
+            }
+
+            # Enable namespace resourcing for all future loaded namespaces and
+            # resource already loaded namespaces so we get virtual documents for
+            # step-debugging.
+            options(ark.resource_namespaces = TRUE)
+            .ps.internal(resource_loaded_namespaces(pkgs))
+        })
+
+        # Skip this wrapper
+        skipCalls <- skipCalls + 1L
+
+        browser(text = text, condition = condition, expr = expr, skipCalls = skipCalls)
+    }
+}
+
 do_resource_namespaces <- function(default) {
     getOption("ark.resource_namespaces", default = default)
 }
