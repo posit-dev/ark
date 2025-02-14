@@ -6,9 +6,30 @@
 #
 
 register_hooks <- function() {
-    rebind("utils", "View", .ps.view_data_frame, namespace = TRUE)
-    rebind("base", "debug", new_ark_debug(base::debug), namespace = TRUE)
-    rebind("base", "debugonce", new_ark_debug(base::debugonce), namespace = TRUE)
+    rebind(
+        "utils",
+        "View",
+        .ps.view_data_frame,
+        namespace = TRUE
+    )
+    rebind(
+        "base",
+        "debug",
+        new_ark_debug(base::debug),
+        namespace = TRUE
+    )
+    rebind(
+        "base",
+        "debugonce",
+        new_ark_debug(base::debugonce),
+        namespace = TRUE
+    )
+    rebind(
+        "base",
+        "browser",
+        new_ark_browser(base::browser),
+        namespace = TRUE
+    )
     register_getHook_hook()
 }
 
@@ -24,7 +45,7 @@ rebind <- function(pkg, name, value, namespace = FALSE) {
             pkg = pkg,
             name = name,
             value = value
-          )
+        )
     }
 }
 
@@ -42,7 +63,11 @@ pkg_bind <- function(pkg, name, value) {
     env <- as.environment(env)
 
     if (!exists(name, envir = env, mode = "function", inherits = FALSE)) {
-        msg <- sprintf("Can't register hook: function `%s::%s` not found.", pkg, name)
+        msg <- sprintf(
+            "Can't register hook: function `%s::%s` not found.",
+            pkg,
+            name
+        )
         stop(msg, call. = FALSE)
     }
 
@@ -70,7 +95,12 @@ register_getHook_hook <- function() {
     local_unlock_binding(ns, "getHook")
 
     ns[["getHook"]] <- function(hookName, ...) {
-        hooks <- get0(hookName, envir = .userHooksEnv, inherits = FALSE, ifnotfound = list())
+        hooks <- get0(
+            hookName,
+            envir = .userHooksEnv,
+            inherits = FALSE,
+            ifnotfound = list()
+        )
 
         if (!grepl("^UserHook::.*::onLoad$", hookName)) {
             return(hooks)
