@@ -2,9 +2,15 @@
 
 # 0.1.9000
 
+## 2025-02
+
+- Jupyter: The `--install` command now works on Linux (#648).
+
+
 ## 2024-12
 
 - LSP: The statement range provider now has better support for expressions separated by `;` on a single line (posit-dev/positron#4317).
+
 
 ## 2024-11
 
@@ -17,6 +23,7 @@
   - `R_DOC_DIR`
 
   This solves a number of problems in situations that depend on these variables being defined (https://github.com/posit-dev/positron/issues/3637).
+
 
 ## 2024-10
 
