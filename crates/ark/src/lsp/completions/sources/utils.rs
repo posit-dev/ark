@@ -11,6 +11,7 @@ use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::utils::r_inherits;
 use regex::Regex;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
@@ -204,6 +205,10 @@ pub(super) fn completions_from_evaluated_object_names(
     let completions = if harp::utils::r_is_matrix(object.sexp) {
         // Special case just for 2D arrays
         completions_from_object_colnames(object, name, enquote)?
+    } else if r_inherits(object.sexp, "data.table") {
+        // When completing names for data.table objects, we don't want to
+        // enquote the names.
+        completions_from_object_names(object, name, false)?
     } else {
         completions_from_object_names(object, name, enquote)?
     };
@@ -259,6 +264,7 @@ mod tests {
     use harp::eval::parse_eval_global;
     use tree_sitter::Point;
 
+    use crate::fixtures::package_is_installed;
     use crate::lsp::completions::sources::utils::call_node_position_type;
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
@@ -486,6 +492,27 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
+
+            parse_eval_global("remove(x)").unwrap();
+        })
+    }
+
+    #[test]
+    fn test_data_table_completions() {
+        r_task(|| {
+            // Skip test if data.table is not installed
+            if !package_is_installed("data.table") {
+                return;
+            }
+
+            parse_eval_global("x <- data.table::as.data.table(mtcars)").unwrap();
+
+            let completions = completions_from_evaluated_object_names("x", false)
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(completions.len(), 11);
+            assert_eq!(completions.get(0).unwrap().label, String::from("mpg"));
 
             parse_eval_global("remove(x)").unwrap();
         })

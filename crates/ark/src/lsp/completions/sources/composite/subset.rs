@@ -76,6 +76,7 @@ mod tests {
     use harp::eval::RParseEvalOptions;
     use tree_sitter::Point;
 
+    use crate::fixtures::package_is_installed;
     use crate::lsp::completions::sources::composite::subset::completions_from_subset;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
@@ -124,6 +125,56 @@ mod tests {
 
             // Clean up
             harp::parse_eval("remove(foo)", options.clone()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_data_table_subset_completions() {
+        r_task(|| {
+            if !package_is_installed("data.table") {
+                return;
+            }
+
+            harp::parse_eval_global("x <- data.table::as.data.table(mtcars)").unwrap();
+
+            // Works for single comlumn name completion
+            let point = Point { row: 0, column: 2 };
+            let document = Document::new("x[]", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_subset(&context).unwrap().unwrap();
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.get(0).unwrap();
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
+
+            // Works when completing inside a `c` call
+            let point = Point { row: 0, column: 6 };
+            let document = Document::new("x[, c()]", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_subset(&context).unwrap().unwrap();
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.get(0).unwrap();
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
+
+            // Works when completing inside a `c` call with a collumn already selected
+            let point = Point { row: 0, column: 10 };
+            let document = Document::new("x[, c(mpg,)]", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_subset(&context).unwrap().unwrap();
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.get(0).unwrap();
+            // TODO: ideally we could assert that mpg doesn't appear again, or appears at the end
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
+
+            harp::parse_eval_global("remove(x)").unwrap();
         })
     }
 }
