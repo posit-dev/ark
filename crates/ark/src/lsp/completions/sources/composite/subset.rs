@@ -68,7 +68,7 @@ pub(super) fn completions_from_subset(
 
     let text = context.document.contents.node_slice(&child)?.to_string();
 
-    completions_from_evaluated_object_names(&text, ENQUOTE)
+    completions_from_evaluated_object_names(&text, ENQUOTE, node.node_type())
 }
 
 #[cfg(test)]
@@ -173,6 +173,18 @@ mod tests {
             // TODO: ideally we could assert that mpg doesn't appear again, or appears at the end
             assert_eq!(completion.label, "mpg".to_string());
             assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
+
+            // Works completing subset2
+            let point = Point { row: 0, column: 3 };
+            let document = Document::new("x[[]]", None);
+            let context = DocumentContext::new(&document, point, None);
+
+            let completions = completions_from_subset(&context).unwrap().unwrap();
+            assert_eq!(completions.len(), 11);
+
+            let completion = completions.get(0).unwrap();
+            assert_eq!(completion.label, "mpg".to_string());
+            assert_eq!(completion.insert_text, Some("\"mpg\"".to_string())); // Enquoted result
 
             harp::parse_eval_global("remove(x)").unwrap();
         })

@@ -171,6 +171,7 @@ fn call_prev_leaf_position_type(node: &Node, allow_ambiguous: bool) -> CallNodeP
 pub(super) fn completions_from_evaluated_object_names(
     name: &str,
     enquote: bool,
+    node_type: NodeType,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_evaluated_object_names({name:?})");
 
@@ -208,7 +209,12 @@ pub(super) fn completions_from_evaluated_object_names(
     } else if r_inherits(object.sexp, "data.table") {
         // When completing names for data.table objects, we don't want to
         // enquote the names.
-        completions_from_object_names(object, name, false)?
+        let enquote = match node_type {
+            NodeType::Subset => false,
+            NodeType::Subset2 => true,
+            _ => enquote,
+        };
+        completions_from_object_names(object, name, enquote)?
     } else {
         completions_from_object_names(object, name, enquote)?
     };
@@ -432,7 +438,7 @@ mod tests {
             parse_eval_global("x <- 1:2").unwrap();
             parse_eval_global("names(x) <- c('a', 'b')").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false)
+            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
                 .unwrap()
                 .unwrap();
             assert_eq!(completions.len(), 2);
@@ -444,7 +450,7 @@ mod tests {
             // Data frame
             parse_eval_global("x <- data.frame(a = 1, b = 2, c = 3)").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false)
+            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
                 .unwrap()
                 .unwrap();
             assert_eq!(completions.len(), 3);
@@ -458,7 +464,7 @@ mod tests {
             parse_eval_global("x <- array(1:2)").unwrap();
             parse_eval_global("names(x) <- c('a', 'b')").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false)
+            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
                 .unwrap()
                 .unwrap();
             assert_eq!(completions.len(), 2);
@@ -472,7 +478,7 @@ mod tests {
             parse_eval_global("rownames(x) <- 'a'").unwrap();
             parse_eval_global("colnames(x) <- 'b'").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false)
+            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
                 .unwrap()
                 .unwrap();
             assert_eq!(completions.len(), 1);
@@ -488,7 +494,7 @@ mod tests {
             parse_eval_global("rownames(x) <- 'a'").unwrap();
             parse_eval_global("colnames(x) <- 'b'").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false)
+            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -507,12 +513,27 @@ mod tests {
 
             parse_eval_global("x <- data.table::as.data.table(mtcars)").unwrap();
 
-            let completions = completions_from_evaluated_object_names("x", false)
+            // Subset completions
+            let completions = completions_from_evaluated_object_names("x", false, NodeType::Subset)
                 .unwrap()
                 .unwrap();
 
             assert_eq!(completions.len(), 11);
             assert_eq!(completions.get(0).unwrap().label, String::from("mpg"));
+            assert_eq!(completions.get(0).unwrap().insert_text, None);
+
+            // Subset2 completions
+            let completions =
+                completions_from_evaluated_object_names("x", false, NodeType::Subset2)
+                    .unwrap()
+                    .unwrap();
+
+            assert_eq!(completions.len(), 11);
+            assert_eq!(completions.get(0).unwrap().label, String::from("mpg"));
+            assert_eq!(
+                completions.get(0).unwrap().insert_text,
+                Some("\"mpg\"".to_string())
+            );
 
             parse_eval_global("remove(x)").unwrap();
         })

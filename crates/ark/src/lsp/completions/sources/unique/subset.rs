@@ -50,7 +50,9 @@ pub(super) fn completions_from_string_subset(
 
     let text = context.document.contents.node_slice(&node)?.to_string();
 
-    if let Some(mut candidates) = completions_from_evaluated_object_names(&text, ENQUOTE)? {
+    if let Some(mut candidates) =
+        completions_from_evaluated_object_names(&text, ENQUOTE, node.node_type())?
+    {
         completions.append(&mut candidates);
     }
 
