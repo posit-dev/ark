@@ -97,9 +97,11 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     let main = RMain::get();
 
     let input: RObject = input.try_into()?;
-    let input_code: Option<String> = match r_is_null(input.sexp) {
-        true => None,
-        false => Some(input.try_into()?),
+    // Reticulate sends `NULL` or a string with the code to be executed in the Python console.
+    let input_code: Option<String> = if r_is_null(input.sexp) {
+        None
+    } else {
+        Some(input.try_into()?)
     };
 
     // If there's an id already registered, we just need to send the focus event
