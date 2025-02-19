@@ -2093,9 +2093,22 @@ mod tests {
             .unwrap();
             env.bind("x".into(), &value);
             let path = vec![];
-            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            let vars = PositronVariable::inspect(env.clone().into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "[10 rows x 10 columns] <matrix>");
+
+            // Test consistency between data.frame and matrix display
+            let value = harp::parse_eval_base(
+                "data.frame(matrix(paste(1:100, collapse = ' - '), nrow = 10, ncol = 10))",
+            )
+            .unwrap();
+            env.bind("y".into(), &value);
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 2);
+            let display_value_matrix = vars[0].display_value.split('<').next().unwrap();
+            let display_value_df = vars[1].display_value.split('<').next().unwrap();
+            assert_eq!(display_value_matrix, display_value_df);
 
             // Test plurals
             let env = Environment::new_empty().unwrap();
