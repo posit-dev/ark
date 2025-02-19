@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 
-static RETICULATE_COMM_ID: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+static RETICULATE_COMM: LazyLock<Mutex<Option<CommSocket>>> = LazyLock::new(|| Mutex::new(None));
 
 pub struct ReticulateService {
     comm: CommSocket,
@@ -27,7 +27,10 @@ pub struct ReticulateService {
 }
 
 impl ReticulateService {
-    fn start(comm_id: String, comm_manager_tx: Sender<CommManagerEvent>) -> anyhow::Result<String> {
+    fn start(
+        comm_id: String,
+        comm_manager_tx: Sender<CommManagerEvent>,
+    ) -> anyhow::Result<CommSocket> {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
@@ -45,13 +48,15 @@ impl ReticulateService {
             .send(event)
             .or_log_error("Reticulate: Could not open comm.");
 
+        let socket = service.comm.clone();
+
         spawn!(format!("ark-reticulate-{}", comm_id), move || {
             service
                 .handle_messages()
                 .or_log_error("Reticulate: Error handling messages");
         });
 
-        Ok(comm_id)
+        Ok(socket)
     }
 
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
@@ -61,13 +66,7 @@ impl ReticulateService {
                 break;
             });
 
-            // Eventually, messages will be sent from R to this comm using
-            // main.get_comm_manager_tx().send()
-            // We want these to be forwarded to the front-end.
-            if let CommMsg::Data(_) = msg {
-                self.comm.outgoing_tx.send(msg)?;
-                continue;
-            }
+            log::trace!("Reticulate: Received message from front end: {msg:?}");
 
             if let CommMsg::Close = msg {
                 break;
@@ -81,9 +80,9 @@ impl ReticulateService {
             .or_log_error("Reticulate: Could not send close message to the front-end");
 
         // Reset the global comm_id before closing
-        let mut comm_id_guard = RETICULATE_COMM_ID.lock().unwrap();
-        log::info!("Reticulate Thread closing {:?}", (*comm_id_guard).clone());
-        *comm_id_guard = None;
+        let mut comm_guard = RETICULATE_COMM.lock().unwrap();
+        log::info!("Reticulate Thread closing {:?}", self.comm.comm_id);
+        *comm_guard = None;
 
         Ok(())
     }
@@ -104,25 +103,23 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     };
 
     // If there's an id already registered, we just need to send the focus event
-    let mut comm_id_guard = RETICULATE_COMM_ID.lock().unwrap();
-    if let Some(id) = comm_id_guard.deref() {
+    let mut comm_guard = RETICULATE_COMM.lock().unwrap();
+    if let Some(comm) = comm_guard.deref() {
         // There's a comm_id registered, we just send the focus event
-        main.get_comm_manager_tx().send(CommManagerEvent::Message(
-            id.clone(),
-            CommMsg::Data(json!({
-                "method": "focus",
-                "params": {
-                    "input": input_code
-                }
-            })),
-        ))?;
+        comm.outgoing_tx.send(CommMsg::Data(json!({
+            "method": "focus",
+            "params": {
+                "input": input_code
+            }
+        })))?;
         return Ok(R_NilValue);
     }
 
-    let id = Uuid::new_v4().to_string();
-    *comm_id_guard = Some(id.clone());
-
-    ReticulateService::start(id, main.get_comm_manager_tx().clone())?;
+    let id = format!("reticulate-{}", Uuid::new_v4().to_string());
+    *comm_guard = Some(ReticulateService::start(
+        id,
+        main.get_comm_manager_tx().clone(),
+    )?);
 
     Ok(R_NilValue)
 }
