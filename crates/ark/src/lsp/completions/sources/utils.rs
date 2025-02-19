@@ -207,8 +207,8 @@ pub(super) fn completions_from_evaluated_object_names(
         // Special case just for 2D arrays
         completions_from_object_colnames(object, name, enquote)?
     } else if r_inherits(object.sexp, "data.table") {
-        // When completing names for data.table objects, we don't want to
-        // enquote the names.
+        // The `[` method for data.table uses NSE so we don't enquote the names
+        // https://github.com/posit-dev/positron/issues/3140
         let enquote = match node_type {
             NodeType::Subset => false,
             NodeType::Subset2 => true,
