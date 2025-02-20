@@ -352,6 +352,10 @@ impl RObject {
         r_is_object(self.sexp)
     }
 
+    pub fn is_null(&self) -> bool {
+        r_is_null(self.sexp)
+    }
+
     pub fn size(&self) -> harp::Result<usize> {
         r_size(self.sexp)
     }
@@ -1154,6 +1158,7 @@ mod tests {
     use stdext::assert_match;
 
     use super::*;
+    use crate::parse_eval_global;
     use crate::r_char;
 
     #[test]
@@ -1727,6 +1732,17 @@ mod tests {
             // Now convert back to a vector of RObjects.
             let items_out = Vec::<RObject>::try_from(list).unwrap();
             assert_eq!(items_in, items_out);
+        })
+    }
+
+    #[test]
+    fn test_is_null() {
+        crate::r_task(|| {
+            let x = parse_eval_global("NULL").unwrap();
+            assert!(x.is_null());
+
+            let x = parse_eval_global("1").unwrap();
+            assert!(!x.is_null());
         })
     }
 }

@@ -1877,12 +1877,28 @@ fn test_row_names_matrix() {
         }),
         format_options: default_format_options(),
     });
+    assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
+        DataExplorerBackendReply::GetStateReply(state) => {
+            assert_eq!(state.has_row_labels, true)
+        }
+    );
+
     assert_match!(socket_rpc(&socket, req),
         DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
             let labels = row_labels.row_labels;
             assert_eq!(labels[0][0], "Valiant");
             assert_eq!(labels[0][1], "Duster 360");
             assert_eq!(labels[0][2], "Merc 240D");
+        }
+    );
+
+    // Convert mtcars to a matrix
+    let socket =
+        open_data_explorer_from_expression("matrix(0, ncol =10, nrow = 10)", Some("zero_matrix"))
+            .unwrap();
+    assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
+        DataExplorerBackendReply::GetStateReply(state) => {
+            assert_eq!(state.has_row_labels, false)
         }
     );
 }
