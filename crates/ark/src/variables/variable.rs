@@ -304,43 +304,33 @@ impl WorkspaceVariableDisplayValue {
         Self::new(display_value, is_truncated)
     }
 
-    // TODO: handle higher dimensional arrays, i.e. expand
-    //       recursively from the higher dimension
     fn from_matrix(value: SEXP) -> anyhow::Result<Self> {
-        let formatted = FormattedVector::new(RObject::from(value))?;
-
-        let mut display_value = String::from("");
-
-        let n_col = match harp::table_info(value) {
-            Some(info) => info.dims.num_cols,
+        let (n_row, n_col) = match harp::table_info(value) {
+            Some(info) => (info.dims.num_cols, info.dims.num_rows),
             None => {
                 log::error!("Failed to get matrix dimensions");
-                0
+                (-1, -1)
             },
         };
 
-        display_value.push('[');
-        for i in 0..n_col {
-            if i > 0 {
-                display_value.push_str(", ");
-            }
+        let class = match r_classes(value) {
+            None => String::from(" <matrix>"),
+            Some(classes) => match classes.get_unchecked(0) {
+                Some(class) => format!(" <{}>", class),
+                None => String::from(" <matrix>"),
+            },
+        };
 
-            display_value.push('[');
-            for char in formatted
-                .column_iter_n(i as isize, MAX_DISPLAY_VALUE_LENGTH)?
-                .join(" ")
-                .chars()
-            {
-                if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
-                    return Ok(Self::new(display_value, true));
-                }
-                display_value.push(char);
-            }
-            display_value.push(']');
-        }
-        display_value.push(']');
+        let value = format!(
+            "[{} {} x {} {}]{}",
+            n_row,
+            plural("row", n_row),
+            n_col,
+            plural("column", n_col),
+            class
+        );
 
-        Ok(Self::new(display_value, false))
+        Ok(Self::new(value, false))
     }
 
     fn from_s4(value: SEXP) -> anyhow::Result<Self> {
@@ -2051,25 +2041,6 @@ mod tests {
             let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "\"\"");
-
-            // Test for the single elment matrix, but with a large character
-            let env = Environment::new_empty().unwrap();
-            let value = harp::parse_eval_base("matrix(paste(1:5e6, collapse = ' - '))").unwrap();
-            env.bind("x".into(), &value);
-            let path = vec![];
-            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
-            assert_eq!(vars.len(), 1);
-            assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
-            assert_eq!(vars[0].is_truncated, true);
-
-            // Test for the empty matrix
-            let env = Environment::new_empty().unwrap();
-            let value = harp::parse_eval_base("matrix(NA, ncol = 0, nrow = 0)").unwrap();
-            env.bind("x".into(), &value);
-            let path = vec![];
-            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
-            assert_eq!(vars.len(), 1);
-            assert_eq!(vars[0].display_value, "[]");
         });
     }
 
@@ -2108,6 +2079,59 @@ mod tests {
             let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "<CHARSXP>");
+        })
+    }
+
+    #[test]
+    fn test_matrix_display() {
+        r_task(|| {
+            // Test 10x10 matrix
+            let env = Environment::new_empty().unwrap();
+            let value = harp::parse_eval_base(
+                "matrix(paste(1:100, collapse = ' - '), nrow = 10, ncol = 10)",
+            )
+            .unwrap();
+            env.bind("x".into(), &value);
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.clone().into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "[10 rows x 10 columns] <matrix>");
+
+            // Test consistency between data.frame and matrix display
+            let value = harp::parse_eval_base(
+                "data.frame(matrix(paste(1:100, collapse = ' - '), nrow = 10, ncol = 10))",
+            )
+            .unwrap();
+            env.bind("y".into(), &value);
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 2);
+            let display_value_matrix = vars[0].display_value.split('<').next().unwrap();
+            let display_value_df = vars[1].display_value.split('<').next().unwrap();
+            assert_eq!(display_value_matrix, display_value_df);
+
+            // Test plurals
+            let env = Environment::new_empty().unwrap();
+            let value =
+                harp::parse_eval_base("matrix(paste(1:100, collapse = ' - '), nrow = 1, ncol = 1)")
+                    .unwrap();
+            env.bind("x".into(), &value);
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "[1 row x 1 column] <matrix>");
+
+            // Test class
+            let env = Environment::new_empty().unwrap();
+            let value = harp::parse_eval_base(
+                "structure(matrix(paste(1:100, collapse = ' - '), nrow = 1, ncol = 1), class='foo')",
+            )
+            .unwrap();
+            env.bind("x".into(), &value);
+            let path = vec![];
+            let vars = PositronVariable::inspect(env.into(), &path).unwrap();
+            assert_eq!(vars.len(), 1);
+            assert_eq!(vars[0].display_value, "[1 row x 1 column] <foo>");
         })
     }
 }
