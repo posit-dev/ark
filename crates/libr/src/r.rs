@@ -83,14 +83,14 @@ functions::generate! {
     pub fn R_RunPendingFinalizers();
 
     pub fn R_ToplevelExec(
-        fun: Option<unsafe extern "C" fn(arg1: *mut std::ffi::c_void)>,
+        fun: Option<unsafe extern "C-unwind" fn(arg1: *mut std::ffi::c_void)>,
         data: *mut std::ffi::c_void
     ) -> Rboolean;
 
     pub fn R_withCallingErrorHandler(
-        body: Option<unsafe extern "C" fn(args: *mut std::ffi::c_void) -> SEXP>,
+        body: Option<unsafe extern "C-unwind" fn(args: *mut std::ffi::c_void) -> SEXP>,
         bdata: *mut std::ffi::c_void,
-        handler: Option<unsafe extern "C" fn(err: SEXP, args: *mut std::ffi::c_void) -> SEXP>,
+        handler: Option<unsafe extern "C-unwind" fn(err: SEXP, args: *mut std::ffi::c_void) -> SEXP>,
         hdata: *mut std::ffi::c_void
     ) -> SEXP;
 

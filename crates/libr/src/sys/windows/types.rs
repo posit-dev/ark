@@ -147,7 +147,7 @@ pub struct structRstart {
     #[doc = "HOME"]
     pub home: *mut ::std::os::raw::c_char,
     pub ReadConsole: ::std::option::Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             arg1: *const ::std::os::raw::c_char,
             arg2: *mut ::std::os::raw::c_uchar,
             arg3: ::std::os::raw::c_int,

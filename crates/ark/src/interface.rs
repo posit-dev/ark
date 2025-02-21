@@ -1973,7 +1973,7 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
 // global `RMain` singleton.
 
 #[no_mangle]
-pub extern "C" fn r_read_console(
+pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
