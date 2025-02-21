@@ -712,7 +712,7 @@ mutable_globals::generate! {
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_ReadConsole: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             arg1: *const std::ffi::c_char,
             arg2: *mut std::ffi::c_uchar,
             arg3: std::ffi::c_int,
