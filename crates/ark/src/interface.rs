@@ -788,7 +788,18 @@ impl RMain {
         let stdin_reply_index = select.recv(&stdin_reply_rx);
         let kernel_request_index = select.recv(&kernel_request_rx);
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
-        let tasks_idle_index = select.recv(&tasks_idle_rx);
+
+        // Don't process idle tasks in browser prompts. We currently don't want
+        // idle tasks (e.g. for srcref generation) to run when the call stack is
+        // empty. We could make this configurable though if needed, i.e. some
+        // idle tasks would be able to run in the browser. Those should be sent
+        // to a dedicated channel that would always be included in the set of
+        // recv channels.
+        let tasks_idle_index = if info.browser {
+            None
+        } else {
+            Some(select.recv(&tasks_idle_rx))
+        };
 
         loop {
             // If an interrupt was signaled and we are in a user
@@ -868,7 +879,7 @@ impl RMain {
                 },
 
                 // An idle task woke us up
-                i if i == tasks_idle_index => {
+                i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
                     self.handle_task(task);
                 },
