@@ -10,6 +10,7 @@ use std::env;
 use std::path::PathBuf;
 
 use anyhow::Context;
+use harp::command::r_command;
 use harp::command::r_command_from_path;
 use harp::object::RObject;
 use itertools::Itertools;
@@ -58,7 +59,7 @@ pub(crate) fn r_home_setup() -> PathBuf {
 pub fn detect_r() -> anyhow::Result<RVersion> {
     let r_home: String = r_home_setup().to_string_lossy().to_string();
 
-    let output = r_command_from_path(|command| {
+    let output = r_command(|command| {
         command
             .arg("--vanilla")
             .arg("-s")
