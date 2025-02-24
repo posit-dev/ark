@@ -12,6 +12,7 @@ use amalthea::language::server_handler::ServerHandler;
 use bus::BusReader;
 use crossbeam::channel::Sender;
 use stdext::spawn;
+use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
 
 use super::backend;
@@ -25,8 +26,17 @@ pub struct Lsp {
 
 impl Lsp {
     pub fn new(kernel_init_rx: BusReader<KernelInfo>) -> Self {
+        let rt = Builder::new_multi_thread()
+            .enable_all()
+            // One for the main loop and one spare
+            .worker_threads(2)
+            // Used for diagnostics
+            .max_blocking_threads(2)
+            .build()
+            .unwrap();
+
         Self {
-            runtime: Arc::new(tokio::runtime::Runtime::new().unwrap()),
+            runtime: Arc::new(rt),
             kernel_init_rx,
             kernel_initialized: false,
         }
