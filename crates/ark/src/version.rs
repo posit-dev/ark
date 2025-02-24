@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use harp::command::r_command;
-use harp::command::r_command_from_path;
+use harp::command::r_home_setup;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
@@ -29,31 +29,6 @@ pub struct RVersion {
     // The full path on disk to the R installation -- that is, the value R_HOME
     // would have inside an R session: > R.home()
     pub r_home: String,
-}
-
-pub(crate) fn r_home_setup() -> PathBuf {
-    match std::env::var("R_HOME") {
-        Ok(home) => {
-            // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
-            PathBuf::from(home)
-        },
-        Err(_) => {
-            // Get `R_HOME` from `PATH`, via `R`
-            let Ok(result) = r_command_from_path(|command| {
-                command.arg("RHOME");
-            }) else {
-                panic!("Can't find R or `R_HOME`");
-            };
-
-            let r_home = String::from_utf8(result.stdout).unwrap();
-            let r_home = r_home.trim();
-
-            // Now set `R_HOME`. From now on, `r_command()` can be used to
-            // run exactly the same R as is running in Ark.
-            unsafe { std::env::set_var("R_HOME", r_home) };
-            PathBuf::from(r_home)
-        },
-    }
 }
 
 pub fn detect_r() -> anyhow::Result<RVersion> {

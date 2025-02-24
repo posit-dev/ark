@@ -18,7 +18,8 @@ use crate::sys::command::COMMAND_R_NAMES;
 /// - For Windows, this looks at `R` (`R.exe`) and `R.bat` (for rig compatibility)
 ///
 /// The executable name is joined to the path in `R_HOME`. If not set, this is a
-/// panic. Use `r_command_from_path()` to exectute R from `PATH` instead.
+/// panic. Use `r_home_setup()` to set `R_HOME` from the R on the `PATH` or use
+/// `r_command_from_path()` to exectute R from `PATH` directly.
 ///
 /// Returns the `Ok()` value of the first success, or the `Err()` value of the
 /// last failure if all locations fail.
@@ -37,6 +38,32 @@ where
         .into();
 
     r_command_from_locs(locations, build)
+}
+
+/// Use this before calling `r_command()` to ensure that `R_HOME` is set consistently
+pub fn r_home_setup() -> PathBuf {
+    match std::env::var("R_HOME") {
+        Ok(home) => {
+            // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
+            PathBuf::from(home)
+        },
+        Err(_) => {
+            // Get `R_HOME` from `PATH`, via `R`
+            let Ok(result) = r_command_from_path(|command| {
+                command.arg("RHOME");
+            }) else {
+                panic!("Can't find R or `R_HOME`");
+            };
+
+            let r_home = String::from_utf8(result.stdout).unwrap();
+            let r_home = r_home.trim();
+
+            // Now set `R_HOME`. From now on, `r_command()` can be used to
+            // run exactly the same R as is running in Ark.
+            unsafe { std::env::set_var("R_HOME", r_home) };
+            PathBuf::from(r_home)
+        },
+    }
 }
 
 /// Execute a `Command` for R found on the `PATH`
