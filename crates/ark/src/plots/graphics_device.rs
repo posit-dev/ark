@@ -77,11 +77,11 @@ pub(crate) fn init_graphics_device() {
 #[derive(Debug, Default)]
 #[allow(non_snake_case)]
 struct DeviceCallbacks {
-    pub activate: Cell<Option<unsafe extern "C" fn(pDevDesc)>>,
-    pub deactivate: Cell<Option<unsafe extern "C" fn(pDevDesc)>>,
-    pub holdflush: Cell<Option<unsafe extern "C" fn(pDevDesc, i32) -> i32>>,
-    pub mode: Cell<Option<unsafe extern "C" fn(i32, pDevDesc)>>,
-    pub newPage: Cell<Option<unsafe extern "C" fn(pGEcontext, pDevDesc)>>,
+    pub activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
+    pub deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
+    pub holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
+    pub mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
+    pub newPage: Cell<Option<unsafe extern "C-unwind" fn(pGEcontext, pDevDesc)>>,
 }
 
 #[derive(Default)]
@@ -473,7 +473,7 @@ pub unsafe fn on_did_execute_request(
 
 // NOTE: May be called when rendering a plot to file, since this is done by
 // copying the graphics display list to a new plot device, and then closing that device.
-unsafe extern "C" fn gd_activate(dev: pDevDesc) {
+unsafe extern "C-unwind" fn gd_activate(dev: pDevDesc) {
     log::trace!("gd_activate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
@@ -485,7 +485,7 @@ unsafe extern "C" fn gd_activate(dev: pDevDesc) {
 
 // NOTE: May be called when rendering a plot to file, since this is done by
 // copying the graphics display list to a new plot device, and then closing that device.
-unsafe extern "C" fn gd_deactivate(dev: pDevDesc) {
+unsafe extern "C-unwind" fn gd_deactivate(dev: pDevDesc) {
     log::trace!("gd_deactivate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
@@ -495,7 +495,7 @@ unsafe extern "C" fn gd_deactivate(dev: pDevDesc) {
     });
 }
 
-unsafe extern "C" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> i32 {
+unsafe extern "C-unwind" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> i32 {
     log::trace!("gd_hold_flush");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
@@ -511,7 +511,7 @@ unsafe extern "C" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> i32 {
 // mode = 0, graphics off
 // mode = 1, graphics on
 // mode = 2, graphical input on (ignored by most drivers)
-unsafe extern "C" fn gd_mode(mode: i32, dev: pDevDesc) {
+unsafe extern "C-unwind" fn gd_mode(mode: i32, dev: pDevDesc) {
     log::trace!("gd_mode: {mode}");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
@@ -522,7 +522,7 @@ unsafe extern "C" fn gd_mode(mode: i32, dev: pDevDesc) {
     });
 }
 
-unsafe extern "C" fn gd_new_page(dd: pGEcontext, dev: pDevDesc) {
+unsafe extern "C-unwind" fn gd_new_page(dd: pGEcontext, dev: pDevDesc) {
     log::trace!("gd_new_page");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
@@ -590,7 +590,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_graphics_device() -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
     ps_graphics_device_impl().or_else(|err| {
         log::error!("{}", err);
         Ok(R_NilValue)
@@ -598,7 +598,7 @@ unsafe extern "C" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_graphics_event(_name: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_graphics_event(_name: SEXP) -> anyhow::Result<SEXP> {
     let id = unwrap!(DEVICE_CONTEXT.with_borrow(|cell| cell._id.borrow().clone()), None => {
         return Ok(Rf_ScalarLogical(0));
     });

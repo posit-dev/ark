@@ -694,16 +694,16 @@ mutable_globals::generate! {
     pub static mut R_wait_usec: i32;
 
     #[cfg(target_family = "unix")]
-    pub static mut R_PolledEvents: Option<unsafe extern "C" fn()>;
+    pub static mut R_PolledEvents: Option<unsafe extern "C-unwind" fn()>;
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_WriteConsole: Option<
-        unsafe extern "C" fn(arg1: *const std::ffi::c_char, arg2: std::ffi::c_int),
+        unsafe extern "C-unwind" fn(arg1: *const std::ffi::c_char, arg2: std::ffi::c_int),
     >;
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_WriteConsoleEx: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             arg1: *const std::ffi::c_char,
             arg2: std::ffi::c_int,
             arg3: std::ffi::c_int,
@@ -721,13 +721,13 @@ mutable_globals::generate! {
     >;
 
     #[cfg(target_family = "unix")]
-    pub static mut ptr_R_ShowMessage: Option<unsafe extern "C" fn(arg1: *const std::ffi::c_char)>;
+    pub static mut ptr_R_ShowMessage: Option<unsafe extern "C-unwind" fn(arg1: *const std::ffi::c_char)>;
 
     #[cfg(target_family = "unix")]
-    pub static mut ptr_R_Busy: Option<unsafe extern "C" fn(arg1: std::ffi::c_int)>;
+    pub static mut ptr_R_Busy: Option<unsafe extern "C-unwind" fn(arg1: std::ffi::c_int)>;
 
     #[cfg(target_family = "unix")]
-    pub static mut ptr_R_Suicide: Option<unsafe extern "C" fn(arg1: *const std::ffi::c_char)>;
+    pub static mut ptr_R_Suicide: Option<unsafe extern "C-unwind" fn(arg1: *const std::ffi::c_char)>;
 
     // -----------------------------------------------------------------------------------
     // Windows

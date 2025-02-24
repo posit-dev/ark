@@ -49,7 +49,7 @@ fn emit_html_output_jupyter(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_html_viewer(
+pub unsafe extern "C-unwind" fn ps_html_viewer(
     url: SEXP,
     label: SEXP,
     height: SEXP,

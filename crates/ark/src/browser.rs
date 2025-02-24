@@ -16,7 +16,7 @@ use crate::help::message::ShowHelpUrlParams;
 use crate::interface::RMain;
 
 #[harp::register]
-pub unsafe extern "C" fn ps_browse_url(url: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_browse_url(url: SEXP) -> anyhow::Result<SEXP> {
     ps_browse_url_impl(url).or_else(|err| {
         log::error!("Failed to browse url due to: {err}");
         Ok(Rf_ScalarLogical(0))

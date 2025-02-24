@@ -71,7 +71,7 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ark_version() -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ark_version() -> anyhow::Result<SEXP> {
     let mut info = HashMap::<String, String>::new();
     // Set the version info in the map
     info.insert(

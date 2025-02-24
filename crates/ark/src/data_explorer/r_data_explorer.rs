@@ -1088,7 +1088,7 @@ fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
 ///   environment; optional.
 /// - `env`: The environment containing the R object; optional.
 #[harp::register]
-pub unsafe extern "C" fn ps_view_data_frame(
+pub unsafe extern "C-unwind" fn ps_view_data_frame(
     x: SEXP,
     title: SEXP,
     var: SEXP,

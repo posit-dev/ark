@@ -168,17 +168,26 @@ pub struct DevDescVersion13 {
     pub canGenKeybd: Rboolean,
     pub canGenIdle: Rboolean,
     pub gettingEvent: Rboolean,
-    pub activate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub circle: Option<unsafe extern "C" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
-    pub clip: Option<unsafe extern "C" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
-    pub close: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub deactivate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub locator: Option<unsafe extern "C" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
+    pub activate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub circle:
+        Option<unsafe extern "C-unwind" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
+    pub clip: Option<unsafe extern "C-unwind" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
+    pub close: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub deactivate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub locator:
+        Option<unsafe extern "C-unwind" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
     pub line: Option<
-        unsafe extern "C" fn(x1: f64, y1: f64, x2: f64, y2: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x1: f64,
+            y1: f64,
+            x2: f64,
+            y2: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub metricInfo: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             c: std::ffi::c_int,
             gc: pGEcontext,
             ascent: *mut f64,
@@ -187,10 +196,10 @@ pub struct DevDescVersion13 {
             dd: pDevDesc,
         ),
     >,
-    pub mode: Option<unsafe extern "C" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
-    pub newPage: Option<unsafe extern "C" fn(gc: pGEcontext, dd: pDevDesc)>,
+    pub mode: Option<unsafe extern "C-unwind" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
+    pub newPage: Option<unsafe extern "C-unwind" fn(gc: pGEcontext, dd: pDevDesc)>,
     pub polygon: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -199,7 +208,7 @@ pub struct DevDescVersion13 {
         ),
     >,
     pub polyline: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -208,10 +217,17 @@ pub struct DevDescVersion13 {
         ),
     >,
     pub rect: Option<
-        unsafe extern "C" fn(x0: f64, y0: f64, x1: f64, y1: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x0: f64,
+            y0: f64,
+            x1: f64,
+            y1: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub path: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: *mut f64,
             y: *mut f64,
             npoly: std::ffi::c_int,
@@ -222,7 +238,7 @@ pub struct DevDescVersion13 {
         ),
     >,
     pub raster: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             raster: *mut std::ffi::c_uint,
             w: std::ffi::c_int,
             h: std::ffi::c_int,
@@ -236,9 +252,9 @@ pub struct DevDescVersion13 {
             dd: pDevDesc,
         ),
     >,
-    pub cap: Option<unsafe extern "C" fn(dd: pDevDesc) -> SEXP>,
+    pub cap: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> SEXP>,
     pub size: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             left: *mut f64,
             right: *mut f64,
             bottom: *mut f64,
@@ -247,10 +263,14 @@ pub struct DevDescVersion13 {
         ),
     >,
     pub strWidth: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub text: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -260,12 +280,13 @@ pub struct DevDescVersion13 {
             dd: pDevDesc,
         ),
     >,
-    pub onExit: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub getEvent: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
-    pub newFrameConfirm: Option<unsafe extern "C" fn(dd: pDevDesc) -> Rboolean>,
+    pub onExit: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub getEvent:
+        Option<unsafe extern "C-unwind" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
+    pub newFrameConfirm: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> Rboolean>,
     pub hasTextUTF8: Rboolean,
     pub textUTF8: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -276,14 +297,19 @@ pub struct DevDescVersion13 {
         ),
     >,
     pub strWidthUTF8: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub wantSymbolUTF8: Rboolean,
     pub useRotatedTextInContour: Rboolean,
     pub eventEnv: SEXP,
-    pub eventHelper: Option<unsafe extern "C" fn(dd: pDevDesc, code: std::ffi::c_int)>,
-    pub holdflush:
-        Option<unsafe extern "C" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int>,
+    pub eventHelper: Option<unsafe extern "C-unwind" fn(dd: pDevDesc, code: std::ffi::c_int)>,
+    pub holdflush: Option<
+        unsafe extern "C-unwind" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int,
+    >,
     pub haveTransparency: std::ffi::c_int,
     pub haveTransparentBg: std::ffi::c_int,
     pub haveRaster: std::ffi::c_int,
@@ -327,17 +353,26 @@ pub struct DevDescVersion14 {
     pub canGenKeybd: Rboolean,
     pub canGenIdle: Rboolean,
     pub gettingEvent: Rboolean,
-    pub activate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub circle: Option<unsafe extern "C" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
-    pub clip: Option<unsafe extern "C" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
-    pub close: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub deactivate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub locator: Option<unsafe extern "C" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
+    pub activate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub circle:
+        Option<unsafe extern "C-unwind" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
+    pub clip: Option<unsafe extern "C-unwind" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
+    pub close: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub deactivate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub locator:
+        Option<unsafe extern "C-unwind" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
     pub line: Option<
-        unsafe extern "C" fn(x1: f64, y1: f64, x2: f64, y2: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x1: f64,
+            y1: f64,
+            x2: f64,
+            y2: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub metricInfo: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             c: std::ffi::c_int,
             gc: pGEcontext,
             ascent: *mut f64,
@@ -346,10 +381,10 @@ pub struct DevDescVersion14 {
             dd: pDevDesc,
         ),
     >,
-    pub mode: Option<unsafe extern "C" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
-    pub newPage: Option<unsafe extern "C" fn(gc: pGEcontext, dd: pDevDesc)>,
+    pub mode: Option<unsafe extern "C-unwind" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
+    pub newPage: Option<unsafe extern "C-unwind" fn(gc: pGEcontext, dd: pDevDesc)>,
     pub polygon: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -358,7 +393,7 @@ pub struct DevDescVersion14 {
         ),
     >,
     pub polyline: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -367,10 +402,17 @@ pub struct DevDescVersion14 {
         ),
     >,
     pub rect: Option<
-        unsafe extern "C" fn(x0: f64, y0: f64, x1: f64, y1: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x0: f64,
+            y0: f64,
+            x1: f64,
+            y1: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub path: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: *mut f64,
             y: *mut f64,
             npoly: std::ffi::c_int,
@@ -381,7 +423,7 @@ pub struct DevDescVersion14 {
         ),
     >,
     pub raster: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             raster: *mut std::ffi::c_uint,
             w: std::ffi::c_int,
             h: std::ffi::c_int,
@@ -395,9 +437,9 @@ pub struct DevDescVersion14 {
             dd: pDevDesc,
         ),
     >,
-    pub cap: Option<unsafe extern "C" fn(dd: pDevDesc) -> SEXP>,
+    pub cap: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> SEXP>,
     pub size: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             left: *mut f64,
             right: *mut f64,
             bottom: *mut f64,
@@ -406,10 +448,14 @@ pub struct DevDescVersion14 {
         ),
     >,
     pub strWidth: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub text: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -419,12 +465,13 @@ pub struct DevDescVersion14 {
             dd: pDevDesc,
         ),
     >,
-    pub onExit: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub getEvent: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
-    pub newFrameConfirm: Option<unsafe extern "C" fn(dd: pDevDesc) -> Rboolean>,
+    pub onExit: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub getEvent:
+        Option<unsafe extern "C-unwind" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
+    pub newFrameConfirm: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> Rboolean>,
     pub hasTextUTF8: Rboolean,
     pub textUTF8: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -435,25 +482,31 @@ pub struct DevDescVersion14 {
         ),
     >,
     pub strWidthUTF8: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub wantSymbolUTF8: Rboolean,
     pub useRotatedTextInContour: Rboolean,
     pub eventEnv: SEXP,
-    pub eventHelper: Option<unsafe extern "C" fn(dd: pDevDesc, code: std::ffi::c_int)>,
-    pub holdflush:
-        Option<unsafe extern "C" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int>,
+    pub eventHelper: Option<unsafe extern "C-unwind" fn(dd: pDevDesc, code: std::ffi::c_int)>,
+    pub holdflush: Option<
+        unsafe extern "C-unwind" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int,
+    >,
     pub haveTransparency: std::ffi::c_int,
     pub haveTransparentBg: std::ffi::c_int,
     pub haveRaster: std::ffi::c_int,
     pub haveCapture: std::ffi::c_int,
     pub haveLocator: std::ffi::c_int,
-    pub setPattern: Option<unsafe extern "C" fn(pattern: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releasePattern: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub setClipPath: Option<unsafe extern "C" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releaseClipPath: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub setMask: Option<unsafe extern "C" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releaseMask: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setPattern: Option<unsafe extern "C-unwind" fn(pattern: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releasePattern: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setClipPath:
+        Option<unsafe extern "C-unwind" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releaseClipPath: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setMask: Option<unsafe extern "C-unwind" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releaseMask: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
     pub deviceVersion: std::ffi::c_int,
     pub deviceClip: Rboolean,
     pub reserved: [std::ffi::c_char; 64usize],
@@ -494,17 +547,26 @@ pub struct DevDescVersion15 {
     pub canGenKeybd: Rboolean,
     pub canGenIdle: Rboolean,
     pub gettingEvent: Rboolean,
-    pub activate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub circle: Option<unsafe extern "C" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
-    pub clip: Option<unsafe extern "C" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
-    pub close: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub deactivate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub locator: Option<unsafe extern "C" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
+    pub activate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub circle:
+        Option<unsafe extern "C-unwind" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
+    pub clip: Option<unsafe extern "C-unwind" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
+    pub close: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub deactivate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub locator:
+        Option<unsafe extern "C-unwind" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
     pub line: Option<
-        unsafe extern "C" fn(x1: f64, y1: f64, x2: f64, y2: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x1: f64,
+            y1: f64,
+            x2: f64,
+            y2: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub metricInfo: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             c: std::ffi::c_int,
             gc: pGEcontext,
             ascent: *mut f64,
@@ -513,10 +575,10 @@ pub struct DevDescVersion15 {
             dd: pDevDesc,
         ),
     >,
-    pub mode: Option<unsafe extern "C" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
-    pub newPage: Option<unsafe extern "C" fn(gc: pGEcontext, dd: pDevDesc)>,
+    pub mode: Option<unsafe extern "C-unwind" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
+    pub newPage: Option<unsafe extern "C-unwind" fn(gc: pGEcontext, dd: pDevDesc)>,
     pub polygon: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -525,7 +587,7 @@ pub struct DevDescVersion15 {
         ),
     >,
     pub polyline: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -534,10 +596,17 @@ pub struct DevDescVersion15 {
         ),
     >,
     pub rect: Option<
-        unsafe extern "C" fn(x0: f64, y0: f64, x1: f64, y1: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x0: f64,
+            y0: f64,
+            x1: f64,
+            y1: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub path: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: *mut f64,
             y: *mut f64,
             npoly: std::ffi::c_int,
@@ -548,7 +617,7 @@ pub struct DevDescVersion15 {
         ),
     >,
     pub raster: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             raster: *mut std::ffi::c_uint,
             w: std::ffi::c_int,
             h: std::ffi::c_int,
@@ -562,9 +631,9 @@ pub struct DevDescVersion15 {
             dd: pDevDesc,
         ),
     >,
-    pub cap: Option<unsafe extern "C" fn(dd: pDevDesc) -> SEXP>,
+    pub cap: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> SEXP>,
     pub size: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             left: *mut f64,
             right: *mut f64,
             bottom: *mut f64,
@@ -573,10 +642,14 @@ pub struct DevDescVersion15 {
         ),
     >,
     pub strWidth: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub text: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -586,12 +659,13 @@ pub struct DevDescVersion15 {
             dd: pDevDesc,
         ),
     >,
-    pub onExit: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub getEvent: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
-    pub newFrameConfirm: Option<unsafe extern "C" fn(dd: pDevDesc) -> Rboolean>,
+    pub onExit: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub getEvent:
+        Option<unsafe extern "C-unwind" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
+    pub newFrameConfirm: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> Rboolean>,
     pub hasTextUTF8: Rboolean,
     pub textUTF8: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -602,45 +676,61 @@ pub struct DevDescVersion15 {
         ),
     >,
     pub strWidthUTF8: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub wantSymbolUTF8: Rboolean,
     pub useRotatedTextInContour: Rboolean,
     pub eventEnv: SEXP,
-    pub eventHelper: Option<unsafe extern "C" fn(dd: pDevDesc, code: std::ffi::c_int)>,
-    pub holdflush:
-        Option<unsafe extern "C" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int>,
+    pub eventHelper: Option<unsafe extern "C-unwind" fn(dd: pDevDesc, code: std::ffi::c_int)>,
+    pub holdflush: Option<
+        unsafe extern "C-unwind" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int,
+    >,
     pub haveTransparency: std::ffi::c_int,
     pub haveTransparentBg: std::ffi::c_int,
     pub haveRaster: std::ffi::c_int,
     pub haveCapture: std::ffi::c_int,
     pub haveLocator: std::ffi::c_int,
-    pub setPattern: Option<unsafe extern "C" fn(pattern: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releasePattern: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub setClipPath: Option<unsafe extern "C" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releaseClipPath: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub setMask: Option<unsafe extern "C" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releaseMask: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setPattern: Option<unsafe extern "C-unwind" fn(pattern: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releasePattern: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setClipPath:
+        Option<unsafe extern "C-unwind" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releaseClipPath: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setMask: Option<unsafe extern "C-unwind" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releaseMask: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
     pub deviceVersion: std::ffi::c_int,
     pub deviceClip: Rboolean,
     pub defineGroup: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             source: SEXP,
             op: std::ffi::c_int,
             destination: SEXP,
             dd: pDevDesc,
         ) -> SEXP,
     >,
-    pub useGroup: Option<unsafe extern "C" fn(ref_: SEXP, trans: SEXP, dd: pDevDesc)>,
-    pub releaseGroup: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub stroke: Option<unsafe extern "C" fn(path: SEXP, gc: pGEcontext, dd: pDevDesc)>,
+    pub useGroup: Option<unsafe extern "C-unwind" fn(ref_: SEXP, trans: SEXP, dd: pDevDesc)>,
+    pub releaseGroup: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub stroke: Option<unsafe extern "C-unwind" fn(path: SEXP, gc: pGEcontext, dd: pDevDesc)>,
     pub fill: Option<
-        unsafe extern "C" fn(path: SEXP, rule: std::ffi::c_int, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            path: SEXP,
+            rule: std::ffi::c_int,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub fillStroke: Option<
-        unsafe extern "C" fn(path: SEXP, rule: std::ffi::c_int, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            path: SEXP,
+            rule: std::ffi::c_int,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
-    pub capabilities: Option<unsafe extern "C" fn(cap: SEXP) -> SEXP>,
+    pub capabilities: Option<unsafe extern "C-unwind" fn(cap: SEXP) -> SEXP>,
     pub reserved: [std::ffi::c_char; 64usize],
 }
 pub type pDevDescVersion15 = *mut DevDescVersion15;
@@ -679,17 +769,26 @@ pub struct DevDescVersion16 {
     pub canGenKeybd: Rboolean,
     pub canGenIdle: Rboolean,
     pub gettingEvent: Rboolean,
-    pub activate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub circle: Option<unsafe extern "C" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
-    pub clip: Option<unsafe extern "C" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
-    pub close: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub deactivate: Option<unsafe extern "C" fn(arg1: pDevDesc)>,
-    pub locator: Option<unsafe extern "C" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
+    pub activate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub circle:
+        Option<unsafe extern "C-unwind" fn(x: f64, y: f64, r: f64, gc: pGEcontext, dd: pDevDesc)>,
+    pub clip: Option<unsafe extern "C-unwind" fn(x0: f64, x1: f64, y0: f64, y1: f64, dd: pDevDesc)>,
+    pub close: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub deactivate: Option<unsafe extern "C-unwind" fn(arg1: pDevDesc)>,
+    pub locator:
+        Option<unsafe extern "C-unwind" fn(x: *mut f64, y: *mut f64, dd: pDevDesc) -> Rboolean>,
     pub line: Option<
-        unsafe extern "C" fn(x1: f64, y1: f64, x2: f64, y2: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x1: f64,
+            y1: f64,
+            x2: f64,
+            y2: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub metricInfo: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             c: std::ffi::c_int,
             gc: pGEcontext,
             ascent: *mut f64,
@@ -698,10 +797,10 @@ pub struct DevDescVersion16 {
             dd: pDevDesc,
         ),
     >,
-    pub mode: Option<unsafe extern "C" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
-    pub newPage: Option<unsafe extern "C" fn(gc: pGEcontext, dd: pDevDesc)>,
+    pub mode: Option<unsafe extern "C-unwind" fn(mode: std::ffi::c_int, dd: pDevDesc)>,
+    pub newPage: Option<unsafe extern "C-unwind" fn(gc: pGEcontext, dd: pDevDesc)>,
     pub polygon: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -710,7 +809,7 @@ pub struct DevDescVersion16 {
         ),
     >,
     pub polyline: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             x: *mut f64,
             y: *mut f64,
@@ -719,10 +818,17 @@ pub struct DevDescVersion16 {
         ),
     >,
     pub rect: Option<
-        unsafe extern "C" fn(x0: f64, y0: f64, x1: f64, y1: f64, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            x0: f64,
+            y0: f64,
+            x1: f64,
+            y1: f64,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub path: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: *mut f64,
             y: *mut f64,
             npoly: std::ffi::c_int,
@@ -733,7 +839,7 @@ pub struct DevDescVersion16 {
         ),
     >,
     pub raster: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             raster: *mut std::ffi::c_uint,
             w: std::ffi::c_int,
             h: std::ffi::c_int,
@@ -747,9 +853,9 @@ pub struct DevDescVersion16 {
             dd: pDevDesc,
         ),
     >,
-    pub cap: Option<unsafe extern "C" fn(dd: pDevDesc) -> SEXP>,
+    pub cap: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> SEXP>,
     pub size: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             left: *mut f64,
             right: *mut f64,
             bottom: *mut f64,
@@ -758,10 +864,14 @@ pub struct DevDescVersion16 {
         ),
     >,
     pub strWidth: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub text: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -771,12 +881,13 @@ pub struct DevDescVersion16 {
             dd: pDevDesc,
         ),
     >,
-    pub onExit: Option<unsafe extern "C" fn(dd: pDevDesc)>,
-    pub getEvent: Option<unsafe extern "C" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
-    pub newFrameConfirm: Option<unsafe extern "C" fn(dd: pDevDesc) -> Rboolean>,
+    pub onExit: Option<unsafe extern "C-unwind" fn(dd: pDevDesc)>,
+    pub getEvent:
+        Option<unsafe extern "C-unwind" fn(arg1: SEXP, arg2: *const std::ffi::c_char) -> SEXP>,
+    pub newFrameConfirm: Option<unsafe extern "C-unwind" fn(dd: pDevDesc) -> Rboolean>,
     pub hasTextUTF8: Rboolean,
     pub textUTF8: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             x: f64,
             y: f64,
             str: *const std::ffi::c_char,
@@ -787,47 +898,63 @@ pub struct DevDescVersion16 {
         ),
     >,
     pub strWidthUTF8: Option<
-        unsafe extern "C" fn(str: *const std::ffi::c_char, gc: pGEcontext, dd: pDevDesc) -> f64,
+        unsafe extern "C-unwind" fn(
+            str: *const std::ffi::c_char,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ) -> f64,
     >,
     pub wantSymbolUTF8: Rboolean,
     pub useRotatedTextInContour: Rboolean,
     pub eventEnv: SEXP,
-    pub eventHelper: Option<unsafe extern "C" fn(dd: pDevDesc, code: std::ffi::c_int)>,
-    pub holdflush:
-        Option<unsafe extern "C" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int>,
+    pub eventHelper: Option<unsafe extern "C-unwind" fn(dd: pDevDesc, code: std::ffi::c_int)>,
+    pub holdflush: Option<
+        unsafe extern "C-unwind" fn(dd: pDevDesc, level: std::ffi::c_int) -> std::ffi::c_int,
+    >,
     pub haveTransparency: std::ffi::c_int,
     pub haveTransparentBg: std::ffi::c_int,
     pub haveRaster: std::ffi::c_int,
     pub haveCapture: std::ffi::c_int,
     pub haveLocator: std::ffi::c_int,
-    pub setPattern: Option<unsafe extern "C" fn(pattern: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releasePattern: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub setClipPath: Option<unsafe extern "C" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releaseClipPath: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub setMask: Option<unsafe extern "C" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
-    pub releaseMask: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setPattern: Option<unsafe extern "C-unwind" fn(pattern: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releasePattern: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setClipPath:
+        Option<unsafe extern "C-unwind" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releaseClipPath: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub setMask: Option<unsafe extern "C-unwind" fn(path: SEXP, ref_: SEXP, dd: pDevDesc) -> SEXP>,
+    pub releaseMask: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
     pub deviceVersion: std::ffi::c_int,
     pub deviceClip: Rboolean,
     pub defineGroup: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             source: SEXP,
             op: std::ffi::c_int,
             destination: SEXP,
             dd: pDevDesc,
         ) -> SEXP,
     >,
-    pub useGroup: Option<unsafe extern "C" fn(ref_: SEXP, trans: SEXP, dd: pDevDesc)>,
-    pub releaseGroup: Option<unsafe extern "C" fn(ref_: SEXP, dd: pDevDesc)>,
-    pub stroke: Option<unsafe extern "C" fn(path: SEXP, gc: pGEcontext, dd: pDevDesc)>,
+    pub useGroup: Option<unsafe extern "C-unwind" fn(ref_: SEXP, trans: SEXP, dd: pDevDesc)>,
+    pub releaseGroup: Option<unsafe extern "C-unwind" fn(ref_: SEXP, dd: pDevDesc)>,
+    pub stroke: Option<unsafe extern "C-unwind" fn(path: SEXP, gc: pGEcontext, dd: pDevDesc)>,
     pub fill: Option<
-        unsafe extern "C" fn(path: SEXP, rule: std::ffi::c_int, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            path: SEXP,
+            rule: std::ffi::c_int,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
     pub fillStroke: Option<
-        unsafe extern "C" fn(path: SEXP, rule: std::ffi::c_int, gc: pGEcontext, dd: pDevDesc),
+        unsafe extern "C-unwind" fn(
+            path: SEXP,
+            rule: std::ffi::c_int,
+            gc: pGEcontext,
+            dd: pDevDesc,
+        ),
     >,
-    pub capabilities: Option<unsafe extern "C" fn(cap: SEXP) -> SEXP>,
+    pub capabilities: Option<unsafe extern "C-unwind" fn(cap: SEXP) -> SEXP>,
     pub glyph: Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             n: std::ffi::c_int,
             glyphs: *mut std::ffi::c_int,
             x: *mut f64,

@@ -20,7 +20,7 @@ use stdext::unwrap;
 use crate::interface::RMain;
 
 #[harp::register]
-unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::Result<SEXP> {
     let main = RMain::get_mut();
 
     // Convert to `RObject` for access to `try_from()` / `try_into()` methods.
@@ -45,7 +45,7 @@ unsafe extern "C" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::R
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_format_traceback(calls: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_format_traceback(calls: SEXP) -> anyhow::Result<SEXP> {
     Ok(r_format_traceback(calls.into())?.sexp)
 }
 
@@ -62,7 +62,7 @@ pub unsafe fn initialize() {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_rust_backtrace() -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_rust_backtrace() -> anyhow::Result<SEXP> {
     let trace = std::backtrace::Backtrace::force_capture();
     let trace = format!("{trace}");
     Ok(*RObject::from(trace))

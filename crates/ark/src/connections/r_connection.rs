@@ -297,7 +297,7 @@ impl RConnection {
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_connection_opened(
+pub unsafe extern "C-unwind" fn ps_connection_opened(
     name: SEXP,
     host: SEXP,
     r#type: SEXP,
@@ -333,7 +333,7 @@ pub unsafe extern "C" fn ps_connection_opened(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::Error> {
+pub unsafe extern "C-unwind" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::Error> {
     let main = RMain::get();
     let id_ = RObject::view(id).to::<String>()?;
 
@@ -344,7 +344,7 @@ pub unsafe extern "C" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_connection_updated(id: SEXP) -> Result<SEXP, anyhow::Error> {
+pub unsafe extern "C-unwind" fn ps_connection_updated(id: SEXP) -> Result<SEXP, anyhow::Error> {
     let main = RMain::get();
     let comm_id: String = RObject::view(id).to::<String>()?;
 
