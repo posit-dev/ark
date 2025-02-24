@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use harp::command::r_command;
+use harp::command::r_home_setup;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
@@ -31,16 +32,7 @@ pub struct RVersion {
 }
 
 pub fn detect_r() -> anyhow::Result<RVersion> {
-    let output = r_command(|command| {
-        command.arg("RHOME");
-    })
-    .context("Failed to execute R to determine R_HOME")?;
-
-    // Convert the output to a string
-    let r_home = String::from_utf8(output.stdout)
-        .context("Failed to convert R_HOME output to string")?
-        .trim()
-        .to_string();
+    let r_home: String = r_home_setup().to_string_lossy().to_string();
 
     let output = r_command(|command| {
         command
