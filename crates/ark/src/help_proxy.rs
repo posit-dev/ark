@@ -44,18 +44,30 @@ struct PreviewRdParams {
 pub fn start(target_port: u16) -> anyhow::Result<u16> {
     let source_port = HelpProxy::get_os_assigned_port()?;
 
-    spawn!("ark-help-proxy", move || {
-        match task(source_port, target_port) {
-            Ok(value) => log::info!("Help proxy server exited with value: {:?}", value),
-            Err(error) => log::error!("Help proxy server exited unexpectedly: {}", error),
-        }
+    spawn!("ark-help-proxy", move || -> anyhow::Result<()> {
+        // Create a single-threaded Tokio runtime to spare stack memory. The
+        // help proxy server does not need to be high performance.
+        // Note that `new_current_thread()` seems to consume much more memory.
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(1)
+            .build()?;
+
+        // Execute the task within the runtime.
+        rt.block_on(async {
+            match task(source_port, target_port).await {
+                Ok(value) => log::info!("Help proxy server exited with value: {:?}", value),
+                Err(error) => log::error!("Help proxy server exited unexpectedly: {}", error),
+            }
+        });
+
+        Ok(())
     });
 
     Ok(source_port)
 }
 
 // The help proxy main entry point.
-#[tokio::main]
 async fn task(source_port: u16, target_port: u16) -> anyhow::Result<()> {
     // Create the help proxy.
     let help_proxy = HelpProxy::new(source_port, target_port)?;
@@ -101,7 +113,8 @@ impl HelpProxy {
                 .service(preview_img)
                 .default_service(web::to(proxy_request))
         })
-        .bind(("127.0.0.1", self.source_port))?;
+        .bind(("127.0.0.1", self.source_port))?
+        .workers(1);
 
         // Run the server.
         Ok(server.run().await?)
