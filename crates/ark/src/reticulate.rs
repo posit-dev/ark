@@ -19,8 +19,7 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 
-static RETICULATE_SERVICE: LazyLock<Mutex<Option<ReticulateService>>> =
-    LazyLock::new(|| Mutex::new(None));
+static RETICULATE_SOCKET: LazyLock<Mutex<Option<CommSocket>>> = LazyLock::new(|| Mutex::new(None));
 
 #[derive(Clone)]
 pub struct ReticulateService {
@@ -29,15 +28,17 @@ pub struct ReticulateService {
 }
 
 impl ReticulateService {
-    fn start(
-        comm_id: String,
-        comm_manager_tx: Sender<CommManagerEvent>,
-    ) -> anyhow::Result<ReticulateService> {
+    fn start(comm_id: String, comm_manager_tx: Sender<CommManagerEvent>) -> anyhow::Result<()> {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
             String::from("positron.reticulate"),
         );
+
+        {
+            let mut socket_guard = RETICULATE_SOCKET.lock().unwrap();
+            *socket_guard = Some(comm.clone());
+        }
 
         let service = Self {
             comm,
@@ -50,14 +51,13 @@ impl ReticulateService {
             .send(event)
             .or_log_error("Reticulate: Could not open comm.");
 
-        let serv = service.clone();
         spawn!(format!("ark-reticulate-{}", comm_id), move || {
-            serv.clone()
+            service
                 .handle_messages()
                 .or_log_error("Reticulate: Error handling messages");
         });
 
-        Ok(service)
+        Ok(())
     }
 
     fn handle_messages(&self) -> Result<(), anyhow::Error> {
@@ -80,16 +80,13 @@ impl ReticulateService {
             .send(CommMsg::Close)
             .or_log_error("Reticulate: Could not send close message to the front-end");
 
-        // Reset the global service before closing
-        let mut comm_guard = RETICULATE_SERVICE.lock().unwrap();
+        // Reset the global soccket before closing
         log::info!("Reticulate Thread closing {:?}", self.comm.comm_id);
-        *comm_guard = None;
+        {
+            let mut comm_guard = RETICULATE_SOCKET.lock().unwrap();
+            *comm_guard = None;
+        }
 
-        Ok(())
-    }
-
-    fn send_msg_to_frontend(&self, msg: CommMsg) -> Result<(), anyhow::Error> {
-        self.comm.outgoing_tx.send(msg)?;
         Ok(())
     }
 }
@@ -111,10 +108,10 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     };
 
     // If there's an id already registered, we just need to send the focus event
-    let mut service_guard = RETICULATE_SERVICE.lock().unwrap();
-    if let Some(service) = service_guard.deref() {
+    let socket_guard = RETICULATE_SOCKET.lock().unwrap();
+    if let Some(socket) = socket_guard.deref() {
         // There's a comm_id registered, we just send the focus event
-        service.send_msg_to_frontend(CommMsg::Data(json!({
+        socket.outgoing_tx.send(CommMsg::Data(json!({
             "method": "focus",
             "params": {
                 "input": input_code
@@ -124,10 +121,7 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     }
 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
-    *service_guard = Some(ReticulateService::start(
-        id,
-        main.get_comm_manager_tx().clone(),
-    )?);
+    ReticulateService::start(id, main.get_comm_manager_tx().clone())?;
 
     Ok(R_NilValue)
 }
