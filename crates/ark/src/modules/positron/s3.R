@@ -25,14 +25,14 @@
 
 #' @export
 .ps.s3.genericNameFromFunctionImpl <- function(callable) {
-
     useMethodSym <- as.name("UseMethod")
     value <- .ps.recursiveSearch(body(callable), function(node) {
-        if (is.call(node) &&
-            length(node) >= 2L &&
-            identical(node[[1L]], useMethodSym) &&
-            is.character(node[[2L]]))
-        {
+        if (
+            is.call(node) &&
+                length(node) >= 2L &&
+                identical(node[[1L]], useMethodSym) &&
+                is.character(node[[2L]])
+        ) {
             return(node[[2L]])
         }
     })

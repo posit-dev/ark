@@ -10,7 +10,9 @@
 #
 # Arguments:
 #   defaults: A named character vector of default CRAN repositories.
-apply_repo_defaults <- function(defaults = c(CRAN = "https://cran.rstudio.com/")) {
+apply_repo_defaults <- function(
+    defaults = c(CRAN = "https://cran.rstudio.com/")
+) {
     repos <- getOption("repos")
     if (is.null(repos) || !is.character(repos)) {
         # There are no repositories set, so apply the defaults directly

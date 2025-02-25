@@ -17,16 +17,17 @@
 
 #' @export
 .ps.recursiveSearch <- function(object, callback, ...) {
-
     result <- callback(object, ...)
-    if (!is.null(result))
+    if (!is.null(result)) {
         return(result)
+    }
 
     if (is.recursive(object)) {
         for (i in seq_along(object)) {
             result <- .ps.recursiveSearch(object[[i]], callback, ...)
-            if (!is.null(result))
+            if (!is.null(result)) {
                 return(result)
+            }
         }
     }
 }
@@ -38,13 +39,17 @@
 
     # Format the date into the current timezone for display
     if (nzchar(ark_version['date'])) {
-        utc_date <- as.POSIXct(ark_version['date'],
-                               format = "%Y-%m-%dT%H:%M:%SZ",
-                               tz = "UTC")
-        local_date <- format(utc_date,
-                             format = "%Y-%m-%d %H:%M:%S",
-                             usetz = TRUE,
-                             tz = Sys.timezone())
+        utc_date <- as.POSIXct(
+            ark_version['date'],
+            format = "%Y-%m-%dT%H:%M:%SZ",
+            tz = "UTC"
+        )
+        local_date <- format(
+            utc_date,
+            format = "%Y-%m-%d %H:%M:%S",
+            usetz = TRUE,
+            tz = Sys.timezone()
+        )
         ark_version['date'] <- local_date
     }
 
@@ -134,5 +139,5 @@ node_poke_cdr <- function(node, cdr) {
 }
 
 is_string <- function(x) {
-  is.character(x) && length(x) == 1 && !is.na(x)
+    is.character(x) && length(x) == 1 && !is.na(x)
 }

@@ -41,7 +41,6 @@
 }
 
 summary_stats_number <- function(col) {
-
     col <- col[!is.na(col)]
 
     # Don't compute stats if the column is all NA's or empty.
@@ -63,7 +62,7 @@ summary_stats_string <- function(col) {
         col <- haven::as_factor(col)
     }
 
-    if(is.factor(col)) {
+    if (is.factor(col)) {
         # We could have an optimization here to get unique and empty values
         # from levels, but probably not worth it.
         col <- as.character(col)
@@ -73,7 +72,10 @@ summary_stats_string <- function(col) {
 }
 
 summary_stats_boolean <- function(col) {
-    c(true_count = sum(col, na.rm = TRUE), false_count = sum(!col, na.rm = TRUE))
+    c(
+        true_count = sum(col, na.rm = TRUE),
+        false_count = sum(!col, na.rm = TRUE)
+    )
 }
 
 summary_stats_date <- function(col) {
@@ -109,12 +111,11 @@ finite_or_null <- function(x) {
 
 summary_stats_get_timezone <- function(x) {
     # this is the implementation in lubridate for POSIXt objects
-    tz <- function (x) {
+    tz <- function(x) {
         tzone <- attr(x, "tzone")
         if (is.null(tzone)) {
             ""
-        }
-        else {
+        } else {
             tzone[[1]]
         }
     }
@@ -154,12 +155,17 @@ col_filter_indices <- function(col, idx = NULL) {
 
         # Do not try to apply filters that are already marked as invalid.
         if (!is.null(row_filter$is_valid) && !row_filter$is_valid) {
-            row_filters_errors[i] <- row_filter$error_message %||% "Invalid filter for unknown reason"
+            row_filters_errors[i] <- row_filter$error_message %||%
+                "Invalid filter for unknown reason"
             next
         }
 
         # Dynamic dispatch to the appropriate filter function
-        filter_function <- paste('.ps.filter_col', row_filter$filter_type, sep = '.')
+        filter_function <- paste(
+            '.ps.filter_col',
+            row_filter$filter_type,
+            sep = '.'
+        )
 
         # Get the parameters for the filter function. Not all functions have
         # parameters.
@@ -174,18 +180,21 @@ col_filter_indices <- function(col, idx = NULL) {
         }
         filter_args <- list(col, params)
 
-        row_filters_errors[i] <- tryCatch({
-            # Apply the filter function to the column
-            filter_matches <- do.call(filter_function, filter_args)
-            if (identical(row_filter$condition, "or")) {
-                indices <- indices | filter_matches
-            } else {
-                indices <- indices & filter_matches
+        row_filters_errors[i] <- tryCatch(
+            {
+                # Apply the filter function to the column
+                filter_matches <- do.call(filter_function, filter_args)
+                if (identical(row_filter$condition, "or")) {
+                    indices <- indices | filter_matches
+                } else {
+                    indices <- indices & filter_matches
+                }
+                NA
+            },
+            error = function(e) {
+                e$message
             }
-            NA
-        }, error = function(e) {
-            e$message
-        })
+        )
     }
 
     # Return the indices of the rows that pass all filters
@@ -201,7 +210,8 @@ col_filter_indices <- function(col, idx = NULL) {
     # Form the expression to evaluate. The filter operations map
     # straightforwardly to R's operators, except for the 'equals' operation,
     # which is represented by '=' but needs to be converted to '=='.
-    op <- switch(params$op,
+    op <- switch(
+        params$op,
         `=` = "==",
         `!=` = "!=",
         `>` = ">",
@@ -274,44 +284,57 @@ col_filter_indices <- function(col, idx = NULL) {
 }
 
 .ps.filter_col.search <- function(col, params) {
-    # Search for the term anywhere in the column's values
     if (identical(params$search_type, "contains")) {
+        # Search for the term anywhere in the column's values
+
         # We escape the term to ensure that it is treated as a fixed string; we
         # can't do this using `fixed = TRUE` since `ignore.case` only works when
         # `fixed = FALSE`
         escaped_term <- .ps.regex_escape(params$term)
-        grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
-    }
-
-    # Search for the term not contained in the column's values
-    else if (identical(params$search_type, "not_contains")) {
+        grepl(
+            pattern = escaped_term,
+            col,
+            fixed = FALSE,
+            ignore.case = !params$case_sensitive
+        )
+    } else if (identical(params$search_type, "not_contains")) {
+        # Search for the term not contained in the column's values
         escaped_term <- .ps.regex_escape(params$term)
-        !grepl(pattern = escaped_term, col, fixed = FALSE, ignore.case = !params$case_sensitive)
-    }
-
-    # Search for the term at the beginning of the column's values
-    else if (identical(params$search_type, "starts_with")) {
+        !grepl(
+            pattern = escaped_term,
+            col,
+            fixed = FALSE,
+            ignore.case = !params$case_sensitive
+        )
+    } else if (identical(params$search_type, "starts_with")) {
+        # Search for the term at the beginning of the column's values
         escaped_term <- .ps.regex_escape(params$term)
-        grepl(pattern = paste0("^", escaped_term), col, ignore.case = !params$case_sensitive)
-    }
-
-    # Search for the term at the end of the column's values
-    else if (identical(params$search_type, "ends_with")) {
+        grepl(
+            pattern = paste0("^", escaped_term),
+            col,
+            ignore.case = !params$case_sensitive
+        )
+    } else if (identical(params$search_type, "ends_with")) {
+        # Search for the term at the end of the column's values
         escaped_term <- .ps.regex_escape(params$term)
-        grepl(pattern = paste0(escaped_term, "$"), col, ignore.case = !params$case_sensitive)
-    }
-
-    # Search for the term anywhere in the column's values, as a regular
-    # expression
-    else if (identical(params$search_type, "regex_match")) {
+        grepl(
+            pattern = paste0(escaped_term, "$"),
+            col,
+            ignore.case = !params$case_sensitive
+        )
+    } else if (identical(params$search_type, "regex_match")) {
+        # Search for the term anywhere in the column's values, as a regular
+        # expression
         # We suppress warnings because invalid regex will raise both an error and a warning.
         # We already catch the error when calling this functions, but the warning leaks to
         # the user console.
-        suppressWarnings(grepl(pattern = params$term, col, ignore.case = !params$case_sensitive))
-    }
-
-    # Unsupported search type
-    else {
+        suppressWarnings(grepl(
+            pattern = params$term,
+            col,
+            ignore.case = !params$case_sensitive
+        ))
+    } else {
+        # Unsupported search type
         stop("Unsupported search type '", params$search_type, "'")
     }
 }
@@ -331,7 +354,11 @@ is_na_checked <- function(x) {
     result
 }
 
-export_selection <- function(x, format = c("csv", "tsv", "html"), include_header = TRUE) {
+export_selection <- function(
+    x,
+    format = c("csv", "tsv", "html"),
+    include_header = TRUE
+) {
     format <- match.arg(format)
 
     if (format == "csv") {
@@ -369,14 +396,14 @@ write_delim_impl <- function(x, path, delim, include_header) {
     defer(close(con))
 
     utils::write.table(
-      x = x,
-      file = con,
-      sep = delim,
-      eol = "\n",
-      row.names = FALSE,
-      col.names = include_header,
-      quote = FALSE,
-      na = ""
+        x = x,
+        file = con,
+        sep = delim,
+        eol = "\n",
+        row.names = FALSE,
+        col.names = include_header,
+        quote = FALSE,
+        na = ""
     )
 }
 
@@ -384,7 +411,7 @@ write_html <- function(x, include_header) {
     # TODO: do not depend on knitr to render html tables
     # kable takes NA to mean "use the default column names"
     # and `NULL` means no column names
-    col_names <- if(include_header) {
+    col_names <- if (include_header) {
         NA
     } else {
         NULL
@@ -393,67 +420,77 @@ write_html <- function(x, include_header) {
     knitr::kable(x, format = "html", row.names = FALSE, col.names = col_names)
 }
 
-profile_histogram <- function(x, method = c("fixed", "sturges", "fd", "scott"), num_bins = NULL, quantiles = NULL) {
-  # We only use finite values for building this histogram.
-  # This removes NA's, Inf, NaN and -Inf
-  x <- x[is.finite(x)]
+profile_histogram <- function(
+    x,
+    method = c("fixed", "sturges", "fd", "scott"),
+    num_bins = NULL,
+    quantiles = NULL
+) {
+    # We only use finite values for building this histogram.
+    # This removes NA's, Inf, NaN and -Inf
+    x <- x[is.finite(x)]
 
-  # No-non finite values, we early return as there's nothing we can compute.
-  if (length(x) == 0) {
-      return(list(
-          bin_edges = c(),
-          bin_counts = c(),
-          quantiles = rep(NA_real_, length(quantiles))
-      ))
-  }
+    # No-non finite values, we early return as there's nothing we can compute.
+    if (length(x) == 0) {
+        return(list(
+            bin_edges = c(),
+            bin_counts = c(),
+            quantiles = rep(NA_real_, length(quantiles))
+        ))
+    }
 
-  # If we have a Date variable, we convert it to POSIXct, in order to be able to have equal
-  # width bins - that can be fractions of dates.
-  if (inherits(x, "Date")) {
-    x <- as.POSIXct(x)
-  }
+    # If we have a Date variable, we convert it to POSIXct, in order to be able to have equal
+    # width bins - that can be fractions of dates.
+    if (inherits(x, "Date")) {
+        x <- as.POSIXct(x)
+    }
 
-  if (!is.null(quantiles)) {
-    quantiles <- stats::quantile(x, probs = quantiles)
-  } else {
-    quantiles <- NULL  # We otherwise return an empty quantiles vector
-  }
+    if (!is.null(quantiles)) {
+        quantiles <- stats::quantile(x, probs = quantiles)
+    } else {
+        # We otherwise return an empty quantiles vector
+        quantiles <- NULL
+    }
 
-  method <- match.arg(method)
-  num_bins <- histogram_num_bins(x, method, num_bins)
+    method <- match.arg(method)
+    num_bins <- histogram_num_bins(x, method, num_bins)
 
-  # For dates, `hist` does not compute the number of breaks automatically
-  # using default methods.
-  # We force something considering the integer representation.
-  if (inherits(x, "POSIXct") || is.integer(x)) {
-    # The pretty bins algorithm doesn't really make sense for dates,
-    # so we generate our own bin_edges for them.
-    breaks <- seq(min(x), max(x), length.out = num_bins + 1L)
-  } else {
-    breaks <- num_bins
-    stopifnot(is.integer(breaks), length(breaks) == 1)
-  }
+    # For dates, `hist` does not compute the number of breaks automatically
+    # using default methods.
+    # We force something considering the integer representation.
+    if (inherits(x, "POSIXct") || is.integer(x)) {
+        # The pretty bins algorithm doesn't really make sense for dates,
+        # so we generate our own bin_edges for them.
+        breaks <- seq(min(x), max(x), length.out = num_bins + 1L)
+    } else {
+        breaks <- num_bins
+        stopifnot(is.integer(breaks), length(breaks) == 1)
+    }
 
-  # A warning is raised when computing the histogram for dates due to
-  # integer overflow in when computing n cell midpoints, but we don't
-  # use it, so it can be safely ignored.
-  suppressWarnings(h <- graphics::hist(x, breaks = breaks, plot = FALSE))
+    # A warning is raised when computing the histogram for dates due to
+    # integer overflow in when computing n cell midpoints, but we don't
+    # use it, so it can be safely ignored.
+    suppressWarnings(h <- graphics::hist(x, breaks = breaks, plot = FALSE))
 
-  bin_edges <- h$breaks
-  bin_counts <- h$counts
+    bin_edges <- h$breaks
+    bin_counts <- h$counts
 
-  # For dates, we convert back the breaks to the date representation.
-  if (inherits(x, "POSIXct")) {
-    # Must supply an `origin` on R <= 4.2
-    origin <- as.POSIXct("1970-01-01", tz = "UTC")
-    bin_edges <- as.POSIXct(h$breaks, tz = attr(x, "tzone"), origin = origin)
-  }
+    # For dates, we convert back the breaks to the date representation.
+    if (inherits(x, "POSIXct")) {
+        # Must supply an `origin` on R <= 4.2
+        origin <- as.POSIXct("1970-01-01", tz = "UTC")
+        bin_edges <- as.POSIXct(
+            h$breaks,
+            tz = attr(x, "tzone"),
+            origin = origin
+        )
+    }
 
-  list(
-      bin_edges = bin_edges,
-      bin_counts = bin_counts,
-      quantiles = quantiles
-  )
+    list(
+        bin_edges = bin_edges,
+        bin_counts = bin_counts,
+        quantiles = quantiles
+    )
 }
 
 profile_frequency_table <- function(x, limit) {

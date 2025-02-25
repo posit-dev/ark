@@ -33,7 +33,11 @@
 }
 
 #' @export
-.ps.ui.navigateToFile <- function(file = character(0), line = -1L, column = -1L) {
+.ps.ui.navigateToFile <- function(
+    file = character(0),
+    line = -1L,
+    column = -1L
+) {
     file <- normalizePath(file)
     .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }
