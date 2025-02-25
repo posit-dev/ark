@@ -19,7 +19,8 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 
-static RETICULATE_SOCKET: LazyLock<Mutex<Option<CommSocket>>> = LazyLock::new(|| Mutex::new(None));
+static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 #[derive(Clone)]
 pub struct ReticulateService {
@@ -36,8 +37,8 @@ impl ReticulateService {
         );
 
         {
-            let mut socket_guard = RETICULATE_SOCKET.lock().unwrap();
-            *socket_guard = Some(comm.clone());
+            let mut outgoing_tx_guard = RETICULATE_OUTGOING_TX.lock().unwrap();
+            *outgoing_tx_guard = Some(comm.outgoing_tx.clone());
         }
 
         let service = Self {
@@ -83,8 +84,8 @@ impl ReticulateService {
         // Reset the global soccket before closing
         log::info!("Reticulate Thread closing {:?}", self.comm.comm_id);
         {
-            let mut comm_guard = RETICULATE_SOCKET.lock().unwrap();
-            *comm_guard = None;
+            let mut outgoing_tx_guard = RETICULATE_OUTGOING_TX.lock().unwrap();
+            *outgoing_tx_guard = None;
         }
 
         Ok(())
@@ -108,10 +109,10 @@ pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow:
     };
 
     // If there's an id already registered, we just need to send the focus event
-    let socket_guard = RETICULATE_SOCKET.lock().unwrap();
-    if let Some(socket) = socket_guard.deref() {
+    let outgoing_tx_guard = RETICULATE_OUTGOING_TX.lock().unwrap();
+    if let Some(outgoing_tx) = outgoing_tx_guard.deref() {
         // There's a comm_id registered, we just send the focus event
-        socket.outgoing_tx.send(CommMsg::Data(json!({
+        outgoing_tx.send(CommMsg::Data(json!({
             "method": "focus",
             "params": {
                 "input": input_code
