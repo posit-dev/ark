@@ -23,7 +23,7 @@ fn invalid_parameter(stream: impl ToTokens) -> ! {
 
 fn invalid_extern(stream: impl ToTokens) -> ! {
     panic!(
-        "Invalid signature `{}`: registered routines must be 'extern \"C\"'.",
+        "Invalid signature `{}`: registered routines must be 'extern \"C-unwind\"'.",
         stream.to_token_stream()
     );
 }
