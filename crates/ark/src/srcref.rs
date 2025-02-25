@@ -36,7 +36,7 @@ pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
     let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
     resource_namespaces(pkgs)?;
     Ok(harp::r_null())
