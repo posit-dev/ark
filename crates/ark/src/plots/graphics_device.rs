@@ -150,17 +150,20 @@ impl DeviceContext {
     }
 
     fn holdflush(&self, holdflush: i32) {
+        log::trace!("Graphics: holdflush: {holdflush}");
         self._holdflush.replace(holdflush);
     }
 
     fn mode(&self, mode: i32, _dev: pDevDesc) {
+        log::trace!("Graphics: mode: {mode}");
         self._mode.replace(mode);
-
         let old = self._changes.get();
         self._changes.replace(old || mode != 0);
     }
 
     fn new_page(&self, _dd: pGEcontext, _dev: pDevDesc) {
+        log::trace!("Graphics: new_page");
+
         // Process changes related to the last plot.
         // Particularly important if we make multiple plots in a single chunk.
         self.process_changes();
@@ -172,6 +175,8 @@ impl DeviceContext {
     }
 
     fn on_did_execute_request(&self) {
+        log::trace!("Graphics: on_did_execute_request");
+
         // Process changes related to the last code execution block.
         // This runs after the code block has finished, processing the current
         // state of the most recent page.
@@ -179,6 +184,8 @@ impl DeviceContext {
     }
 
     fn on_process_events(&self) {
+        log::trace!("Graphics: on_process_events");
+
         // Don't try to render a plot if we're currently drawing.
         if self._mode.get() != 0 {
             return;
@@ -232,9 +239,13 @@ impl DeviceContext {
     ) -> anyhow::Result<PlotBackendReply> {
         match message {
             PlotBackendRequest::GetIntrinsicSize => {
+                log::trace!("Graphics: handle_rpc: Getting intrinsic size");
                 Ok(PlotBackendReply::GetIntrinsicSizeReply(None))
             },
             PlotBackendRequest::Render(plot_meta) => {
+                log::trace!(
+                    "Graphics: handle_rpc: Rendering {plot_id} with parameters: {plot_meta:?}"
+                );
                 let size = unwrap!(plot_meta.size, None => {
                     bail!("Intrinsically sized plots are not yet supported.");
                 });
@@ -266,8 +277,10 @@ impl DeviceContext {
     }
 
     fn process_changes(&self) {
+        log::trace!("Graphics: process_changes");
+
         if !self._changes.replace(false) {
-            // No changes to process
+            log::trace!("Graphics: No changes to process");
             return;
         }
 
@@ -294,6 +307,8 @@ impl DeviceContext {
     }
 
     fn process_new_plot_positron(&self, id: &str) {
+        log::trace!("Graphics: Notifying Positron of new plot with `id` {id}`");
+
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -314,6 +329,8 @@ impl DeviceContext {
     }
 
     fn process_new_plot_jupyter_protocol(&self, id: &str) {
+        log::trace!("Graphics: Notifying Jupyter frontend of new plot with `id` {id}`");
+
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -351,6 +368,8 @@ impl DeviceContext {
     }
 
     fn process_update_plot_positron(&self, id: &str) {
+        log::trace!("Graphics: Notifying Positron of plot update with `id` {id}`");
+
         // Refcell Safety: Make sure not to call other methods from this whole block.
         let channels = self._channels.borrow();
 
@@ -373,6 +392,8 @@ impl DeviceContext {
     }
 
     fn process_update_plot_jupyter_protocol(&self, id: &str) {
+        log::trace!("Graphics: Notifying Jupyter frontend of plot update with `id` {id}`");
+
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -385,7 +406,7 @@ impl DeviceContext {
             data: None,
         };
 
-        log::info!("Sending update display data to IOPub.");
+        log::info!("Sending update display data to IOPub for `id` {id}.");
 
         self.iopub_tx
             .send(IOPubMessage::UpdateDisplayData(UpdateDisplayData {
@@ -494,7 +515,7 @@ pub(crate) fn on_did_execute_request() {
 // NOTE: May be called when rendering a plot to file, since this is done by
 // copying the graphics display list to a new plot device, and then closing that device.
 unsafe extern "C-unwind" fn gd_activate(dev: pDevDesc) {
-    log::trace!("gd_activate");
+    log::trace!("Graphics: gd_activate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell._callbacks.activate.get() {
@@ -506,7 +527,7 @@ unsafe extern "C-unwind" fn gd_activate(dev: pDevDesc) {
 // NOTE: May be called when rendering a plot to file, since this is done by
 // copying the graphics display list to a new plot device, and then closing that device.
 unsafe extern "C-unwind" fn gd_deactivate(dev: pDevDesc) {
-    log::trace!("gd_deactivate");
+    log::trace!("Graphics: gd_deactivate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell._callbacks.deactivate.get() {
@@ -516,7 +537,7 @@ unsafe extern "C-unwind" fn gd_deactivate(dev: pDevDesc) {
 }
 
 unsafe extern "C-unwind" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> i32 {
-    log::trace!("gd_hold_flush");
+    log::trace!("Graphics: gd_hold_flush");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell._callbacks.holdflush.get() {
@@ -532,7 +553,7 @@ unsafe extern "C-unwind" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> 
 // mode = 1, graphics on
 // mode = 2, graphical input on (ignored by most drivers)
 unsafe extern "C-unwind" fn gd_mode(mode: i32, dev: pDevDesc) {
-    log::trace!("gd_mode: {mode}");
+    log::trace!("Graphics: gd_mode");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell._callbacks.mode.get() {
@@ -543,7 +564,7 @@ unsafe extern "C-unwind" fn gd_mode(mode: i32, dev: pDevDesc) {
 }
 
 unsafe extern "C-unwind" fn gd_new_page(dd: pGEcontext, dev: pDevDesc) {
-    log::trace!("gd_new_page");
+    log::trace!("Graphics: gd_new_page");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell._callbacks.newPage.get() {
@@ -611,6 +632,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
+    log::trace!("Graphics: ps_graphics_device: Initializing Positron graphics device");
     ps_graphics_device_impl().or_else(|error| {
         log::error!("{error:?}");
         Ok(R_NilValue)
