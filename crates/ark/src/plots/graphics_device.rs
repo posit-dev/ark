@@ -77,61 +77,61 @@ pub(crate) fn init_graphics_device() {
 #[derive(Debug, Default)]
 #[allow(non_snake_case)]
 struct DeviceCallbacks {
-    pub activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
-    pub deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
-    pub holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
-    pub mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
-    pub newPage: Cell<Option<unsafe extern "C-unwind" fn(pGEcontext, pDevDesc)>>,
+    activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
+    deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
+    holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
+    mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
+    newPage: Cell<Option<unsafe extern "C-unwind" fn(pGEcontext, pDevDesc)>>,
 }
 
 #[derive(Default)]
 struct DeviceContext {
     // Tracks whether the graphics device has changes.
-    pub _changes: Cell<bool>,
+    _changes: Cell<bool>,
 
     // Tracks whether or not the current plot page has ever been written to.
-    pub _new_page: Cell<bool>,
+    _new_page: Cell<bool>,
 
     // Tracks the current graphics device mode.
-    pub _mode: Cell<i32>,
+    _mode: Cell<i32>,
 
     // The 'holdflush' flag, as normally handled via a device's 'holdflush()'
     // callback. If 'dev.hold()' has been set, we want to avoid rendering
     // new plots.
-    pub _holdflush: Cell<i32>,
+    _holdflush: Cell<i32>,
 
     // The ID associated with the current plot page. Used primarily
     // for accessing indexed plots, e.g. for the Plots pane history.
-    pub _id: RefCell<Option<String>>,
+    _id: RefCell<Option<String>>,
 
     // A map, mapping plot IDs to the communication channels used
     // for communicating their rendered results to the frontend.
-    pub _channels: RefCell<HashMap<String, CommSocket>>,
+    _channels: RefCell<HashMap<String, CommSocket>>,
 
     // The device callbacks, which are patched into the device.
-    pub _callbacks: DeviceCallbacks,
+    _callbacks: DeviceCallbacks,
 }
 
 impl DeviceContext {
-    pub fn holdflush(&self, holdflush: i32) {
+    fn holdflush(&self, holdflush: i32) {
         self._holdflush.replace(holdflush);
     }
 
-    pub fn mode(&self, mode: i32, _dev: pDevDesc) {
+    fn mode(&self, mode: i32, _dev: pDevDesc) {
         self._mode.replace(mode);
 
         let old = self._changes.get();
         self._changes.replace(old || mode != 0);
     }
 
-    pub fn new_page(&self, _dd: pGEcontext, _dev: pDevDesc) {
+    fn new_page(&self, _dd: pGEcontext, _dev: pDevDesc) {
         // Create a new id for this new plot page and note that this is a new page
         let id = Uuid::new_v4().to_string();
         self._id.replace(Some(id));
         self._new_page.replace(true);
     }
 
-    pub fn on_did_execute_request(
+    fn on_did_execute_request(
         &self,
         comm_manager_tx: Sender<CommManagerEvent>,
         iopub_tx: Sender<IOPubMessage>,
@@ -145,7 +145,7 @@ impl DeviceContext {
         }
     }
 
-    pub fn on_process_events(&self) {
+    fn on_process_events(&self) {
         // Don't try to render a plot if we're currently drawing.
         if self._mode.get() != 0 {
             return;
@@ -458,11 +458,11 @@ macro_rules! with_device {
     }};
 }
 
-pub unsafe fn on_process_events() {
+pub(crate) unsafe fn on_process_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.on_process_events());
 }
 
-pub unsafe fn on_did_execute_request(
+pub(crate) unsafe fn on_did_execute_request(
     comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
     dynamic_plots: bool,
