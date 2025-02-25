@@ -128,7 +128,7 @@ use crate::ui::UiCommSender;
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// An enum representing the different modes in which the R session can run.
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum SessionMode {
     /// A session with an interactive console (REPL), such as in Positron.
     Console,
@@ -168,7 +168,7 @@ pub struct RMain {
     kernel_request_rx: Receiver<KernelRequest>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
-    pub session_mode: SessionMode,
+    session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -346,10 +346,13 @@ impl RMain {
             session_mode,
         )));
 
-        // Initialize the GD context on this thread
-        graphics_device::init_graphics_device();
-
         let main = RMain::get_mut();
+
+        // Initialize the GD context on this thread
+        graphics_device::init_graphics_device(
+            main.get_comm_manager_tx().clone(),
+            main.get_iopub_tx().clone(),
+        );
 
         let mut r_args = r_args.clone();
 
@@ -979,13 +982,7 @@ impl RMain {
             // Check for pending graphics updates
             // (Important that this occurs while in the "busy" state of this ExecuteRequest
             // so that the `parent` message is set correctly in any Jupyter messages)
-            unsafe {
-                graphics_device::on_did_execute_request(
-                    self.comm_manager_tx.clone(),
-                    self.iopub_tx.clone(),
-                    self.is_ui_comm_connected() && self.session_mode == SessionMode::Console,
-                )
-            };
+            graphics_device::on_did_execute_request();
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
@@ -1271,6 +1268,10 @@ impl RMain {
         });
     }
 
+    pub fn session_mode(&self) -> SessionMode {
+        self.session_mode
+    }
+
     pub fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
         self.ui_comm_tx.as_ref()
     }
@@ -1307,7 +1308,7 @@ impl RMain {
         }
     }
 
-    fn is_ui_comm_connected(&self) -> bool {
+    pub fn is_ui_comm_connected(&self) -> bool {
         self.get_ui_comm_tx().is_some()
     }
 

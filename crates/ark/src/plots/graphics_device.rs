@@ -60,6 +60,8 @@ use stdext::result::ResultOrLog;
 use stdext::unwrap;
 use uuid::Uuid;
 
+use crate::interface::RMain;
+use crate::interface::SessionMode;
 use crate::r_task;
 
 thread_local! {
@@ -70,8 +72,11 @@ thread_local! {
 const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 
 // Expose thread initialization via function so we can keep the structs private
-pub(crate) fn init_graphics_device() {
-    DEVICE_CONTEXT.set(Default::default())
+pub(crate) fn init_graphics_device(
+    comm_manager_tx: Sender<CommManagerEvent>,
+    iopub_tx: Sender<IOPubMessage>,
+) {
+    DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx))
 }
 
 #[derive(Debug, Default)]
@@ -84,8 +89,14 @@ struct DeviceCallbacks {
     newPage: Cell<Option<unsafe extern "C-unwind" fn(pGEcontext, pDevDesc)>>,
 }
 
-#[derive(Default)]
 struct DeviceContext {
+    /// Channel for sending [CommManagerEvent]s to Positron when plot events occur
+    comm_manager_tx: Sender<CommManagerEvent>,
+
+    /// Channel for sending [IOPubMessage::DisplayData] and
+    /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
+    iopub_tx: Sender<IOPubMessage>,
+
     // Tracks whether the graphics device has changes.
     _changes: Cell<bool>,
 
@@ -113,6 +124,31 @@ struct DeviceContext {
 }
 
 impl DeviceContext {
+    fn new(comm_manager_tx: Sender<CommManagerEvent>, iopub_tx: Sender<IOPubMessage>) -> Self {
+        Self {
+            comm_manager_tx,
+            iopub_tx,
+            _changes: Cell::new(false),
+            _new_page: Cell::new(false),
+            _mode: Cell::new(0),
+            _holdflush: Cell::new(0),
+            _id: RefCell::new(None),
+            _channels: RefCell::new(HashMap::new()),
+            _callbacks: DeviceCallbacks::default(),
+        }
+    }
+
+    /// Should plot events be sent over [CommSocket]s to the frontend?
+    ///
+    /// This allows plots to be dynamically resized by their `id`. Only possible if the UI
+    /// comm is connected (i.e. we are connected to Positron) and if we are in
+    /// [SessionMode::Console] mode.
+    fn should_use_dynamic_plots(&self) -> bool {
+        RMain::with(|main| {
+            main.is_ui_comm_connected() && main.session_mode() == SessionMode::Console
+        })
+    }
+
     fn holdflush(&self, holdflush: i32) {
         self._holdflush.replace(holdflush);
     }
@@ -131,18 +167,10 @@ impl DeviceContext {
         self._new_page.replace(true);
     }
 
-    fn on_did_execute_request(
-        &self,
-        comm_manager_tx: Sender<CommManagerEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-        dynamic_plots: bool,
-    ) {
+    fn on_did_execute_request(&self) {
         // After R code has completed execution, we use this to check if any graphics
         // need to be created
-        let changed = self._changes.replace(false);
-        if changed {
-            self.process_changes(comm_manager_tx, iopub_tx, dynamic_plots);
-        }
+        self.process_changes();
     }
 
     fn on_process_events(&self) {
@@ -229,12 +257,12 @@ impl DeviceContext {
         }
     }
 
-    fn process_changes(
-        &self,
-        comm_manager_tx: Sender<CommManagerEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-        dynamic_plots: bool,
-    ) {
+    fn process_changes(&self) {
+        if !self._changes.replace(false) {
+            // No changes to process
+            return;
+        }
+
         // Refcell Safety: Short borrows in the file.
         let id = unwrap!(self._id.borrow().clone(), None => {
             log::error!("Unexpected uninitialized `id`.");
@@ -243,27 +271,21 @@ impl DeviceContext {
 
         let new_page = self._new_page.replace(false);
         if new_page {
-            self.process_new_plot(id.as_str(), comm_manager_tx, iopub_tx, dynamic_plots);
+            self.process_new_plot(id.as_str());
         } else {
-            self.process_update_plot(id.as_str(), iopub_tx, dynamic_plots);
+            self.process_update_plot(id.as_str());
         }
     }
 
-    fn process_new_plot(
-        &self,
-        id: &str,
-        comm_manager_tx: Sender<CommManagerEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-        dynamic_plots: bool,
-    ) {
-        if dynamic_plots {
-            self.process_new_plot_positron(id, comm_manager_tx);
+    fn process_new_plot(&self, id: &str) {
+        if self.should_use_dynamic_plots() {
+            self.process_new_plot_positron(id);
         } else {
-            self.process_new_plot_jupyter_protocol(id, iopub_tx);
+            self.process_new_plot_jupyter_protocol(id);
         }
     }
 
-    fn process_new_plot_positron(&self, id: &str, comm_manager_tx: Sender<CommManagerEvent>) {
+    fn process_new_plot_positron(&self, id: &str) {
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -272,7 +294,7 @@ impl DeviceContext {
         );
 
         let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);
-        if let Err(error) = comm_manager_tx.send(event) {
+        if let Err(error) = self.comm_manager_tx.send(event) {
             log::error!("{}", error);
         }
 
@@ -283,7 +305,7 @@ impl DeviceContext {
             .insert(id.to_string(), socket.clone());
     }
 
-    fn process_new_plot_jupyter_protocol(&self, id: &str, iopub_tx: Sender<IOPubMessage>) {
+    fn process_new_plot_jupyter_protocol(&self, id: &str) {
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -303,7 +325,7 @@ impl DeviceContext {
 
         log::info!("Sending display data to IOPub.");
 
-        iopub_tx
+        self.iopub_tx
             .send(IOPubMessage::DisplayData(DisplayData {
                 data,
                 metadata,
@@ -312,16 +334,11 @@ impl DeviceContext {
             .or_log_warning(&format!("Could not publish display data on IOPub."));
     }
 
-    fn process_update_plot(
-        &self,
-        id: &str,
-        iopub_tx: Sender<IOPubMessage>,
-        positron_connected: bool,
-    ) {
-        if positron_connected {
+    fn process_update_plot(&self, id: &str) {
+        if self.should_use_dynamic_plots() {
             self.process_update_plot_positron(id);
         } else {
-            self.process_update_plot_jupyter_protocol(id, iopub_tx);
+            self.process_update_plot_jupyter_protocol(id);
         }
     }
 
@@ -347,7 +364,7 @@ impl DeviceContext {
             .or_log_error("Failed to send update message for id {id}.");
     }
 
-    fn process_update_plot_jupyter_protocol(&self, id: &str, iopub_tx: Sender<IOPubMessage>) {
+    fn process_update_plot_jupyter_protocol(&self, id: &str) {
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -362,7 +379,7 @@ impl DeviceContext {
 
         log::info!("Sending update display data to IOPub.");
 
-        iopub_tx
+        self.iopub_tx
             .send(IOPubMessage::UpdateDisplayData(UpdateDisplayData {
                 data,
                 metadata,
@@ -458,17 +475,12 @@ macro_rules! with_device {
     }};
 }
 
-pub(crate) unsafe fn on_process_events() {
+pub(crate) fn on_process_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.on_process_events());
 }
 
-pub(crate) unsafe fn on_did_execute_request(
-    comm_manager_tx: Sender<CommManagerEvent>,
-    iopub_tx: Sender<IOPubMessage>,
-    dynamic_plots: bool,
-) {
-    DEVICE_CONTEXT
-        .with_borrow(|cell| cell.on_did_execute_request(comm_manager_tx, iopub_tx, dynamic_plots));
+pub(crate) fn on_did_execute_request() {
+    DEVICE_CONTEXT.with_borrow(|cell| cell.on_did_execute_request());
 }
 
 // NOTE: May be called when rendering a plot to file, since this is done by
