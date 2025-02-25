@@ -803,8 +803,8 @@ impl RMain {
             // to be handled in a blocking way to ensure subscribers are
             // notified before the next incoming message is processed.
 
-            // First handle execute requests outside of `select!` to ensure they
-            // have priority. `select!` chooses at random.
+            // First handle execute requests outside of `select` to ensure they
+            // have priority. `select` chooses at random.
             if let Ok(req) = r_request_rx.try_recv() {
                 if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
                     return input;

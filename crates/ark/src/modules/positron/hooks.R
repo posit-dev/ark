@@ -31,8 +31,9 @@ rebind <- function(pkg, name, value, namespace = FALSE) {
 #' Override a function within an attached package
 #'
 #' Assumes the package is attached, typically used for base packages like base or utils.
-#' - `hook` will replace the binding for unnamespaced calls.
-#' - `hook_namespace` will optionally also replace the binding for namespaced calls.
+#' - `pkg_bind()` replaces the binding in the package environment on the search
+#'   path for unnamespaced calls.
+#' - `ns_bind()` replaces the binding for namespaced calls.
 #'
 #' TODO: Will cause ark to fail to start if `option(defaultPackages = character())`
 #' or `R_DEFAULT_PACKAGES=NULL` are set! One idea is to register an `onAttach()`
