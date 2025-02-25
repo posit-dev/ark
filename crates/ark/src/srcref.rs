@@ -16,16 +16,7 @@ use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn resource_namespaces(pkgs: Option<Vec<String>>) -> anyhow::Result<()> {
-    let pkgs = match pkgs {
-        Some(inner) => inner,
-        None => {
-            let loaded = RFunction::new("base", "loadedNamespaces").call()?;
-            let loaded: Vec<String> = loaded.try_into()?;
-            loaded
-        },
-    };
-
+pub(crate) fn resource_namespaces(pkgs: Vec<String>) -> anyhow::Result<()> {
     // Generate only one task and loop inside it to preserve the order of `pkgs`
     r_task::spawn_idle(|| async move {
         for pkg in pkgs.into_iter() {
@@ -38,10 +29,16 @@ pub(crate) fn resource_namespaces(pkgs: Option<Vec<String>>) -> anyhow::Result<(
     Ok(())
 }
 
+pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
+    let loaded = RFunction::new("base", "loadedNamespaces").call()?;
+    let loaded: Vec<String> = loaded.try_into()?;
+    resource_namespaces(loaded)
+}
+
 #[harp::register]
 unsafe extern "C" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
     let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
-    resource_namespaces(Some(pkgs))?;
+    resource_namespaces(pkgs)?;
     Ok(harp::r_null())
 }
 

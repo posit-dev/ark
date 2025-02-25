@@ -118,7 +118,7 @@ use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
 use crate::srcref::ns_populate_srcref;
-use crate::srcref::resource_namespaces;
+use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
@@ -452,7 +452,7 @@ impl RMain {
             // Namespaces of future loaded packages will be populated on load.
             // (after r_task initialization)
             if do_resource_namespaces() {
-                if let Err(err) = resource_namespaces(None) {
+                if let Err(err) = resource_loaded_namespaces() {
                     log::error!("Can't populate srcrefs for loaded packages: {err:?}");
                 }
             }
