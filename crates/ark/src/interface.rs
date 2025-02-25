@@ -53,7 +53,6 @@ use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
-use crossbeam::select;
 use harp::command::r_command;
 use harp::command::r_home_setup;
 use harp::environment::r_ns_env;
@@ -103,6 +102,7 @@ use crate::lsp::main_loop::KernelNotification;
 use crate::lsp::main_loop::TokioUnboundedSender;
 use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
+use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
 use crate::r_task;
 use crate::r_task::BoxFuture;
@@ -443,7 +443,7 @@ impl RMain {
             }
 
             // Register all hooks once all modules have been imported
-            let hook_result = RFunction::from(".ps.register_all_hooks").call();
+            let hook_result = RFunction::from("register_hooks").call_in(ARK_ENVS.positron_ns);
             if let Err(err) = hook_result {
                 log::error!("Error registering some hooks: {err:?}");
             }
@@ -753,6 +753,32 @@ impl RMain {
             }
         }
 
+        let mut select = crossbeam::channel::Select::new();
+
+        // Cloning is necessary to avoid a double mutable borrow error
+        let r_request_rx = self.r_request_rx.clone();
+        let stdin_reply_rx = self.stdin_reply_rx.clone();
+        let kernel_request_rx = self.kernel_request_rx.clone();
+        let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
+        let tasks_idle_rx = self.tasks_idle_rx.clone();
+
+        let r_request_index = select.recv(&r_request_rx);
+        let stdin_reply_index = select.recv(&stdin_reply_rx);
+        let kernel_request_index = select.recv(&kernel_request_rx);
+        let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
+
+        // Don't process idle tasks in browser prompts. We currently don't want
+        // idle tasks (e.g. for srcref generation) to run when the call stack is
+        // empty. We could make this configurable though if needed, i.e. some
+        // idle tasks would be able to run in the browser. Those should be sent
+        // to a dedicated channel that would always be included in the set of
+        // recv channels.
+        let tasks_idle_index = if info.browser {
+            None
+        } else {
+            Some(select.recv(&tasks_idle_rx))
+        };
+
         loop {
             // If an interrupt was signaled and we are in a user
             // request prompt, e.g. `readline()`, we need to propagate
@@ -777,17 +803,31 @@ impl RMain {
             // to be handled in a blocking way to ensure subscribers are
             // notified before the next incoming message is processed.
 
-            // First handle execute requests outside of `select!` to ensure they
-            // have priority. `select!` chooses at random.
-            if let Ok(req) = self.r_request_rx.try_recv() {
+            // First handle execute requests outside of `select` to ensure they
+            // have priority. `select` chooses at random.
+            if let Ok(req) = r_request_rx.try_recv() {
                 if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
                     return input;
                 }
             }
 
-            select! {
-                // Wait for an execution request from the frontend.
-                recv(self.r_request_rx) -> req => {
+            let oper = select.select_timeout(Duration::from_millis(200));
+
+            let Ok(oper) = oper else {
+                // We hit a timeout. Process events because we need to
+                // pump the event loop while waiting for console input.
+                //
+                // Alternatively, we could try to figure out the file
+                // descriptors that R has open and select() on those for
+                // available data?
+                unsafe { Self::process_events() };
+                continue;
+            };
+
+            match oper.index() {
+                // We've got an execute request from the frontend
+                i if i == r_request_index => {
+                    let req = oper.recv(&r_request_rx);
                     let Ok(req) = req else {
                         // The channel is disconnected and empty
                         return ConsoleResult::Disconnected;
@@ -796,35 +836,33 @@ impl RMain {
                     if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
                         return input;
                     }
-                }
+                },
 
                 // We've got a reply for readline
-                recv(self.stdin_reply_rx) -> reply => {
-                    return self.handle_input_reply(reply.unwrap(), buf, buflen);
-                }
+                i if i == stdin_reply_index => {
+                    let reply = oper.recv(&stdin_reply_rx).unwrap();
+                    return self.handle_input_reply(reply, buf, buflen);
+                },
 
                 // We've got a kernel request
-                recv(self.kernel_request_rx) -> req => {
-                    self.handle_kernel_request(req.unwrap(), &info);
-                }
+                i if i == kernel_request_index => {
+                    let req = oper.recv(&kernel_request_rx).unwrap();
+                    self.handle_kernel_request(req, &info);
+                },
 
-                // A task woke us up, start next loop tick to yield to it
-                recv(self.tasks_interrupt_rx) -> task => {
-                    self.handle_task_interrupt(task.unwrap());
-                }
-                recv(self.tasks_idle_rx) -> task => {
-                    self.handle_task(task.unwrap());
-                }
+                // An interrupt task woke us up
+                i if i == tasks_interrupt_index => {
+                    let task = oper.recv(&tasks_interrupt_rx).unwrap();
+                    self.handle_task_interrupt(task);
+                },
 
-                // Wait with a timeout. Necessary because we need to
-                // pump the event loop while waiting for console input.
-                //
-                // Alternatively, we could try to figure out the file
-                // descriptors that R has open and select() on those for
-                // available data?
-                default(Duration::from_millis(200)) => {
-                    unsafe { Self::process_events() };
-                }
+                // An idle task woke us up
+                i if Some(i) == tasks_idle_index => {
+                    let task = oper.recv(&tasks_idle_rx).unwrap();
+                    self.handle_task(task);
+                },
+
+                i => log::error!("Unexpected index in Select: {i}"),
             }
         }
     }
@@ -2056,7 +2094,10 @@ fn do_resource_namespaces() -> bool {
     let opt: Option<bool> = r_null_or_try_into(harp::get_option("ark.resource_namespaces"))
         .ok()
         .flatten();
-    opt.unwrap_or(true)
+
+    // By default we don't eagerly resource namespaces to avoid increased memory usage.
+    // https://github.com/posit-dev/positron/issues/5050
+    opt.unwrap_or(false)
 }
 
 /// Are we auto-printing?

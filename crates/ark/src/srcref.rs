@@ -15,20 +15,31 @@ use crate::r_task;
 use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
-#[tracing::instrument(level = "trace")]
-pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
-    let loaded = RFunction::new("base", "loadedNamespaces").call()?;
-    let loaded: Vec<String> = loaded.try_into()?;
-
-    for pkg in loaded.into_iter() {
-        r_task::spawn_idle(|| async move {
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) fn resource_namespaces(pkgs: Vec<String>) -> anyhow::Result<()> {
+    // Generate only one task and loop inside it to preserve the order of `pkgs`
+    r_task::spawn_idle(|| async move {
+        for pkg in pkgs.into_iter() {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcrefs for `{pkg}`: {err:?}");
             }
-        });
-    }
+        }
+    });
 
     Ok(())
+}
+
+pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
+    let loaded = RFunction::new("base", "loadedNamespaces").call()?;
+    let loaded: Vec<String> = loaded.try_into()?;
+    resource_namespaces(loaded)
+}
+
+#[harp::register]
+unsafe extern "C" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
+    let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
+    resource_namespaces(pkgs)?;
+    Ok(harp::r_null())
 }
 
 #[harp::register]

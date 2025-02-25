@@ -44,3 +44,42 @@ reparse_with_srcref <- function(x, name, uri, line) {
 zap_srcref <- function(x) {
     .ps.Call("ark_zap_srcref", x)
 }
+
+new_ark_debug <- function(fn) {
+    # Signature of `debug()` and `debugonce()`:
+    # function(fun, text = "", condition = NULL, signature = NULL)
+
+    body(fn) <- bquote({
+        local({
+            if (!.ps.internal(do_resource_namespaces(default = TRUE))) {
+                return() # from local()
+            }
+
+            pkgs <- loadedNamespaces()
+
+            # Give priority to the namespace of the debugged function
+            env <- topenv(environment(fun))
+            if (isNamespace(env)) {
+                pkgs <- unique(c(getNamespaceName(env), pkgs))
+            }
+
+            # Enable namespace resourcing for all future loaded namespaces and
+            # resource already loaded namespaces so we get virtual documents for
+            # step-debugging.
+            options(ark.resource_namespaces = TRUE)
+            .ps.internal(resource_namespaces(pkgs))
+        })
+
+        .(body(fn))
+    })
+
+    fn
+}
+
+do_resource_namespaces <- function(default) {
+    getOption("ark.resource_namespaces", default = default)
+}
+
+resource_namespaces <- function(pkgs) {
+    .ps.Call("ps_resource_namespaces", pkgs)
+}

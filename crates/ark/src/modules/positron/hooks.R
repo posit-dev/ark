@@ -1,70 +1,66 @@
 #
 # hooks.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
-#' @export
-.ps.register_utils_hook <- function(name, hook, namespace = FALSE) {
-  if (namespace) {
-    hook_namespace <- hook
-  } else {
-    hook_namespace <- NULL
-  }
-
-  pkg_hook(
-    pkg = "utils",
-    name = name,
-    hook = hook,
-    hook_namespace = hook_namespace
-  )
+register_hooks <- function() {
+    rebind("utils", "View", .ps.view_data_frame, namespace = TRUE)
+    rebind("base", "debug", new_ark_debug(base::debug), namespace = TRUE)
+    rebind("base", "debugonce", new_ark_debug(base::debugonce), namespace = TRUE)
+    register_getHook_hook()
 }
 
-# Wrapper to contain the definition of all hooks we want to register
-#' @export
-.ps.register_all_hooks <- function() {
-  .ps.register_utils_hook("View", .ps.view_data_frame, namespace = TRUE)
-  register_getHook_hook()
+rebind <- function(pkg, name, value, namespace = FALSE) {
+    pkg_bind(
+        pkg = pkg,
+        name = name,
+        value = value
+    )
+
+    if (namespace) {
+        ns_bind(
+            pkg = pkg,
+            name = name,
+            value = value
+          )
+    }
 }
 
 #' Override a function within an attached package
 #'
 #' Assumes the package is attached, typically used for base packages like base or utils.
-#' - `hook` will replace the binding for unnamespaced calls.
-#' - `hook_namespace` will optionally also replace the binding for namespaced calls.
+#' - `pkg_bind()` replaces the binding in the package environment on the search
+#'   path for unnamespaced calls.
+#' - `ns_bind()` replaces the binding for namespaced calls.
 #'
 #' TODO: Will cause ark to fail to start if `option(defaultPackages = character())`
 #' or `R_DEFAULT_PACKAGES=NULL` are set! One idea is to register an `onAttach()`
 #' hook here and use that if the package is not loaded yet.
-pkg_hook <- function(pkg, name, hook, hook_namespace = NULL) {
-  env <- sprintf("package:%s", pkg)
-  env <- as.environment(env)
+pkg_bind <- function(pkg, name, value) {
+    env <- sprintf("package:%s", pkg)
+    env <- as.environment(env)
 
-  if (!exists(name, envir = env, mode = "function", inherits = FALSE)) {
-    msg <- sprintf("Can't register hook: function `%s::%s` not found.", pkg, name)
-    stop(msg, call. = FALSE)
-  }
-
-  # Replaces the unnamespaced, attached version of the function
-  hook_original <- env_bind_force(env, name, hook)
-
-  # If `hook_namespace` is provided, we try to replace the binding for `pkg::name` as well
-  if (is.null(hook_namespace)) {
-    hook_namespace_original <- NULL
-  } else {
-    ns <- asNamespace(pkg)
-    if (!exists(name, envir = ns, mode = "function", inherits = FALSE)) {
-      msg <- sprintf("Can't replace `%s` in the '%s' namespace.", name, pkg)
-      stop(msg, call. = FALSE)
+    if (!exists(name, envir = env, mode = "function", inherits = FALSE)) {
+        msg <- sprintf("Can't register hook: function `%s::%s` not found.", pkg, name)
+        stop(msg, call. = FALSE)
     }
-    hook_namespace_original <- env_bind_force(ns, name, hook_namespace)
-  }
 
-  invisible(list(
-    hook = hook_original,
-    hook_namespace = hook_namespace_original
-  ))
+    old <- env_bind_force(env, name, value)
+    invisible(old)
+}
+
+ns_bind <- function(pkg, name, value) {
+    ns <- asNamespace(pkg)
+
+    if (!exists(name, envir = ns, mode = "function", inherits = FALSE)) {
+        msg <- sprintf("Can't replace `%s` in the '%s' namespace.", name, pkg)
+        stop(msg, call. = FALSE)
+    }
+
+    old <- env_bind_force(ns, name, value)
+    invisible(old)
 }
 
 # R only allows `onLoad` hooks for named packages, not for any package that
