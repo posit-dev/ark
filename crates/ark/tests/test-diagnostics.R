@@ -1,4 +1,3 @@
-
 # A set of examples to test the ark diagnostics.
 
 # We should get warnings that 'apple' and 'banana' are not defined.
@@ -8,8 +7,8 @@ print(apple, banana)
 apple ~ banana
 
 # We should check names in subset calls.
-mtcars$cyl    # ok
-mtcars$oops   # 'oops' does not exist
+mtcars$cyl # ok
+mtcars$oops # 'oops' does not exist
 
 # We should diagnose incorrect argument names.
 stats::rnorm(oops = 42)
@@ -18,10 +17,10 @@ stats::rnorm(oops = 42)
 local({
     local_variable <- 42
 })
-local_variable   # should warn
+local_variable # should warn
 
 # Similarly for function definitions.
 (function() {
     local_variable_2 <- 42
 })()
-local_variable_2  # should warn
+local_variable_2 # should warn
