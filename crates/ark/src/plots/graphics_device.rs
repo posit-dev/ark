@@ -197,28 +197,31 @@ impl DeviceContext {
             channels.into_iter().collect::<Vec<_>>()
         };
 
-        // Check for incoming plot render requests.
+        // Dynamically load all channels into a single `Select`
         let mut select = Select::new();
         for (_id, channel) in channels.iter() {
             select.recv(&channel.incoming_rx);
         }
 
-        let selection = unwrap!(select.try_select(), Err(_error) => {
-            // We don't log errors here, since it's most likely that none
-            // of the channels have any messages available.
-            return;
-        });
+        // Check for incoming plot render requests.
+        // Totally possible to have >1 requests pending, especially if we've plotted
+        // multiple things in a single chunk of R code. The `Err` case is likely just
+        // that no channels have any messages, so we don't log in that case.
+        while let Ok(selection) = select.try_select() {
+            let plot_id = unsafe { &channels.get_unchecked(selection.index()).0 };
+            let socket = unsafe { &channels.get_unchecked(selection.index()).1 };
 
-        let plot_id = unsafe { &channels.get_unchecked(selection.index()).0 };
-        let socket = unsafe { &channels.get_unchecked(selection.index()).1 };
-        let message = unwrap!(selection.recv(&socket.incoming_rx), Err(error) => {
-            log::error!("{}", error);
-            return;
-        });
+            // Receive on the "selected" channel
+            let message = match selection.recv(&socket.incoming_rx) {
+                Ok(message) => message,
+                Err(error) => {
+                    log::error!("{error:?}");
+                    return;
+                },
+            };
 
-        // Get the RPC request.
-        if socket.handle_request(message, |req| self.handle_rpc(req, plot_id)) {
-            return;
+            // Handle the RPC request
+            socket.handle_request(message, |req| self.handle_rpc(req, plot_id));
         }
     }
 
