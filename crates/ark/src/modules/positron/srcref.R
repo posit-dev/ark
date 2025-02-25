@@ -46,7 +46,7 @@ zap_srcref <- function(x) {
 }
 
 new_ark_debug <- function(fn) {
-    # Signature of `debug()`:
+    # Signature of `debug()` and `debugonce()`:
     # function(fun, text = "", condition = NULL, signature = NULL)
 
     body(fn) <- bquote({

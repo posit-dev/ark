@@ -2095,7 +2095,7 @@ fn do_resource_namespaces() -> bool {
         .ok()
         .flatten();
 
-    // By default we don't resource namespaces to avoid increased memory usage.
+    // By default we don't eagerly resource namespaces to avoid increased memory usage.
     // https://github.com/posit-dev/positron/issues/5050
     opt.unwrap_or(false)
 }
