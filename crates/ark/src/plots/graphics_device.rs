@@ -284,14 +284,24 @@ impl DeviceContext {
             return;
         }
 
-        // Refcell Safety: Short borrows in the file.
-        let id = unwrap!(self._id.borrow().clone(), None => {
+        let id = unwrap!(self.id(), None => {
             log::error!("Unexpected uninitialized `id`.");
             return;
         });
 
-        let new_page = self._new_page.replace(false);
-        if new_page {
+        // Snapshot the changes so we can replay them when Positron asks us for them.
+        // Snapshotting here overrides an existing snapshot for `id` if something has
+        // changed between then and now, which is what we want, for example, we want
+        // it when running this line by line:
+        //
+        // ```r
+        // par(mfrow = c(2, 1))
+        // plot(1) # Should get snapshotted with `id1`
+        // plot(2) # Should snapshot and overwrite `id1` because no new_page has been requested
+        // ```
+        Self::snapshot(&id);
+
+        if self._new_page.replace(false) {
             self.process_new_plot(id.as_str());
         } else {
             self.process_update_plot(id.as_str());
@@ -472,6 +482,29 @@ impl DeviceContext {
 
         Ok(data)
     }
+
+    fn snapshot(id: &str) -> bool {
+        log::trace!("Graphics: Snapshotting plot with `id` {id}");
+        let result = RFunction::from(".ps.graphics.createSnapshot")
+            .param("id", id)
+            .call();
+
+        match result {
+            Ok(_) => {
+                log::trace!("Graphics: Snapshotted plot with `id` {id}");
+                true
+            },
+            Err(error) => {
+                log::error!("Graphics: Failed to snapshot plot with `id` {id}: {error:?}");
+                false
+            },
+        }
+    }
+
+    fn id(&self) -> Option<String> {
+        // Refcell Safety: Short borrows in the file.
+        self._id.borrow().clone()
+    }
 }
 
 // TODO: This macro needs to be updated every time we introduce support
@@ -639,26 +672,19 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
     })
 }
 
+// TODO!: Do we really need to snapshot on `before.new.page` if we have a `new_page` hook?
+// Add docs about this if so.
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::Result<SEXP> {
-    let id = unwrap!(DEVICE_CONTEXT.with_borrow(|cell| cell._id.borrow().clone()), None => {
-        log::trace!("No `id` to snapshot");
-        return Ok(Rf_ScalarLogical(0));
+    log::trace!("Graphics: ps_graphics_before_new_page");
+
+    let snapshotted = DEVICE_CONTEXT.with_borrow(|cell| match cell.id() {
+        Some(ref id) => DeviceContext::snapshot(id),
+        None => {
+            log::trace!("Graphics: No `id` to snapshot");
+            false
+        },
     });
 
-    log::trace!("Snapshotting plot with `id` {id}");
-    let result = RFunction::from(".ps.graphics.createSnapshot")
-        .param("id", id.as_str())
-        .call();
-
-    match result {
-        Ok(_) => {
-            log::trace!("Snapshotted plot with `id` {id}");
-            Ok(Rf_ScalarLogical(1))
-        },
-        Err(error) => {
-            log::error!("Failed to snapshot plot with `id` {id}: {error:?}");
-            Ok(Rf_ScalarLogical(0))
-        },
-    }
+    Ok(Rf_ScalarLogical(i32::from(snapshotted)))
 }
