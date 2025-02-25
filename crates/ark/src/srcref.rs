@@ -15,7 +15,7 @@ use crate::r_task;
 use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
-#[tracing::instrument(level = "trace")]
+#[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn resource_namespaces(pkgs: Option<Vec<String>>) -> anyhow::Result<()> {
     let pkgs = match pkgs {
         Some(inner) => inner,
