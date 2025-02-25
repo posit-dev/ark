@@ -67,7 +67,7 @@ new_ark_debug <- function(fn) {
             # resource already loaded namespaces so we get virtual documents for
             # step-debugging.
             options(ark.resource_namespaces = TRUE)
-            .ps.internal(resource_loaded_namespaces(pkgs))
+            .ps.internal(resource_namespaces(pkgs))
         })
 
         .(body(fn))
@@ -80,6 +80,6 @@ do_resource_namespaces <- function(default) {
     getOption("ark.resource_namespaces", default = default)
 }
 
-resource_loaded_namespaces <- function(pkgs) {
-    .ps.Call("ps_resource_loaded_namespaces", pkgs)
+resource_namespaces <- function(pkgs) {
+    .ps.Call("ps_resource_namespaces", pkgs)
 }

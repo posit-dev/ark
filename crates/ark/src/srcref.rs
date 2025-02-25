@@ -16,7 +16,7 @@ use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
 #[tracing::instrument(level = "trace")]
-pub(crate) fn resource_loaded_namespaces(pkgs: Option<Vec<String>>) -> anyhow::Result<()> {
+pub(crate) fn resource_namespaces(pkgs: Option<Vec<String>>) -> anyhow::Result<()> {
     let pkgs = match pkgs {
         Some(inner) => inner,
         None => {
@@ -39,9 +39,9 @@ pub(crate) fn resource_loaded_namespaces(pkgs: Option<Vec<String>>) -> anyhow::R
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_resource_loaded_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
     let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
-    resource_loaded_namespaces(Some(pkgs))?;
+    resource_namespaces(Some(pkgs))?;
     Ok(harp::r_null())
 }
 
