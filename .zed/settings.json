@@ -2,7 +2,10 @@
     "languages": {
         "R": {
             "hard_tabs": false,
-            "tab_size": 4
+            "tab_size": 4,
+            "format_on_save": "on",
+            "formatter": "language_server",
+            "language_servers": ["air"]
         }
     }
 }

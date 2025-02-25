@@ -76,7 +76,11 @@ init_test_format <- function() {
     .S3method("format", "test_unconforming_type", format.test_unconforming_type)
 
     format.test_unconforming_length <- function(x) as.character(x)[-1]
-    .S3method("format", "test_unconforming_length", format.test_unconforming_length)
+    .S3method(
+        "format",
+        "test_unconforming_length",
+        format.test_unconforming_length
+    )
 
     unconforming_dims <- matrix(1:4, 2)
     class(unconforming_dims) <- "test_unconforming_dims"

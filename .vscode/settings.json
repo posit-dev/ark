@@ -4,17 +4,18 @@
         "editor.formatOnSaveMode": "file",
         "editor.defaultFormatter": "rust-lang.rust-analyzer"
     },
-
+    "[r]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "Posit.air-vscode",
+    },
     "rust-analyzer.rustfmt.extraArgs": ["+nightly"],
     "rust-analyzer.imports.prefix": "crate",
     "rust-analyzer.imports.granularity.group": "item",
     "rust-analyzer.imports.granularity.enforce": true,
-
+    "rust-analyzer.showUnlinkedFileNotification": false,
     "rust-analyzer.check.extraArgs": [
         "--target-dir", "${workspaceFolder}/target/check"
     ],
-    "cmake.configureOnOpen": false,
-    "rust-analyzer.showUnlinkedFileNotification": false,
     "files.insertFinalNewline": true,
     "files.trimFinalNewlines": true,
     "files.trimTrailingWhitespace": true,

@@ -59,7 +59,10 @@ format_traceback <- function(traceback = list(), rust_like = FALSE) {
     prefixes <- format(prefixes, justify = "right")
 
     traceback <- mapply(prepend_prefix, traceback, prefixes, SIMPLIFY = FALSE)
-    traceback <- lapply(traceback, function(lines) paste0(lines, collapse = "\n"))
+    traceback <- lapply(
+        traceback,
+        function(lines) paste0(lines, collapse = "\n")
+    )
     traceback <- as.character(traceback)
 
     paste0(traceback, srcrefs)

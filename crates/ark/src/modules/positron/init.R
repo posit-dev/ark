@@ -144,12 +144,12 @@ env_unlock <- function(env) {
 }
 
 defer <- function(expr, envir = parent.frame(), after = FALSE) {
-  thunk <- as.call(list(function() expr))
-  do.call(
-    on.exit,
-    list(thunk, add = TRUE, after = after),
-    envir = envir
-  )
+    thunk <- as.call(list(function() expr))
+    do.call(
+        on.exit,
+        list(thunk, add = TRUE, after = after),
+        envir = envir
+    )
 }
 
 local_unlock <- function(env, frame = parent.frame()) {

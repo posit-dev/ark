@@ -1,6 +1,5 @@
 #' @export
 .rs.api.versionInfo <- function() {
-
     current_year <- format(Sys.Date(), "%Y")
     positron_citation <-
         utils::bibentry(
@@ -8,17 +7,16 @@
             title = "Positron: A next generation data science IDE",
             author = utils::person("Posit team"),
             organization = "Posit Software, PBC",
-            address      = "Boston, MA",
-            year         = current_year,
-            url          = "https://www.posit.co/",
-            textVersion =
-                paste(
-                    paste0("Posit team (", current_year, "). "),
-                    "Positron: A next generation data science IDE. ",
-                    "Posit Software, PBC, Boston, MA. ",
-                    "URL https://www.posit.co/.",
-                    sep = ""
-                ),
+            address = "Boston, MA",
+            year = current_year,
+            url = "https://www.posit.co/",
+            textVersion = paste(
+                paste0("Posit team (", current_year, "). "),
+                "Positron: A next generation data science IDE. ",
+                "Posit Software, PBC, Boston, MA. ",
+                "URL https://www.posit.co/.",
+                sep = ""
+            ),
             mheader = "To cite Positron in publications use:",
             mfooter = ""
         )

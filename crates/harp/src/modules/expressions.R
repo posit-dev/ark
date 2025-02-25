@@ -5,7 +5,12 @@
 #
 #
 
-expr_deparse_collapse <- function(expr, width.cutoff = 500L, nlines = -1L, collapse = " ") {
+expr_deparse_collapse <- function(
+    expr,
+    width.cutoff = 500L,
+    nlines = -1L,
+    collapse = " "
+) {
     # TODO: take inspiration from .rs.deparse() in rstudio
     deparsed <- deparse(
         expr,

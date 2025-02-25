@@ -1,14 +1,10 @@
 #' @export
-.rs.api.modifyRange <- function(location = NULL,
-                                text = NULL,
-                                id = NULL) {
+.rs.api.modifyRange <- function(location = NULL, text = NULL, id = NULL) {
     .rs.api.insertText(location, text, id)
 }
 
 #' @export
-.rs.api.insertText <- function(location = NULL,
-                               text = NULL,
-                               id = NULL) {
+.rs.api.insertText <- function(location = NULL, text = NULL, id = NULL) {
     # TODO: Support document IDs
     stopifnot(is.null(id))
 
@@ -104,7 +100,13 @@ selection_as_range <- function(ps_sel) {
 }
 
 #' @export
-.rs.api.documentNew <- function(type, code, row = 0, column = 0, execute = FALSE) {
+.rs.api.documentNew <- function(
+    type,
+    code,
+    row = 0,
+    column = 0,
+    execute = FALSE
+) {
     # TODO: Support execute and row/column
     stopifnot(!execute && !row && !column)
 
@@ -166,7 +168,10 @@ asRangeList <- function(location) {
 
         # validate we have a range-like object
         if (length(el) != 4 || !is.numeric(el) || any(is.na(el))) {
-            stop("'ranges' should be a list of 4-element integer vectors", call. = FALSE)
+            stop(
+                "'ranges' should be a list of 4-element integer vectors",
+                call. = FALSE
+            )
         }
 
         # transform out-of-bounds values appropriately

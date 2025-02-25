@@ -23,42 +23,50 @@
 
 #' @export
 .ps.connection_observer <- function() {
-
     connections <- new.env(parent = emptyenv())
 
-    connectionOpened <- function (type, host, displayName, icon = NULL,
-        connectCode, disconnect, listObjectTypes, listObjects,
-        listColumns, previewObject, connectionObject,
-        actions = NULL) {
-
-            # check if the connection is already opened.
-            # here's how this is done in RStudio:
-            # https://github.com/rstudio/rstudio/blob/2344a0bf04657a13c36053eb04bcc47616a623dc/src/cpp/session/modules/SessionConnections.R#L48-L59ß
-            for (id in ls(envir = connections)) {
-                con <- get(id, envir = connections)
-                if (identical(con$host, host) && identical(con$type, type)) {
-                    return(invisible(id))
-                }
+    connectionOpened <- function(
+        type,
+        host,
+        displayName,
+        icon = NULL,
+        connectCode,
+        disconnect,
+        listObjectTypes,
+        listObjects,
+        listColumns,
+        previewObject,
+        connectionObject,
+        actions = NULL
+    ) {
+        # check if the connection is already opened.
+        # here's how this is done in RStudio:
+        # https://github.com/rstudio/rstudio/blob/2344a0bf04657a13c36053eb04bcc47616a623dc/src/cpp/session/modules/SessionConnections.R#L48-L59ß
+        for (id in ls(envir = connections)) {
+            con <- get(id, envir = connections)
+            if (identical(con$host, host) && identical(con$type, type)) {
+                return(invisible(id))
             }
+        }
 
-            id <- .ps.connection_opened(displayName, host, type, connectCode)
-            connections[[id]] <- list(
-                type = type,
-                host = host,
-                displayName = displayName,
-                icon = icon,
-                connectCode = connectCode,
-                disconnect = disconnect,
-                listObjectTypes = listObjectTypes,
-                listObjects = listObjects,
-                listColumns = listColumns,
-                previewObject = previewObject,
-                connectionObject = connectionObject,
-                actions = actions,
-                # objectTypes are computed only once when creating the connection and are assumed to be static
-                # until the end of the connection.
-                objectTypes = connection_flatten_object_types(listObjectTypes())
-            )
+        id <- .ps.connection_opened(displayName, host, type, connectCode)
+        connections[[id]] <- list(
+            type = type,
+            host = host,
+            displayName = displayName,
+            icon = icon,
+            connectCode = connectCode,
+            disconnect = disconnect,
+            listObjectTypes = listObjectTypes,
+            listObjects = listObjects,
+            listColumns = listColumns,
+            previewObject = previewObject,
+            connectionObject = connectionObject,
+            actions = actions,
+            # objectTypes are computed only once when creating the connection and are assumed to be static
+            # until the end of the connection.
+            objectTypes = connection_flatten_object_types(listObjectTypes())
+        )
         invisible(id)
     }
 
@@ -107,7 +115,9 @@ connection_flatten_object_types <- function(object_tree) {
 
         object_tree <- object_tree[-1]
         if (!is.null(object$contains) && !identical(object$contains, "data")) {
-            contains <- object$contains[!names(object$contains) %in% names(object_types)]
+            contains <- object$contains[
+                !names(object$contains) %in% names(object_types)
+            ]
             object_tree <- c(contains, object_tree)
         }
     }
@@ -150,8 +160,8 @@ connection_flatten_object_types <- function(object_tree) {
 .ps.connection_close <- function(id, ...) {
     con <- getOption("connectionObserver")$.connections[[id]]
     if (is.null(con)) {
-         # this value is used to determine if we should send a close msg to the frontend
-         # ie. closing the connection was an action from the R console, not from the frontend
+        # this value is used to determine if we should send a close msg to the frontend
+        # ie. closing the connection was an action from the R console, not from the frontend
         return(FALSE)
     }
     # disconnect is resposible for calling connectionClosed that

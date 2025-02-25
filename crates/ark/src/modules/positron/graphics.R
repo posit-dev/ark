@@ -26,7 +26,7 @@ default_device_type <- function() {
     }
 }
 
-renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
+renderWithPlotDevice <- function(filepath, format, width, height, res, type) {
     # width and height are in inches and use 72 DPI to create the requested size in pixels
     dpi <- 72
 
@@ -35,15 +35,15 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
         format,
         "png" = grDevices::png(
             filename = filepath,
-            width    = width,
-            height   = height,
-            res      = res,
-            type     = type
+            width = width,
+            height = height,
+            res = res,
+            type = type
         ),
         "svg" = grDevices::svg(
             filename = filepath,
-            width    = (width / dpi),
-            height   = (height / dpi),
+            width = (width / dpi),
+            height = (height / dpi),
         ),
         "pdf" = grDevices::pdf(
             file = filepath,
@@ -52,23 +52,27 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
         ),
         "jpeg" = grDevices::jpeg(
             filename = filepath,
-            width    = width,
-            height   = height,
-            res      = res,
-            type     = type
+            width = width,
+            height = height,
+            res = res,
+            type = type
         ),
         "tiff" = grDevices::tiff(
             filename = filepath,
-            width    = width,
-            height   = height,
-            type     = type
+            width = width,
+            height = height,
+            type = type
         ),
         stop("Internal error: Unknown plot `format`.")
     )
 }
 
 #' @export
-.ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") 96L else 72L
+.ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
+    96L
+} else {
+    72L
+}
 
 #' @export
 .ps.graphics.plotSnapshotRoot <- function(...) {
@@ -91,7 +95,6 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
 
 #' @export
 .ps.graphics.createDevice <- function(name, type, res) {
-
     # Get path where plots will be generated.
     plotsPath <- .ps.graphics.plotSnapshotRoot("current-plot.png")
     ensure_parent_directory(plotsPath)
@@ -139,7 +142,6 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
 # to re-render plots as necessary.
 #' @export
 .ps.graphics.createSnapshot <- function(id) {
-
     # Flush any pending plot actions.
     grDevices::dev.set(grDevices::dev.cur())
     grDevices::dev.flush()
@@ -159,18 +161,23 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
 
 #' @export
 .ps.graphics.renderPlot <- function(id, width, height, dpr, format) {
-
     # If we have an existing snapshot, render from that file.
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
-    if (file.exists(snapshotPath))
+    if (file.exists(snapshotPath)) {
         .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr, format)
-    else
+    } else {
         .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr, format)
+    }
 }
 
 #' @export
-.ps.graphics.renderPlotFromSnapshot <- function(id, width, height, dpr, format) {
-
+.ps.graphics.renderPlotFromSnapshot <- function(
+    id,
+    width,
+    height,
+    dpr,
+    format
+) {
     # Get path to snapshot file + output path.
     outputPath <- .ps.graphics.plotOutputPath(id)
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
@@ -195,12 +202,16 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
 
     # Return path to generated plot file.
     invisible(outputPath)
-
 }
 
 #' @export
-.ps.graphics.renderPlotFromCurrentDevice <- function(id, width, height, dpr, format) {
-
+.ps.graphics.renderPlotFromCurrentDevice <- function(
+    id,
+    width,
+    height,
+    dpr,
+    format
+) {
     # Try and force the graphics device to sync changes.
     grDevices::dev.set(grDevices::dev.cur())
     grDevices::dev.flush()
@@ -226,5 +237,4 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type ) {
 
     # Return path to the generated file.
     invisible(filepath)
-
 }

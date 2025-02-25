@@ -115,12 +115,14 @@
 # Unlike rlang we don't make an exception for non-interactive sessions
 # since Ark is meant to be run interactively.
 default_message_file <- function() {
-  if (sink.number("output") == 0 &&
-      sink.number("message") == 2) {
-    stdout()
-  } else {
-    stderr()
-  }
+    if (
+        sink.number("output") == 0 &&
+            sink.number("message") == 2
+    ) {
+        stdout()
+    } else {
+        stderr()
+    }
 }
 
 handle_error_base <- function(cnd) {

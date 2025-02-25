@@ -30,11 +30,7 @@
 
     # Pass the widget to the viewer. Positron will assemble the final HTML
     # document from these components.
-    .ps.Call("ps_html_viewer",
-        tmp_file,
-        label,
-        height,
-        is_plot)
+    .ps.Call("ps_html_viewer", tmp_file, label, height, is_plot)
 }
 
 #' @export
@@ -53,14 +49,22 @@
 
 # When the htmlwidgets package is loaded, inject/overlay our print method.
 loadEvent <- packageEvent("htmlwidgets", "onLoad")
-setHook(loadEvent, function(...) {
-   .ps.viewer.addOverrides()
-}, action = "append")
+setHook(
+    loadEvent,
+    function(...) {
+        .ps.viewer.addOverrides()
+    },
+    action = "append"
+)
 
 unloadEvent <- packageEvent("htmlwidgets", "onUnload")
-setHook(unloadEvent, function(...) {
-   .ps.viewer.removeOverrides()
-}, action = "append")
+setHook(
+    unloadEvent,
+    function(...) {
+        .ps.viewer.removeOverrides()
+    },
+    action = "append"
+)
 
 # Validate the height argument for the viewer function; returns an
 # integer or stops with an error.
@@ -68,11 +72,12 @@ setHook(unloadEvent, function(...) {
     if (identical(height, "maximize"))
         # The height of the viewer pane is set to -1 to maximize it.
         height <- -1L
-    if (!is.null(height) && (!is.numeric(height) || (length(height) !=
-        1)))
-        stop("Invalid height: ",
+    if (!is.null(height) && (!is.numeric(height) || (length(height) != 1)))
+        stop(
+            "Invalid height: ",
             height,
-            "Must be a single element numeric vector or 'maximize'.")
+            "Must be a single element numeric vector or 'maximize'."
+        )
     if (is.null(height)) {
         # The height of the viewer pane is set to 0 to signal that
         # no specific height is requested.
