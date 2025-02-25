@@ -81,7 +81,7 @@ pub const ParseStatus_PARSE_INCOMPLETE: ParseStatus = 2;
 pub const ParseStatus_PARSE_ERROR: ParseStatus = 3;
 pub const ParseStatus_PARSE_EOF: ParseStatus = 4;
 
-pub type DL_FUNC = Option<unsafe extern "C" fn() -> *mut std::ffi::c_void>;
+pub type DL_FUNC = Option<unsafe extern "C-unwind" fn() -> *mut std::ffi::c_void>;
 pub type R_NativePrimitiveArgType = std::ffi::c_uint;
 
 #[repr(C)]

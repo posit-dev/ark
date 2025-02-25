@@ -1989,7 +1989,7 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
 // global `RMain` singleton.
 
 #[no_mangle]
-pub extern "C" fn r_read_console(
+pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
@@ -2034,30 +2034,30 @@ fn new_cstring(x: String) -> CString {
 }
 
 #[no_mangle]
-pub extern "C" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
+pub extern "C-unwind" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     RMain::write_console(buf, buflen, otype);
 }
 
 #[no_mangle]
-pub extern "C" fn r_show_message(buf: *const c_char) {
+pub extern "C-unwind" fn r_show_message(buf: *const c_char) {
     let main = RMain::get();
     main.show_message(buf);
 }
 
 #[no_mangle]
-pub extern "C" fn r_busy(which: i32) {
+pub extern "C-unwind" fn r_busy(which: i32) {
     let main = RMain::get_mut();
     main.busy(which);
 }
 
 #[no_mangle]
-pub extern "C" fn r_suicide(buf: *const c_char) {
+pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
     let msg = unsafe { CStr::from_ptr(buf) };
     panic!("Suicide: {}", msg.to_str().unwrap());
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn r_polled_events() {
+pub unsafe extern "C-unwind" fn r_polled_events() {
     let main = RMain::get_mut();
     main.polled_events();
 }
@@ -2065,7 +2065,7 @@ pub unsafe extern "C" fn r_polled_events() {
 // This hook is called like a user onLoad hook but for every package to be
 // loaded in the session
 #[harp::register]
-unsafe extern "C" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Result<SEXP> {
     // NOTE: `_path` might be NULL for a compat reason, see comments on the R side
 
     let pkg: String = RObject::view(pkg).try_into()?;

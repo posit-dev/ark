@@ -19,7 +19,7 @@ macro_rules! generate {
         $(
             paste::paste! {
                 $(#[cfg($cfg)])*
-                static mut [<$name _opt>]: Option<unsafe extern "C" fn ($($pty), *, ...) $(-> $ret)*> = None;
+                static mut [<$name _opt>]: Option<unsafe extern "C-unwind" fn ($($pty), *, ...) $(-> $ret)*> = None;
             }
         )+
 

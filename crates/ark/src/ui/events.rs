@@ -20,7 +20,7 @@ use libr::SEXP;
 use crate::interface::RMain;
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEXP> {
     let params = ShowMessageParams {
         message: RObject::view(message).try_into()?,
     };
@@ -37,7 +37,7 @@ pub unsafe extern "C" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEX
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_open_workspace(
+pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
     path: SEXP,
     new_window: SEXP,
 ) -> anyhow::Result<SEXP> {
@@ -58,7 +58,7 @@ pub unsafe extern "C" fn ps_ui_open_workspace(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_navigate_to_file(
+pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
     file: SEXP,
     _line: SEXP,
     _column: SEXP,
@@ -81,7 +81,7 @@ pub unsafe extern "C" fn ps_ui_navigate_to_file(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Result<SEXP> {
     let selections = ps_ui_robj_as_ranges(ranges)?;
     let params = SetEditorSelectionsParams { selections };
 
@@ -97,7 +97,7 @@ pub unsafe extern "C" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyhow::Res
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
     let params = ShowUrlParams {
         url: RObject::view(url).try_into()?,
     };

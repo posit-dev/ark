@@ -106,7 +106,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Get metadata about the function being registered.
     let mut function: syn::ItemFn = syn::parse(item).unwrap();
 
-    // Make sure the function is 'extern "C"'.
+    // Make sure the function is 'extern "C-unwind"'.
     let abi = match function.sig.abi {
         Some(ref abi) => abi,
         None => invalid_extern(function.sig),
@@ -118,7 +118,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let name = name.to_token_stream().to_string();
-    if name != "\"C\"" {
+    if name != "\"C-unwind\"" {
         invalid_extern(function.sig);
     }
 

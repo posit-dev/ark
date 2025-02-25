@@ -180,12 +180,12 @@ fn get_user_home() -> String {
 }
 
 #[no_mangle]
-extern "C" fn r_callback() {
+extern "C-unwind" fn r_callback() {
     // Do nothing!
 }
 
 #[no_mangle]
-extern "C" fn r_yes_no_cancel(question: *const c_char) -> c_int {
+extern "C-unwind" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     // This seems to only be used on Windows during R's default `CleanUp` when
     // `SA_SAVEASK` is used. We should replace `Cleanup` with our own version
     // that resolves `SA_SAVEASK`, changes `saveact` to the resolved value,

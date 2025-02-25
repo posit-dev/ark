@@ -85,7 +85,7 @@ impl ReticulateService {
 // Further actions that reticulate can ask the front-end can be requested through
 // the comm_id that is returned by this function.
 #[harp::register]
-pub unsafe extern "C" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
+pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
     let main = RMain::get();
 
     let input: RObject = input.try_into()?;

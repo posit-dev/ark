@@ -147,7 +147,7 @@ pub struct structRstart {
     #[doc = "HOME"]
     pub home: *mut ::std::os::raw::c_char,
     pub ReadConsole: ::std::option::Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             arg1: *const ::std::os::raw::c_char,
             arg2: *mut ::std::os::raw::c_uchar,
             arg3: ::std::os::raw::c_int,
@@ -155,21 +155,24 @@ pub struct structRstart {
         ) -> ::std::os::raw::c_int,
     >,
     pub WriteConsole: ::std::option::Option<
-        unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char, arg2: ::std::os::raw::c_int),
+        unsafe extern "C-unwind" fn(
+            arg1: *const ::std::os::raw::c_char,
+            arg2: ::std::os::raw::c_int,
+        ),
     >,
     #[doc = "ProcessEvents under Unix"]
-    pub CallBack: ::std::option::Option<unsafe extern "C" fn()>,
+    pub CallBack: ::std::option::Option<unsafe extern "C-unwind" fn()>,
     pub ShowMessage:
-        ::std::option::Option<unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char)>,
+        ::std::option::Option<unsafe extern "C-unwind" fn(arg1: *const ::std::os::raw::c_char)>,
     pub YesNoCancel: ::std::option::Option<
-        unsafe extern "C" fn(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int,
+        unsafe extern "C-unwind" fn(arg1: *const ::std::os::raw::c_char) -> ::std::os::raw::c_int,
     >,
     #[doc = "Return value here is expected to be 1 for Yes, -1 for No and\n0 for Cancel: symbolic constants in graphapp.h"]
-    pub Busy: ::std::option::Option<unsafe extern "C" fn(arg1: ::std::os::raw::c_int)>,
+    pub Busy: ::std::option::Option<unsafe extern "C-unwind" fn(arg1: ::std::os::raw::c_int)>,
     pub CharacterMode: UImode,
     #[doc = "The following field has been added in R 2.5.0"]
     pub WriteConsoleEx: ::std::option::Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             arg1: *const ::std::os::raw::c_char,
             arg2: ::std::os::raw::c_int,
             arg3: ::std::os::raw::c_int,
@@ -179,16 +182,17 @@ pub struct structRstart {
     pub EmitEmbeddedUTF8: Rboolean,
     #[doc = "The following fields have been added in R 4.2.0 and are only\navailable with RstarVersion 1."]
     pub CleanUp: ::std::option::Option<
-        unsafe extern "C" fn(
+        unsafe extern "C-unwind" fn(
             arg1: SA_TYPE,
             arg2: ::std::os::raw::c_int,
             arg3: ::std::os::raw::c_int,
         ),
     >,
-    pub ClearerrConsole: ::std::option::Option<unsafe extern "C" fn()>,
-    pub FlushConsole: ::std::option::Option<unsafe extern "C" fn()>,
-    pub ResetConsole: ::std::option::Option<unsafe extern "C" fn()>,
-    pub Suicide: ::std::option::Option<unsafe extern "C" fn(s: *const ::std::os::raw::c_char)>,
+    pub ClearerrConsole: ::std::option::Option<unsafe extern "C-unwind" fn()>,
+    pub FlushConsole: ::std::option::Option<unsafe extern "C-unwind" fn()>,
+    pub ResetConsole: ::std::option::Option<unsafe extern "C-unwind" fn()>,
+    pub Suicide:
+        ::std::option::Option<unsafe extern "C-unwind" fn(s: *const ::std::os::raw::c_char)>,
 }
 impl structRstart {
     #[inline]

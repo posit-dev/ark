@@ -262,7 +262,7 @@ unsafe impl Send for REnvs {}
 unsafe impl Sync for REnvs {}
 
 #[harp::register]
-pub extern "C" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
+pub extern "C-unwind" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
     unsafe {
         crate::check_env(env)?;
         Environment::view(env).unlock();

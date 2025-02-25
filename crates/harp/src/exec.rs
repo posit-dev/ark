@@ -186,7 +186,7 @@ where
     };
     let payload = &mut callback_data as *mut _ as *mut c_void;
 
-    extern "C" fn callback<'env, F, T>(payload: *mut c_void) -> SEXP
+    extern "C-unwind" fn callback<'env, F, T>(payload: *mut c_void) -> SEXP
     where
         F: FnOnce() -> T,
         F: 'env,
@@ -202,7 +202,7 @@ where
         harp::r_null()
     }
 
-    extern "C" fn handler<'env, F, T>(err: SEXP, payload: *mut c_void) -> SEXP
+    extern "C-unwind" fn handler<'env, F, T>(err: SEXP, payload: *mut c_void) -> SEXP
     where
         F: FnOnce() -> T,
         F: 'env,
@@ -328,7 +328,7 @@ where
     };
     let payload = &mut callback_data as *mut _ as *mut c_void;
 
-    extern "C" fn callback<'env, F, T>(args: *mut c_void)
+    extern "C-unwind" fn callback<'env, F, T>(args: *mut c_void)
     where
         F: FnOnce() -> T,
         F: 'env,

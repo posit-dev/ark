@@ -22,7 +22,7 @@
 // and set this up now.
 pub use crate::sys::traps::register_trap_handlers;
 
-pub extern "C" fn backtrace_handler(signum: libc::c_int) {
+pub extern "C-unwind" fn backtrace_handler(signum: libc::c_int) {
     // Prevent infloop into the handler
     unsafe {
         libc::signal(signum, libc::SIG_DFL);

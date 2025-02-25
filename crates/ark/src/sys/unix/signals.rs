@@ -64,6 +64,13 @@ pub fn set_interrupts_pending(pending: bool) {
     }
 }
 
+/// Unix interrupt handler
+///
+/// # Safety
+///
+/// Note that this can't be `"C-unwind"` because [SigHandler::Handler] takes a `"C"`
+/// function, so make absolute sure that the contents of this function can't Rust panic or
+/// C longjmp.
 pub extern "C" fn handle_interrupt(_signal: libc::c_int) {
     set_interrupts_pending(true);
 }

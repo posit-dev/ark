@@ -43,7 +43,7 @@ unsafe extern "C" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> 
 }
 
 #[harp::register]
-unsafe extern "C" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
     let ns_name: String = RObject::view(ns_name).try_into()?;
     futures::executor::block_on(ns_populate_srcref(ns_name))?;
     Ok(harp::r_null())
@@ -194,6 +194,6 @@ fn generate_source(
 }
 
 #[harp::register]
-pub extern "C" fn ark_zap_srcref(x: SEXP) -> anyhow::Result<SEXP> {
+pub extern "C-unwind" fn ark_zap_srcref(x: SEXP) -> anyhow::Result<SEXP> {
     Ok(harp::attrib::zap_srcref(x).sexp)
 }

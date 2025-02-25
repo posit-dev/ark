@@ -22,14 +22,14 @@ use crate::interface::RMain;
 use crate::ui::events::ps_ui_robj_as_ranges;
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
     Ok(out.sexp)
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_modify_editor_selections(
+pub unsafe extern "C-unwind" fn ps_ui_modify_editor_selections(
     ranges: SEXP,
     values: SEXP,
 ) -> anyhow::Result<SEXP> {
@@ -48,14 +48,17 @@ pub unsafe extern "C" fn ps_ui_modify_editor_selections(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_workspace_folder() -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_workspace_folder() -> anyhow::Result<SEXP> {
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::WorkspaceFolder)?;
     Ok(out.sexp)
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_show_dialog(title: SEXP, message: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_show_dialog(
+    title: SEXP,
+    message: SEXP,
+) -> anyhow::Result<SEXP> {
     let params = ShowDialogParams {
         title: RObject::view(title).try_into()?,
         message: RObject::view(message).try_into()?,
@@ -67,7 +70,7 @@ pub unsafe extern "C" fn ps_ui_show_dialog(title: SEXP, message: SEXP) -> anyhow
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_show_question(
+pub unsafe extern "C-unwind" fn ps_ui_show_question(
     title: SEXP,
     message: SEXP,
     ok_button_title: SEXP,
@@ -94,7 +97,7 @@ pub unsafe extern "C" fn ps_ui_show_question(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_new_document(
+pub unsafe extern "C-unwind" fn ps_ui_new_document(
     contents: SEXP,
     language_id: SEXP,
 ) -> anyhow::Result<SEXP> {
@@ -109,7 +112,7 @@ pub unsafe extern "C" fn ps_ui_new_document(
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<SEXP> {
     let params = ExecuteCommandParams {
         command: RObject::view(command).try_into()?,
     };
@@ -120,7 +123,10 @@ pub unsafe extern "C" fn ps_ui_execute_command(command: SEXP) -> anyhow::Result<
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_execute_code(code: SEXP, focus: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_execute_code(
+    code: SEXP,
+    focus: SEXP,
+) -> anyhow::Result<SEXP> {
     let params = ExecuteCodeParams {
         language_id: String::from("r"),
         code: RObject::view(code).try_into()?,
@@ -134,7 +140,9 @@ pub unsafe extern "C" fn ps_ui_execute_code(code: SEXP, focus: SEXP) -> anyhow::
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_evaluate_when_clause(when_clause: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_evaluate_when_clause(
+    when_clause: SEXP,
+) -> anyhow::Result<SEXP> {
     let params = EvaluateWhenClauseParams {
         when_clause: RObject::view(when_clause).try_into()?,
     };
@@ -145,7 +153,7 @@ pub unsafe extern "C" fn ps_ui_evaluate_when_clause(when_clause: SEXP) -> anyhow
 }
 
 #[harp::register]
-pub unsafe extern "C" fn ps_ui_debug_sleep(ms: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_ui_debug_sleep(ms: SEXP) -> anyhow::Result<SEXP> {
     let params = DebugSleepParams {
         ms: RObject::view(ms).try_into()?,
     };

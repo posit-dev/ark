@@ -50,7 +50,7 @@ static RE_SYNTACTIC_IDENTIFIER: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$").unwrap());
 
 #[harp::register]
-pub extern "C" fn harp_log_trace(msg: SEXP) -> crate::error::Result<SEXP> {
+pub extern "C-unwind" fn harp_log_trace(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::trace!("{msg}");
 
@@ -58,7 +58,7 @@ pub extern "C" fn harp_log_trace(msg: SEXP) -> crate::error::Result<SEXP> {
 }
 
 #[harp::register]
-pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
+pub extern "C-unwind" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::warn!("{msg}");
 
@@ -66,7 +66,7 @@ pub extern "C" fn harp_log_warning(msg: SEXP) -> crate::error::Result<SEXP> {
 }
 
 #[harp::register]
-pub extern "C" fn harp_log_error(msg: SEXP) -> crate::error::Result<SEXP> {
+pub extern "C-unwind" fn harp_log_error(msg: SEXP) -> crate::error::Result<SEXP> {
     let msg = String::try_from(RObject::view(msg))?;
     log::error!("{msg}");
 
