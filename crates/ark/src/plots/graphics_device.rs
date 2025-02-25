@@ -612,7 +612,8 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Allow customization of the graphics device here?
 
     // TODO: Infer appropriate resolution based on whether display is high DPI.
-    let res = 144;
+    // TODO!: Need this resolution to get inferred correctly now.
+    let res = 144 / 2;
 
     // TODO: allow customization of device type.
     let r#type = RObject::null();
