@@ -7,11 +7,11 @@
 
 # Set up plot hooks.
 setHook("before.plot.new", action = "replace", function(...) {
-    .ps.Call("ps_graphics_event", "before.plot.new")
+    .ps.Call("ps_graphics_before_new_page", "before.plot.new")
 })
 
 setHook("before.grid.newpage", action = "replace", function(...) {
-    .ps.Call("ps_graphics_event", "before.grid.newpage")
+    .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
 })
 
 default_device_type <- function() {

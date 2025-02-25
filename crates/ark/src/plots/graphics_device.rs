@@ -161,6 +161,10 @@ impl DeviceContext {
     }
 
     fn new_page(&self, _dd: pGEcontext, _dev: pDevDesc) {
+        // Process changes related to the last plot.
+        // Particularly important if we make multiple plots in a single chunk.
+        self.process_changes();
+
         // Create a new id for this new plot page and note that this is a new page
         let id = Uuid::new_v4().to_string();
         self._id.replace(Some(id));
@@ -168,8 +172,9 @@ impl DeviceContext {
     }
 
     fn on_did_execute_request(&self) {
-        // After R code has completed execution, we use this to check if any graphics
-        // need to be created
+        // Process changes related to the last code execution block.
+        // This runs after the code block has finished, processing the current
+        // state of the most recent page.
         self.process_changes();
     }
 
@@ -295,7 +300,7 @@ impl DeviceContext {
 
         let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);
         if let Err(error) = self.comm_manager_tx.send(event) {
-            log::error!("{}", error);
+            log::error!("{error:?}");
         }
 
         // Save our new socket.
@@ -603,26 +608,32 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
-    ps_graphics_device_impl().or_else(|err| {
-        log::error!("{}", err);
+    ps_graphics_device_impl().or_else(|error| {
+        log::error!("{error:?}");
         Ok(R_NilValue)
     })
 }
 
 #[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_event(_name: SEXP) -> anyhow::Result<SEXP> {
+unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::Result<SEXP> {
     let id = unwrap!(DEVICE_CONTEXT.with_borrow(|cell| cell._id.borrow().clone()), None => {
+        log::trace!("No `id` to snapshot");
         return Ok(Rf_ScalarLogical(0));
     });
 
+    log::trace!("Snapshotting plot with `id` {id}");
     let result = RFunction::from(".ps.graphics.createSnapshot")
-        .param("id", id)
+        .param("id", id.as_str())
         .call();
 
-    if let Err(error) = result {
-        log::error!("{}", error);
-        return Ok(Rf_ScalarLogical(0));
+    match result {
+        Ok(_) => {
+            log::trace!("Snapshotted plot with `id` {id}");
+            Ok(Rf_ScalarLogical(1))
+        },
+        Err(error) => {
+            log::error!("Failed to snapshot plot with `id` {id}: {error:?}");
+            Ok(Rf_ScalarLogical(0))
+        },
     }
-
-    Ok(Rf_ScalarLogical(1))
 }
