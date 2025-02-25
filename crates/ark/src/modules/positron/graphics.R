@@ -159,6 +159,10 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type) {
     snapshotPath
 }
 
+# TODO!: We should remove the `renderPlotFromCurrentDevice` path if possible
+# in favor of just snapshotting all the time and relying on that to capture
+# plots, and then we just replay them when Positron asks us to
+
 #' @export
 .ps.graphics.renderPlot <- function(id, width, height, dpr, format) {
     # If we have an existing snapshot, render from that file.
