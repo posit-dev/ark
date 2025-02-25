@@ -1,0 +1,3 @@
+[format]
+indent-width = 4
+exclude = ["crates/ark/src/lsp/snapshots/indent.R"]
