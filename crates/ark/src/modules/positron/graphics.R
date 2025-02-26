@@ -34,6 +34,9 @@ replayPlotWithDevice <- function(
     res,
     type
 ) {
+    # Store handle to current device (i.e. us)
+    old_dev <- grDevices::dev.cur()
+
     # Width and height are in inches and use 72 DPI to create the requested
     # size in pixels
     dpi <- 72
@@ -74,12 +77,18 @@ replayPlotWithDevice <- function(
         stop("Internal error: Unknown plot `format`.")
     )
 
+    # Ensure we turn off the device on the way out, this:
+    # - Commits the plot to disk
+    # - Resets us back as being the current device
+    on.exit(utils::capture.output({
+        grDevices::dev.off()
+        if (old_dev > 1) {
+            grDevices::dev.set(old_dev)
+        }
+    }))
+
     # Replay the plot under this device.
     suppressWarnings(grDevices::replayPlot(plot))
-
-    # Turn off the device (commits the plot to disk, and moves us back to
-    # being the current device).
-    grDevices::dev.off()
 }
 
 #' @export
