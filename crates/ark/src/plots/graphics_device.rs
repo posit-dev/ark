@@ -1,29 +1,11 @@
 //
 // graphics_device.rs
 //
-// Copyright (C) 2022-2024 by Posit Software, PBC
+// Copyright (C) 2022-2025 by Posit Software, PBC
 //
 
 use std::cell::Cell;
 use std::cell::RefCell;
-///
-/// The Positron Graphics Device.
-///
-/// Rather than implement a separate graphics device, Positron
-/// allows the user to select their own graphics device, and
-/// then monkey-patches it in a way that allows us to hook into
-/// the various graphics events.
-///
-/// This approach is similar in spirit to the RStudio approach,
-/// but is vastly simpler as we no longer need to implement and
-/// synchronize two separate graphics devices.
-///
-/// See also:
-///
-/// https://github.com/wch/r-source/blob/trunk/src/include/R_ext/GraphicsDevice.h
-/// https://github.com/wch/r-source/blob/trunk/src/include/R_ext/GraphicsEngine.h
-/// https://github.com/rstudio/rstudio/blob/main/src/cpp/r/session/graphics/RGraphicsDevice.cpp
-///
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
