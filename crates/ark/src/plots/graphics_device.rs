@@ -53,7 +53,6 @@ use harp::object::RObject;
 use libr::pDevDesc;
 use libr::pGEcontext;
 use libr::R_NilValue;
-use libr::Rf_ScalarLogical;
 use libr::SEXP;
 use serde_json::json;
 use stdext::result::ResultOrLog;
@@ -161,19 +160,37 @@ impl DeviceContext {
         self._changes.replace(old || mode != 0);
     }
 
-    fn new_page(&self, _dd: pGEcontext, _dev: pDevDesc) {
+    /// Hook applied when starting a new page
+    ///
+    /// Notably this hook is called by the R graphics system after the display list
+    /// of the old page has been cleared, so it is too late to try and snapshot here.
+    /// If you are looking for where we snapshot before the page is advanced, look to
+    /// [ps_graphics_before_new_page()] instead.
+    fn new_page(&self) {
         log::trace!("Graphics: new_page");
-
-        // Process changes related to the last plot.
-        // Particularly important if we make multiple plots in a single chunk.
-        self.process_changes();
-
         // Create a new id for this new plot page and note that this is a new page
         let id = Uuid::new_v4().to_string();
         self._id.replace(Some(id));
         self._new_page.replace(true);
     }
 
+    /// Hook applied after a code chunk has finished executing
+    ///
+    /// Not an official graphics device hook, instead we run this manually after
+    /// completing execution of a chunk of R code.
+    ///
+    /// This is particularly useful for snapshotting "partial" states within a single
+    /// page, for example:
+    ///
+    /// ```r
+    /// # Run this line by line
+    /// par(mfrow = c(2, 1))
+    /// plot(1:10)
+    /// ```
+    ///
+    /// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
+    /// but we can still render this intermediate state and show it to the user until
+    /// they add more plots or advance to another new page.
     fn on_did_execute_request(&self) {
         log::trace!("Graphics: on_did_execute_request");
 
@@ -183,6 +200,30 @@ impl DeviceContext {
         self.process_changes();
     }
 
+    /// Hook applied at R idle time
+    ///
+    /// At idle time we loop through our set of plot channels and check if Positron has
+    /// responded on any of them stating that it is ready for us to replay and render
+    /// the actual plot, and then send back the bytes that represent that plot.
+    ///
+    /// Note that we only send back rendered plots at idle time. This means that if you
+    /// do something like:
+    ///
+    /// ```r
+    /// for (i in 1:5) {
+    ///   plot(i)
+    ///   Sys.sleep(1)
+    /// }
+    /// ```
+    ///
+    /// Then it goes something like this:
+    /// - At each new page event we tell Positron there we have a new plot for it
+    /// - Positron sets up 5 blank plot windows and sends back an RPC requesting the plot
+    ///   data
+    /// - AFTER the entire for loop has finished and we hit idle time, we drop into
+    ///   `on_process_events()` and render all 5 plots at once
+    ///
+    /// Practically this seems okay, it is just something to keep in mind.
     fn on_process_events(&self) {
         log::trace!("Graphics: on_process_events");
 
@@ -603,7 +644,7 @@ unsafe extern "C-unwind" fn gd_new_page(dd: pGEcontext, dev: pDevDesc) {
         if let Some(callback) = cell._callbacks.newPage.get() {
             callback(dd, dev);
         }
-        cell.new_page(dd, dev);
+        cell.new_page();
     });
 }
 
@@ -673,19 +714,21 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
     })
 }
 
-// TODO!: Do we really need to snapshot on `before.new.page` if we have a `new_page` hook?
-// Add docs about this if so.
+/// Hook applied right before we advance to a new page
+///
+/// The timing of this hook is particularly important. If we advance to the new page,
+/// then when we drop into our [DeviceContext::new_page] hook it will be too late for
+/// us to snapshot any changes because the display list we snapshot gets cleared before
+/// our hook is called.
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::Result<SEXP> {
     log::trace!("Graphics: ps_graphics_before_new_page");
 
-    let snapshotted = DEVICE_CONTEXT.with_borrow(|cell| match cell.id() {
-        Some(ref id) => DeviceContext::snapshot(id),
-        None => {
-            log::trace!("Graphics: No `id` to snapshot");
-            false
-        },
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        // Process changes related to the last plot.
+        // Particularly important if we make multiple plots in a single chunk.
+        cell.process_changes();
     });
 
-    Ok(Rf_ScalarLogical(i32::from(snapshotted)))
+    Ok(harp::r_null())
 }
