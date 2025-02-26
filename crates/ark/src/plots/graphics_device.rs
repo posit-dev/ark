@@ -194,30 +194,7 @@ impl DeviceContext {
         PlotId(Uuid::new_v4().to_string())
     }
 
-    /// Hook applied after a code chunk has finished executing
-    ///
-    /// Not an official graphics device hook, instead we run this manually after
-    /// completing execution of a chunk of R code.
-    ///
-    /// This is particularly useful for snapshotting "partial" states within a single
-    /// page, for example:
-    ///
-    /// ```r
-    /// # Run this line by line
-    /// par(mfrow = c(2, 1))
-    /// plot(1:10)
-    /// ```
-    ///
-    /// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
-    /// but we can still render this intermediate state and show it to the user until
-    /// they add more plots or advance to another new page.
-    #[tracing::instrument(level = "trace", skip_all)]
-    fn on_did_execute_request(&self) {
-        log::trace!("Entering");
-        self.process_changes();
-    }
-
-    /// Hook applied at R idle time
+    /// Process outstanding RPC requests received from Positron
     ///
     /// At idle time we loop through our set of plot channels and check if Positron has
     /// responded on any of them stating that it is ready for us to replay and render
@@ -238,11 +215,11 @@ impl DeviceContext {
     /// - Positron sets up 5 blank plot windows and sends back an RPC requesting the plot
     ///   data
     /// - AFTER the entire for loop has finished and we hit idle time, we drop into
-    ///   `on_process_events()` and render all 5 plots at once
+    ///   `process_rpc_requests()` and render all 5 plots at once
     ///
     /// Practically this seems okay, it is just something to keep in mind.
     #[tracing::instrument(level = "trace", skip_all)]
-    fn on_process_events(&self) {
+    fn process_rpc_requests(&self) {
         // Don't try to render a plot if we're currently drawing.
         if self.is_drawing.get() {
             log::trace!("Refusing to render due to `is_drawing`");
@@ -621,12 +598,36 @@ impl From<&PlotId> for RObject {
     }
 }
 
+/// Hook applied at idle time (`R_ProcessEvents()` time) to process any outstanding
+/// RPC requests from Positron
+///
+/// This is called a lot, so we don't trace log each entry
+#[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn on_process_events() {
-    DEVICE_CONTEXT.with_borrow(|cell| cell.on_process_events());
+    DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
+/// Hook applied after a code chunk has finished executing
+///
+/// Not an official graphics device hook, instead we run this manually after
+/// completing execution of a chunk of R code.
+///
+/// This is particularly useful for snapshotting "partial" states within a single
+/// page, for example:
+///
+/// ```r
+/// # Run this line by line
+/// par(mfrow = c(2, 1))
+/// plot(1:10)
+/// ```
+///
+/// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
+/// but we can still render this intermediate state and show it to the user until
+/// they add more plots or advance to another new page.
+#[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn on_did_execute_request() {
-    DEVICE_CONTEXT.with_borrow(|cell| cell.on_did_execute_request());
+    log::trace!("Entering");
+    DEVICE_CONTEXT.with_borrow(|cell| cell.process_changes());
 }
 
 /// Activation callback
