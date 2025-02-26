@@ -9,6 +9,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
@@ -62,15 +63,19 @@ pub(crate) fn init_graphics_device(
     DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx))
 }
 
+/// Wrapped callbacks of the original graphics device we shadow
 #[derive(Debug, Default)]
 #[allow(non_snake_case)]
-struct DeviceCallbacks {
+struct WrappedDeviceCallbacks {
     activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
     deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
     holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
     mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
     newPage: Cell<Option<unsafe extern "C-unwind" fn(pGEcontext, pDevDesc)>>,
 }
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct PlotId(String);
 
 struct DeviceContext {
     /// Channel for sending [CommManagerEvent]s to Positron when plot events occur
@@ -80,30 +85,49 @@ struct DeviceContext {
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
     iopub_tx: Sender<IOPubMessage>,
 
-    // Tracks whether the graphics device has changes.
-    _changes: Cell<bool>,
+    /// Tracks whether the graphics device has any changes.
+    ///
+    /// Set to `true` if the device's `mode` ever flips to `1`, indicating some drawing
+    /// has occurred. Reset back to `false` once we've processed those changes.
+    has_changes: Cell<bool>,
 
-    // Tracks whether or not the current plot page has ever been written to.
-    _new_page: Cell<bool>,
+    /// Tracks whether or not the current plot page has ever been written to.
+    ///
+    /// Set to `true` in the [DeviceContext::new_page] hook. Set to `false` once we've
+    /// processed the changes on this page at least once.
+    is_new_page: Cell<bool>,
 
-    // Tracks the current graphics device mode.
-    _mode: Cell<i32>,
+    /// Tracks whether or not the graphics device is currently "drawing".
+    ///
+    /// Tracks the device's `mode`, where `mode == 1` means we are drawing,
+    /// and `mode == 0` means we stop drawing.
+    is_drawing: Cell<bool>,
 
-    // The 'holdflush' flag, as normally handled via a device's 'holdflush()'
-    // callback. If 'dev.hold()' has been set, we want to avoid rendering
-    // new plots.
-    _holdflush: Cell<i32>,
+    /// Tracks whether or not we are allowed to render a plot
+    ///
+    /// When a new page event occurs, or when we finish executing R code, we snapshot the
+    /// display list and send Positron a notification that we have new plot information to
+    /// display. When it responds, we actually render the plot and send it back to
+    /// Positron. If a user sets `dev.hold()`, then we refrain from actually responding
+    /// to that render request until an equivalent call to `dev.flush()` frees us.
+    ///
+    /// Tracks the device's `holdflush` flag, where we simplify it to mean that `holdflush
+    /// == 0` means we can render, and `holdflush > 0` means we cannot. This flag
+    /// technically represents a stack of hold levels, but that doesn't affect us.
+    should_render: Cell<bool>,
 
-    // The ID associated with the current plot page. Used primarily
-    // for accessing indexed plots, e.g. for the Plots pane history.
-    _id: RefCell<Option<String>>,
+    /// The ID associated with the current plot page.
+    ///
+    /// Used for looking up a snapshotted plot so we can replay it with different graphics
+    /// device specifications (i.e. for Positron's Plots pane).
+    id: RefCell<PlotId>,
 
-    // A map, mapping plot IDs to the communication channels used
-    // for communicating their rendered results to the frontend.
-    _channels: RefCell<HashMap<String, CommSocket>>,
+    /// Mapping of plot ID to the communication socket used for communicating its
+    /// rendered results to the frontend.
+    sockets: RefCell<HashMap<PlotId, CommSocket>>,
 
-    // The device callbacks, which are patched into the device.
-    _callbacks: DeviceCallbacks,
+    /// The callbacks of the wrapped device, initialized on graphics device creation
+    wrapped_callbacks: WrappedDeviceCallbacks,
 }
 
 impl DeviceContext {
@@ -111,13 +135,13 @@ impl DeviceContext {
         Self {
             comm_manager_tx,
             iopub_tx,
-            _changes: Cell::new(false),
-            _new_page: Cell::new(false),
-            _mode: Cell::new(0),
-            _holdflush: Cell::new(0),
-            _id: RefCell::new(None),
-            _channels: RefCell::new(HashMap::new()),
-            _callbacks: DeviceCallbacks::default(),
+            has_changes: Cell::new(false),
+            is_new_page: Cell::new(true),
+            is_drawing: Cell::new(false),
+            should_render: Cell::new(true),
+            id: RefCell::new(Self::new_id()),
+            sockets: RefCell::new(HashMap::new()),
+            wrapped_callbacks: WrappedDeviceCallbacks::default(),
         }
     }
 
@@ -132,16 +156,17 @@ impl DeviceContext {
         })
     }
 
-    fn holdflush(&self, holdflush: i32) {
+    fn hook_holdflush(&self, holdflush: i32) {
         log::trace!("Graphics: holdflush: {holdflush}");
-        self._holdflush.replace(holdflush);
+        self.should_render.replace(holdflush == 0);
     }
 
-    fn mode(&self, mode: i32, _dev: pDevDesc) {
+    fn hook_mode(&self, mode: i32) {
         log::trace!("Graphics: mode: {mode}");
-        self._mode.replace(mode);
-        let old = self._changes.get();
-        self._changes.replace(old || mode != 0);
+        let is_drawing = mode != 0;
+        self.is_drawing.replace(is_drawing);
+        let old_has_changes = self.has_changes.get();
+        self.has_changes.replace(old_has_changes || is_drawing);
     }
 
     /// Hook applied when starting a new page
@@ -150,12 +175,20 @@ impl DeviceContext {
     /// of the old page has been cleared, so it is too late to try and snapshot here.
     /// If you are looking for where we snapshot before the page is advanced, look to
     /// [ps_graphics_before_new_page()] instead.
-    fn new_page(&self) {
+    fn hook_new_page(&self) {
         log::trace!("Graphics: new_page");
         // Create a new id for this new plot page and note that this is a new page
-        let id = Uuid::new_v4().to_string();
-        self._id.replace(Some(id));
-        self._new_page.replace(true);
+        self.id.replace(Self::new_id());
+        self.is_new_page.replace(true);
+    }
+
+    fn id(&self) -> PlotId {
+        // Refcell Safety: Short borrows in the file.
+        self.id.borrow().clone()
+    }
+
+    fn new_id() -> PlotId {
+        PlotId(Uuid::new_v4().to_string())
     }
 
     /// Hook applied after a code chunk has finished executing
@@ -212,27 +245,27 @@ impl DeviceContext {
         log::trace!("Graphics: on_process_events");
 
         // Don't try to render a plot if we're currently drawing.
-        if self._mode.get() != 0 {
+        if self.is_drawing.get() {
             return;
         }
 
-        // Don't try to render a plot if the 'holdflush' flag is set.
-        if self._holdflush.get() > 0 {
+        // Don't try to render a plot if someone is asking us not to, i.e. `dev.hold()`
+        if !self.should_render.get() {
             return;
         }
 
-        // Collect existing channels into a vector of tuples.
+        // Collect existing sockets into a vector of tuples.
         // Necessary for handling Select in a clean way.
-        let channels = {
+        let sockets = {
             // Refcell Safety: Clone the hashmap so we don't hold a reference for too long
-            let channels = self._channels.borrow().clone();
-            channels.into_iter().collect::<Vec<_>>()
+            let sockets = self.sockets.borrow().clone();
+            sockets.into_iter().collect::<Vec<_>>()
         };
 
-        // Dynamically load all channels into a single `Select`
+        // Dynamically load all incoming channels within the sockets into a single `Select`
         let mut select = Select::new();
-        for (_id, channel) in channels.iter() {
-            select.recv(&channel.incoming_rx);
+        for (_id, sockets) in sockets.iter() {
+            select.recv(&sockets.incoming_rx);
         }
 
         // Check for incoming plot render requests.
@@ -240,8 +273,8 @@ impl DeviceContext {
         // multiple things in a single chunk of R code. The `Err` case is likely just
         // that no channels have any messages, so we don't log in that case.
         while let Ok(selection) = select.try_select() {
-            let plot_id = unsafe { &channels.get_unchecked(selection.index()).0 };
-            let socket = unsafe { &channels.get_unchecked(selection.index()).1 };
+            let plot_id = unsafe { &sockets.get_unchecked(selection.index()).0 };
+            let socket = unsafe { &sockets.get_unchecked(selection.index()).1 };
 
             // Receive on the "selected" channel
             let message = match selection.recv(&socket.incoming_rx) {
@@ -260,7 +293,7 @@ impl DeviceContext {
     fn handle_rpc(
         &self,
         message: PlotBackendRequest,
-        plot_id: &String,
+        plot_id: &PlotId,
     ) -> anyhow::Result<PlotBackendReply> {
         match message {
             PlotBackendRequest::GetIntrinsicSize => {
@@ -304,15 +337,12 @@ impl DeviceContext {
     fn process_changes(&self) {
         log::trace!("Graphics: process_changes");
 
-        if !self._changes.replace(false) {
+        if !self.has_changes.replace(false) {
             log::trace!("Graphics: No changes to process");
             return;
         }
 
-        let id = unwrap!(self.id(), None => {
-            log::error!("Unexpected uninitialized `id`.");
-            return;
-        });
+        let id = self.id();
 
         // Snapshot the changes so we can replay them when Positron asks us for them.
         // Snapshotting here overrides an existing snapshot for `id` if something has
@@ -326,14 +356,14 @@ impl DeviceContext {
         // ```
         Self::snapshot(&id);
 
-        if self._new_page.replace(false) {
-            self.process_new_plot(id.as_str());
+        if self.is_new_page.replace(false) {
+            self.process_new_plot(&id);
         } else {
-            self.process_update_plot(id.as_str());
+            self.process_update_plot(&id);
         }
     }
 
-    fn process_new_plot(&self, id: &str) {
+    fn process_new_plot(&self, id: &PlotId) {
         if self.should_use_dynamic_plots() {
             self.process_new_plot_positron(id);
         } else {
@@ -341,7 +371,7 @@ impl DeviceContext {
         }
     }
 
-    fn process_new_plot_positron(&self, id: &str) {
+    fn process_new_plot_positron(&self, id: &PlotId) {
         log::trace!("Graphics: Notifying Positron of new plot with `id` {id}`");
 
         // Let Positron know that we just created a new plot.
@@ -358,12 +388,10 @@ impl DeviceContext {
 
         // Save our new socket.
         // Refcell Safety: Short borrows in the file.
-        self._channels
-            .borrow_mut()
-            .insert(id.to_string(), socket.clone());
+        self.sockets.borrow_mut().insert(id.clone(), socket);
     }
 
-    fn process_new_plot_jupyter_protocol(&self, id: &str) {
+    fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Graphics: Notifying Jupyter frontend of new plot with `id` {id}`");
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
@@ -394,7 +422,7 @@ impl DeviceContext {
             .or_log_warning(&format!("Could not publish display data on IOPub."));
     }
 
-    fn process_update_plot(&self, id: &str) {
+    fn process_update_plot(&self, id: &PlotId) {
         if self.should_use_dynamic_plots() {
             self.process_update_plot_positron(id);
         } else {
@@ -402,14 +430,14 @@ impl DeviceContext {
         }
     }
 
-    fn process_update_plot_positron(&self, id: &str) {
+    fn process_update_plot_positron(&self, id: &PlotId) {
         log::trace!("Graphics: Notifying Positron of plot update with `id` {id}`");
 
         // Refcell Safety: Make sure not to call other methods from this whole block.
-        let channels = self._channels.borrow();
+        let sockets = self.sockets.borrow();
 
         // Find our socket
-        let socket = unwrap!(channels.get(id), None => {
+        let socket = unwrap!(sockets.get(id), None => {
             // If socket doesn't exist, bail, nothing to update (should be rare, likely a bug?)
             log::error!("Can't find socket to update with id: {id}.");
             return;
@@ -426,7 +454,7 @@ impl DeviceContext {
             .or_log_error("Failed to send update message for id {id}.");
     }
 
-    fn process_update_plot_jupyter_protocol(&self, id: &str) {
+    fn process_update_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Graphics: Notifying Jupyter frontend of plot update with `id` {id}`");
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
@@ -452,7 +480,7 @@ impl DeviceContext {
             .or_log_warning(&format!("Could not publish update display data on IOPub."));
     }
 
-    fn create_display_data_plot(&self, id: &str) -> Result<serde_json::Value, anyhow::Error> {
+    fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
         let width = 800;
         let height = 600;
@@ -471,7 +499,7 @@ impl DeviceContext {
 
     fn render_plot(
         &self,
-        plot_id: &str,
+        id: &PlotId,
         width: i64,
         height: i64,
         pixel_ratio: f64,
@@ -482,7 +510,7 @@ impl DeviceContext {
         // we instead write to a connection or something else?
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.renderPlot")
-                .param("id", plot_id)
+                .param("id", id)
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
                 .param("dpr", pixel_ratio)
@@ -492,7 +520,7 @@ impl DeviceContext {
         });
 
         let image_path = unwrap!(image_path, Err(error) => {
-            bail!("Failed to render plot with id {plot_id} due to: {error}.");
+            bail!("Failed to render plot with id {id} due to: {error}.");
         });
 
         // Read contents into bytes.
@@ -508,7 +536,7 @@ impl DeviceContext {
         Ok(data)
     }
 
-    fn snapshot(id: &str) -> bool {
+    fn snapshot(id: &PlotId) -> bool {
         log::trace!("Graphics: Snapshotting plot with `id` {id}");
         let result = RFunction::from(".ps.graphics.createSnapshot")
             .param("id", id)
@@ -524,11 +552,6 @@ impl DeviceContext {
                 false
             },
         }
-    }
-
-    fn id(&self) -> Option<String> {
-        // Refcell Safety: Short borrows in the file.
-        self._id.borrow().clone()
     }
 }
 
@@ -562,6 +585,24 @@ macro_rules! with_device {
     }};
 }
 
+impl Display for PlotId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<PlotId> for RObject {
+    fn from(value: PlotId) -> Self {
+        RObject::from(value.0)
+    }
+}
+
+impl From<&PlotId> for RObject {
+    fn from(value: &PlotId) -> Self {
+        RObject::from(value.0.as_str())
+    }
+}
+
 pub(crate) fn on_process_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.on_process_events());
 }
@@ -570,39 +611,46 @@ pub(crate) fn on_did_execute_request() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.on_did_execute_request());
 }
 
-// NOTE: May be called when rendering a plot to file, since this is done by
-// copying the graphics display list to a new plot device, and then closing that device.
-unsafe extern "C-unwind" fn gd_activate(dev: pDevDesc) {
-    log::trace!("Graphics: gd_activate");
+/// Activation callback
+///
+/// Only used for logging
+///
+/// NOTE: May be called when rendering a plot to file, since this is done by
+/// copying the graphics display list to a new plot device, and then closing that device.
+unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
+    log::trace!("Graphics: callback_activate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell._callbacks.activate.get() {
+        if let Some(callback) = cell.wrapped_callbacks.activate.get() {
             callback(dev);
         }
     });
 }
 
-// NOTE: May be called when rendering a plot to file, since this is done by
-// copying the graphics display list to a new plot device, and then closing that device.
-unsafe extern "C-unwind" fn gd_deactivate(dev: pDevDesc) {
-    log::trace!("Graphics: gd_deactivate");
+/// Deactivation callback
+///
+/// Only used for logging
+///
+/// NOTE: May be called when rendering a plot to file, since this is done by
+/// copying the graphics display list to a new plot device, and then closing that device.
+unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
+    log::trace!("Graphics: callback_deactivate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell._callbacks.deactivate.get() {
+        if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
             callback(dev);
         }
     });
 }
 
-unsafe extern "C-unwind" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> i32 {
-    log::trace!("Graphics: gd_hold_flush");
+unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32) -> i32 {
+    log::trace!("Graphics: callback_holdflush");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell._callbacks.holdflush.get() {
+        if let Some(callback) = cell.wrapped_callbacks.holdflush.get() {
             holdflush = callback(dev, holdflush);
         }
-
-        cell.holdflush(holdflush);
+        cell.hook_holdflush(holdflush);
         holdflush
     })
 }
@@ -610,25 +658,25 @@ unsafe extern "C-unwind" fn gd_hold_flush(dev: pDevDesc, mut holdflush: i32) -> 
 // mode = 0, graphics off
 // mode = 1, graphics on
 // mode = 2, graphical input on (ignored by most drivers)
-unsafe extern "C-unwind" fn gd_mode(mode: i32, dev: pDevDesc) {
-    log::trace!("Graphics: gd_mode");
+unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
+    log::trace!("Graphics: callback_mode");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell._callbacks.mode.get() {
+        if let Some(callback) = cell.wrapped_callbacks.mode.get() {
             callback(mode, dev);
         }
-        cell.mode(mode, dev);
+        cell.hook_mode(mode);
     });
 }
 
-unsafe extern "C-unwind" fn gd_new_page(dd: pGEcontext, dev: pDevDesc) {
-    log::trace!("Graphics: gd_new_page");
+unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
+    log::trace!("Graphics: callback_new_page");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell._callbacks.newPage.get() {
+        if let Some(callback) = cell.wrapped_callbacks.newPage.get() {
             callback(dd, dev);
         }
-        cell.new_page();
+        cell.hook_new_page();
     });
 }
 
@@ -659,30 +707,31 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // `displayListOn` too)
     libr::GEinitDisplayList(ge_device);
 
-    // Get a specialized versioned pointer from our opaque one so we can initialize our _callbacks
+    // Get a specialized versioned pointer from our opaque one so we can initialize our
+    // `wrapped_callbacks`
     with_device!(ge_device, |ge_device, device| {
         (*ge_device).displayListOn = 1;
         // (*ge_device).recordGraphics = 1;
 
         DEVICE_CONTEXT.with_borrow(|cell| {
-            let callbacks = &cell._callbacks;
+            let wrapped_callbacks = &cell.wrapped_callbacks;
 
             // Safety: The callbacks are stored in simple cells.
 
-            callbacks.activate.replace((*device).activate);
-            (*device).activate = Some(gd_activate);
+            wrapped_callbacks.activate.replace((*device).activate);
+            (*device).activate = Some(callback_activate);
 
-            callbacks.deactivate.replace((*device).deactivate);
-            (*device).deactivate = Some(gd_deactivate);
+            wrapped_callbacks.deactivate.replace((*device).deactivate);
+            (*device).deactivate = Some(callback_deactivate);
 
-            callbacks.holdflush.replace((*device).holdflush);
-            (*device).holdflush = Some(gd_hold_flush);
+            wrapped_callbacks.holdflush.replace((*device).holdflush);
+            (*device).holdflush = Some(callback_holdflush);
 
-            callbacks.mode.replace((*device).mode);
-            (*device).mode = Some(gd_mode);
+            wrapped_callbacks.mode.replace((*device).mode);
+            (*device).mode = Some(callback_mode);
 
-            callbacks.newPage.replace((*device).newPage);
-            (*device).newPage = Some(gd_new_page);
+            wrapped_callbacks.newPage.replace((*device).newPage);
+            (*device).newPage = Some(callback_new_page);
         });
     });
 
