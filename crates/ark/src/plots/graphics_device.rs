@@ -214,10 +214,6 @@ impl DeviceContext {
     #[tracing::instrument(level = "trace", skip_all)]
     fn on_did_execute_request(&self) {
         log::trace!("Entering");
-
-        // Process changes related to the last code execution block.
-        // This runs after the code block has finished, processing the current
-        // state of the most recent page.
         self.process_changes();
     }
 
