@@ -4,6 +4,8 @@
 // Copyright (C) 2022-2025 by Posit Software, PBC
 //
 
+// See `doc/graphics-devices.md` for documentation
+
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
