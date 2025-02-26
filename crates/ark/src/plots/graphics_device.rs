@@ -156,13 +156,15 @@ impl DeviceContext {
         })
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
     fn hook_holdflush(&self, holdflush: i32) {
-        log::trace!("Graphics: holdflush: {holdflush}");
+        log::trace!("Entering");
         self.should_render.replace(holdflush == 0);
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
     fn hook_mode(&self, mode: i32) {
-        log::trace!("Graphics: mode: {mode}");
+        log::trace!("Entering");
         let is_drawing = mode != 0;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
@@ -175,8 +177,9 @@ impl DeviceContext {
     /// of the old page has been cleared, so it is too late to try and snapshot here.
     /// If you are looking for where we snapshot before the page is advanced, look to
     /// [ps_graphics_before_new_page()] instead.
+    #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
-        log::trace!("Graphics: new_page");
+        log::trace!("Entering");
         // Create a new id for this new plot page and note that this is a new page
         self.id.replace(Self::new_id());
         self.is_new_page.replace(true);
@@ -208,8 +211,9 @@ impl DeviceContext {
     /// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
     /// but we can still render this intermediate state and show it to the user until
     /// they add more plots or advance to another new page.
+    #[tracing::instrument(level = "trace", skip_all)]
     fn on_did_execute_request(&self) {
-        log::trace!("Graphics: on_did_execute_request");
+        log::trace!("Entering");
 
         // Process changes related to the last code execution block.
         // This runs after the code block has finished, processing the current
@@ -241,16 +245,17 @@ impl DeviceContext {
     ///   `on_process_events()` and render all 5 plots at once
     ///
     /// Practically this seems okay, it is just something to keep in mind.
+    #[tracing::instrument(level = "trace", skip_all)]
     fn on_process_events(&self) {
-        log::trace!("Graphics: on_process_events");
-
         // Don't try to render a plot if we're currently drawing.
         if self.is_drawing.get() {
+            log::trace!("Refusing to render due to `is_drawing`");
             return;
         }
 
         // Don't try to render a plot if someone is asking us not to, i.e. `dev.hold()`
         if !self.should_render.get() {
+            log::trace!("Refusing to render due to `should_render`");
             return;
         }
 
@@ -273,7 +278,7 @@ impl DeviceContext {
         // multiple things in a single chunk of R code. The `Err` case is likely just
         // that no channels have any messages, so we don't log in that case.
         while let Ok(selection) = select.try_select() {
-            let plot_id = unsafe { &sockets.get_unchecked(selection.index()).0 };
+            let id = unsafe { &sockets.get_unchecked(selection.index()).0 };
             let socket = unsafe { &sockets.get_unchecked(selection.index()).1 };
 
             // Receive on the "selected" channel
@@ -285,30 +290,31 @@ impl DeviceContext {
                 },
             };
 
-            // Handle the RPC request
-            socket.handle_request(message, |req| self.handle_rpc(req, plot_id));
+            log::trace!("Handling RPC for plot `id` {id}");
+            socket.handle_request(message, |req| self.handle_rpc(req, id));
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn handle_rpc(
         &self,
         message: PlotBackendRequest,
-        plot_id: &PlotId,
+        id: &PlotId,
     ) -> anyhow::Result<PlotBackendReply> {
         match message {
             PlotBackendRequest::GetIntrinsicSize => {
-                log::trace!("Graphics: handle_rpc: Getting intrinsic size");
+                log::trace!("PlotBackendRequest::GetIntrinsicSize");
                 Ok(PlotBackendReply::GetIntrinsicSizeReply(None))
             },
             PlotBackendRequest::Render(plot_meta) => {
-                log::trace!(
-                    "Graphics: handle_rpc: Rendering {plot_id} with parameters: {plot_meta:?}"
-                );
+                log::trace!("PlotBackendRequest::Render");
+
                 let size = unwrap!(plot_meta.size, None => {
                     bail!("Intrinsically sized plots are not yet supported.");
                 });
+
                 let data = self.render_plot(
-                    &plot_id,
+                    &id,
                     size.width,
                     size.height,
                     plot_meta.pixel_ratio,
@@ -316,6 +322,7 @@ impl DeviceContext {
                 )?;
 
                 let mime_type = Self::get_mime_type(&plot_meta.format);
+
                 Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: mime_type.to_string(),
@@ -334,15 +341,16 @@ impl DeviceContext {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all)]
     fn process_changes(&self) {
-        log::trace!("Graphics: process_changes");
+        let id = self.id();
 
         if !self.has_changes.replace(false) {
-            log::trace!("Graphics: No changes to process");
+            log::trace!("No changes to process for plot `id` {id}");
             return;
         }
 
-        let id = self.id();
+        log::trace!("Processing changes for plot `id` {id}");
 
         // Snapshot the changes so we can replay them when Positron asks us for them.
         // Snapshotting here overrides an existing snapshot for `id` if something has
@@ -371,8 +379,9 @@ impl DeviceContext {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_new_plot_positron(&self, id: &PlotId) {
-        log::trace!("Graphics: Notifying Positron of new plot with `id` {id}`");
+        log::trace!("Notifying Positron of new plot");
 
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
@@ -391,8 +400,9 @@ impl DeviceContext {
         self.sockets.borrow_mut().insert(id.clone(), socket);
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
-        log::trace!("Graphics: Notifying Jupyter frontend of new plot with `id` {id}`");
+        log::trace!("Notifying Jupyter frontend of new plot");
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
@@ -430,8 +440,9 @@ impl DeviceContext {
         }
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_update_plot_positron(&self, id: &PlotId) {
-        log::trace!("Graphics: Notifying Positron of plot update with `id` {id}`");
+        log::trace!("Notifying Positron of plot update");
 
         // Refcell Safety: Make sure not to call other methods from this whole block.
         let sockets = self.sockets.borrow();
@@ -443,8 +454,6 @@ impl DeviceContext {
             return;
         });
 
-        log::info!("Sending plot update message for id: {id}.");
-
         let value = serde_json::to_value(PlotFrontendEvent::Update).unwrap();
 
         // Tell Positron we have an updated plot that it should request a rerender for
@@ -454,8 +463,9 @@ impl DeviceContext {
             .or_log_error("Failed to send update message for id {id}.");
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_update_plot_jupyter_protocol(&self, id: &PlotId) {
-        log::trace!("Graphics: Notifying Jupyter frontend of plot update with `id` {id}`");
+        log::trace!("Notifying Jupyter frontend of plot update");
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
@@ -497,6 +507,7 @@ impl DeviceContext {
         Ok(serde_json::Value::Object(map))
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id, width = %width, height = %height, pixel_ratio = %pixel_ratio, format = %format))]
     fn render_plot(
         &self,
         id: &PlotId,
@@ -508,6 +519,8 @@ impl DeviceContext {
         // Render the plot to file.
         // TODO: Is it possible to do this without writing to file; e.g. could
         // we instead write to a connection or something else?
+        log::trace!("Rendering plot");
+
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.renderPlot")
                 .param("id", id)
@@ -519,9 +532,16 @@ impl DeviceContext {
                 .to::<String>()
         });
 
-        let image_path = unwrap!(image_path, Err(error) => {
-            bail!("Failed to render plot with id {id} due to: {error}.");
-        });
+        let image_path = match image_path {
+            Ok(image_path) => image_path,
+            Err(error) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to render plot with `id` {id} due to: {error}."
+                ))
+            },
+        };
+
+        log::trace!("Rendered plot to {image_path}");
 
         // Read contents into bytes.
         let conn = File::open(image_path)?;
@@ -536,19 +556,21 @@ impl DeviceContext {
         Ok(data)
     }
 
+    #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn snapshot(id: &PlotId) -> bool {
-        log::trace!("Graphics: Snapshotting plot with `id` {id}");
+        log::trace!("Snapshotting plot");
+
         let result = RFunction::from(".ps.graphics.createSnapshot")
             .param("id", id)
             .call();
 
         match result {
             Ok(_) => {
-                log::trace!("Graphics: Snapshotted plot with `id` {id}");
+                log::trace!("Snapshotted plot");
                 true
             },
             Err(error) => {
-                log::error!("Graphics: Failed to snapshot plot with `id` {id}: {error:?}");
+                log::error!("Failed to snapshot plot: {error:?}");
                 false
             },
         }
@@ -618,7 +640,7 @@ pub(crate) fn on_did_execute_request() {
 /// NOTE: May be called when rendering a plot to file, since this is done by
 /// copying the graphics display list to a new plot device, and then closing that device.
 unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
-    log::trace!("Graphics: callback_activate");
+    log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.activate.get() {
@@ -633,8 +655,9 @@ unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
 ///
 /// NOTE: May be called when rendering a plot to file, since this is done by
 /// copying the graphics display list to a new plot device, and then closing that device.
+#[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
-    log::trace!("Graphics: callback_deactivate");
+    log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
@@ -643,8 +666,9 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     });
 }
 
+#[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32) -> i32 {
-    log::trace!("Graphics: callback_holdflush");
+    log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.holdflush.get() {
@@ -658,8 +682,9 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32
 // mode = 0, graphics off
 // mode = 1, graphics on
 // mode = 2, graphical input on (ignored by most drivers)
+#[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
-    log::trace!("Graphics: callback_mode");
+    log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.mode.get() {
@@ -669,8 +694,9 @@ unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     });
 }
 
+#[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
-    log::trace!("Graphics: callback_new_page");
+    log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.newPage.get() {
@@ -738,9 +764,10 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     Ok(R_NilValue)
 }
 
+#[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
-    log::trace!("Graphics: ps_graphics_device: Initializing Positron graphics device");
+    log::trace!("Initializing Positron graphics device");
     ps_graphics_device_impl().or_else(|error| {
         log::error!("{error:?}");
         Ok(R_NilValue)
@@ -753,9 +780,10 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 /// then when we drop into our [DeviceContext::new_page] hook it will be too late for
 /// us to snapshot any changes because the display list we snapshot gets cleared before
 /// our hook is called.
+#[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::Result<SEXP> {
-    log::trace!("Graphics: ps_graphics_before_new_page");
+    log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         // Process changes related to the last plot.
