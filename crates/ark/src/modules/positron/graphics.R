@@ -1,20 +1,19 @@
 #
 # graphics.R
 #
-# Copyright (C) 2022-2024 by Posit Software, PBC
+# Copyright (C) 2022-2025 by Posit Software, PBC
 #
 #
 
-# Set up plot hooks.
+# Set up "before new page" hooks
 setHook("before.plot.new", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_new_page", "before.plot.new")
 })
-
 setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
 })
 
-default_device_type <- function() {
+defaultDeviceType <- function() {
     if (has_aqua()) {
         "quartz"
     } else if (has_cairo()) {
@@ -26,8 +25,17 @@ default_device_type <- function() {
     }
 }
 
-renderWithPlotDevice <- function(filepath, format, width, height, res, type) {
-    # width and height are in inches and use 72 DPI to create the requested size in pixels
+replayPlotWithDevice <- function(
+    plot,
+    filepath,
+    format,
+    width,
+    height,
+    res,
+    type
+) {
+    # Width and height are in inches and use 72 DPI to create the requested
+    # size in pixels
     dpi <- 72
 
     # Create a new graphics device.
@@ -65,6 +73,13 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type) {
         ),
         stop("Internal error: Unknown plot `format`.")
     )
+
+    # Replay the plot under this device.
+    suppressWarnings(grDevices::replayPlot(plot))
+
+    # Turn off the device (commits the plot to disk, and moves us back to
+    # being the current device).
+    grDevices::dev.off()
 }
 
 #' @export
@@ -100,7 +115,7 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type) {
     ensure_parent_directory(plotsPath)
 
     if (is.null(type)) {
-        type <- default_device_type()
+        type <- defaultDeviceType()
     }
 
     # Create the graphics device.
@@ -159,86 +174,39 @@ renderWithPlotDevice <- function(filepath, format, width, height, res, type) {
     snapshotPath
 }
 
-# TODO!: We should remove the `renderPlotFromCurrentDevice` path if possible
-# in favor of just snapshotting all the time and relying on that to capture
-# plots, and then we just replay them when Positron asks us to
-
 #' @export
 .ps.graphics.renderPlot <- function(id, width, height, dpr, format) {
-    # If we have an existing snapshot, render from that file.
-    snapshotPath <- .ps.graphics.plotSnapshotPath(id)
-    if (file.exists(snapshotPath)) {
-        .ps.graphics.renderPlotFromSnapshot(id, width, height, dpr, format)
-    } else {
-        .ps.graphics.renderPlotFromCurrentDevice(id, width, height, dpr, format)
-    }
-}
-
-#' @export
-.ps.graphics.renderPlotFromSnapshot <- function(
-    id,
-    width,
-    height,
-    dpr,
-    format
-) {
     # Get path to snapshot file + output path.
     outputPath <- .ps.graphics.plotOutputPath(id)
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
+
+    if (!file.exists(snapshotPath)) {
+        stop(sprintf(
+            "Failed to render plot for plot `id` %s. Snapshot is missing.",
+            id
+        ))
+    }
 
     # Read the snapshot data.
     recordedPlot <- readRDS(snapshotPath)
 
     # Get device attributes to be passed along.
-    type <- default_device_type()
+    type <- defaultDeviceType()
     res <- .ps.graphics.defaultResolution * dpr
     width <- width * dpr
     height <- height * dpr
 
-    # Create a new graphics device.
-    renderWithPlotDevice(outputPath, format, width, height, res, type)
-
-    # Replay the plot.
-    suppressWarnings(grDevices::replayPlot(recordedPlot))
-
-    # Turn off the device (commit the plot to disk)
-    grDevices::dev.off()
+    # Replay the plot with the specified device.
+    replayPlotWithDevice(
+        recordedPlot,
+        outputPath,
+        format,
+        width,
+        height,
+        res,
+        type
+    )
 
     # Return path to generated plot file.
     invisible(outputPath)
-}
-
-#' @export
-.ps.graphics.renderPlotFromCurrentDevice <- function(
-    id,
-    width,
-    height,
-    dpr,
-    format
-) {
-    # Try and force the graphics device to sync changes.
-    grDevices::dev.set(grDevices::dev.cur())
-    grDevices::dev.flush()
-
-    # Get the file name associated with the current graphics device.
-    device <- .Devices[[grDevices::dev.cur()]]
-
-    # Get device attributes to be passed along.
-    type <- attr(device, "type") %??% default_device_type()
-    res <- .ps.graphics.defaultResolution * dpr
-    width <- width * dpr
-    height <- height * dpr
-
-    # Copy to a new graphics device.
-    # TODO: We'll want some indirection around which graphics device is selected here.
-    filepath <- attr(device, "filepath")
-    grDevices::dev.copy(function() {
-        renderWithPlotDevice(filepath, format, width, height, res, type)
-    })
-
-    # Turn off the graphics device.
-    grDevices::dev.off()
-
-    # Return path to the generated file.
-    invisible(filepath)
 }
