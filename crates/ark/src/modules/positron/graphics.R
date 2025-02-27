@@ -33,23 +33,14 @@ addSnapshot <- function(id, snapshot) {
 #     remove(list = id, envir = SNAPSHOTS)
 # }
 
-#' @export
-.ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
-    96L
-} else {
-    72L
-}
-
-#' @export
-.ps.graphics.plotSnapshotRoot <- function() {
+plotSnapshotRoot <- function() {
     root <- file.path(tempdir(), "positron-snapshots")
     ensure_directory(root)
     root
 }
 
-#' @export
-.ps.graphics.plotSnapshotPath <- function(id) {
-    root <- .ps.graphics.plotSnapshotRoot()
+plotSnapshotPath <- function(id) {
+    root <- plotSnapshotRoot()
     file <- paste0("snapshot-", id, ".png")
     file.path(root, file)
 }
@@ -57,7 +48,7 @@ addSnapshot <- function(id, snapshot) {
 #' @export
 .ps.graphics.createDevice <- function(name, type, res) {
     # Get path where non-snapshot plots will be generated.
-    root <- .ps.graphics.plotSnapshotRoot()
+    root <- plotSnapshotRoot()
     filename <- file.path(root, "current-plot.png")
 
     if (is.null(type)) {
@@ -127,7 +118,7 @@ addSnapshot <- function(id, snapshot) {
     format
 ) {
     snapshot <- getSnapshot(id)
-    snapshotPath <- .ps.graphics.plotSnapshotPath(id)
+    snapshotPath <- plotSnapshotPath(id)
 
     if (is.null(snapshot)) {
         stop(sprintf(
@@ -138,7 +129,7 @@ addSnapshot <- function(id, snapshot) {
 
     # Get device attributes to be passed along.
     type <- defaultDeviceType()
-    res <- .ps.graphics.defaultResolution * dpr
+    res <- defaultResolution * dpr
     width <- width * dpr
     height <- height * dpr
 
@@ -149,6 +140,12 @@ addSnapshot <- function(id, snapshot) {
 
     # Return path to generated plot file.
     invisible(snapshotPath)
+}
+
+defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
+    96L
+} else {
+    72L
 }
 
 defaultDeviceType <- function() {
