@@ -109,10 +109,6 @@ addSnapshot <- function(id, snapshot) {
 # to re-render plots as necessary.
 #' @export
 .ps.graphics.createSnapshot <- function(id) {
-    # Flush any pending plot actions.
-    grDevices::dev.set(grDevices::dev.cur())
-    grDevices::dev.flush()
-
     # Create the plot snapshot.
     snapshot <- grDevices::recordPlot()
 
