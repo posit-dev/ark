@@ -13,84 +13,6 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
 })
 
-defaultDeviceType <- function() {
-    if (has_aqua()) {
-        "quartz"
-    } else if (has_cairo()) {
-        "cairo"
-    } else if (has_x11()) {
-        "Xlib"
-    } else {
-        stop("This version of R wasn't built with plotting capabilities")
-    }
-}
-
-replayPlotWithDevice <- function(
-    plot,
-    filepath,
-    format,
-    width,
-    height,
-    res,
-    type
-) {
-    # Store handle to current device (i.e. us)
-    old_dev <- grDevices::dev.cur()
-
-    # Width and height are in inches and use 72 DPI to create the requested
-    # size in pixels
-    dpi <- 72
-
-    # Create a new graphics device.
-    switch(
-        format,
-        "png" = grDevices::png(
-            filename = filepath,
-            width = width,
-            height = height,
-            res = res,
-            type = type
-        ),
-        "svg" = grDevices::svg(
-            filename = filepath,
-            width = (width / dpi),
-            height = (height / dpi),
-        ),
-        "pdf" = grDevices::pdf(
-            file = filepath,
-            width = (width / dpi),
-            height = (height / dpi)
-        ),
-        "jpeg" = grDevices::jpeg(
-            filename = filepath,
-            width = width,
-            height = height,
-            res = res,
-            type = type
-        ),
-        "tiff" = grDevices::tiff(
-            filename = filepath,
-            width = width,
-            height = height,
-            type = type
-        ),
-        stop("Internal error: Unknown plot `format`.")
-    )
-
-    # Ensure we turn off the device on the way out, this:
-    # - Commits the plot to disk
-    # - Resets us back as being the current device
-    on.exit(utils::capture.output({
-        grDevices::dev.off()
-        if (old_dev > 1) {
-            grDevices::dev.set(old_dev)
-        }
-    }))
-
-    # Replay the plot under this device.
-    suppressWarnings(grDevices::replayPlot(plot))
-}
-
 #' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
     96L
@@ -206,16 +128,89 @@ replayPlotWithDevice <- function(
     height <- height * dpr
 
     # Replay the plot with the specified device.
-    replayPlotWithDevice(
-        recordedPlot,
-        outputPath,
-        format,
-        width,
-        height,
-        res,
-        type
-    )
+    withDevice(outputPath, format, width, height, res, type, {
+        suppressWarnings(grDevices::replayPlot(recordedPlot))
+    })
 
     # Return path to generated plot file.
     invisible(outputPath)
+}
+
+defaultDeviceType <- function() {
+    if (has_aqua()) {
+        "quartz"
+    } else if (has_cairo()) {
+        "cairo"
+    } else if (has_x11()) {
+        "Xlib"
+    } else {
+        stop("This version of R wasn't built with plotting capabilities")
+    }
+}
+
+# Run an expression with the specificed device activated.
+# The device is guaranteed to close after the expression has run.
+withDevice <- function(
+    filepath,
+    format,
+    width,
+    height,
+    res,
+    type,
+    expr
+) {
+    # Store handle to current device (i.e. us)
+    old_dev <- grDevices::dev.cur()
+
+    # Width and height are in inches and use 72 DPI to create the requested
+    # size in pixels
+    dpi <- 72
+
+    # Create a new graphics device.
+    switch(
+        format,
+        "png" = grDevices::png(
+            filename = filepath,
+            width = width,
+            height = height,
+            res = res,
+            type = type
+        ),
+        "svg" = grDevices::svg(
+            filename = filepath,
+            width = (width / dpi),
+            height = (height / dpi),
+        ),
+        "pdf" = grDevices::pdf(
+            file = filepath,
+            width = (width / dpi),
+            height = (height / dpi)
+        ),
+        "jpeg" = grDevices::jpeg(
+            filename = filepath,
+            width = width,
+            height = height,
+            res = res,
+            type = type
+        ),
+        "tiff" = grDevices::tiff(
+            filename = filepath,
+            width = width,
+            height = height,
+            type = type
+        ),
+        stop("Internal error: Unknown plot `format`.")
+    )
+
+    # Ensure we turn off the device on the way out, this:
+    # - Commits the plot to disk
+    # - Resets us back as being the current device
+    on.exit(utils::capture.output({
+        grDevices::dev.off()
+        if (old_dev > 1) {
+            grDevices::dev.set(old_dev)
+        }
+    }))
+
+    expr
 }
