@@ -682,10 +682,12 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     log::trace!("Entering callback_deactivate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
+        // We run our hook first to snapshot before we deactivate the underlying device,
+        // in case device deactivation messes with the display list
+        cell.hook_deactivate();
         if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
             callback(dev);
         }
-        cell.hook_deactivate();
     });
 }
 
