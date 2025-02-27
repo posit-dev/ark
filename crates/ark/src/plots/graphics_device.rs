@@ -156,6 +156,36 @@ impl DeviceContext {
         })
     }
 
+    /// Deactivation hook
+    ///
+    /// We process any changes here before fully deactivating, ensuring that
+    /// we snapshot the current display list before a different device takes control,
+    /// because that new device may wipe the display list.
+    ///
+    /// For example, running this all in one chunk should plot `1:10` at the end of the
+    /// chunk as long as we snapshot the `1:10` plot before we switch to the png device.
+    ///
+    /// ```r
+    /// plot(1:10)
+    /// grDevices::png()
+    /// plot(1:20)
+    /// dev.off()
+    /// ```
+    ///
+    /// That's also exactly what happens here with ggsave
+    ///
+    /// ```r
+    /// library(ggplot2)
+    /// p <- ggplot(mtcars, aes(x = wt, y = mpg)) + geom_point()
+    /// p
+    /// ggsave("temp.png", p)
+    /// ```
+    #[tracing::instrument(level = "trace", skip_all)]
+    fn hook_deactivate(&self) {
+        log::trace!("Entering");
+        self.process_changes();
+    }
+
     #[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
     fn hook_holdflush(&self, holdflush: i32) {
         log::trace!("Entering");
@@ -660,6 +690,7 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
         if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
             callback(dev);
         }
+        cell.hook_deactivate();
     });
 }
 
@@ -783,7 +814,7 @@ unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::
     log::trace!("Entering");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        // Process changes related to the last plot.
+        // Process changes related to the last plot before opening a new page.
         // Particularly important if we make multiple plots in a single chunk.
         cell.process_changes();
     });
