@@ -109,16 +109,18 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     };
 
     // If there's an id already registered, we just need to send the focus event
-    let outgoing_tx_guard = RETICULATE_OUTGOING_TX.lock().unwrap();
-    if let Some(outgoing_tx) = outgoing_tx_guard.deref() {
-        // There's a comm_id registered, we just send the focus event
-        outgoing_tx.send(CommMsg::Data(json!({
-            "method": "focus",
-            "params": {
-                "input": input_code
-            }
-        })))?;
-        return Ok(R_NilValue);
+    {
+        let outgoing_tx_guard = RETICULATE_OUTGOING_TX.lock().unwrap();
+        if let Some(outgoing_tx) = outgoing_tx_guard.deref() {
+            // There's a comm_id registered, we just send the focus event
+            outgoing_tx.send(CommMsg::Data(json!({
+                "method": "focus",
+                "params": {
+                    "input": input_code
+                }
+            })))?;
+            return Ok(R_NilValue);
+        }
     }
 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
