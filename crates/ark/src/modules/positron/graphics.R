@@ -95,6 +95,12 @@ addSnapshot <- function(id, snapshot) {
     # Replace bindings.
     env_bind_force(baseenv(), ".Devices", .Devices)
     env_bind_force(baseenv(), ".Device", newDevice)
+
+    # Also set ourselves as a known interactive device.
+    # Used by `dev.interactive()`, which is used in `stats:::plot.lm()`
+    # to determine if `devAskNewPage(TRUE)` should be set to prompt before
+    # each new plot is drawn.
+    grDevices::deviceIsInteractive(name)
 }
 
 # Create a snapshot of the current plot.
