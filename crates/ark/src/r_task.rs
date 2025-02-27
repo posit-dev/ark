@@ -146,7 +146,9 @@ where
     T: 'env + Send,
 {
     // Escape hatch for unit tests
-    if stdext::IS_TESTING {
+    // In integration tests with dummy frontends, we have a "real" RMain and want to
+    // go through the standard r-task path
+    if stdext::IS_TESTING && !RMain::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         r_test_init();
         return f();
@@ -254,7 +256,7 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     // Escape hatch for unit tests
-    if stdext::IS_TESTING {
+    if stdext::IS_TESTING && !RMain::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fun());
         return;
