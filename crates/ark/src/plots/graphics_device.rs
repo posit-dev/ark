@@ -525,7 +525,7 @@ impl DeviceContext {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
-            RFunction::from(".ps.graphics.renderPlot")
+            RFunction::from(".ps.graphics.renderPlotFromSnapshot")
                 .param("id", id)
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)

@@ -13,6 +13,26 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
 })
 
+# A persistent environment mapping plot `id`s to their display list snapshot.
+# Used for replaying snapshots under a new device or new width/height/resolution.
+SNAPSHOTS <- new.env()
+
+# Retrieves a snapshot by its `id`
+#
+# Returns `NULL` if no snapshot exists
+getSnapshot <- function(id) {
+    SNAPSHOTS[[id]]
+}
+
+addSnapshot <- function(id, snapshot) {
+    SNAPSHOTS[[id]] <- snapshot
+}
+
+# TODO: Use this when we get notified that we can remove a snapshot
+# removeSnapshot <- function(id) {
+#     remove(list = id, envir = SNAPSHOTS)
+# }
+
 #' @export
 .ps.graphics.defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
     96L
@@ -21,29 +41,24 @@ setHook("before.grid.newpage", action = "replace", function(...) {
 }
 
 #' @export
-.ps.graphics.plotSnapshotRoot <- function(...) {
-    file.path(tempdir(), "positron-snapshots", ...)
+.ps.graphics.plotSnapshotRoot <- function() {
+    root <- file.path(tempdir(), "positron-snapshots")
+    ensure_directory(root)
+    root
 }
 
 #' @export
 .ps.graphics.plotSnapshotPath <- function(id) {
-    root <- .ps.graphics.plotSnapshotRoot(id)
-    ensure_directory(root)
-    file.path(root, "snapshot.rds")
-}
-
-#' @export
-.ps.graphics.plotOutputPath <- function(id) {
-    root <- .ps.graphics.plotSnapshotRoot(id)
-    ensure_directory(root)
-    file.path(root, "snapshot.png")
+    root <- .ps.graphics.plotSnapshotRoot()
+    file <- paste0("snapshot-", id, ".png")
+    file.path(root, file)
 }
 
 #' @export
 .ps.graphics.createDevice <- function(name, type, res) {
-    # Get path where plots will be generated.
-    plotsPath <- .ps.graphics.plotSnapshotRoot("current-plot.png")
-    ensure_parent_directory(plotsPath)
+    # Get path where non-snapshot plots will be generated.
+    root <- .ps.graphics.plotSnapshotRoot()
+    filename <- file.path(root, "current-plot.png")
 
     if (is.null(type)) {
         type <- defaultDeviceType()
@@ -53,7 +68,7 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     # TODO: Use 'ragg' if available?
     withCallingHandlers(
         grDevices::png(
-            filename = plotsPath,
+            filename = filename,
             type = type,
             res = res
         ),
@@ -93,33 +108,31 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     grDevices::dev.flush()
 
     # Create the plot snapshot.
-    recordedPlot <- grDevices::recordPlot()
+    snapshot <- grDevices::recordPlot()
 
-    # Get the path to the plot snapshot file.
-    snapshotPath <- .ps.graphics.plotSnapshotPath(id)
+    # Add the snapshot to the persistent environment.
+    addSnapshot(id, snapshot)
 
-    # Save it to disk.
-    saveRDS(recordedPlot, file = snapshotPath)
-
-    # Return the path to that snapshot file.
-    snapshotPath
+    invisible(NULL)
 }
 
 #' @export
-.ps.graphics.renderPlot <- function(id, width, height, dpr, format) {
-    # Get path to snapshot file + output path.
-    outputPath <- .ps.graphics.plotOutputPath(id)
+.ps.graphics.renderPlotFromSnapshot <- function(
+    id,
+    width,
+    height,
+    dpr,
+    format
+) {
+    snapshot <- getSnapshot(id)
     snapshotPath <- .ps.graphics.plotSnapshotPath(id)
 
-    if (!file.exists(snapshotPath)) {
+    if (is.null(snapshot)) {
         stop(sprintf(
             "Failed to render plot for plot `id` %s. Snapshot is missing.",
             id
         ))
     }
-
-    # Read the snapshot data.
-    recordedPlot <- readRDS(snapshotPath)
 
     # Get device attributes to be passed along.
     type <- defaultDeviceType()
@@ -128,12 +141,12 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     height <- height * dpr
 
     # Replay the plot with the specified device.
-    withDevice(outputPath, format, width, height, res, type, {
-        suppressWarnings(grDevices::replayPlot(recordedPlot))
+    withDevice(snapshotPath, format, width, height, res, type, {
+        suppressWarnings(grDevices::replayPlot(snapshot))
     })
 
     # Return path to generated plot file.
-    invisible(outputPath)
+    invisible(snapshotPath)
 }
 
 defaultDeviceType <- function() {
