@@ -660,8 +660,9 @@ pub(crate) fn on_did_execute_request() {
 ///
 /// Only used for logging
 ///
-/// NOTE: May be called when rendering a plot to file, since this is done by
+/// NOTE: May be called during [DeviceContext::render_plot], since this is done by
 /// copying the graphics display list to a new plot device, and then closing that device.
+#[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
     log::trace!("Entering callback_activate");
 
@@ -674,9 +675,7 @@ unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
 
 /// Deactivation callback
 ///
-/// Only used for logging
-///
-/// NOTE: May be called when rendering a plot to file, since this is done by
+/// NOTE: May be called during [DeviceContext::render_plot], since this is done by
 /// copying the graphics display list to a new plot device, and then closing that device.
 #[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
