@@ -182,19 +182,16 @@ impl DeviceContext {
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_deactivate(&self) {
-        log::trace!("Entering");
         self.process_changes();
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
     fn hook_holdflush(&self, holdflush: i32) {
-        log::trace!("Entering");
         self.should_render.replace(holdflush == 0);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
     fn hook_mode(&self, mode: i32) {
-        log::trace!("Entering");
         let is_drawing = mode != 0;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
@@ -209,7 +206,6 @@ impl DeviceContext {
     /// [ps_graphics_before_new_page()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
-        log::trace!("Entering");
         // Create a new id for this new plot page and note that this is a new page
         self.id.replace(Self::new_id());
         self.is_new_page.replace(true);
@@ -656,7 +652,7 @@ pub(crate) fn on_process_events() {
 /// they add more plots or advance to another new page.
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn on_did_execute_request() {
-    log::trace!("Entering");
+    log::trace!("Entering on_did_execute_request");
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_changes());
 }
 
@@ -667,7 +663,7 @@ pub(crate) fn on_did_execute_request() {
 /// NOTE: May be called when rendering a plot to file, since this is done by
 /// copying the graphics display list to a new plot device, and then closing that device.
 unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
-    log::trace!("Entering");
+    log::trace!("Entering callback_activate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.activate.get() {
@@ -684,7 +680,7 @@ unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
 /// copying the graphics display list to a new plot device, and then closing that device.
 #[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
-    log::trace!("Entering");
+    log::trace!("Entering callback_deactivate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
@@ -694,9 +690,9 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     });
 }
 
-#[tracing::instrument(level = "trace", skip_all)]
+#[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
 unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32) -> i32 {
-    log::trace!("Entering");
+    log::trace!("Entering callback_holdflush");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.holdflush.get() {
@@ -712,7 +708,7 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32
 // mode = 2, graphical input on (ignored by most drivers)
 #[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
-    log::trace!("Entering");
+    log::trace!("Entering callback_mode");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.mode.get() {
@@ -724,7 +720,7 @@ unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
 
 #[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
-    log::trace!("Entering");
+    log::trace!("Entering callback_new_page");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         if let Some(callback) = cell.wrapped_callbacks.newPage.get() {
@@ -811,7 +807,7 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 #[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::Result<SEXP> {
-    log::trace!("Entering");
+    log::trace!("Entering ps_graphics_before_new_page");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         // Process changes related to the last plot before opening a new page.
