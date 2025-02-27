@@ -29,7 +29,11 @@ pub struct ReticulateService {
 }
 
 impl ReticulateService {
-    fn start(comm_id: String, comm_manager_tx: Sender<CommManagerEvent>) -> anyhow::Result<()> {
+    fn start(
+        comm_id: String,
+        comm_manager_tx: Sender<CommManagerEvent>,
+        input: Option<String>,
+    ) -> anyhow::Result<()> {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
@@ -46,7 +50,12 @@ impl ReticulateService {
             comm_manager_tx,
         };
 
-        let event = CommManagerEvent::Opened(service.comm.clone(), serde_json::Value::Null);
+        let event = CommManagerEvent::Opened(
+            service.comm.clone(),
+            json!({
+                "input": input
+            }),
+        );
         service
             .comm_manager_tx
             .send(event)
@@ -124,7 +133,7 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     }
 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
-    ReticulateService::start(id, main.get_comm_manager_tx().clone())?;
+    ReticulateService::start(id, main.get_comm_manager_tx().clone(), input_code)?;
 
     Ok(R_NilValue)
 }
