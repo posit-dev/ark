@@ -754,7 +754,6 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // `wrapped_callbacks`
     with_device!(ge_device, |ge_device, device| {
         (*ge_device).displayListOn = 1;
-        // (*ge_device).recordGraphics = 1;
 
         DEVICE_CONTEXT.with_borrow(|cell| {
             let wrapped_callbacks = &cell.wrapped_callbacks;
