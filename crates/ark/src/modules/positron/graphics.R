@@ -57,7 +57,7 @@ plotRecordingPath <- function(id) {
 
     # TODO: Is there any way to know the `pixel_ratio` here ahead of time?
     # We know and use it in `.ps.graphics.renderPlotFromRecording()`.
-    res <- defaultResolution()
+    res <- defaultResolutionInPixelsPerInch()
 
     # Create the graphics device.
     # TODO: Use 'ragg' if available?
@@ -131,14 +131,8 @@ plotRecordingPath <- function(id) {
         ))
     }
 
-    # Get device attributes to be passed along.
-    type <- defaultDeviceType()
-    res <- defaultResolution() * pixel_ratio
-    width <- width * pixel_ratio
-    height <- height * pixel_ratio
-
     # Replay the plot with the specified device.
-    withDevice(recordingPath, format, width, height, res, type, {
+    withDevice(recordingPath, width, height, pixel_ratio, format, {
         suppressWarnings(grDevices::replayPlot(recording))
     })
 
@@ -146,7 +140,113 @@ plotRecordingPath <- function(id) {
     invisible(recordingPath)
 }
 
-defaultResolution <- function() {
+#' Run an expression with the specificed device activated.
+#'
+#' The device is guaranteed to close after the expression has run.
+#'
+#' @param path The file path to render output to.
+#' @param width The plot width, in pixels.
+#' @param height The plot height, in pixels.
+#' @param pixel_ratio The device pixel ratio (e.g. 1 for standard displays, 2
+#'   for retina displays)
+#' @param format The output format (and therefore graphics device) to use.
+#'   One of: `"png"`, `"svg"`, `"pdf"`, `"jpeg"`, or `"tiff"`.
+withDevice <- function(
+    path,
+    width,
+    height,
+    pixel_ratio,
+    format,
+    expr
+) {
+    # Store handle to current device (i.e. us)
+    old_dev <- grDevices::dev.cur()
+
+    args <- finalizeDeviceDimensions(format, width, height, pixel_ratio)
+    width <- args$width
+    height <- args$height
+    res <- args$res
+    type <- args$type
+
+    # Create a new graphics device.
+    switch(
+        format,
+        "png" = grDevices::png(
+            filename = path,
+            width = width,
+            height = height,
+            res = res,
+            type = type
+        ),
+        "svg" = grDevices::svg(
+            filename = path,
+            width = width,
+            height = height,
+        ),
+        "pdf" = grDevices::pdf(
+            file = path,
+            width = width,
+            height = height
+        ),
+        "jpeg" = grDevices::jpeg(
+            filename = path,
+            width = width,
+            height = height,
+            res = res,
+            type = type
+        ),
+        "tiff" = grDevices::tiff(
+            filename = path,
+            width = width,
+            height = height,
+            res = res,
+            type = type
+        ),
+        stop("Internal error: Unknown plot `format`.")
+    )
+
+    # Ensure we turn off the device on the way out, this:
+    # - Commits the plot to disk
+    # - Resets us back as being the current device
+    on.exit(utils::capture.output({
+        grDevices::dev.off()
+        if (old_dev > 1) {
+            grDevices::dev.set(old_dev)
+        }
+    }))
+
+    expr
+}
+
+finalizeDeviceDimensions <- function(format, width, height, pixel_ratio) {
+    if (format == "png" || format == "jpeg" || format == "tiff") {
+        # These devices require `width` and `height` in pixels.
+        # We already have them in pixels, so we just scale by the `pixel_ratio`.
+        # `res` is nominal resolution specified in pixels-per-inch (ppi).
+        return(list(
+            type = defaultDeviceType(),
+            res = defaultResolutionInPixelsPerInch() * pixel_ratio,
+            width = width * pixel_ratio,
+            height = height * pixel_ratio
+        ))
+    }
+
+    if (format == "svg" || format == "pdf") {
+        # These devices require `width` and `height` in inches.
+        # We convert from pixels to inches here.
+        # There is no `type` or `res` argument for these devices.
+        return(list(
+            type = NULL,
+            res = NULL,
+            width = width * pixel_ratio / defaultResolutionInPixelsPerInch(),
+            height = height * pixel_ratio / defaultResolutionInPixelsPerInch()
+        ))
+    }
+
+    stop("Internal error: Unknown plot `format`.")
+}
+
+defaultResolutionInPixelsPerInch <- function() {
     if (Sys.info()[["sysname"]] == "Darwin") {
         96L
     } else {
@@ -164,71 +264,4 @@ defaultDeviceType <- function() {
     } else {
         stop("This version of R wasn't built with plotting capabilities")
     }
-}
-
-# Run an expression with the specificed device activated.
-# The device is guaranteed to close after the expression has run.
-withDevice <- function(
-    filepath,
-    format,
-    width,
-    height,
-    res,
-    type,
-    expr
-) {
-    # Store handle to current device (i.e. us)
-    old_dev <- grDevices::dev.cur()
-
-    # Width and height are in inches and use 72 DPI to create the requested
-    # size in pixels
-    dpi <- 72
-
-    # Create a new graphics device.
-    switch(
-        format,
-        "png" = grDevices::png(
-            filename = filepath,
-            width = width,
-            height = height,
-            res = res,
-            type = type
-        ),
-        "svg" = grDevices::svg(
-            filename = filepath,
-            width = (width / dpi),
-            height = (height / dpi),
-        ),
-        "pdf" = grDevices::pdf(
-            file = filepath,
-            width = (width / dpi),
-            height = (height / dpi)
-        ),
-        "jpeg" = grDevices::jpeg(
-            filename = filepath,
-            width = width,
-            height = height,
-            res = res,
-            type = type
-        ),
-        "tiff" = grDevices::tiff(
-            filename = filepath,
-            width = width,
-            height = height,
-            type = type
-        ),
-        stop("Internal error: Unknown plot `format`.")
-    )
-
-    # Ensure we turn off the device on the way out, this:
-    # - Commits the plot to disk
-    # - Resets us back as being the current device
-    on.exit(utils::capture.output({
-        grDevices::dev.off()
-        if (old_dev > 1) {
-            grDevices::dev.set(old_dev)
-        }
-    }))
-
-    expr
 }
