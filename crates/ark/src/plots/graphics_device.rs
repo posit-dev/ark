@@ -203,7 +203,7 @@ impl DeviceContext {
     /// Notably this hook is called by the R graphics system after the display list
     /// of the old page has been cleared, so it is too late to try and record here.
     /// If you are looking for where we record before the page is advanced, look to
-    /// [ps_graphics_before_new_page()] instead.
+    /// [ps_graphics_before_plot_new()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
         // Create a new id for this new plot page and note that this is a new page
@@ -790,16 +790,32 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
     })
 }
 
-/// Hook applied right before we advance to a new page
+/// Hook applied by `plot.new()` and `grid::grid.newpage()`
 ///
-/// The timing of this hook is particularly important. If we advance to the new page,
-/// then when we drop into our [DeviceContext::new_page] hook it will be too late for
-/// us to record any changes because the display list we record gets cleared before
-/// our hook is called.
+/// The timing of this hook is particularly important. If we advance to the new page, then
+/// when we drop into our [DeviceContext::new_page] hook it will be too late for us to
+/// record any changes because the display list we record gets cleared before our hook is
+/// called.
+///
+/// It is also worth noting that we don't always drop into our [DeviceContext::new_page]
+/// hook after a call to `plot.new()` (and, therefore, after this hook is called). With
+/// this:
+///
+/// ```r
+/// par(mfrow = c(2, 1))
+/// plot(1:10)
+/// plot(2:20)
+/// ```
+///
+/// When running `plot(2:20)` the internal `plot.new()` will trigger this hook, but will
+/// not trigger a [DeviceContext::new_page] hook. That's correct, as it gives us a chance
+/// to record the intermediate plot, and then after `plot(2:20)` finishes it overwrites
+/// that intermediate plot since we are still on the same plot page with the same plot
+/// `id`.
 #[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_before_new_page(_name: SEXP) -> anyhow::Result<SEXP> {
-    log::trace!("Entering ps_graphics_before_new_page");
+unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::Result<SEXP> {
+    log::trace!("Entering ps_graphics_before_plot_new");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
         // Process changes related to the last plot before opening a new page.

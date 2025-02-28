@@ -5,12 +5,12 @@
 #
 #
 
-# Set up "before new page" hooks
+# Set up "before plot new" hooks
 setHook("before.plot.new", action = "replace", function(...) {
-    .ps.Call("ps_graphics_before_new_page", "before.plot.new")
+    .ps.Call("ps_graphics_before_plot_new", "before.plot.new")
 })
 setHook("before.grid.newpage", action = "replace", function(...) {
-    .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
+    .ps.Call("ps_graphics_before_plot_new", "before.grid.newpage")
 })
 
 # A persistent list mapping plot `id`s to their display list recording.
