@@ -13,9 +13,9 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
 })
 
-# A persistent environment mapping plot `id`s to their display list recording.
+# A persistent list mapping plot `id`s to their display list recording.
 # Used for replaying recordings under a new device or new width/height/resolution.
-RECORDINGS <- new.env()
+RECORDINGS <- list()
 
 # Retrieves a recording by its `id`
 #
@@ -25,12 +25,12 @@ getRecording <- function(id) {
 }
 
 addRecording <- function(id, recording) {
-    RECORDINGS[[id]] <- recording
+    RECORDINGS[[id]] <<- recording
 }
 
 # TODO: Use this when we get notified that we can remove a recording
 # removeRecording <- function(id) {
-#     remove(list = id, envir = RECORDINGS)
+#     RECORDINGS[[id]] <<- NULL
 # }
 
 plotRecordingRoot <- function() {
@@ -103,7 +103,7 @@ plotRecordingPath <- function(id) {
     # Create the plot recording
     recording <- grDevices::recordPlot()
 
-    # Add the recording to the persistent environment
+    # Add the recording to the persistent list
     addRecording(id, recording)
 
     invisible(NULL)
