@@ -105,7 +105,7 @@ struct DeviceContext {
 
     /// Tracks whether or not we are allowed to render a plot
     ///
-    /// When a new page event occurs, or when we finish executing R code, we snapshot the
+    /// When a new page event occurs, or when we finish executing R code, we record the
     /// display list and send Positron a notification that we have new plot information to
     /// display. When it responds, we actually render the plot and send it back to
     /// Positron. If a user sets `dev.hold()`, then we refrain from actually responding
@@ -118,7 +118,7 @@ struct DeviceContext {
 
     /// The ID associated with the current plot page.
     ///
-    /// Used for looking up a snapshotted plot so we can replay it with different graphics
+    /// Used for looking up a recorded plot so we can replay it with different graphics
     /// device specifications (i.e. for Positron's Plots pane).
     id: RefCell<PlotId>,
 
@@ -159,11 +159,11 @@ impl DeviceContext {
     /// Deactivation hook
     ///
     /// We process any changes here before fully deactivating, ensuring that
-    /// we snapshot the current display list before a different device takes control,
+    /// we record the current display list before a different device takes control,
     /// because that new device may wipe the display list.
     ///
     /// For example, running this all in one chunk should plot `1:10` at the end of the
-    /// chunk as long as we snapshot the `1:10` plot before we switch to the png device.
+    /// chunk as long as we record the `1:10` plot before we switch to the png device.
     ///
     /// ```r
     /// plot(1:10)
@@ -201,8 +201,8 @@ impl DeviceContext {
     /// Hook applied when starting a new page
     ///
     /// Notably this hook is called by the R graphics system after the display list
-    /// of the old page has been cleared, so it is too late to try and snapshot here.
-    /// If you are looking for where we snapshot before the page is advanced, look to
+    /// of the old page has been cleared, so it is too late to try and record here.
+    /// If you are looking for where we record before the page is advanced, look to
     /// [ps_graphics_before_new_page()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
@@ -351,17 +351,17 @@ impl DeviceContext {
 
         log::trace!("Processing changes for plot `id` {id}");
 
-        // Snapshot the changes so we can replay them when Positron asks us for them.
-        // Snapshotting here overrides an existing snapshot for `id` if something has
+        // Record the changes so we can replay them when Positron asks us for them.
+        // Recording here overrides an existing recording for `id` if something has
         // changed between then and now, which is what we want, for example, we want
         // it when running this line by line:
         //
         // ```r
         // par(mfrow = c(2, 1))
-        // plot(1) # Should get snapshotted with `id1`
-        // plot(2) # Should snapshot and overwrite `id1` because no new_page has been requested
+        // plot(1) # Should get recorded with `id1`
+        // plot(2) # Should record and overwrite `id1` because no new_page has been requested
         // ```
-        Self::snapshot(&id);
+        Self::record_plot(&id);
 
         if self.is_new_page.replace(false) {
             self.process_new_plot(&id);
@@ -521,7 +521,7 @@ impl DeviceContext {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
-            RFunction::from(".ps.graphics.renderPlotFromSnapshot")
+            RFunction::from(".ps.graphics.renderPlotFromRecording")
                 .param("id", id)
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
@@ -556,20 +556,20 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn snapshot(id: &PlotId) -> bool {
-        log::trace!("Snapshotting plot");
+    fn record_plot(id: &PlotId) -> bool {
+        log::trace!("Recording plot");
 
-        let result = RFunction::from(".ps.graphics.createSnapshot")
+        let result = RFunction::from(".ps.graphics.recordPlot")
             .param("id", id)
             .call();
 
         match result {
             Ok(_) => {
-                log::trace!("Snapshotted plot");
+                log::trace!("Recorded plot");
                 true
             },
             Err(error) => {
-                log::error!("Failed to snapshot plot: {error:?}");
+                log::error!("Failed to record plot: {error:?}");
                 false
             },
         }
@@ -638,7 +638,7 @@ pub(crate) fn on_process_events() {
 /// Not an official graphics device hook, instead we run this manually after
 /// completing execution of a chunk of R code.
 ///
-/// This is particularly useful for snapshotting "partial" states within a single
+/// This is particularly useful for recording "partial" states within a single
 /// page, for example:
 ///
 /// ```r
@@ -682,7 +682,7 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     log::trace!("Entering callback_deactivate");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        // We run our hook first to snapshot before we deactivate the underlying device,
+        // We run our hook first to record before we deactivate the underlying device,
         // in case device deactivation messes with the display list
         cell.hook_deactivate();
         if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
@@ -803,7 +803,7 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 ///
 /// The timing of this hook is particularly important. If we advance to the new page,
 /// then when we drop into our [DeviceContext::new_page] hook it will be too late for
-/// us to snapshot any changes because the display list we snapshot gets cleared before
+/// us to record any changes because the display list we record gets cleared before
 /// our hook is called.
 #[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]

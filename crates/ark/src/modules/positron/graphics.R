@@ -13,42 +13,42 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_new_page", "before.grid.newpage")
 })
 
-# A persistent environment mapping plot `id`s to their display list snapshot.
-# Used for replaying snapshots under a new device or new width/height/resolution.
-SNAPSHOTS <- new.env()
+# A persistent environment mapping plot `id`s to their display list recording.
+# Used for replaying recordings under a new device or new width/height/resolution.
+RECORDINGS <- new.env()
 
-# Retrieves a snapshot by its `id`
+# Retrieves a recording by its `id`
 #
-# Returns `NULL` if no snapshot exists
-getSnapshot <- function(id) {
-    SNAPSHOTS[[id]]
+# Returns `NULL` if no recording exists
+getRecording <- function(id) {
+    RECORDINGS[[id]]
 }
 
-addSnapshot <- function(id, snapshot) {
-    SNAPSHOTS[[id]] <- snapshot
+addRecording <- function(id, recording) {
+    RECORDINGS[[id]] <- recording
 }
 
-# TODO: Use this when we get notified that we can remove a snapshot
-# removeSnapshot <- function(id) {
-#     remove(list = id, envir = SNAPSHOTS)
+# TODO: Use this when we get notified that we can remove a recording
+# removeRecording <- function(id) {
+#     remove(list = id, envir = RECORDINGS)
 # }
 
-plotSnapshotRoot <- function() {
-    root <- file.path(tempdir(), "positron-snapshots")
+plotRecordingRoot <- function() {
+    root <- file.path(tempdir(), "positron-plot-recordings")
     ensure_directory(root)
     root
 }
 
-plotSnapshotPath <- function(id) {
-    root <- plotSnapshotRoot()
-    file <- paste0("snapshot-", id, ".png")
+plotRecordingPath <- function(id) {
+    root <- plotRecordingRoot()
+    file <- paste0("recording-", id, ".png")
     file.path(root, file)
 }
 
 #' @export
 .ps.graphics.createDevice <- function(name, type, res) {
-    # Get path where non-snapshot plots will be generated.
-    root <- plotSnapshotRoot()
+    # Get path where non-recorded plots will be generated.
+    root <- plotRecordingRoot()
     filename <- file.path(root, "current-plot.png")
 
     if (is.null(type)) {
@@ -94,35 +94,35 @@ plotSnapshotPath <- function(id) {
     grDevices::deviceIsInteractive(name)
 }
 
-# Create a snapshot of the current plot.
+# Create a recording of the current plot.
 #
-# This saves the plot's display list, so it can be used
-# to re-render plots as necessary.
+# This saves the plot's display list, so it can be used to re-render plots as
+# necessary.
 #' @export
-.ps.graphics.createSnapshot <- function(id) {
-    # Create the plot snapshot.
-    snapshot <- grDevices::recordPlot()
+.ps.graphics.recordPlot <- function(id) {
+    # Create the plot recording
+    recording <- grDevices::recordPlot()
 
-    # Add the snapshot to the persistent environment.
-    addSnapshot(id, snapshot)
+    # Add the recording to the persistent environment
+    addRecording(id, recording)
 
     invisible(NULL)
 }
 
 #' @export
-.ps.graphics.renderPlotFromSnapshot <- function(
+.ps.graphics.renderPlotFromRecording <- function(
     id,
     width,
     height,
     dpr,
     format
 ) {
-    snapshot <- getSnapshot(id)
-    snapshotPath <- plotSnapshotPath(id)
+    recording <- getRecording(id)
+    recordingPath <- plotRecordingPath(id)
 
-    if (is.null(snapshot)) {
+    if (is.null(recording)) {
         stop(sprintf(
-            "Failed to render plot for plot `id` %s. Snapshot is missing.",
+            "Failed to render plot for plot `id` %s. Recording is missing.",
             id
         ))
     }
@@ -134,12 +134,12 @@ plotSnapshotPath <- function(id) {
     height <- height * dpr
 
     # Replay the plot with the specified device.
-    withDevice(snapshotPath, format, width, height, res, type, {
-        suppressWarnings(grDevices::replayPlot(snapshot))
+    withDevice(recordingPath, format, width, height, res, type, {
+        suppressWarnings(grDevices::replayPlot(recording))
     })
 
     # Return path to generated plot file.
-    invisible(snapshotPath)
+    invisible(recordingPath)
 }
 
 defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
