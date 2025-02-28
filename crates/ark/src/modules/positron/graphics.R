@@ -162,7 +162,7 @@ withDevice <- function(
     # Store handle to current device (i.e. us)
     old_dev <- grDevices::dev.cur()
 
-    args <- finalizeDeviceDimensions(format, width, height, pixel_ratio)
+    args <- finalizeDeviceArguments(format, width, height, pixel_ratio)
     width <- args$width
     height <- args$height
     res <- args$res
@@ -218,7 +218,7 @@ withDevice <- function(
     expr
 }
 
-finalizeDeviceDimensions <- function(format, width, height, pixel_ratio) {
+finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
     if (format == "png" || format == "jpeg" || format == "tiff") {
         # These devices require `width` and `height` in pixels.
         # We already have them in pixels, so we just scale by the `pixel_ratio`.
