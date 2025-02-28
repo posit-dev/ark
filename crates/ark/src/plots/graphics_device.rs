@@ -525,7 +525,7 @@ impl DeviceContext {
                 .param("id", id)
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
-                .param("dpr", pixel_ratio)
+                .param("pixel_ratio", pixel_ratio)
                 .param("format", format.to_string())
                 .call()?
                 .to::<String>()
@@ -735,10 +735,6 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
     // TODO: Allow customization of the graphics device here?
 
-    // TODO: Infer appropriate resolution based on whether display is high DPI.
-    // TODO!: Need this resolution to get inferred correctly now.
-    let res = 144 / 2;
-
     // TODO: allow customization of device type.
     let r#type = RObject::null();
 
@@ -746,7 +742,6 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     RFunction::from(".ps.graphics.createDevice")
         .param("name", "Positron Graphics Device")
         .param("type", r#type)
-        .param("res", res)
         .call()?;
 
     // Get reference to current device (opaque pointer)

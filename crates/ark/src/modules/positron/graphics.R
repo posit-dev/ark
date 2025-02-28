@@ -46,7 +46,7 @@ plotRecordingPath <- function(id) {
 }
 
 #' @export
-.ps.graphics.createDevice <- function(name, type, res) {
+.ps.graphics.createDevice <- function(name, type) {
     # Get path where non-recorded plots will be generated.
     root <- plotRecordingRoot()
     filename <- file.path(root, "current-plot.png")
@@ -54,6 +54,10 @@ plotRecordingPath <- function(id) {
     if (is.null(type)) {
         type <- defaultDeviceType()
     }
+
+    # TODO: Is there any way to know the `pixel_ratio` here ahead of time?
+    # We know and use it in `.ps.graphics.renderPlotFromRecording()`.
+    res <- defaultResolution()
 
     # Create the graphics device.
     # TODO: Use 'ragg' if available?
@@ -114,7 +118,7 @@ plotRecordingPath <- function(id) {
     id,
     width,
     height,
-    dpr,
+    pixel_ratio,
     format
 ) {
     recording <- getRecording(id)
@@ -129,9 +133,9 @@ plotRecordingPath <- function(id) {
 
     # Get device attributes to be passed along.
     type <- defaultDeviceType()
-    res <- defaultResolution * dpr
-    width <- width * dpr
-    height <- height * dpr
+    res <- defaultResolution() * pixel_ratio
+    width <- width * pixel_ratio
+    height <- height * pixel_ratio
 
     # Replay the plot with the specified device.
     withDevice(recordingPath, format, width, height, res, type, {
@@ -142,10 +146,12 @@ plotRecordingPath <- function(id) {
     invisible(recordingPath)
 }
 
-defaultResolution <- if (Sys.info()[["sysname"]] == "Darwin") {
-    96L
-} else {
-    72L
+defaultResolution <- function() {
+    if (Sys.info()[["sysname"]] == "Darwin") {
+        96L
+    } else {
+        72L
+    }
 }
 
 defaultDeviceType <- function() {
