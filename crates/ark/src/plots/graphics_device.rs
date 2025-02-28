@@ -515,9 +515,6 @@ impl DeviceContext {
         pixel_ratio: f64,
         format: &RenderFormat,
     ) -> anyhow::Result<String> {
-        // Render the plot to file.
-        // TODO: Is it possible to do this without writing to file; e.g. could
-        // we instead write to a connection or something else?
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
