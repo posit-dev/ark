@@ -737,7 +737,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 
     // Create the graphics device.
     RFunction::from(".ps.graphics.createDevice")
-        .param("name", "Positron Graphics Device")
+        .param("name", "Ark Graphics Device")
         .param("type", r#type)
         .call()?;
 
@@ -784,7 +784,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
 #[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
-    log::trace!("Initializing Positron graphics device");
+    log::trace!("Initializing Ark graphics device");
     ps_graphics_device_impl().or_else(|error| {
         log::error!("{error:?}");
         Ok(R_NilValue)
