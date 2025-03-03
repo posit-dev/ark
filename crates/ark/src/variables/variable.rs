@@ -306,7 +306,7 @@ impl WorkspaceVariableDisplayValue {
 
     fn from_matrix(value: SEXP) -> anyhow::Result<Self> {
         let (n_row, n_col) = match harp::table_info(value) {
-            Some(info) => (info.dims.num_cols, info.dims.num_rows),
+            Some(info) => (info.dims.num_rows, info.dims.num_cols),
             None => {
                 log::error!("Failed to get matrix dimensions");
                 (-1, -1)
@@ -2087,19 +2087,18 @@ mod tests {
         r_task(|| {
             // Test 10x10 matrix
             let env = Environment::new_empty().unwrap();
-            let value = harp::parse_eval_base(
-                "matrix(paste(1:100, collapse = ' - '), nrow = 10, ncol = 10)",
-            )
-            .unwrap();
+            let value =
+                harp::parse_eval_base("matrix(paste(1:90, collapse = ' - '), nrow = 9, ncol = 10)")
+                    .unwrap();
             env.bind("x".into(), &value);
             let path = vec![];
             let vars = PositronVariable::inspect(env.clone().into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
-            assert_eq!(vars[0].display_value, "[10 rows x 10 columns] <matrix>");
+            assert_eq!(vars[0].display_value, "[9 rows x 10 columns] <matrix>");
 
             // Test consistency between data.frame and matrix display
             let value = harp::parse_eval_base(
-                "data.frame(matrix(paste(1:100, collapse = ' - '), nrow = 10, ncol = 10))",
+                "data.frame(matrix(paste(1:90, collapse = ' - '), nrow = 9, ncol = 10))",
             )
             .unwrap();
             env.bind("y".into(), &value);
