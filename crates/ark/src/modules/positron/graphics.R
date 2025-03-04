@@ -246,6 +246,15 @@ finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
     stop("Internal error: Unknown plot `format`.")
 }
 
+#' Default OS resolution in PPI (pixels per inch)
+#'
+#' Thomas thinks these are "more correct than any other numbers." Specifically,
+#' macOS uses 96 DPI for its internal scaling, but this is user definable on
+#' Windows.
+#'
+#' This corresponds to a scaling factor that tries to make things that appear
+#' "on screen" be as close to the size in which they are actually printed at,
+#' which has always been tricky.
 defaultResolutionInPixelsPerInch <- function() {
     if (Sys.info()[["sysname"]] == "Darwin") {
         96L
