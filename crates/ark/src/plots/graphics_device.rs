@@ -730,7 +730,6 @@ unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
 
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
-    // TODO: Allow customization of the graphics device here?
 
     // Create the graphics device.
     RFunction::from(".ps.graphics.createDevice").call()?;
