@@ -49,18 +49,20 @@ plotRecordingPath <- function(id) {
 .ps.graphics.createDevice <- function() {
     name <- "Ark Graphics Device"
 
-    # Get path where non-recorded plots will be generated.
+    # TODO: Remove the "shadow" device in favor of implementing our own
+    # minimal graphics device like {devoid}. That would allow us to remove
+    # all of the awkwardness here around:
+    # - A `filename` that we never look at
+    # - A `res` that isn't scaled by `pixel_ratio`
+    # - The fact that the `png` device is forcing double the work to happen,
+    #   as it is drawing graphics that we never look at.
+    # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
     root <- plotRecordingRoot()
     filename <- file.path(root, "current-plot.png")
-
     type <- defaultDeviceType()
-
-    # TODO: Is there any way to know the `pixel_ratio` here ahead of time?
-    # We know and use it in `.ps.graphics.renderPlotFromRecording()`.
     res <- defaultResolutionInPixelsPerInch()
 
-    # Create the graphics device.
-    # TODO: Use 'ragg' if available?
+    # Create the graphics device that we are going to shadow
     withCallingHandlers(
         grDevices::png(
             filename = filename,
@@ -169,6 +171,7 @@ withDevice <- function(
     type <- args$type
 
     # Create a new graphics device.
+    # TODO: Use 'ragg' if available?
     switch(
         format,
         "png" = grDevices::png(
