@@ -220,8 +220,10 @@ withDevice <- function(
 
 finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
     if (format == "png" || format == "jpeg" || format == "tiff") {
-        # These devices require `width` and `height` in pixels.
-        # We already have them in pixels, so we just scale by the `pixel_ratio`.
+        # These devices require `width` and `height` in pixels, which is what
+        # they are provided in already. For pixel based devices, all relevant
+        # values are upscaled by `pixel_ratio`.
+        #
         # `res` is nominal resolution specified in pixels-per-inch (ppi).
         return(list(
             type = defaultDeviceType(),
@@ -232,8 +234,17 @@ finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
     }
 
     if (format == "svg" || format == "pdf") {
-        # These devices require `width` and `height` in inches.
-        # We convert from pixels to inches here.
+        # These devices require `width` and `height` in inches, but they are
+        # provided to us in pixels, so we have to perform a conversion here.
+        # For vector based devices, providing the size in inches implicitly
+        # tells the device the relative size to use for things like text,
+        # since that is the absolute unit (pts are based on inches).
+        #
+        # Thomas says the math for `width` and `height` here are correct,
+        # i.e. we don't also multiply `defaultResolutionInPixelsPerInch()` by
+        # `pixel_ratio` like we do above, which would have made it cancel out
+        # of the equation below.
+        #
         # There is no `type` or `res` argument for these devices.
         return(list(
             type = NULL,
