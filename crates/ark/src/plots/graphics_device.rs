@@ -732,13 +732,9 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
     // TODO: Allow customization of the graphics device here?
 
-    // TODO: allow customization of device type.
-    let r#type = RObject::null();
-
     // Create the graphics device.
     RFunction::from(".ps.graphics.createDevice")
         .param("name", "Ark Graphics Device")
-        .param("type", r#type)
         .call()?;
 
     // Get reference to current device (opaque pointer)

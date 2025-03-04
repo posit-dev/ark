@@ -46,14 +46,12 @@ plotRecordingPath <- function(id) {
 }
 
 #' @export
-.ps.graphics.createDevice <- function(name, type) {
+.ps.graphics.createDevice <- function(name) {
     # Get path where non-recorded plots will be generated.
     root <- plotRecordingRoot()
     filename <- file.path(root, "current-plot.png")
 
-    if (is.null(type)) {
-        type <- defaultDeviceType()
-    }
+    type <- defaultDeviceType()
 
     # TODO: Is there any way to know the `pixel_ratio` here ahead of time?
     # We know and use it in `.ps.graphics.renderPlotFromRecording()`.
