@@ -10,7 +10,7 @@ Let's take a look at what generally happens when a user runs `plot(1:10)`:
 
 -   If the graphics device has never been used, a new page is created. This runs our `hook_new_page()`, creating a new unique `id` for this plot page.
 
--   The graphics engine "draws" the plot, which repeatedly triggers `hook_mode()` letting us know when drawing starts and stops, and as a side effect this lets us know that we have some changes to render. To Ark, "drawing" the plot looks like writing a series of *instructions* on how to create the plot to the graphics device's *display list*.
+-   The graphics device "draws" the plot, which repeatedly triggers `hook_mode()` letting us know when drawing starts and stops, and as a side effect this lets us know that we have some changes to render. To Ark, "drawing" the plot looks like writing a series of *instructions* on how to create the plot to the graphics device's *display list*.
 
 -   When either the top level code finishes executing (i.e. `plot(1:10)` is done), or when a new page is about to be created (i.e. triggering our `before.new.page` or `before.grid.newpage` hooks), we check to see if there are any changes to record for this plot `id` using `process_changes()`. If something has changed for this `id`:
 
@@ -84,10 +84,6 @@ A graphics device is represented by the C struct `DevDesc`, and is seen in our c
 
 ## Graphics engine
 
-There are two graphics engines in existence today: `base` and `grid`.
-
-Graphics engines build R interfaces on top of the lower level graphics devices.
-
 A graphics engine maintains an array of graphics devices. The graphics devices themselves are wrapped by the C struct `GEDevDesc`, which is laid out like:
 
 ```
@@ -99,9 +95,15 @@ struct GEDevDesc {
 
 You'll see `pGEDevDesc` in the code representing a pointer to one of these device wrappers owned by the graphics engine. The definitions of this struct lives in [R_ext/GraphicsEngine.h](https://github.com/wch/r-source/blob/trunk/src/include/R_ext/GraphicsEngine.h).
 
+## Graphics system
+
+There are two graphics systems in existence today: `base` and `grid`. Up to 16 are allowed in total.
+
+Graphics systems build R interfaces on top of the lower level graphics devices, with the graphics engine sitting between the two and adding some common glue between them.
+
 ## New page
 
-A new "page" roughly corresponds to what we actually end up showing the user. The easiest way to think about this is as a blank white piece of paper that you get to write graphics onto. Starting a new page via the `newPage` graphics device hook gives you a new blank piece of paper to write onto. At the R level, this is generally controlled by a call to `plot.new()` in the `base` graphics engine, and `grid.newpage()` in the `grid` graphics engine.
+A new "page" roughly corresponds to what we actually end up showing the user. The easiest way to think about this is as a blank white piece of paper that you get to write graphics onto. Starting a new page via the `newPage` graphics device hook gives you a new blank piece of paper to write onto. At the R level, this is generally controlled by a call to `plot.new()` in the `base` graphics system, and `grid.newpage()` in the `grid` graphics system.
 
 ### before.plot.new / before.grid.newpage
 
