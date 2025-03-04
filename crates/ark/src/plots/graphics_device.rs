@@ -733,9 +733,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Allow customization of the graphics device here?
 
     // Create the graphics device.
-    RFunction::from(".ps.graphics.createDevice")
-        .param("name", "Ark Graphics Device")
-        .call()?;
+    RFunction::from(".ps.graphics.createDevice").call()?;
 
     // Get reference to current device (opaque pointer)
     let ge_device = libr::GEcurrentDevice();

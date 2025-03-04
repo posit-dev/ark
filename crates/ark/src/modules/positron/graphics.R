@@ -46,7 +46,9 @@ plotRecordingPath <- function(id) {
 }
 
 #' @export
-.ps.graphics.createDevice <- function(name) {
+.ps.graphics.createDevice <- function() {
+    name <- "Ark Graphics Device"
+
     # Get path where non-recorded plots will be generated.
     root <- plotRecordingRoot()
     filename <- file.path(root, "current-plot.png")
