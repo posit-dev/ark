@@ -743,11 +743,15 @@ fn new_device() -> libr::DevDescVersion16 {
         canHAdj: 2,
 
         // Device initial settings
+        // For the `base` graphics system, these seem to only ever be set once by the
+        // very first graphics device, so they are important to get right.
         startps: 12.0,
         // Sets par("fg"), par("col"), and gpar("col")
-        startcol: 0,
+        // `farver::encode_native("black")`
+        startcol: -16777216,
         // Sets par("bg") and gpar("fill")
-        startfill: 0,
+        // `farver::encode_native("white")`
+        startfill: -1,
         startlty: 0,
         startfont: 1,
         startgamma: 1.0,
