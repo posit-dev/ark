@@ -752,6 +752,7 @@ fn new_device() -> libr::DevDescVersion16 {
         // Sets par("bg") and gpar("fill")
         // `farver::encode_native("white")`
         startfill: -1,
+        // `0` corresponds to solid, see `LTY_SOLID` in `GraphicsEngine.h`
         startlty: 0,
         startfont: 1,
         startgamma: 1.0,
