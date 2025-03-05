@@ -11,6 +11,7 @@
 use crate::constant_globals;
 use crate::functions;
 use crate::functions_variadic;
+use crate::graphics::pDevDesc;
 use crate::graphics::pGEDevDesc;
 use crate::mutable_globals;
 use crate::types::*;
@@ -295,6 +296,10 @@ functions::generate! {
     pub fn GEcurrentDevice() -> pGEDevDesc;
 
     pub fn GEinitDisplayList(dd: pGEDevDesc);
+
+    pub fn GEcreateDevDesc(dev: pDevDesc) -> pGEDevDesc;
+
+    pub fn GEaddDevice2(arg1: pGEDevDesc, arg2: *const ::std::os::raw::c_char);
 
     pub fn ENVFLAGS(x: SEXP) -> std::ffi::c_int;
 

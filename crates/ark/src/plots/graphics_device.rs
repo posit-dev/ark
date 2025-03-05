@@ -9,6 +9,7 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::BufReader;
@@ -63,17 +64,6 @@ pub(crate) fn init_graphics_device(
     DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx))
 }
 
-/// Wrapped callbacks of the original graphics device we shadow
-#[derive(Debug, Default)]
-#[allow(non_snake_case)]
-struct WrappedDeviceCallbacks {
-    activate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
-    deactivate: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc)>>,
-    holdflush: Cell<Option<unsafe extern "C-unwind" fn(pDevDesc, i32) -> i32>>,
-    mode: Cell<Option<unsafe extern "C-unwind" fn(i32, pDevDesc)>>,
-    newPage: Cell<Option<unsafe extern "C-unwind" fn(pGEcontext, pDevDesc)>>,
-}
-
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PlotId(String);
 
@@ -126,8 +116,7 @@ struct DeviceContext {
     /// rendered results to the frontend.
     sockets: RefCell<HashMap<PlotId, CommSocket>>,
 
-    /// The callbacks of the wrapped device, initialized on graphics device creation
-    wrapped_callbacks: WrappedDeviceCallbacks,
+    device: libr::DevDescVersion16,
 }
 
 impl DeviceContext {
@@ -141,7 +130,7 @@ impl DeviceContext {
             should_render: Cell::new(true),
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
-            wrapped_callbacks: WrappedDeviceCallbacks::default(),
+            device: new_device(),
         }
     }
 
@@ -187,7 +176,7 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
     fn hook_holdflush(&self, holdflush: i32) {
-        self.should_render.replace(holdflush == 0);
+        //self.should_render.replace(holdflush == 0);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
@@ -653,121 +642,21 @@ pub(crate) fn on_did_execute_request() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_changes());
 }
 
-/// Activation callback
-///
-/// Only used for logging
-///
-/// NOTE: May be called during [DeviceContext::render_plot], since this is done by
-/// copying the graphics display list to a new plot device, and then closing that device.
-#[tracing::instrument(level = "trace", skip_all)]
-unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
-    log::trace!("Entering callback_activate");
-
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.activate.get() {
-            callback(dev);
-        }
-    });
-}
-
-/// Deactivation callback
-///
-/// NOTE: May be called during [DeviceContext::render_plot], since this is done by
-/// copying the graphics display list to a new plot device, and then closing that device.
-#[tracing::instrument(level = "trace", skip_all)]
-unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
-    log::trace!("Entering callback_deactivate");
-
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        // We run our hook first to record before we deactivate the underlying device,
-        // in case device deactivation messes with the display list
-        cell.hook_deactivate();
-        if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
-            callback(dev);
-        }
-    });
-}
-
-#[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
-unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32) -> i32 {
-    log::trace!("Entering callback_holdflush");
-
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.holdflush.get() {
-            holdflush = callback(dev, holdflush);
-        }
-        cell.hook_holdflush(holdflush);
-        holdflush
-    })
-}
-
-// mode = 0, graphics off
-// mode = 1, graphics on
-// mode = 2, graphical input on (ignored by most drivers)
-#[tracing::instrument(level = "trace", skip_all)]
-unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
-    log::trace!("Entering callback_mode");
-
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.mode.get() {
-            callback(mode, dev);
-        }
-        cell.hook_mode(mode);
-    });
-}
-
-#[tracing::instrument(level = "trace", skip_all)]
-unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
-    log::trace!("Entering callback_new_page");
-
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.newPage.get() {
-            callback(dd, dev);
-        }
-        cell.hook_new_page();
-    });
-}
-
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
-    // TODO: Don't allow creation of more than one graphics device.
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        let p_device: *const libr::DevDescVersion16 = &cell.device;
+        let p_device: *mut libr::DevDesc = p_device as *mut libr::DevDesc;
+        let p_ge_device = libr::GEcreateDevDesc(p_device);
+        let name = CString::new("Ark Graphics Device").unwrap();
 
-    // Create the graphics device.
-    RFunction::from(".ps.graphics.createDevice").call()?;
-
-    // Get reference to current device (opaque pointer)
-    let ge_device = libr::GEcurrentDevice();
-
-    // Initialize display list (needed for copying of plots)
-    // (Called on opaque pointer, because that matches the function signature.
-    // Pointer specialization is done below, at which point we can access and set
-    // `displayListOn` too)
-    libr::GEinitDisplayList(ge_device);
-
-    // Get a specialized versioned pointer from our opaque one so we can initialize our
-    // `wrapped_callbacks`
-    with_device!(ge_device, |ge_device, device| {
-        (*ge_device).displayListOn = 1;
-
-        DEVICE_CONTEXT.with_borrow(|cell| {
-            let wrapped_callbacks = &cell.wrapped_callbacks;
-
-            // Safety: The callbacks are stored in simple cells.
-
-            wrapped_callbacks.activate.replace((*device).activate);
-            (*device).activate = Some(callback_activate);
-
-            wrapped_callbacks.deactivate.replace((*device).deactivate);
-            (*device).deactivate = Some(callback_deactivate);
-
-            wrapped_callbacks.holdflush.replace((*device).holdflush);
-            (*device).holdflush = Some(callback_holdflush);
-
-            wrapped_callbacks.mode.replace((*device).mode);
-            (*device).mode = Some(callback_mode);
-
-            wrapped_callbacks.newPage.replace((*device).newPage);
-            (*device).newPage = Some(callback_new_page);
-        });
+        // Wrapper for:
+        //
+        // ```
+        // gsetVar(R_DeviceSymbol, mkString(name), R_BaseEnv);
+        // GEaddDevice(gdd);
+        // GEinitDisplayList(gdd);
+        // ```
+        libr::GEaddDevice2(p_ge_device, name.as_ptr());
     });
 
     Ok(R_NilValue)
@@ -817,4 +706,382 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
     });
 
     Ok(harp::r_null())
+}
+
+// ---------------------------------------------------------------------------------------
+// Used hooks
+
+fn new_device() -> libr::DevDescVersion16 {
+    libr::DevDescVersion16 {
+        // Screen dimensions in pts
+        left: 0.0,
+        right: 480.0,
+        bottom: 480.0,
+        top: 0.0,
+
+        clipLeft: 0.0,
+        clipRight: 0.0,
+        clipBottom: 0.0,
+        clipTop: 0.0,
+
+        // Magic constants copied from other graphics devices
+        xCharOffset: 0.4900,
+        yCharOffset: 0.3333,
+        yLineBias: 0.2,
+        // Inches per raster
+        ipr: [1.0 / 72.0, 1.0 / 72.0],
+        // Character size in rasters
+        cra: [0.9 * 12.0, 0.9 * 12.0],
+        // (initial) device gamma correction
+        gamma: 1.0,
+
+        // Device capabilities
+        canClip: libr::Rboolean_TRUE,
+        canChangeGamma: libr::Rboolean_FALSE,
+        // Can do at least some horiz adjust of text
+        // 0 = none, 1 = {0,0.5,1}, 2 = [0,1]
+        canHAdj: 2,
+
+        // Device initial settings
+        startps: 12.0,
+        // Sets par("fg"), par("col"), and gpar("col")
+        startcol: 0,
+        // Sets par("bg") and gpar("fill")
+        startfill: 0,
+        startlty: 0,
+        startfont: 1,
+        startgamma: 1.0,
+
+        // Device specific information
+        deviceSpecific: std::ptr::null_mut(),
+
+        // This one actually matters, as it enables display list recording to work
+        displayListOn: 1,
+
+        // Event handling entries
+        // FALSE until we know any better
+        canGenMouseDown: libr::Rboolean_FALSE,
+        canGenMouseMove: libr::Rboolean_FALSE,
+        canGenMouseUp: libr::Rboolean_FALSE,
+        canGenKeybd: libr::Rboolean_FALSE,
+        canGenIdle: libr::Rboolean_FALSE,
+
+        // This is set while getGraphicsEvent is actively looking for events
+        gettingEvent: libr::Rboolean_FALSE,
+
+        // Device procedures
+        activate: Some(hook_activate),
+        circle: Some(hook_circle),
+        clip: Some(hook_clip),
+        close: Some(hook_close),
+        deactivate: Some(hook_deactivate),
+        // Paired with `haveLocator`
+        locator: None,
+        line: Some(hook_line),
+        metricInfo: Some(hook_metric_info),
+        mode: Some(hook_mode),
+        newPage: Some(hook_new_page),
+        polygon: Some(hook_polygon),
+        polyline: Some(hook_polyline),
+        rect: Some(hook_rect),
+        path: Some(hook_path),
+        // Paired with `haveRaster`
+        raster: None,
+        // Paired with `haveCapture`
+        cap: None,
+        size: Some(hook_size),
+        strWidth: Some(hook_str_width),
+        text: Some(hook_text),
+        onExit: Some(hook_on_exit),
+        getEvent: Some(hook_get_event),
+        // Let R handle `par(ask = TRUE)` new frame confirmation
+        newFrameConfirm: None,
+        hasTextUTF8: libr::Rboolean_TRUE,
+        textUTF8: Some(hook_text_utf8),
+        strWidthUTF8: Some(hook_str_width_utf8),
+        wantSymbolUTF8: libr::Rboolean_TRUE,
+        useRotatedTextInContour: libr::Rboolean_TRUE,
+        eventEnv: unsafe { R_NilValue },
+        eventHelper: None,
+        holdflush: Some(hook_holdflush),
+        // 0 = unset, 1 = no, 2 = yes
+        haveTransparency: 1,
+        // 0 = unset, 1 = no, 2 = fully, 3 = semi
+        haveTransparentBg: 1,
+        haveRaster: 0,
+        haveCapture: 0,
+        haveLocator: 0,
+        setPattern: Some(hook_set_pattern),
+        releasePattern: Some(hook_release_pattern),
+        setClipPath: Some(hook_set_clip_path),
+        releaseClipPath: Some(hook_release_clip_path),
+        setMask: Some(hook_set_mask),
+        releaseMask: Some(hook_release_mask),
+        // TODO: Oldest supported? Not sure what to put here.
+        // Maybe we can fill it in per graphics device implementation.
+        // It does effect if `defineGroup` and `useGroup` are even called.
+        deviceVersion: 13,
+        deviceClip: libr::Rboolean_FALSE,
+        defineGroup: Some(hook_define_group),
+        useGroup: Some(hook_use_group),
+        releaseGroup: Some(hook_release_group),
+        stroke: Some(hook_stroke),
+        fill: Some(hook_fill),
+        fillStroke: Some(hook_fill_stroke),
+        capabilities: Some(hook_capabilities),
+        glyph: Some(hook_glyph),
+
+        reserved: [0; 64usize],
+    }
+}
+
+/// Activation callback
+///
+/// Only used for logging
+///
+/// NOTE: May be called during [DeviceContext::render_plot], since this is done by
+/// copying the graphics display list to a new plot device, and then closing that device.
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn hook_activate(_dev: pDevDesc) {
+    log::trace!("Entering hook_activate");
+}
+
+/// Deactivation callback
+///
+/// NOTE: May be called during [DeviceContext::render_plot], since this is done by
+/// copying the graphics display list to a new plot device, and then closing that device.
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn hook_deactivate(_dev: pDevDesc) {
+    log::trace!("Entering hook_deactivate");
+
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.hook_deactivate();
+    });
+}
+
+// mode = 0, graphics off
+// mode = 1, graphics on
+// mode = 2, graphical input on (ignored by most drivers)
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn hook_mode(mode: std::ffi::c_int, _dd: pDevDesc) {
+    log::trace!("Entering hook_mode");
+
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.hook_mode(mode);
+    });
+}
+
+#[tracing::instrument(level = "trace", skip_all)]
+unsafe extern "C-unwind" fn hook_new_page(_gc: pGEcontext, _dd: pDevDesc) {
+    log::trace!("Entering hook_new_page");
+
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.hook_new_page();
+    });
+}
+
+#[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
+unsafe extern "C-unwind" fn hook_holdflush(
+    _dd: pDevDesc,
+    level: std::ffi::c_int,
+) -> std::ffi::c_int {
+    log::trace!("Entering hook_holdflush");
+
+    // Something is probably not right here
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.hook_holdflush(level);
+        level
+    })
+}
+
+// ---------------------------------------------------------------------------------------
+// Empty hooks
+
+unsafe extern "C-unwind" fn hook_circle(_x: f64, _y: f64, _r: f64, _gc: pGEcontext, _dd: pDevDesc) {
+}
+
+unsafe extern "C-unwind" fn hook_clip(_x0: f64, _x1: f64, _y0: f64, _y1: f64, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_close(_dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_line(
+    _x1: f64,
+    _y1: f64,
+    _x2: f64,
+    _y2: f64,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_metric_info(
+    _c: std::ffi::c_int,
+    _gc: pGEcontext,
+    ascent: *mut f64,
+    descent: *mut f64,
+    width: *mut f64,
+    _dd: pDevDesc,
+) {
+    // Copying {devoid}
+    *ascent = 1.0;
+    *descent = 1.0;
+    *width = 1.0;
+}
+
+unsafe extern "C-unwind" fn hook_polygon(
+    _n: std::ffi::c_int,
+    _x: *mut f64,
+    _y: *mut f64,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_polyline(
+    _n: std::ffi::c_int,
+    _x: *mut f64,
+    _y: *mut f64,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_rect(
+    _x0: f64,
+    _y0: f64,
+    _x1: f64,
+    _y1: f64,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_path(
+    _x: *mut f64,
+    _y: *mut f64,
+    _npoly: std::ffi::c_int,
+    _nper: *mut std::ffi::c_int,
+    _winding: libr::Rboolean,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_size(
+    _left: *mut f64,
+    _right: *mut f64,
+    _bottom: *mut f64,
+    _top: *mut f64,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_str_width(
+    _str: *const std::ffi::c_char,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) -> f64 {
+    0.0
+}
+
+unsafe extern "C-unwind" fn hook_text(
+    _x: f64,
+    _y: f64,
+    _str: *const std::ffi::c_char,
+    _rot: f64,
+    _hadj: f64,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_on_exit(_dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_get_event(_arg1: SEXP, _arg2: *const std::ffi::c_char) -> SEXP {
+    R_NilValue
+}
+
+unsafe extern "C-unwind" fn hook_text_utf8(
+    _x: f64,
+    _y: f64,
+    _str: *const std::ffi::c_char,
+    _rot: f64,
+    _hadj: f64,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_str_width_utf8(
+    _str: *const std::ffi::c_char,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) -> f64 {
+    0.0
+}
+
+unsafe extern "C-unwind" fn hook_set_pattern(_pattern: SEXP, _dd: pDevDesc) -> SEXP {
+    R_NilValue
+}
+
+unsafe extern "C-unwind" fn hook_release_pattern(_ref_: SEXP, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_set_clip_path(_path: SEXP, _ref_: SEXP, _dd: pDevDesc) -> SEXP {
+    R_NilValue
+}
+
+unsafe extern "C-unwind" fn hook_release_clip_path(_ref_: SEXP, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_set_mask(_path: SEXP, _ref_: SEXP, _dd: pDevDesc) -> SEXP {
+    R_NilValue
+}
+
+unsafe extern "C-unwind" fn hook_release_mask(_ref_: SEXP, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_define_group(
+    _source: SEXP,
+    _op: std::ffi::c_int,
+    _destination: SEXP,
+    _dd: pDevDesc,
+) -> SEXP {
+    R_NilValue
+}
+
+unsafe extern "C-unwind" fn hook_use_group(_ref_: SEXP, _trans: SEXP, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_release_group(_ref_: SEXP, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_stroke(_path: SEXP, _gc: pGEcontext, _dd: pDevDesc) {}
+
+unsafe extern "C-unwind" fn hook_fill(
+    _path: SEXP,
+    _rule: std::ffi::c_int,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_fill_stroke(
+    _path: SEXP,
+    _rule: std::ffi::c_int,
+    _gc: pGEcontext,
+    _dd: pDevDesc,
+) {
+}
+
+unsafe extern "C-unwind" fn hook_capabilities(_cap: SEXP) -> SEXP {
+    R_NilValue
+}
+
+unsafe extern "C-unwind" fn hook_glyph(
+    _n: std::ffi::c_int,
+    _glyphs: *mut std::ffi::c_int,
+    _x: *mut f64,
+    _y: *mut f64,
+    _font: SEXP,
+    _size: f64,
+    _colour: std::ffi::c_int,
+    _rot: f64,
+    _dd: pDevDesc,
+) {
 }

@@ -45,60 +45,66 @@ plotRecordingPath <- function(id) {
     file.path(root, file)
 }
 
-#' @export
-.ps.graphics.createDevice <- function() {
-    name <- "Ark Graphics Device"
+# #' @export
+# .ps.graphics.createDevice <- function() {
+#     name <- "Ark Graphics Device"
+#
+#     # TODO: Remove the "shadow" device in favor of implementing our own
+#     # minimal graphics device like {devoid}. That would allow us to remove
+#     # all of the awkwardness here around:
+#     # - A `filename` that we never look at
+#     # - A `res` that isn't scaled by `pixel_ratio`
+#     # - The fact that the `png` device is forcing double the work to happen,
+#     #   as it is drawing graphics that we never look at.
+#     # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
+#     root <- plotRecordingRoot()
+#     filename <- file.path(root, "current-plot.png")
+#     type <- defaultDeviceType()
+#     res <- defaultResolutionInPixelsPerInch()
+#
+#     # Create the graphics device that we are going to shadow
+#     withCallingHandlers(
+#         grDevices::png(
+#             filename = filename,
+#             type = type,
+#             res = res
+#         ),
+#         warning = function(w) {
+#             stop("Error creating graphics device: ", conditionMessage(w))
+#         }
+#     )
+#
+#     # Update the device name + description in the base environment.
+#     index <- grDevices::dev.cur()
+#     oldDevice <- .Devices[[index]]
+#     newDevice <- name
+#
+#     # Copy device attributes. Usually, this is just the file path.
+#     attributes(newDevice) <- attributes(oldDevice)
+#
+#     # Set other device properties.
+#     attr(newDevice, "type") <- type
+#     attr(newDevice, "res") <- res
+#
+#     # Update the devices list.
+#     .Devices[[index]] <- newDevice
+#
+#     # Replace bindings.
+#     env_bind_force(baseenv(), ".Devices", .Devices)
+#     env_bind_force(baseenv(), ".Device", newDevice)
+#
+#     # Also set ourselves as a known interactive device.
+#     # Used by `dev.interactive()`, which is used in `stats:::plot.lm()`
+#     # to determine if `devAskNewPage(TRUE)` should be set to prompt before
+#     # each new plot is drawn.
+#     grDevices::deviceIsInteractive(name)
+# }
 
-    # TODO: Remove the "shadow" device in favor of implementing our own
-    # minimal graphics device like {devoid}. That would allow us to remove
-    # all of the awkwardness here around:
-    # - A `filename` that we never look at
-    # - A `res` that isn't scaled by `pixel_ratio`
-    # - The fact that the `png` device is forcing double the work to happen,
-    #   as it is drawing graphics that we never look at.
-    # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
-    root <- plotRecordingRoot()
-    filename <- file.path(root, "current-plot.png")
-    type <- defaultDeviceType()
-    res <- defaultResolutionInPixelsPerInch()
-
-    # Create the graphics device that we are going to shadow
-    withCallingHandlers(
-        grDevices::png(
-            filename = filename,
-            type = type,
-            res = res
-        ),
-        warning = function(w) {
-            stop("Error creating graphics device: ", conditionMessage(w))
-        }
-    )
-
-    # Update the device name + description in the base environment.
-    index <- grDevices::dev.cur()
-    oldDevice <- .Devices[[index]]
-    newDevice <- name
-
-    # Copy device attributes. Usually, this is just the file path.
-    attributes(newDevice) <- attributes(oldDevice)
-
-    # Set other device properties.
-    attr(newDevice, "type") <- type
-    attr(newDevice, "res") <- res
-
-    # Update the devices list.
-    .Devices[[index]] <- newDevice
-
-    # Replace bindings.
-    env_bind_force(baseenv(), ".Devices", .Devices)
-    env_bind_force(baseenv(), ".Device", newDevice)
-
-    # Also set ourselves as a known interactive device.
-    # Used by `dev.interactive()`, which is used in `stats:::plot.lm()`
-    # to determine if `devAskNewPage(TRUE)` should be set to prompt before
-    # each new plot is drawn.
-    grDevices::deviceIsInteractive(name)
-}
+# # Also set ourselves as a known interactive device.
+# # Used by `dev.interactive()`, which is used in `stats:::plot.lm()`
+# # to determine if `devAskNewPage(TRUE)` should be set to prompt before
+# # each new plot is drawn.
+# grDevices::deviceIsInteractive(name)
 
 # Create a recording of the current plot.
 #

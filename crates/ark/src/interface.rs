@@ -348,12 +348,6 @@ impl RMain {
 
         let main = RMain::get_mut();
 
-        // Initialize the GD context on this thread
-        graphics_device::init_graphics_device(
-            main.get_comm_manager_tx().clone(),
-            main.get_iopub_tx().clone(),
-        );
-
         let mut r_args = r_args.clone();
 
         // Record if the user has requested that we don't load the site/user level R profiles
@@ -467,6 +461,12 @@ impl RMain {
             if let Err(err) = apply_default_repos(default_repos) {
                 log::error!("Error setting default repositories: {err:?}");
             }
+
+            // Initialize the GD context on this thread
+            graphics_device::init_graphics_device(
+                main.get_comm_manager_tx().clone(),
+                main.get_iopub_tx().clone(),
+            );
 
             // Now that R has started (emitting any startup messages), and now that we have set
             // up all hooks and handlers, officially finish the R initialization process to
