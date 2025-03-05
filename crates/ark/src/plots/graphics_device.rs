@@ -731,7 +731,7 @@ fn new_device() -> libr::DevDescVersion16 {
         // Inches per raster
         ipr: [1.0 / 72.0, 1.0 / 72.0],
         // Character size in rasters
-        cra: [0.9 * 12.0, 0.9 * 12.0],
+        cra: [0.9 * 12.0, 1.2 * 12.0],
         // (initial) device gamma correction
         gamma: 1.0,
 
