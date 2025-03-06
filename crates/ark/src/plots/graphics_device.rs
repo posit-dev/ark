@@ -899,6 +899,21 @@ unsafe extern "C-unwind" fn hook_holdflush(
     })
 }
 
+// TODO!: Document this, do we even need it?
+// Note that `right` and `bottom` must be kept in sync with what we have in `new_device()`
+unsafe extern "C-unwind" fn hook_size(
+    left: *mut f64,
+    right: *mut f64,
+    bottom: *mut f64,
+    top: *mut f64,
+    _dd: pDevDesc,
+) {
+    *left = 0.0;
+    *right = 480.0;
+    *bottom = 480.0;
+    *top = 0.0;
+}
+
 // ---------------------------------------------------------------------------------------
 // Empty hooks
 
@@ -968,15 +983,6 @@ unsafe extern "C-unwind" fn hook_path(
     _nper: *mut std::ffi::c_int,
     _winding: libr::Rboolean,
     _gc: pGEcontext,
-    _dd: pDevDesc,
-) {
-}
-
-unsafe extern "C-unwind" fn hook_size(
-    _left: *mut f64,
-    _right: *mut f64,
-    _bottom: *mut f64,
-    _top: *mut f64,
     _dd: pDevDesc,
 ) {
 }
