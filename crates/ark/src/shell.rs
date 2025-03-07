@@ -54,6 +54,7 @@ pub struct Shell {
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
+    kernel_info_request_tx: Sender<()>,
     kernel_info: Option<KernelInfo>,
 }
 
@@ -69,6 +70,7 @@ impl Shell {
         r_request_tx: Sender<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
+        kernel_info_request_tx: Sender<()>,
         kernel_request_tx: Sender<KernelRequest>,
     ) -> Self {
         Self {
@@ -77,6 +79,7 @@ impl Shell {
             stdin_request_tx,
             kernel_request_tx,
             kernel_init_rx,
+            kernel_info_request_tx,
             kernel_info: None,
         }
     }
@@ -120,6 +123,8 @@ impl ShellHandler for Shell {
         if self.kernel_info.is_none() {
             trace!("Got kernel info request; waiting for R to complete initialization");
             self.kernel_info = Some(self.kernel_init_rx.recv().unwrap());
+            trace!("R completed initialization; sending back kernel info request confirmation");
+            self.kernel_info_request_tx.send(()).unwrap();
         } else {
             trace!("R already started, using existing kernel information")
         }
