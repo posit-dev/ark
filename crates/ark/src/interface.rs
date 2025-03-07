@@ -165,6 +165,8 @@ thread_local! {
 pub struct RMain {
     kernel_init_tx: Bus<KernelInfo>,
 
+    kernel_info_request_rx: Receiver<()>,
+
     kernel_request_rx: Receiver<KernelRequest>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
@@ -313,6 +315,7 @@ impl RMain {
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
+        kernel_info_request_rx: Receiver<()>,
         kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
@@ -341,6 +344,7 @@ impl RMain {
             stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
+            kernel_info_request_rx,
             kernel_request_rx,
             dap,
             session_mode,
@@ -510,6 +514,15 @@ impl RMain {
 
         log::info!("Sending kernel info: {version}");
         self.kernel_init_tx.broadcast(kernel_info);
+        log::info!("Sent kernel info, waiting on kernel info request confirmation");
+
+        if let Err(_) = self
+            .kernel_info_request_rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+        {
+            panic!("Failed to receive kernel info request confirmation. Aborting.");
+        }
+        log::info!("Received kernel info request confirmation, completing initialization");
 
         // Thread-safe initialisation flag for R
         R_INIT.set(()).expect("`R_INIT` can only be set once");
@@ -524,6 +537,7 @@ impl RMain {
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
         kernel_init_tx: Bus<KernelInfo>,
+        kernel_info_request_rx: Receiver<()>,
         kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
@@ -535,6 +549,7 @@ impl RMain {
             stdin_reply_rx,
             iopub_tx,
             kernel_init_tx,
+            kernel_info_request_rx,
             kernel_request_rx,
             active_request: None,
             execution_count: 0,
