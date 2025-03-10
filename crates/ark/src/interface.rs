@@ -786,7 +786,7 @@ impl RMain {
             // If an interrupt was signaled and we are in a user
             // request prompt, e.g. `readline()`, we need to propagate
             // the interrupt to the R stack. This needs to happen before
-            // `process_events()`, particularly on Windows, because it
+            // `process_idle_events()`, particularly on Windows, because it
             // calls `R_ProcessEvents()`, which checks and resets
             // `UserBreak`, but won't actually fire the interrupt b/c
             // we have them disabled, so it would end up swallowing the
@@ -817,13 +817,13 @@ impl RMain {
             let oper = select.select_timeout(Duration::from_millis(200));
 
             let Ok(oper) = oper else {
-                // We hit a timeout. Process events because we need to
+                // We hit a timeout. Process idle events because we need to
                 // pump the event loop while waiting for console input.
                 //
                 // Alternatively, we could try to figure out the file
                 // descriptors that R has open and select() on those for
                 // available data?
-                unsafe { Self::process_events() };
+                unsafe { Self::process_idle_events() };
                 continue;
             };
 
@@ -1754,7 +1754,7 @@ impl RMain {
         }
     }
 
-    unsafe fn process_events() {
+    unsafe fn process_idle_events() {
         // Process regular R events. We're normally running with polled
         // events disabled so that won't run here. We also run with
         // interrupts disabled, so on Windows those won't get run here
@@ -1771,7 +1771,7 @@ impl RMain {
         R_RunPendingFinalizers();
 
         // Check for Positron render requests
-        graphics_device::on_process_events();
+        graphics_device::on_process_idle_events();
     }
 
     pub fn get_comm_manager_tx(&self) -> &Sender<CommManagerEvent> {

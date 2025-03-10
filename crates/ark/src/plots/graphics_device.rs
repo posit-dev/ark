@@ -626,7 +626,7 @@ impl From<&PlotId> for RObject {
 ///
 /// This is called a lot, so we don't trace log each entry
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_process_events() {
+pub(crate) fn on_process_idle_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
