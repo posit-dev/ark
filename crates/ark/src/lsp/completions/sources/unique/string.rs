@@ -58,11 +58,10 @@ mod tests {
     use stdext::assert_match;
 
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::completions::parameter_hints::ParameterHints;
-    use crate::lsp::completions::sources::completions_from_unique_sources;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::r_task;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
@@ -115,8 +114,11 @@ mod tests {
             let res = completions_from_string(&context).unwrap();
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
 
-            // Check one level up too
-            let res = completions_from_unique_sources(&context, ParameterHints::Enabled).unwrap();
+            // Check for same result when consulting (potentially all) unique sources
+            let state = WorldState::default();
+            let builder =
+                crate::lsp::completions::builder::CompletionBuilder::new(&context, &state);
+            let res = builder.completions_from_unique_sources().unwrap();
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })
     }

@@ -6,9 +6,6 @@
 //
 
 mod common;
-mod composite;
-mod unique;
+pub(crate) mod composite;
+pub mod unique;
 mod utils;
-
-pub use composite::completions_from_composite_sources;
-pub use unique::completions_from_unique_sources;
