@@ -95,6 +95,8 @@ struct GEDevDesc {
 
 You'll see `pGEDevDesc` in the code representing a pointer to one of these device wrappers owned by the graphics engine. The definitions of this struct lives in [R_ext/GraphicsEngine.h](https://github.com/wch/r-source/blob/trunk/src/include/R_ext/GraphicsEngine.h).
 
+An easy way to think about ownership is that anytime you see `GE` as a prefix on a function or struct, you as the graphics device do not manage that data, R does. For example, the `displayList` itself lives in `pGEDevDesc` and is managed by R, the device does not manage recording instructions here.
+
 ## Graphics system
 
 There are two graphics systems in existence today: `base` and `grid`. Up to 16 are allowed in total.
