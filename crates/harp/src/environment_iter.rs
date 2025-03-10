@@ -3,8 +3,6 @@ use libr::*;
 use crate::environment::Environment;
 use crate::object::RObject;
 use crate::r_is_altrep;
-use crate::r_is_null;
-use crate::r_is_s4;
 use crate::r_typeof;
 use crate::symbol::RSymbol;
 
@@ -13,20 +11,20 @@ pub struct EnvironmentIter {
     names: std::vec::IntoIter<String>,
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq)]
 pub struct Binding {
     pub name: RSymbol,
     pub value: BindingValue,
 }
 
-// What is this used for? Do we still need it?
-// https://github.com/posit-dev/amalthea/commit/04a9fe20a48cb01c4fe2d6fe1a4dfdc0f2a186fc
-#[derive(Eq)]
-pub struct BindingNestedEnvironment {
-    pub has_nested_environment: bool,
+// Bindings are equal if their names and values are exactly the same.
+impl PartialEq for Binding {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.value == other.value
+    }
 }
 
-#[derive(Eq, PartialEq)]
+#[derive(Eq)]
 pub enum BindingValue {
     Active {
         fun: RObject,
@@ -38,12 +36,39 @@ pub enum BindingValue {
         object: RObject,
         data1: RObject,
         data2: RObject,
-        has_nested_environment: BindingNestedEnvironment,
     },
     Standard {
         object: RObject,
-        has_nested_environment: BindingNestedEnvironment,
     },
+}
+
+// Two binding values are equal if they are identical (ie, their SEXP's)
+// are the same.
+impl PartialEq for BindingValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Active { fun: a }, Self::Active { fun: b }) => a.sexp == b.sexp,
+            (Self::Promise { promise: a }, Self::Promise { promise: b }) => a.sexp == b.sexp,
+            (
+                Self::Altrep {
+                    object: a,
+                    data1: b,
+                    data2: c,
+                    ..
+                },
+                Self::Altrep {
+                    object: d,
+                    data1: e,
+                    data2: f,
+                    ..
+                },
+            ) => a.sexp == d.sexp && b.sexp == e.sexp && c.sexp == f.sexp,
+            (Self::Standard { object: a, .. }, Self::Standard { object: b, .. }) => {
+                a.sexp == b.sexp
+            },
+            _ => false,
+        }
+    }
 }
 
 impl EnvironmentIter {
@@ -81,7 +106,6 @@ impl Binding {
                     object: RObject::from(value),
                     data1: RObject::from(R_altrep_data1(value)),
                     data2: RObject::from(R_altrep_data2(value)),
-                    has_nested_environment: BindingNestedEnvironment::new(value),
                 };
                 return Ok(Self { name, value });
             }
@@ -114,7 +138,6 @@ impl Binding {
     fn new_standard(name: RSymbol, value: SEXP) -> harp::Result<Self> {
         let value = BindingValue::Standard {
             object: RObject::from(value),
-            has_nested_environment: BindingNestedEnvironment::new(value),
         };
         Ok(Self { name, value })
     }
@@ -131,65 +154,6 @@ impl Binding {
         }
     }
 }
-
-impl BindingNestedEnvironment {
-    fn new(value: SEXP) -> Self {
-        Self {
-            has_nested_environment: has_nested_environment(value),
-        }
-    }
-}
-
-impl PartialEq for BindingNestedEnvironment {
-    fn eq(&self, other: &Self) -> bool {
-        !(self.has_nested_environment || other.has_nested_environment)
-    }
-}
-
-fn has_nested_environment(value: SEXP) -> bool {
-    if r_is_null(value) {
-        return false;
-    }
-
-    if r_is_altrep(value) {
-        unsafe {
-            return has_nested_environment(R_altrep_data1(value)) ||
-                has_nested_environment(R_altrep_data2(value));
-        }
-    }
-
-    unsafe {
-        // S4 slots are attributes and might be expandable
-        // so we need to check if they have reference objects
-        if r_is_s4(value) && has_nested_environment(ATTRIB(value)) {
-            return true;
-        }
-    }
-
-    let rtype = r_typeof(value);
-    match rtype {
-        ENVSXP => true,
-
-        LISTSXP | LANGSXP => unsafe {
-            has_nested_environment(CAR(value)) || has_nested_environment(CDR(value))
-        },
-
-        VECSXP | EXPRSXP => unsafe {
-            let n = Rf_xlength(value);
-            let mut has_ref = false;
-            for i in 0..n {
-                if has_nested_environment(VECTOR_ELT(value, i)) {
-                    has_ref = true;
-                    break;
-                }
-            }
-            has_ref
-        },
-
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use libr::Rf_ScalarInteger;
@@ -227,6 +191,26 @@ mod tests {
         r_task(|| unsafe {
             test_environment_iter_impl(true);
             test_environment_iter_impl(false);
+        })
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_binding_eq() {
+        r_task(|| {
+            let env: Environment = Environment::new_empty().unwrap();
+
+            let obj = harp::parse_eval_base("1").unwrap();
+            env.bind(RSymbol::from("a"), &obj);
+            env.bind(RSymbol::from("b"), &obj);
+
+            let mut iter = env.iter();
+            let a = iter.next().unwrap().unwrap();
+            let b = iter.next().unwrap().unwrap();
+
+            assert_eq!(a == b, false);
+            assert_eq!(a.name == b.name, false);
+            assert_eq!(a.value == b.value, true);
         })
     }
 }
