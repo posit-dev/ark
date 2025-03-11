@@ -277,8 +277,11 @@ impl DeviceContext {
         // multiple things in a single chunk of R code. The `Err` case is likely just
         // that no channels have any messages, so we don't log in that case.
         while let Ok(selection) = select.try_select() {
-            let id = unsafe { &sockets.get_unchecked(selection.index()).0 };
-            let socket = unsafe { &sockets.get_unchecked(selection.index()).1 };
+            let socket = sockets
+                .get(selection.index())
+                .expect("Socket should exist for the selection index");
+            let id = &socket.0;
+            let socket = &socket.1;
 
             // Receive on the "selected" channel
             let message = match selection.recv(&socket.incoming_rx) {
