@@ -21,33 +21,33 @@ RECORDINGS <- list()
 # Retrieves a recording by its `id`
 #
 # Returns `NULL` if no recording exists
-getRecording <- function(id) {
+get_recording <- function(id) {
     RECORDINGS[[id]]
 }
 
-addRecording <- function(id, recording) {
+add_recording <- function(id, recording) {
     RECORDINGS[[id]] <<- recording
 }
 
 # TODO: Use this when we get notified that we can remove a recording
-# removeRecording <- function(id) {
+# remove_recording <- function(id) {
 #     RECORDINGS[[id]] <<- NULL
 # }
 
-renderDirectory <- function() {
+render_directory <- function() {
     directory <- file.path(tempdir(), "positron-plot-renderings")
     ensure_directory(directory)
     directory
 }
 
-renderPath <- function(id) {
-    directory <- renderDirectory()
+render_path <- function(id) {
+    directory <- render_directory()
     file <- paste0("render-", id, ".png")
     file.path(directory, file)
 }
 
 #' @export
-.ps.graphics.createDevice <- function() {
+.ps.graphics.create_device <- function() {
     name <- "Ark Graphics Device"
 
     # TODO: Remove the "shadow" device in favor of implementing our own
@@ -58,10 +58,10 @@ renderPath <- function(id) {
     # - The fact that the `png` device is forcing double the work to happen,
     #   as it is drawing graphics that we never look at.
     # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
-    directory <- renderDirectory()
+    directory <- render_directory()
     filename <- file.path(directory, "current-plot.png")
-    type <- defaultDeviceType()
-    res <- defaultResolutionInPixelsPerInch()
+    type <- default_device_type()
+    res <- default_resolution_in_pixels_per_inch()
 
     # Create the graphics device that we are going to shadow
     withCallingHandlers(
@@ -106,26 +106,26 @@ renderPath <- function(id) {
 # This saves the plot's display list, so it can be used to re-render plots as
 # necessary.
 #' @export
-.ps.graphics.recordPlot <- function(id) {
+.ps.graphics.record_plot <- function(id) {
     # Create the plot recording
     recording <- grDevices::recordPlot()
 
     # Add the recording to the persistent list
-    addRecording(id, recording)
+    add_recording(id, recording)
 
     invisible(NULL)
 }
 
 #' @export
-.ps.graphics.renderPlotFromRecording <- function(
+.ps.graphics.render_plot_from_recording <- function(
     id,
     width,
     height,
     pixel_ratio,
     format
 ) {
-    recording <- getRecording(id)
-    renderPath <- renderPath(id)
+    path <- render_path(id)
+    recording <- get_recording(id)
 
     if (is.null(recording)) {
         stop(sprintf(
@@ -135,12 +135,12 @@ renderPath <- function(id) {
     }
 
     # Replay the plot with the specified device.
-    withDevice(renderPath, width, height, pixel_ratio, format, {
+    with_graphics_device(path, width, height, pixel_ratio, format, {
         suppressWarnings(grDevices::replayPlot(recording))
     })
 
     # Return path to generated plot file.
-    invisible(renderPath)
+    invisible(path)
 }
 
 #' Run an expression with the specificed device activated.
@@ -154,7 +154,7 @@ renderPath <- function(id) {
 #'   for retina displays)
 #' @param format The output format (and therefore graphics device) to use.
 #'   One of: `"png"`, `"svg"`, `"pdf"`, `"jpeg"`, or `"tiff"`.
-withDevice <- function(
+with_graphics_device <- function(
     path,
     width,
     height,
@@ -165,7 +165,7 @@ withDevice <- function(
     # Store handle to current device (i.e. us)
     old_dev <- grDevices::dev.cur()
 
-    args <- finalizeDeviceArguments(format, width, height, pixel_ratio)
+    args <- finalize_device_arguments(format, width, height, pixel_ratio)
     width <- args$width
     height <- args$height
     res <- args$res
@@ -222,7 +222,7 @@ withDevice <- function(
     expr
 }
 
-finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
+finalize_device_arguments <- function(format, width, height, pixel_ratio) {
     if (format == "png" || format == "jpeg" || format == "tiff") {
         # These devices require `width` and `height` in pixels, which is what
         # they are provided in already. For pixel based devices, all relevant
@@ -230,8 +230,8 @@ finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
         #
         # `res` is nominal resolution specified in pixels-per-inch (ppi).
         return(list(
-            type = defaultDeviceType(),
-            res = defaultResolutionInPixelsPerInch() * pixel_ratio,
+            type = default_device_type(),
+            res = default_resolution_in_pixels_per_inch() * pixel_ratio,
             width = width * pixel_ratio,
             height = height * pixel_ratio
         ))
@@ -244,17 +244,21 @@ finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
         # tells the device the relative size to use for things like text,
         # since that is the absolute unit (pts are based on inches).
         #
-        # Thomas says the math for `width` and `height` here are correct,
-        # i.e. we don't also multiply `defaultResolutionInPixelsPerInch()` by
-        # `pixel_ratio` like we do above, which would have made it cancel out
-        # of the equation below.
+        # Thomas says the math for `width` and `height` here are correct, i.e.
+        # we don't also multiply `default_resolution_in_pixels_per_inch()` by
+        # `pixel_ratio` like we do above, which would have made it cancel out of
+        # the equation below.
         #
         # There is no `type` or `res` argument for these devices.
         return(list(
             type = NULL,
             res = NULL,
-            width = width * pixel_ratio / defaultResolutionInPixelsPerInch(),
-            height = height * pixel_ratio / defaultResolutionInPixelsPerInch()
+            width = width *
+                pixel_ratio /
+                default_resolution_in_pixels_per_inch(),
+            height = height *
+                pixel_ratio /
+                default_resolution_in_pixels_per_inch()
         ))
     }
 
@@ -270,7 +274,7 @@ finalizeDeviceArguments <- function(format, width, height, pixel_ratio) {
 #' This corresponds to a scaling factor that tries to make things that appear
 #' "on screen" be as close to the size in which they are actually printed at,
 #' which has always been tricky.
-defaultResolutionInPixelsPerInch <- function() {
+default_resolution_in_pixels_per_inch <- function() {
     if (Sys.info()[["sysname"]] == "Darwin") {
         96L
     } else {
@@ -278,7 +282,7 @@ defaultResolutionInPixelsPerInch <- function() {
     }
 }
 
-defaultDeviceType <- function() {
+default_device_type <- function() {
     if (has_aqua()) {
         "quartz"
     } else if (has_cairo()) {

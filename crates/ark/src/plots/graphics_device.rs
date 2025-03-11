@@ -525,7 +525,7 @@ impl DeviceContext {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
-            RFunction::from(".ps.graphics.renderPlotFromRecording")
+            RFunction::from(".ps.graphics.render_plot_from_recording")
                 .param("id", id)
                 .param("width", RObject::try_from(width)?)
                 .param("height", RObject::try_from(height)?)
@@ -563,7 +563,7 @@ impl DeviceContext {
     fn record_plot(id: &PlotId) -> bool {
         log::trace!("Recording plot");
 
-        let result = RFunction::from(".ps.graphics.recordPlot")
+        let result = RFunction::from(".ps.graphics.record_plot")
             .param("id", id)
             .call();
 
@@ -739,7 +739,7 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
 
     // Create the graphics device.
-    RFunction::from(".ps.graphics.createDevice").call()?;
+    RFunction::from(".ps.graphics.create_device").call()?;
 
     // Get reference to current device (opaque pointer)
     let ge_device = libr::GEcurrentDevice();
