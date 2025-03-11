@@ -5,7 +5,8 @@
 #
 #
 
-# Set up "before plot new" hooks
+# Set up "before plot new" hooks. This is our cue for
+# saving up the state of a plot before it gets wiped out.
 setHook("before.plot.new", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_plot_new", "before.plot.new")
 })
@@ -211,7 +212,7 @@ withDevice <- function(
     # Ensure we turn off the device on the way out, this:
     # - Commits the plot to disk
     # - Resets us back as being the current device
-    on.exit(utils::capture.output({
+    defer(utils::capture.output({
         grDevices::dev.off()
         if (old_dev > 1) {
             grDevices::dev.set(old_dev)
