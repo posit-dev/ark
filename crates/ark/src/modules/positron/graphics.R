@@ -34,16 +34,16 @@ addRecording <- function(id, recording) {
 #     RECORDINGS[[id]] <<- NULL
 # }
 
-plotRecordingRoot <- function() {
-    root <- file.path(tempdir(), "positron-plot-recordings")
-    ensure_directory(root)
-    root
+renderDirectory <- function() {
+    directory <- file.path(tempdir(), "positron-plot-renderings")
+    ensure_directory(directory)
+    directory
 }
 
-plotRecordingPath <- function(id) {
-    root <- plotRecordingRoot()
-    file <- paste0("recording-", id, ".png")
-    file.path(root, file)
+renderPath <- function(id) {
+    directory <- renderDirectory()
+    file <- paste0("render-", id, ".png")
+    file.path(directory, file)
 }
 
 #' @export
@@ -58,8 +58,8 @@ plotRecordingPath <- function(id) {
     # - The fact that the `png` device is forcing double the work to happen,
     #   as it is drawing graphics that we never look at.
     # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
-    root <- plotRecordingRoot()
-    filename <- file.path(root, "current-plot.png")
+    directory <- renderDirectory()
+    filename <- file.path(directory, "current-plot.png")
     type <- defaultDeviceType()
     res <- defaultResolutionInPixelsPerInch()
 
@@ -125,7 +125,7 @@ plotRecordingPath <- function(id) {
     format
 ) {
     recording <- getRecording(id)
-    recordingPath <- plotRecordingPath(id)
+    renderPath <- renderPath(id)
 
     if (is.null(recording)) {
         stop(sprintf(
@@ -135,12 +135,12 @@ plotRecordingPath <- function(id) {
     }
 
     # Replay the plot with the specified device.
-    withDevice(recordingPath, width, height, pixel_ratio, format, {
+    withDevice(renderPath, width, height, pixel_ratio, format, {
         suppressWarnings(grDevices::replayPlot(recording))
     })
 
     # Return path to generated plot file.
-    invisible(recordingPath)
+    invisible(renderPath)
 }
 
 #' Run an expression with the specificed device activated.
