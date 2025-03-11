@@ -25,7 +25,7 @@ use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) fn completions_from_call(
+pub fn completions_from_call(
     context: &DocumentContext,
     root: Option<PipeRoot>,
 ) -> Result<Option<Vec<CompletionItem>>> {

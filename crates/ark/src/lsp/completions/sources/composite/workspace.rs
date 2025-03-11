@@ -25,7 +25,7 @@ use crate::lsp::traits::string::StringExt;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) fn completions_from_workspace(
+pub fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
     parameter_hints: ParameterHints,

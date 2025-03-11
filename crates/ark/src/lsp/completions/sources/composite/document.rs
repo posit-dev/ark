@@ -21,9 +21,7 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) fn completions_from_document(
-    context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+pub fn completions_from_document(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     // get reference to AST
     let mut node = context.node;
 

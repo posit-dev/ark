@@ -17,7 +17,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
 #[derive(Clone)]
-pub(super) struct PipeRoot {
+pub struct PipeRoot {
     pub(super) name: String,
 
     /// If `None`, we found a pipe root and tried to evaluate it, but the
@@ -25,7 +25,7 @@ pub(super) struct PipeRoot {
     pub(super) object: Option<RObject>,
 }
 
-pub(super) fn completions_from_pipe(
+pub fn completions_from_pipe(
     root: Option<PipeRoot>,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let Some(root) = root else {
@@ -51,7 +51,7 @@ pub(super) fn completions_from_pipe(
 
 /// Loop should be kept in sync with `completions_from_call()` so they find
 /// the same call to detect the pipe root of
-pub(super) fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
+pub fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
     log::info!("find_pipe_root()");
 
     let mut node = context.node;
