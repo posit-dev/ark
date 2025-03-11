@@ -19,9 +19,7 @@ use crate::treesitter::NodeTypeExt;
 ///
 /// `$` and `@` are handled elsewhere as they can't be composed with other
 /// completions.
-pub(super) fn completions_from_subset(
-    context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+pub fn completions_from_subset(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_subset()");
 
     const ENQUOTE: bool = true;

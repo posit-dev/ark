@@ -12,7 +12,7 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::types::CompletionData;
 
-pub(super) fn completions_from_keywords() -> Vec<CompletionItem> {
+pub fn completions_from_keywords() -> Vec<CompletionItem> {
     log::info!("completions_from_keywords()");
 
     let mut completions = vec![];

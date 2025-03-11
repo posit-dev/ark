@@ -27,7 +27,7 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
-pub(super) fn completions_from_search_path(
+pub fn completions_from_search_path(
     context: &DocumentContext,
     parameter_hints: ParameterHints,
 ) -> Result<Vec<CompletionItem>> {

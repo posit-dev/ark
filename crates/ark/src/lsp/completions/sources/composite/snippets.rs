@@ -38,7 +38,7 @@ enum SnippetBody {
     Vector(Vec<String>),
 }
 
-pub(super) fn completions_from_snippets() -> Vec<CompletionItem> {
+pub fn completions_from_snippets() -> Vec<CompletionItem> {
     log::info!("completions_from_snippets()");
 
     // Return clone of cached snippet completion items
