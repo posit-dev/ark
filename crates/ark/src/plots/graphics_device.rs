@@ -287,7 +287,11 @@ impl DeviceContext {
             let message = match selection.recv(&socket.incoming_rx) {
                 Ok(message) => message,
                 Err(error) => {
+                    // If the channel is disconnected, log and remove it so we don't try
+                    // and `recv()` on it ever again
                     log::error!("{error:?}");
+                    // Refcell Safety: Short borrows in the file.
+                    self.sockets.borrow_mut().remove(id);
                     return;
                 },
             };
