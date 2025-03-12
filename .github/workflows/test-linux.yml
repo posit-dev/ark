@@ -59,6 +59,7 @@ jobs:
             rstudioapi
             tibble
             haven
+            R6
 
       - name: Set LD_LIBRARY_PATH
         run: |

@@ -38,6 +38,8 @@ jobs:
             data.table
             rstudioapi
             tibble
+            haven
+            R6
 
       - name: Build
         run: |

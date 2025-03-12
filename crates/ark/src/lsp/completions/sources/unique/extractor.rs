@@ -136,7 +136,15 @@ fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<Comple
             },
         };
 
-        let names = RFunction::new("utils", fun).add(object).call()?;
+        // Both `.DollarNames` and `.AtNames` have the same signature. Also, neither
+        // provide a default value for `pattern` in the generic, but do provide a default
+        // value of `pattern = ""` in the default S3 method. We manually pass through
+        // `pattern = ""` in case we hit an S3 method which forgot to provide a default
+        // value for `pattern` (like R6, posit-dev/positron#6699).
+        let names = RFunction::new("utils", fun)
+            .param("x", object)
+            .param("pattern", "")
+            .call()?;
 
         if r_typeof(*names) != STRSXP {
             // Could come from a malformed user supplied S3 method
@@ -165,6 +173,7 @@ mod tests {
     use harp::eval::RParseEvalOptions;
     use harp::object::r_lgl_get;
 
+    use crate::fixtures::package_is_installed;
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
     use crate::lsp::document_context::DocumentContext;
@@ -316,6 +325,47 @@ mod tests {
 
             // Clean up
             harp::parse_eval("remove(foo)", options.clone()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_dollar_completions_on_r6() {
+        r_task(|| {
+            if !package_is_installed("R6") {
+                return;
+            }
+
+            let options = RParseEvalOptions {
+                forbid_function_calls: false,
+                ..Default::default()
+            };
+
+            // Set up an R6 class object with a method named `abc`
+            harp::parse_eval(
+                r#"
+Foo <- R6::R6Class('Foo', public = list(abc = function() {}))
+foo <- Foo$new()
+"#,
+                options.clone(),
+            )
+            .unwrap();
+
+            let (text, point) = point_from_cursor("foo$@");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+
+            // We get some default R6 methods back, but we are looking for `abc`
+            let completions = completions_from_dollar(&context).unwrap().unwrap();
+
+            let completion_labels: Vec<String> = completions
+                .into_iter()
+                .map(|completion| completion.label)
+                .collect();
+
+            assert!(completion_labels.contains(&String::from("abc")));
+
+            // Clean up
+            harp::parse_eval("remove(foo, Foo)", options.clone()).unwrap();
         })
     }
 }
