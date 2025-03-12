@@ -187,7 +187,7 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
     fn hook_holdflush(&self, holdflush: i32) {
-        self.should_render.replace(holdflush == 0);
+        //self.should_render.replace(holdflush == 0);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]

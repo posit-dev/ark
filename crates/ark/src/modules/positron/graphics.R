@@ -50,26 +50,13 @@ render_path <- function(id) {
 .ps.graphics.create_device <- function() {
     name <- "Ark Graphics Device"
 
-    # TODO: Remove the "shadow" device in favor of implementing our own
-    # minimal graphics device like {devoid}. That would allow us to remove
-    # all of the awkwardness here around:
-    # - A `filename` that we never look at
-    # - A `res` that isn't scaled by `pixel_ratio`
-    # - The fact that the `png` device is forcing double the work to happen,
-    #   as it is drawing graphics that we never look at.
-    # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
-    directory <- render_directory()
-    filename <- file.path(directory, "current-plot.png")
-    type <- default_device_type()
     res <- default_resolution_in_pixels_per_inch()
 
     # Create the graphics device that we are going to shadow
+    # TODO!: Does ragg need `res`? We don't know whether or not to scale by
+    # `pixel_ratio` at this point.
     withCallingHandlers(
-        grDevices::png(
-            filename = filename,
-            type = type,
-            res = res
-        ),
+        ragg::agg_record(res = res),
         warning = function(w) {
             stop("Error creating graphics device: ", conditionMessage(w))
         }
@@ -84,7 +71,6 @@ render_path <- function(id) {
     attributes(newDevice) <- attributes(oldDevice)
 
     # Set other device properties.
-    attr(newDevice, "type") <- type
     attr(newDevice, "res") <- res
 
     # Update the devices list.
@@ -175,12 +161,11 @@ with_graphics_device <- function(
     # TODO: Use 'ragg' if available?
     switch(
         format,
-        "png" = grDevices::png(
+        "png" = ragg::agg_png(
             filename = path,
             width = width,
             height = height,
-            res = res,
-            type = type
+            res = res
         ),
         "svg" = grDevices::svg(
             filename = path,
