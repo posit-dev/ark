@@ -26,6 +26,7 @@ use crate::lsp::completions::sources::unique::namespace::completions_from_namesp
 use crate::lsp::completions::sources::unique::string::completions_from_string;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
+
 pub(crate) struct CompletionBuilder<'a> {
     context: &'a DocumentContext<'a>,
     state: &'a WorldState,
@@ -55,6 +56,20 @@ impl<'a> CompletionBuilder<'a> {
         self.completions_from_composite_sources()
     }
 
+    // Temporary move: wrapper methods for functions that use parameter_hints
+
+    fn get_namespace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_namespace(self.context, &self.parameter_hints)
+    }
+
+    fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>> {
+        completions_from_search_path(self.context, &self.parameter_hints)
+    }
+
+    fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_workspace(self.context, self.state, &self.parameter_hints)
+    }
+
     pub fn completions_from_unique_sources(&self) -> Result<Option<Vec<CompletionItem>>> {
         // Try to detect a single colon first, which is a special case where we
         // don't provide any completions
@@ -70,7 +85,7 @@ impl<'a> CompletionBuilder<'a> {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = completions_from_namespace(self.context, self.parameter_hints)? {
+        if let Some(completions) = self.get_namespace_completions()? {
             return Ok(Some(completions));
         }
 
@@ -121,18 +136,13 @@ impl<'a> CompletionBuilder<'a> {
         if is_identifier_like(self.context.node) {
             completions.append(&mut completions_from_keywords());
             completions.append(&mut completions_from_snippets());
-            completions.append(&mut completions_from_search_path(
-                self.context,
-                self.parameter_hints,
-            )?);
+            completions.append(&mut self.get_search_path_completions()?);
 
             if let Some(mut additional_completions) = completions_from_document(self.context)? {
                 completions.append(&mut additional_completions);
             }
 
-            if let Some(mut additional_completions) =
-                completions_from_workspace(self.context, self.state, self.parameter_hints)?
-            {
+            if let Some(mut additional_completions) = self.get_workspace_completions()? {
                 completions.append(&mut additional_completions);
             }
         }

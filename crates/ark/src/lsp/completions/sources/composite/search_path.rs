@@ -29,7 +29,7 @@ use crate::lsp::document_context::DocumentContext;
 
 pub fn completions_from_search_path(
     context: &DocumentContext,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<Vec<CompletionItem>> {
     log::info!("completions_from_search_path()");
 
