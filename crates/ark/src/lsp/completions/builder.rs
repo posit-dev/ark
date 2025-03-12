@@ -13,7 +13,7 @@ use crate::lsp::completions::sources::composite::find_pipe_root;
 use crate::lsp::completions::sources::composite::is_identifier_like;
 use crate::lsp::completions::sources::composite::keyword::completions_from_keywords;
 use crate::lsp::completions::sources::composite::pipe::completions_from_pipe;
-use crate::lsp::completions::sources::composite::search_path::completions_from_search_path;
+use crate::lsp::completions::sources::composite::search_path::SearchPathCompletionProvider;
 use crate::lsp::completions::sources::composite::snippets::completions_from_snippets;
 use crate::lsp::completions::sources::composite::subset::completions_from_subset;
 use crate::lsp::completions::sources::composite::workspace::completions_from_workspace;
@@ -57,10 +57,6 @@ impl<'a> CompletionBuilder<'a> {
     }
 
     // Temporary move: wrapper methods for functions that use parameter_hints
-
-    fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>> {
-        completions_from_search_path(self.context, &self.parameter_hints)
-    }
 
     fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_workspace(self.context, self.state, &self.parameter_hints)
