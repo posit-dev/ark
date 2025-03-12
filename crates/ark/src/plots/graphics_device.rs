@@ -111,9 +111,10 @@ struct DeviceContext {
     /// Positron. If a user sets `dev.hold()`, then we refrain from actually responding
     /// to that render request until an equivalent call to `dev.flush()` frees us.
     ///
-    /// Tracks the device's `holdflush` flag, where we simplify it to mean that `holdflush
-    /// == 0` means we can render, and `holdflush > 0` means we cannot. This flag
-    /// technically represents a stack of hold levels, but that doesn't affect us.
+    /// Tracks the device's holdflush `level`, where we simplify it to mean that `level <=
+    /// 0` means we can render, and `level > 0` means we cannot. Graphics devices should
+    /// return `0` as the `level` when we are free to render and the level should never go
+    /// negative, but we try to be extra safe.
     should_render: Cell<bool>,
 
     /// The ID associated with the current plot page.
@@ -185,9 +186,11 @@ impl DeviceContext {
         self.process_changes();
     }
 
-    #[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
-    fn hook_holdflush(&self, holdflush: i32) {
-        self.should_render.replace(holdflush == 0);
+    #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
+    fn hook_holdflush(&self, level: i32) {
+        // Be extra safe and check `level <= 0` rather than just `level == 0` in case
+        // our shadowed device returns a negative `level`
+        self.should_render.replace(level <= 0);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
@@ -695,23 +698,38 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     });
 }
 
-#[tracing::instrument(level = "trace", skip_all, fields(holdflush = %holdflush))]
-unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, mut holdflush: i32) -> i32 {
+#[tracing::instrument(level = "trace", skip_all, fields(level_delta = %level_delta))]
+unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) -> i32 {
     log::trace!("Entering callback_holdflush");
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.holdflush.get() {
-            holdflush = callback(dev, holdflush);
-        }
-        cell.hook_holdflush(holdflush);
-        holdflush
+        // If our wrapped device has a `holdflush()` method, we rely on it to apply
+        // the `level_delta` (typically `+1` or `-1`) and return the new level. Otherwise
+        // we follow the lead of `devholdflush()` in R and use a resolved `level` of `0`.
+        // Notably, `grDevices::png()` with a Cairo backend does not have a holdflush
+        // hook.
+        // https://github.com/wch/r-source/blob/8cebcc0a5d99890839e5171f398da643d858dcca/src/library/grDevices/src/devices.c#L129-L138
+        let level = match cell.wrapped_callbacks.holdflush.get() {
+            Some(callback) => {
+                let level = callback(dev, level_delta);
+                log::trace!("Using resolved holdflush level from wrapped callback: {level}");
+                level
+            },
+            None => {
+                let level = 0;
+                log::trace!("Using default holdflush level: {level}");
+                level
+            },
+        };
+        cell.hook_holdflush(level);
+        level
     })
 }
 
 // mode = 0, graphics off
 // mode = 1, graphics on
 // mode = 2, graphical input on (ignored by most drivers)
-#[tracing::instrument(level = "trace", skip_all)]
+#[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     log::trace!("Entering callback_mode");
 
