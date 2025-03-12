@@ -28,7 +28,7 @@ use crate::treesitter::NodeTypeExt;
 pub fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_workspace()");
 

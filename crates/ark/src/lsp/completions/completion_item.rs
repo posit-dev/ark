@@ -170,7 +170,7 @@ pub(super) unsafe fn completion_item_from_package(
 pub(super) fn completion_item_from_function(
     name: &str,
     package: Option<&str>,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<CompletionItem> {
     let label = format!("{}", name);
     let mut item = completion_item(label, CompletionData::Function {
@@ -253,7 +253,7 @@ pub(super) unsafe fn completion_item_from_object(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
         return completion_item_from_promise(
@@ -303,7 +303,7 @@ pub(super) unsafe fn completion_item_from_promise(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<CompletionItem> {
     if r_promise_is_forced(object) {
         // Promise has already been evaluated before.
@@ -373,7 +373,7 @@ pub(super) unsafe fn completion_item_from_namespace(
     name: &str,
     namespace: SEXP,
     package: &str,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<CompletionItem> {
     // First, look in the namespace itself.
     if let Some(item) = completion_item_from_symbol(
@@ -419,7 +419,8 @@ pub(super) unsafe fn completion_item_from_lazydata(
     // Lazydata objects are never functions, so this doesn't really matter
     let parameter_hints = ParameterHints::Enabled;
 
-    match completion_item_from_symbol(name, env, Some(package), promise_strategy, parameter_hints) {
+    match completion_item_from_symbol(name, env, Some(package), promise_strategy, &parameter_hints)
+    {
         Some(item) => item,
         None => {
             // Should be impossible, but we'll be extra safe
@@ -433,7 +434,7 @@ pub(super) unsafe fn completion_item_from_symbol(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Option<Result<CompletionItem>> {
     let symbol = r_symbol!(name);
 

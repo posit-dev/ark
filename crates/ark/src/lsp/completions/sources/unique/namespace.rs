@@ -33,7 +33,7 @@ use crate::treesitter::NodeTypeExt;
 // started typing the prefix of the symbol they would like completions for.
 pub fn completions_from_namespace(
     context: &DocumentContext,
-    parameter_hints: ParameterHints,
+    parameter_hints: &ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_namespace()");
 
@@ -238,7 +238,7 @@ mod tests {
             let point = Point { row: 0, column: 7 };
             let document = Document::new("utils::", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
 
@@ -255,7 +255,7 @@ mod tests {
             let point = Point { row: 0, column: 8 };
             let document = Document::new("utils:::", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             let completion = completions
@@ -268,7 +268,7 @@ mod tests {
             let point = Point { row: 0, column: 11 };
             let document = Document::new("utils::blah", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             let completion = completions.iter().find(|item| item.label == "adist");
@@ -283,7 +283,7 @@ mod tests {
             let document = Document::new("base::+", None);
             let context = DocumentContext::new(&document, point, None);
             let completions =
-                completions_from_namespace(&context, ParameterHints::Enabled).unwrap();
+                completions_from_namespace(&context, &ParameterHints::Enabled).unwrap();
             assert!(completions.is_none());
         })
     }
@@ -294,7 +294,7 @@ mod tests {
             let point = Point { row: 0, column: 2 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -307,7 +307,7 @@ mod tests {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -315,7 +315,7 @@ mod tests {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base:::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -323,7 +323,7 @@ mod tests {
             let point = Point { row: 0, column: 6 };
             let document = Document::new("base:::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
