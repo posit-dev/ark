@@ -13,6 +13,7 @@ use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::completion_item_from_variable;
 use crate::lsp::completions::parameter_hints::ParameterHints;
@@ -25,7 +26,17 @@ use crate::lsp::traits::string::StringExt;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub fn completions_from_workspace(
+pub trait WorkspaceCompletionProvider {
+    fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>>;
+}
+
+impl<'a> WorkspaceCompletionProvider for CompletionBuilder<'a> {
+    fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_workspace(self.context, self.state, &self.parameter_hints)
+    }
+}
+
+fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
     parameter_hints: &ParameterHints,
