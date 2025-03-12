@@ -19,6 +19,7 @@ use libr::R_lsInternal;
 use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
 use crate::lsp::completions::parameter_hints::ParameterHints;
@@ -27,7 +28,19 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
-pub fn completions_from_search_path(
+/// Extension trait for providing search path completions
+pub trait SearchPathCompletionProvider {
+    /// Get completions from the R search path
+    fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>>;
+}
+
+impl<'a> SearchPathCompletionProvider for CompletionBuilder<'a> {
+    fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>> {
+        completions_from_search_path(self.context, &self.parameter_hints)
+    }
+}
+
+fn completions_from_search_path(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
 ) -> Result<Vec<CompletionItem>> {
