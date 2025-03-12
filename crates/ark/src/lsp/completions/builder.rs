@@ -22,15 +22,15 @@ use crate::lsp::completions::sources::unique::comment::completions_from_comment;
 use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
 use crate::lsp::completions::sources::unique::extractor::completions_from_at;
 use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
-use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
+use crate::lsp::completions::sources::unique::namespace::NamespaceCompletionProvider;
 use crate::lsp::completions::sources::unique::string::completions_from_string;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 
 pub(crate) struct CompletionBuilder<'a> {
-    context: &'a DocumentContext<'a>,
-    state: &'a WorldState,
-    parameter_hints: ParameterHints,
+    pub(crate) context: &'a DocumentContext<'a>,
+    pub(crate) state: &'a WorldState,
+    pub(crate) parameter_hints: ParameterHints,
 }
 
 impl<'a> CompletionBuilder<'a> {
@@ -57,10 +57,6 @@ impl<'a> CompletionBuilder<'a> {
     }
 
     // Temporary move: wrapper methods for functions that use parameter_hints
-
-    fn get_namespace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_namespace(self.context, &self.parameter_hints)
-    }
 
     fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>> {
         completions_from_search_path(self.context, &self.parameter_hints)
