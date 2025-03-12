@@ -325,6 +325,16 @@ impl DummyFrontend {
         })
     }
 
+    pub fn recv_iopub_display_data(&self) {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::DisplayData(_))
+    }
+
+    pub fn recv_iopub_update_display_data(&self) {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::UpdateDisplayData(_))
+    }
+
     pub fn recv_iopub_stream_stdout(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stdout)
     }

@@ -128,7 +128,7 @@ use crate::ui::UiCommSender;
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// An enum representing the different modes in which the R session can run.
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum SessionMode {
     /// A session with an interactive console (REPL), such as in Positron.
     Console,
@@ -168,7 +168,7 @@ pub struct RMain {
     kernel_request_rx: Receiver<KernelRequest>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
-    pub session_mode: SessionMode,
+    session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -346,10 +346,13 @@ impl RMain {
             session_mode,
         )));
 
-        // Initialize the GD context on this thread
-        graphics_device::init_graphics_device();
-
         let main = RMain::get_mut();
+
+        // Initialize the GD context on this thread
+        graphics_device::init_graphics_device(
+            main.get_comm_manager_tx().clone(),
+            main.get_iopub_tx().clone(),
+        );
 
         let mut r_args = r_args.clone();
 
@@ -783,7 +786,7 @@ impl RMain {
             // If an interrupt was signaled and we are in a user
             // request prompt, e.g. `readline()`, we need to propagate
             // the interrupt to the R stack. This needs to happen before
-            // `process_events()`, particularly on Windows, because it
+            // `process_idle_events()`, particularly on Windows, because it
             // calls `R_ProcessEvents()`, which checks and resets
             // `UserBreak`, but won't actually fire the interrupt b/c
             // we have them disabled, so it would end up swallowing the
@@ -814,13 +817,13 @@ impl RMain {
             let oper = select.select_timeout(Duration::from_millis(200));
 
             let Ok(oper) = oper else {
-                // We hit a timeout. Process events because we need to
+                // We hit a timeout. Process idle events because we need to
                 // pump the event loop while waiting for console input.
                 //
                 // Alternatively, we could try to figure out the file
                 // descriptors that R has open and select() on those for
                 // available data?
-                unsafe { Self::process_events() };
+                unsafe { Self::process_idle_events() };
                 continue;
             };
 
@@ -979,13 +982,7 @@ impl RMain {
             // Check for pending graphics updates
             // (Important that this occurs while in the "busy" state of this ExecuteRequest
             // so that the `parent` message is set correctly in any Jupyter messages)
-            unsafe {
-                graphics_device::on_did_execute_request(
-                    self.comm_manager_tx.clone(),
-                    self.iopub_tx.clone(),
-                    self.is_ui_comm_connected() && self.session_mode == SessionMode::Console,
-                )
-            };
+            graphics_device::on_did_execute_request();
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
@@ -1271,6 +1268,10 @@ impl RMain {
         });
     }
 
+    pub fn session_mode(&self) -> SessionMode {
+        self.session_mode
+    }
+
     pub fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
         self.ui_comm_tx.as_ref()
     }
@@ -1307,7 +1308,7 @@ impl RMain {
         }
     }
 
-    fn is_ui_comm_connected(&self) -> bool {
+    pub fn is_ui_comm_connected(&self) -> bool {
         self.get_ui_comm_tx().is_some()
     }
 
@@ -1753,7 +1754,7 @@ impl RMain {
         }
     }
 
-    unsafe fn process_events() {
+    unsafe fn process_idle_events() {
         // Process regular R events. We're normally running with polled
         // events disabled so that won't run here. We also run with
         // interrupts disabled, so on Windows those won't get run here
@@ -1770,7 +1771,7 @@ impl RMain {
         R_RunPendingFinalizers();
 
         // Check for Positron render requests
-        graphics_device::on_process_events();
+        graphics_device::on_process_idle_events();
     }
 
     pub fn get_comm_manager_tx(&self) -> &Sender<CommManagerEvent> {

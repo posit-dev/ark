@@ -68,7 +68,7 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
             // Emit HTML output
             let main = RMain::get();
             let iopub_tx = main.get_iopub_tx().clone();
-            match main.session_mode {
+            match main.session_mode() {
                 SessionMode::Notebook | SessionMode::Background => {
                     // In notebook mode, send the output as a Jupyter display_data message
                     if let Err(err) = emit_html_output_jupyter(iopub_tx, path, label) {

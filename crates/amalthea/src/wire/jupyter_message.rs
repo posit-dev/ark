@@ -239,6 +239,12 @@ impl TryFrom<&WireMessage> for Message {
         if kind == CompleteReply::message_type() {
             return Ok(Message::CompleteReply(JupyterMessage::try_from(msg)?));
         }
+        if kind == DisplayData::message_type() {
+            return Ok(Message::DisplayData(JupyterMessage::try_from(msg)?));
+        }
+        if kind == UpdateDisplayData::message_type() {
+            return Ok(Message::UpdateDisplayData(JupyterMessage::try_from(msg)?));
+        }
         if kind == ShutdownRequest::message_type() {
             return Ok(Message::ShutdownRequest(JupyterMessage::try_from(msg)?));
         }
