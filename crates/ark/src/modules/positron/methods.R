@@ -1,7 +1,7 @@
 #
 # methods.R
 #
-# Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -26,6 +26,31 @@ lockEnvironment(ark_methods_table, TRUE)
 
 ark_methods_allowed_packages <- c("torch", "reticulate")
 
+# check if the calling package is allowed to touch the methods table
+check_caller_allowed <- function() {
+    if (!in_ark_tests()) {
+        # we want the caller of the caller
+        calling_env <- .ps.env_name(topenv(parent.frame(2)))
+        if (
+            !(calling_env %in%
+                paste0("namespace:", ark_methods_allowed_packages))
+        ) {
+            stop(
+                "Only allowed packages can (un)register methods. Called from ",
+                calling_env
+            )
+        }
+    }
+}
+
+check_register_args <- function(generic, class) {
+    stopifnot(
+        is_string(generic),
+        generic %in% names(ark_methods_table),
+        typeof(class) == "character"
+    )
+}
+
 #' Register the methods with the Positron runtime
 #'
 #' @param generic Generic function name as a character to register
@@ -33,27 +58,28 @@ ark_methods_allowed_packages <- c("torch", "reticulate")
 #' @param method A method to be registered. Should be a call object.
 #' @export
 .ark.register_method <- function(generic, class, method) {
-    # Check if the caller is an allowed package
-    if (!in_ark_tests()) {
-        calling_env <- .ps.env_name(topenv(parent.frame()))
-        if (
-            !(calling_env %in%
-                paste0("namespace:", ark_methods_allowed_packages))
-        ) {
-            stop(
-                "Only allowed packages can register methods. Called from ",
-                calling_env
-            )
-        }
-    }
+    check_caller_allowed()
+    check_register_args(generic, class)
 
-    stopifnot(
-        is_string(generic),
-        generic %in% names(ark_methods_table),
-        typeof(class) == "character"
-    )
     for (cls in class) {
         assign(cls, method, envir = ark_methods_table[[generic]])
+    }
+    invisible()
+}
+
+#' Unregister a method from the Positron runtime
+#'
+#' @param generic Generic function name as a character
+#' @param class Class name as a character
+#' @export
+.ark.unregister_method <- function(generic, class) {
+    check_caller_allowed()
+    check_register_args(generic, class)
+
+    for (cls in class) {
+        if (exists(cls, envir = ark_methods_table[[generic]], inherits = FALSE)) {
+            remove(list = cls, envir = ark_methods_table[[generic]])
+        }
     }
     invisible()
 }

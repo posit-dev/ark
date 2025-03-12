@@ -1749,6 +1749,19 @@ mod tests {
             let path = vec![String::from("x"), variables[3].access_key.clone()];
             let vector = PositronVariable::inspect(env, &path).unwrap();
             assert_eq!(vector.len(), 4);
+
+            // avoid interference with other tests that might use a "foo" class
+            harp::parse_eval_global(
+                r#"
+                .ark.unregister_method("ark_positron_variable_display_value", "foo")
+                .ark.unregister_method("ark_positron_variable_display_type", "foo")
+                .ark.unregister_method("ark_positron_variable_has_children", "foo")
+                .ark.unregister_method("ark_positron_variable_kind", "foo")
+                .ark.unregister_method("ark_positron_variable_get_children", "foo")
+                .ark.unregister_method("ark_positron_variable_get_child_at", "foo")
+                "#,
+            )
+            .unwrap();
         })
     }
 
