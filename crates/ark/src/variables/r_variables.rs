@@ -409,7 +409,7 @@ impl RVariables {
 
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
-                            if old.value != new.value {
+                            if old.value.id() != new.value.id() {
                                 assigned.push(PositronVariable::new(&new).var());
                             }
                             old_next = old_iter.next();
