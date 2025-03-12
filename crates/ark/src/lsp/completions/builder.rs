@@ -16,7 +16,7 @@ use crate::lsp::completions::sources::composite::pipe::completions_from_pipe;
 use crate::lsp::completions::sources::composite::search_path::SearchPathCompletionProvider;
 use crate::lsp::completions::sources::composite::snippets::completions_from_snippets;
 use crate::lsp::completions::sources::composite::subset::completions_from_subset;
-use crate::lsp::completions::sources::composite::workspace::completions_from_workspace;
+use crate::lsp::completions::sources::composite::workspace::WorkspaceCompletionProvider;
 use crate::lsp::completions::sources::unique::colon::completions_from_single_colon;
 use crate::lsp::completions::sources::unique::comment::completions_from_comment;
 use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
@@ -54,12 +54,6 @@ impl<'a> CompletionBuilder<'a> {
         // set of reasonable completions based on loaded packages, the open
         // document, the current workspace, and any call related arguments
         self.completions_from_composite_sources()
-    }
-
-    // Temporary move: wrapper methods for functions that use parameter_hints
-
-    fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_workspace(self.context, self.state, &self.parameter_hints)
     }
 
     pub fn completions_from_unique_sources(&self) -> Result<Option<Vec<CompletionItem>>> {
