@@ -11,20 +11,17 @@ pub struct EnvironmentIter {
     names: std::vec::IntoIter<String>,
 }
 
-#[derive(Eq)]
 pub struct Binding {
     pub name: RSymbol,
     pub value: BindingValue,
 }
 
-// Bindings are equal if their names and values are exactly the same.
-impl PartialEq for Binding {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.value == other.value
-    }
+#[derive(Eq, PartialEq)]
+pub enum RObjectId {
+    Cons(SEXP, Box<RObjectId>),
+    Nil,
 }
 
-#[derive(Eq)]
 pub enum BindingValue {
     Active {
         fun: RObject,
@@ -42,31 +39,28 @@ pub enum BindingValue {
     },
 }
 
-// Two binding values are equal if they are identical (ie, their SEXP's)
-// are the same.
-impl PartialEq for BindingValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Active { fun: a }, Self::Active { fun: b }) => a.sexp == b.sexp,
-            (Self::Promise { promise: a }, Self::Promise { promise: b }) => a.sexp == b.sexp,
-            (
-                Self::Altrep {
-                    object: a,
-                    data1: b,
-                    data2: c,
-                    ..
-                },
-                Self::Altrep {
-                    object: d,
-                    data1: e,
-                    data2: f,
-                    ..
-                },
-            ) => a.sexp == d.sexp && b.sexp == e.sexp && c.sexp == f.sexp,
-            (Self::Standard { object: a, .. }, Self::Standard { object: b, .. }) => {
-                a.sexp == b.sexp
+impl BindingValue {
+    // Use id() to compare binding values by their pointers.
+    pub fn id(&self) -> RObjectId {
+        match self {
+            BindingValue::Active { fun } => RObjectId::Cons(fun.sexp, Box::new(RObjectId::Nil)),
+            BindingValue::Promise { promise } => {
+                RObjectId::Cons(promise.sexp, Box::new(RObjectId::Nil))
             },
-            _ => false,
+            BindingValue::Altrep {
+                object,
+                data1,
+                data2,
+            } => RObjectId::Cons(
+                object.sexp,
+                Box::new(RObjectId::Cons(
+                    data1.sexp,
+                    Box::new(RObjectId::Cons(data2.sexp, Box::new(RObjectId::Nil))),
+                )),
+            ),
+            BindingValue::Standard { object } => {
+                RObjectId::Cons(object.sexp, Box::new(RObjectId::Nil))
+            },
         }
     }
 }
@@ -153,6 +147,11 @@ impl Binding {
             false
         }
     }
+
+    // Use id() to compare bindings by their pointers.
+    pub fn id(&self) -> RObjectId {
+        RObjectId::Cons(self.name.sexp, Box::new(self.value.id()))
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -208,9 +207,19 @@ mod tests {
             let a = iter.next().unwrap().unwrap();
             let b = iter.next().unwrap().unwrap();
 
-            assert_eq!(a == b, false);
-            assert_eq!(a.name == b.name, false);
-            assert_eq!(a.value == b.value, true);
+            // same object bound to different symbols
+            assert_eq!(a.id() == b.id(), false);
+            assert_eq!(a.value.id() == b.value.id(), true);
+
+            // now bind a different object to b
+            let b = harp::parse_eval_base("1").unwrap();
+            env.bind(RSymbol::from("b"), &b);
+
+            let mut iter = env.iter();
+            let a = iter.next().unwrap().unwrap();
+            let b = iter.next().unwrap().unwrap();
+            // Even though they are equal by value, their id() is different
+            assert_eq!(a.value.id() == b.value.id(), false);
         })
     }
 }
