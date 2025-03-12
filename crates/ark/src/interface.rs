@@ -1080,15 +1080,23 @@ impl RMain {
     /// invalid `input_request` case we throw an R error and assume that it
     /// came from a `readline()` or `menu()` call during startup.
     ///
-    /// We make a single exception for preexisting renv `activate.R` scripts,
-    /// which used to call `readline()` from within `.Rprofile`. In those cases,
-    /// we return `"n"` which allows older versions of renv to at least startup.
+    /// We make a single exception for renv `activate.R` scripts, because it is easy for
+    /// them to get outdated, and we want them to at least be able to start up:
+    /// - In renv >=1.0.9, renv never calls `readline()` from within `.Rprofile` and
+    ///   everything works as it should.
+    /// - In renv 1.0.2 to 1.0.8, renv calls `readline()` using `renv:::ask()`, and we
+    ///   return `"n"` immediately rather than letting the user respond.
+    /// - In renv <=1.0.1, renv calls `readline()` using `renv:::menu()`, and we
+    ///   return `"Leave project library empty"` immediately rather than letting the user
+    ///   respond.
+    ///
+    /// https://github.com/rstudio/renv/pull/1915
     /// https://github.com/posit-dev/positron/issues/2070
     /// https://github.com/rstudio/renv/blob/5d0d52c395e569f7f24df4288d949cef95efca4e/inst/resources/activate.R#L85-L87
     fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
-        if Self::in_renv_autoloader() {
-            log::info!("Detected `readline()` call in renv autoloader. Returning `'n'`.");
-            match Self::on_console_input(buf, buflen, String::from("n")) {
+        if let Some(input) = Self::renv_autoloader_reply() {
+            log::info!("Detected `readline()` call in renv autoloader. Returning `'{input}'`.");
+            match Self::on_console_input(buf, buflen, input) {
                 Ok(()) => return ConsoleResult::NewInput,
                 Err(err) => return ConsoleResult::Error(err),
             }
@@ -1104,10 +1112,45 @@ impl RMain {
         return ConsoleResult::Error(Error::InvalidInputRequest(message));
     }
 
-    fn in_renv_autoloader() -> bool {
-        harp::get_option("renv.autoloader.running")
+    fn renv_autoloader_reply() -> Option<String> {
+        let is_autoloader_running = harp::get_option("renv.autoloader.running")
             .try_into()
-            .unwrap_or(false)
+            .unwrap_or(false);
+
+        if !is_autoloader_running {
+            return None;
+        }
+
+        if Self::is_renv_1_0_1_or_earlier()? {
+            // Response to specific `renv:::menu()` call
+            Some(String::from("Leave project library empty"))
+        } else {
+            // Response to `renv:::ask()` call
+            Some(String::from("n"))
+        }
+    }
+
+    fn is_renv_1_0_1_or_earlier() -> Option<bool> {
+        let result = match RFunction::from("is_renv_1_0_1_or_earlier").call_in(ARK_ENVS.positron_ns)
+        {
+            Ok(result) => result,
+            Err(error) => {
+                log::error!("Failed to call `is_renv_1_0_1_or_earlier()`: {error:?}");
+                return None;
+            },
+        };
+
+        let result: bool = match result.try_into() {
+            Ok(result) => result,
+            Err(error) => {
+                log::error!(
+                    "Failed to convert result of `is_renv_1_0_1_or_earlier()` to bool: {error:?}"
+                );
+                return None;
+            },
+        };
+
+        Some(result)
     }
 
     fn handle_input_reply(
