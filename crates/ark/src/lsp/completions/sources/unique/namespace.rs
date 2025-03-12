@@ -1,7 +1,7 @@
 //
 // namespace.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::parameter_hints::ParameterHints;
@@ -29,9 +30,22 @@ use crate::treesitter::NamespaceOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+/// Extension trait for providing namespace completions
+pub trait NamespaceCompletionProvider {
+    /// Get completions for namespace members (`::`/`:::` operator)
+    fn get_namespace_completions(&self) -> Result<Option<Vec<CompletionItem>>>;
+}
+
+impl<'a> NamespaceCompletionProvider for CompletionBuilder<'a> {
+    fn get_namespace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
+        // For now, just delegate to the existing function
+        completions_from_namespace(self.context, &self.parameter_hints)
+    }
+}
+
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
-pub fn completions_from_namespace(
+fn completions_from_namespace(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
