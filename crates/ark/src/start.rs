@@ -48,6 +48,7 @@ pub fn start_kernel(
     // A broadcast channel (bus) used to notify clients when the kernel
     // has finished initialization.
     let mut kernel_init_tx = Bus::new(1);
+    let (kernel_info_request_tx, kernel_info_request_rx) = bounded::<()>(1);
 
     // A channel pair used for kernel requests.
     // These events are used to manage the runtime state, and also to
@@ -75,6 +76,7 @@ pub fn start_kernel(
         r_request_tx.clone(),
         stdin_request_tx.clone(),
         kernel_init_rx,
+        kernel_info_request_tx,
         kernel_request_tx,
     ));
 
@@ -121,6 +123,7 @@ pub fn start_kernel(
         stdin_reply_rx,
         iopub_tx,
         kernel_init_tx,
+        kernel_info_request_rx,
         kernel_request_rx,
         dap,
         session_mode,
