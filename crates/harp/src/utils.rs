@@ -393,6 +393,14 @@ pub unsafe fn r_envir_remove(symbol: &str, envir: SEXP) {
     R_removeVarFromFrame(r_symbol!(symbol), envir);
 }
 
+/// Get the names attribute of a vector
+///
+/// Raw access to the [R_NamesSymbol] attribute. Will return [R_NilValue] when no names
+/// are present.
+pub fn r_names(x: SEXP) -> SEXP {
+    unsafe { Rf_getAttrib(x, R_NamesSymbol) }
+}
+
 /// Get names of a vector
 ///
 /// `r_names2()` always returns a character vector, even when the object does
@@ -405,7 +413,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
 
     let size = r_length(x);
 
-    let names = unsafe { Rf_getAttrib(x, R_NamesSymbol) };
+    let names = r_names(x);
     unsafe { protect.add(names) };
 
     if r_is_null(names) {

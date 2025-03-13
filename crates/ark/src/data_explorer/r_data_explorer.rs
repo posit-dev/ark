@@ -62,8 +62,9 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use harp::r_symbol;
+use harp::table_kind;
 use harp::tbl_get_column;
-use harp::TableInfo;
+use harp::ColumnNames;
 use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
@@ -562,22 +563,28 @@ impl RDataExplorer {
     fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
         unsafe {
             let table = table.clone();
-            let object = *table;
+            let table_sexp = table.sexp;
 
-            let info = table_info_or_bail(object)?;
+            let Some(kind) = table_kind(table_sexp) else {
+                return Err(anyhow!("Unsupported type for the data viewer"));
+            };
 
-            let harp::TableInfo {
-                kind,
-                dims:
-                    harp::TableDim {
-                        num_rows,
-                        num_cols: total_num_columns,
-                    },
-                col_names: column_names,
-            } = info;
+            // `df_n_row()` will materialize duckplyr compact row names, but we are ok
+            // with that for the data explorer
+            let (n_row, n_col, column_names) = match kind {
+                TableKind::Dataframe => (
+                    harp::df_n_row(table_sexp)?,
+                    harp::df_n_col(table_sexp)?,
+                    ColumnNames::from_data_frame(table_sexp)?,
+                ),
+                TableKind::Matrix => {
+                    let (n_row, n_col) = harp::mat_dim(table_sexp)?;
+                    (n_row, n_col, ColumnNames::from_matrix(table_sexp)?)
+                },
+            };
 
             let mut column_schemas = Vec::<ColumnSchema>::new();
-            for i in 0..(total_num_columns as isize) {
+            for i in 0..(n_col as isize) {
                 let column_name = match column_names.get_unchecked(i) {
                     Some(name) => name,
                     None => String::from(""),
@@ -586,8 +593,8 @@ impl RDataExplorer {
                 // TODO: handling for nested data frame columns
 
                 let col = match kind {
-                    harp::TableKind::Dataframe => VECTOR_ELT(object, i),
-                    harp::TableKind::Matrix => object,
+                    harp::TableKind::Dataframe => VECTOR_ELT(table_sexp, i),
+                    harp::TableKind::Matrix => table_sexp,
                 };
 
                 let type_name = WorkspaceVariableDisplayType::from(col, false).display_type;
@@ -610,7 +617,7 @@ impl RDataExplorer {
             Ok(DataObjectShape {
                 columns: column_schemas,
                 kind,
-                num_rows,
+                num_rows: n_row,
             })
         }
     }
@@ -1071,10 +1078,6 @@ impl RDataExplorer {
             )
         })
     }
-}
-
-fn table_info_or_bail(x: SEXP) -> anyhow::Result<TableInfo> {
-    harp::table_info(x).ok_or(anyhow!("Unsupported type for data viewer"))
 }
 
 /// Open an R object in the data viewer.
