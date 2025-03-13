@@ -6,6 +6,7 @@
 //
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTableParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
@@ -1899,6 +1900,47 @@ fn test_row_names_matrix() {
     assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.has_row_labels, false)
+        }
+    );
+}
+
+#[test]
+fn test_schema_identification() {
+    let _lock = r_test_lock();
+    let socket = open_data_explorer_from_expression(
+        "data.frame(
+            a = c(1, 2, 3),
+            b = c('a', 'b', 'c'),
+            c = c(TRUE, FALSE, TRUE),
+            d = factor(c('a', 'b', 'c')),
+            e = as.Date(c('2021-01-01', '2021-01-02', '2021-01-03')),
+            f = as.POSIXct(c('2021-01-01 01:00:00', '2021-01-02 02:00:00', '2021-01-03 03:00:00'))
+        )",
+        None,
+    )
+    .unwrap();
+
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        column_indices: vec![0, 1, 2, 3, 4, 5],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 6);
+
+            let expected_types = vec![
+                (ColumnDisplayType::Number, "dbl"),
+                (ColumnDisplayType::String, "str"),
+                (ColumnDisplayType::Boolean, "lgl"),
+                (ColumnDisplayType::String, "fct(3)"),
+                (ColumnDisplayType::Date, "Date"),
+                (ColumnDisplayType::Datetime, "POSIXct"),
+            ];
+
+            for (i, (expected_display, expected_name)) in expected_types.iter().enumerate() {
+                assert_eq!(schema.columns[i].type_display, *expected_display);
+                assert_eq!(schema.columns[i].type_name, expected_name.to_string());
+            }
         }
     );
 }
