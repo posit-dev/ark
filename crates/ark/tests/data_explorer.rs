@@ -6,6 +6,7 @@
 //
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
+use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTableParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
@@ -1899,6 +1900,51 @@ fn test_row_names_matrix() {
     assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.has_row_labels, false)
+        }
+    );
+}
+
+#[test]
+fn test_schema_identification() {
+    let _lock = r_test_lock();
+    let socket = open_data_explorer_from_expression(
+        "data.frame(
+            a = c(1, 2, 3),
+            b = c('a', 'b', 'c'),
+            c = c(TRUE, FALSE, TRUE),
+            d = factor(c('a', 'b', 'c')),
+            e = as.Date(c('2021-01-01', '2021-01-02', '2021-01-03')),
+            f = as.POSIXct(c('2021-01-01 01:00:00', '2021-01-02 02:00:00', '2021-01-03 03:00:00'))
+        )",
+        None,
+    )
+    .unwrap();
+
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        column_indices: vec![0, 1, 2, 3, 4, 5],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 6);
+
+            assert_eq!(schema.columns[0].type_display, ColumnDisplayType::Number);
+            assert_eq!(schema.columns[0].type_name, String::from("dbl"));
+
+            assert_eq!(schema.columns[1].type_display, ColumnDisplayType::String);
+            assert_eq!(schema.columns[1].type_name, String::from("str"));
+
+            assert_eq!(schema.columns[2].type_display, ColumnDisplayType::Boolean);
+            assert_eq!(schema.columns[2].type_name, String::from("lgl"));
+
+            assert_eq!(schema.columns[3].type_display, ColumnDisplayType::String);
+            assert_eq!(schema.columns[3].type_name, String::from("fct(3)"));
+
+            assert_eq!(schema.columns[4].type_display, ColumnDisplayType::Date);
+            assert_eq!(schema.columns[4].type_name, String::from("Date"));
+
+            assert_eq!(schema.columns[5].type_display, ColumnDisplayType::Datetime);
+            assert_eq!(schema.columns[5].type_name, String::from("POSIXct"));
         }
     );
 }
