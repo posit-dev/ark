@@ -159,6 +159,7 @@ fn empty_column_summary_stats() -> data_explorer_comm::ColumnSummaryStats {
         boolean_stats: None,
         date_stats: None,
         datetime_stats: None,
+        other_stats: None,
     }
 }
 

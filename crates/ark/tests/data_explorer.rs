@@ -1856,7 +1856,10 @@ fn test_frequency_table() {
             values: format_string(
                 harp::parse_eval_global("letters[1:5]").unwrap().sexp,
                 &default_format_options()
-            ),
+            )
+            .into_iter()
+            .map(ColumnValue::FormattedValue)
+            .collect(),
             counts: vec![10, 9, 8, 7, 6],
             other_count: Some(5 + 4 + 3 + 2 + 1)
         });

@@ -6,6 +6,7 @@ use amalthea::comm::data_explorer_comm::ColumnHistogram;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogramParamsMethod;
 use amalthea::comm::data_explorer_comm::ColumnQuantileValue;
+use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use anyhow::anyhow;
 use harp::exec::RFunction;
@@ -149,7 +150,10 @@ pub fn profile_frequency_table(
     };
 
     Ok(ColumnFrequencyTable {
-        values: values_formatted,
+        values: values_formatted
+            .into_iter()
+            .map(ColumnValue::FormattedValue)
+            .collect(),
         counts: counts.into_iter().map(|v| v as i64).collect(),
         other_count,
     })
@@ -271,7 +275,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(freq_table, ColumnFrequencyTable {
-            values: format_string(RObject::try_from(values).unwrap().sexp, &default_options()),
+            values: format_string(RObject::try_from(values).unwrap().sexp, &default_options())
+                .into_iter()
+                .map(ColumnValue::FormattedValue)
+                .collect(),
             counts,
             other_count
         });
