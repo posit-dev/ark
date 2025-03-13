@@ -11,10 +11,23 @@ use harp::object::RObject;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
+
+pub trait PipeCompletionProvider {
+    fn get_pipe_completions(&self) -> Result<Option<Vec<CompletionItem>>, anyhow::Error>;
+}
+
+impl<'a> PipeCompletionProvider for CompletionBuilder<'a> {
+    fn get_pipe_completions(&self) -> Result<Option<Vec<CompletionItem>>, anyhow::Error> {
+        // Use the cached pipe_root from self
+        let root = self.get_pipe_root()?;
+        completions_from_pipe(root)
+    }
+}
 
 #[derive(Clone)]
 pub struct PipeRoot {
@@ -25,9 +38,7 @@ pub struct PipeRoot {
     pub(super) object: Option<RObject>,
 }
 
-pub fn completions_from_pipe(
-    root: Option<PipeRoot>,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let Some(root) = root else {
         // No pipe
         return Ok(None);
