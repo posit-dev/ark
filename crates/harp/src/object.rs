@@ -31,6 +31,7 @@ use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
+use crate::utils::r_names;
 use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
 
@@ -148,6 +149,7 @@ pub fn r_length(x: SEXP) -> isize {
     unsafe { Rf_xlength(x) }
 }
 
+/// Raw access to the underlying `R_DimSymbol` attribute
 pub fn r_dim(x: SEXP) -> SEXP {
     unsafe { Rf_getAttrib(x, R_DimSymbol) }
 }
@@ -458,7 +460,7 @@ impl RObject {
     /// Gets a vector containing names for the object's values (from the `names`
     /// attribute). Returns `None` if the object's value(s) don't have names.
     pub fn names(&self) -> Option<Vec<Option<String>>> {
-        let names = unsafe { Rf_getAttrib(self.sexp, R_NamesSymbol) };
+        let names = r_names(self.sexp);
         let names = RObject::from(names);
         match names.kind() {
             STRSXP => Vec::<Option<String>>::try_from(names).ok(),
@@ -501,19 +503,6 @@ impl RObject {
         }
 
         Ok(Some(class.try_into()?))
-    }
-
-    pub fn dim(&self) -> harp::Result<Option<Vec<usize>>> {
-        let dim: RObject = r_dim(self.sexp).into();
-
-        if dim.sexp == harp::r_null() {
-            return Ok(None);
-        }
-
-        let dim: Vec<i32> = dim.try_into()?;
-        let dim = dim.into_iter().map(|d| d as usize).collect();
-
-        Ok(Some(dim))
     }
 
     pub fn duplicate(&self) -> RObject {
@@ -1065,7 +1054,7 @@ impl TryFrom<RObject> for HashMap<String, String> {
             r_assert_type(*value, &[STRSXP, VECSXP])?;
 
             let mut protect = RProtect::new();
-            let names = protect.add(Rf_getAttrib(*value, R_NamesSymbol));
+            let names = protect.add(r_names(*value));
             r_assert_type(names, &[STRSXP])?;
 
             let value = protect.add(Rf_coerceVector(*value, STRSXP));
@@ -1095,7 +1084,7 @@ impl TryFrom<RObject> for HashMap<String, i32> {
             r_assert_type(*value, &[INTSXP, VECSXP])?;
 
             let mut protect = RProtect::new();
-            let names = protect.add(Rf_getAttrib(*value, R_NamesSymbol));
+            let names = protect.add(r_names(*value));
             r_assert_type(names, &[STRSXP])?;
 
             let value = protect.add(Rf_coerceVector(*value, INTSXP));
@@ -1123,7 +1112,7 @@ impl TryFrom<RObject> for HashMap<String, RObject> {
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         unsafe {
             let mut protect = RProtect::new();
-            let names = protect.add(Rf_getAttrib(*value, R_NamesSymbol));
+            let names = protect.add(r_names(*value));
             r_assert_type(names, &[STRSXP])?;
 
             let n = Rf_xlength(names);
