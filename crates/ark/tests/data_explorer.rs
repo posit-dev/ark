@@ -1928,23 +1928,19 @@ fn test_schema_identification() {
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 6);
 
-            assert_eq!(schema.columns[0].type_display, ColumnDisplayType::Number);
-            assert_eq!(schema.columns[0].type_name, String::from("dbl"));
+            let expected_types = vec![
+                (ColumnDisplayType::Number, "dbl"),
+                (ColumnDisplayType::String, "str"),
+                (ColumnDisplayType::Boolean, "lgl"),
+                (ColumnDisplayType::String, "fct(3)"),
+                (ColumnDisplayType::Date, "Date"),
+                (ColumnDisplayType::Datetime, "POSIXct"),
+            ];
 
-            assert_eq!(schema.columns[1].type_display, ColumnDisplayType::String);
-            assert_eq!(schema.columns[1].type_name, String::from("str"));
-
-            assert_eq!(schema.columns[2].type_display, ColumnDisplayType::Boolean);
-            assert_eq!(schema.columns[2].type_name, String::from("lgl"));
-
-            assert_eq!(schema.columns[3].type_display, ColumnDisplayType::String);
-            assert_eq!(schema.columns[3].type_name, String::from("fct(3)"));
-
-            assert_eq!(schema.columns[4].type_display, ColumnDisplayType::Date);
-            assert_eq!(schema.columns[4].type_name, String::from("Date"));
-
-            assert_eq!(schema.columns[5].type_display, ColumnDisplayType::Datetime);
-            assert_eq!(schema.columns[5].type_name, String::from("POSIXct"));
+            for (i, (expected_display, expected_name)) in expected_types.iter().enumerate() {
+                assert_eq!(schema.columns[i].type_display, *expected_display);
+                assert_eq!(schema.columns[i].type_name, expected_name.to_string());
+            }
         }
     );
 }
