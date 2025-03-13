@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::collections::HashSet;
 
 use anyhow::Result;
@@ -13,6 +14,7 @@ use crate::lsp::completions::sources::composite::find_pipe_root;
 use crate::lsp::completions::sources::composite::is_identifier_like;
 use crate::lsp::completions::sources::composite::keyword::completions_from_keywords;
 use crate::lsp::completions::sources::composite::pipe::completions_from_pipe;
+use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::completions::sources::composite::search_path::SearchPathCompletionProvider;
 use crate::lsp::completions::sources::composite::snippets::completions_from_snippets;
 use crate::lsp::completions::sources::composite::subset::completions_from_subset;
@@ -31,17 +33,36 @@ pub(crate) struct CompletionBuilder<'a> {
     pub(crate) context: &'a DocumentContext<'a>,
     pub(crate) state: &'a WorldState,
     pub(crate) parameter_hints: ParameterHints,
+    pipe_root: OnceCell<Option<PipeRoot>>,
 }
 
 impl<'a> CompletionBuilder<'a> {
     pub fn new(context: &'a DocumentContext, state: &'a WorldState) -> Self {
         let parameter_hints =
             parameter_hints::parameter_hints(context.node, &context.document.contents);
+
         Self {
             context,
             state,
             parameter_hints,
+            pipe_root: OnceCell::new(),
         }
+    }
+
+    pub fn get_pipe_root(&self) -> Result<Option<PipeRoot>> {
+        if let Some(root) = self.pipe_root.get() {
+            // Already computed, just clone and return
+            return Ok(root.clone());
+        }
+
+        // Not yet computed, find the pipe root
+        let root = find_pipe_root(self.context)?;
+
+        // Cache it for future calls (ignore failure if race condition, which shouldn't happen)
+        let _ = self.pipe_root.set(root.clone());
+
+        // Return the result
+        Ok(root)
     }
 
     pub fn build(self) -> Result<Vec<CompletionItem>> {
@@ -96,7 +117,7 @@ impl<'a> CompletionBuilder<'a> {
 
         let mut completions: Vec<CompletionItem> = vec![];
 
-        let root = find_pipe_root(self.context)?;
+        let root = self.get_pipe_root()?;
 
         // Try argument completions
         if let Some(mut additional_completions) = completions_from_call(self.context, root.clone())?
