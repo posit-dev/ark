@@ -16,6 +16,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
 use super::pipe::PipeRoot;
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
@@ -25,7 +26,19 @@ use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub fn completions_from_call(
+pub trait CallCompletionProvider {
+    fn get_call_completions(&self) -> Result<Option<Vec<CompletionItem>>>;
+}
+
+impl<'a> CallCompletionProvider for CompletionBuilder<'a> {
+    fn get_call_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
+        // Use the cached pipe_root from self instead of passing it in
+        let root = self.get_pipe_root()?;
+        completions_from_call(self.context, root)
+    }
+}
+
+fn completions_from_call(
     context: &DocumentContext,
     root: Option<PipeRoot>,
 ) -> Result<Option<Vec<CompletionItem>>> {

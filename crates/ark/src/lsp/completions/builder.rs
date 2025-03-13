@@ -8,12 +8,12 @@ use tower_lsp::lsp_types::CompletionItemKind;
 
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::parameter_hints::{self};
-use crate::lsp::completions::sources::composite::call::completions_from_call;
+use crate::lsp::completions::sources::composite::call::CallCompletionProvider;
 use crate::lsp::completions::sources::composite::document::completions_from_document;
 use crate::lsp::completions::sources::composite::find_pipe_root;
 use crate::lsp::completions::sources::composite::is_identifier_like;
 use crate::lsp::completions::sources::composite::keyword::completions_from_keywords;
-use crate::lsp::completions::sources::composite::pipe::completions_from_pipe;
+use crate::lsp::completions::sources::composite::pipe::PipeCompletionProvider;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::completions::sources::composite::search_path::SearchPathCompletionProvider;
 use crate::lsp::completions::sources::composite::snippets::completions_from_snippets;
@@ -117,16 +117,13 @@ impl<'a> CompletionBuilder<'a> {
 
         let mut completions: Vec<CompletionItem> = vec![];
 
-        let root = self.get_pipe_root()?;
-
         // Try argument completions
-        if let Some(mut additional_completions) = completions_from_call(self.context, root.clone())?
-        {
+        if let Some(mut additional_completions) = self.get_call_completions()? {
             completions.append(&mut additional_completions);
         }
 
         // Try pipe completions
-        if let Some(mut additional_completions) = completions_from_pipe(root.clone())? {
+        if let Some(mut additional_completions) = self.get_pipe_completions()? {
             completions.append(&mut additional_completions);
         }
 
