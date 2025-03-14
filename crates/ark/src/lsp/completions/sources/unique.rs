@@ -18,18 +18,19 @@ use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::builder::CompletionBuilder;
-use crate::lsp::completions::sources::unique::colon::completions_from_single_colon;
-use crate::lsp::completions::sources::unique::comment::completions_from_comment;
-use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
-use crate::lsp::completions::sources::unique::extractor::completions_from_at;
-use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
+use crate::lsp::completions::sources::unique::colon::SingleColonSource;
+use crate::lsp::completions::sources::unique::comment::CommentSource;
+use crate::lsp::completions::sources::unique::custom::CustomSource;
+use crate::lsp::completions::sources::unique::extractor::AtSource;
+use crate::lsp::completions::sources::unique::extractor::DollarSource;
 use crate::lsp::completions::sources::unique::namespace::NamespaceSource;
-use crate::lsp::completions::sources::unique::string::completions_from_string;
+use crate::lsp::completions::sources::unique::string::StringSource;
 use crate::lsp::completions::sources::CompletionSource;
 
 /// Aggregator for unique completion sources
-/// This source tries each unique source in order and returns the first set of
-/// completions that match.
+/// This source tries each unique source in order and returns the first time
+/// a source returns completions (with the caveat that single colon completions
+/// are special).
 pub struct UniqueCompletionsSource;
 
 impl CompletionSource for UniqueCompletionsSource {
@@ -40,15 +41,15 @@ impl CompletionSource for UniqueCompletionsSource {
     fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
         // Try to detect a single colon first, which is a special case where we
         // don't provide any completions
-        if let Some(completions) = completions_from_single_colon(builder.context)? {
+        if let Some(completions) = SingleColonSource::provide_completions(builder)? {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = completions_from_comment(builder.context)? {
+        if let Some(completions) = CommentSource::provide_completions(builder)? {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = completions_from_string(builder.context)? {
+        if let Some(completions) = StringSource::provide_completions(builder)? {
             return Ok(Some(completions));
         }
 
@@ -56,15 +57,15 @@ impl CompletionSource for UniqueCompletionsSource {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = completions_from_custom_source(builder.context)? {
+        if let Some(completions) = CustomSource::provide_completions(builder)? {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = completions_from_dollar(builder.context)? {
+        if let Some(completions) = DollarSource::provide_completions(builder)? {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = completions_from_at(builder.context)? {
+        if let Some(completions) = AtSource::provide_completions(builder)? {
             return Ok(Some(completions));
         }
 
