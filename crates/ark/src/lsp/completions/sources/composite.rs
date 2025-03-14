@@ -1,24 +1,130 @@
 //
 // composite.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-pub(crate) mod call;
-pub(crate) mod document;
-pub(crate) mod keyword;
+mod call;
+mod document;
+mod keyword;
 pub(crate) mod pipe;
-pub(crate) mod search_path;
-pub(crate) mod snippets;
-pub(crate) mod subset;
-pub(crate) mod workspace;
+mod search_path;
+mod snippets;
+mod subset;
+mod workspace;
 
+use std::collections::HashSet;
+
+use anyhow::Result;
 pub use pipe::find_pipe_root;
+use stdext::*;
+use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
+use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::sources::composite::call::CallCompletionProvider;
+use crate::lsp::completions::sources::composite::document::completions_from_document;
+use crate::lsp::completions::sources::composite::keyword::completions_from_keywords;
+use crate::lsp::completions::sources::composite::pipe::PipeCompletionProvider;
+use crate::lsp::completions::sources::composite::search_path::SearchPathCompletionProvider;
+use crate::lsp::completions::sources::composite::snippets::completions_from_snippets;
+use crate::lsp::completions::sources::composite::subset::completions_from_subset;
+use crate::lsp::completions::sources::composite::workspace::WorkspaceCompletionProvider;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+/// Aggregator for composite completion sources
+/// Does deduplication and sorting also
+pub struct CompositeCompletionsSource;
+
+impl CompletionSource for CompositeCompletionsSource {
+    fn name(&self) -> &'static str {
+        "composite_sources"
+    }
+
+    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+        log::info!("completions_from_composite_sources()");
+
+        let mut completions: Vec<CompletionItem> = vec![];
+
+        // Try argument completions
+        if let Some(mut additional_completions) = builder.get_call_completions()? {
+            completions.append(&mut additional_completions);
+        }
+
+        // Try pipe completions
+        if let Some(mut additional_completions) = builder.get_pipe_completions()? {
+            completions.append(&mut additional_completions);
+        }
+
+        // Try subset completions (`[` or `[[`)
+        if let Some(mut additional_completions) = completions_from_subset(builder.context)? {
+            completions.append(&mut additional_completions);
+        }
+
+        // Call, pipe, and subset completions should show up no matter what when
+        // the user requests completions (this allows them to Tab their way through
+        // completions effectively without typing anything). For the rest of the
+        // general completions, we require an identifier to begin showing
+        // anything.
+        if is_identifier_like(builder.context.node) {
+            completions.append(&mut completions_from_keywords());
+            completions.append(&mut completions_from_snippets());
+            completions.append(&mut builder.get_search_path_completions()?);
+
+            if let Some(mut additional_completions) = completions_from_document(builder.context)? {
+                completions.append(&mut additional_completions);
+            }
+
+            if let Some(mut additional_completions) = builder.get_workspace_completions()? {
+                completions.append(&mut additional_completions);
+            }
+        }
+
+        // Remove duplicates
+        let mut uniques = HashSet::new();
+        completions.retain(|x| uniques.insert(x.label.clone()));
+
+        // Sort completions by providing custom 'sort' text to be used when
+        // ordering completion results. we use some placeholders at the front
+        // to 'bin' different completion types differently; e.g. we place parameter
+        // completions at the front, followed by variable completions (like pipe
+        // completions and subset completions), followed by anything else.
+        for item in &mut completions {
+            // Start with existing `sort_text` if one exists
+            let sort_text = item.sort_text.take();
+            let sort_text = match sort_text {
+                Some(sort_text) => sort_text,
+                None => item.label.clone(),
+            };
+
+            case! {
+                // Argument name
+                item.kind == Some(CompletionItemKind::FIELD) => {
+                    item.sort_text = Some(join!["1-", sort_text]);
+                }
+                // Something like pipe completions, or data frame column names
+                item.kind == Some(CompletionItemKind::VARIABLE) => {
+                    item.sort_text = Some(join!["2-", sort_text]);
+                }
+                // Package names generally have higher preference than function
+                // names. Particularly useful for `dev|` to get to `devtools::`,
+                // as that has a lot of base R functions with similar names.
+                item.kind == Some(CompletionItemKind::MODULE) => {
+                    item.sort_text = Some(join!["3-", sort_text]);
+                }
+                => {
+                    item.sort_text = Some(join!["4-", sort_text]);
+                }
+            }
+        }
+
+        Ok(Some(completions))
+    }
+}
 
 pub fn is_identifier_like(x: Node) -> bool {
     if x.is_identifier() {
