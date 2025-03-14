@@ -17,9 +17,11 @@ pub struct Binding {
 }
 
 #[derive(Eq, PartialEq)]
-pub enum RObjectId {
-    Cons(SEXP, Box<RObjectId>),
-    Nil,
+pub enum RObjectValueId {
+    Active(SEXP),
+    Promise(SEXP),
+    Altrep(SEXP, SEXP, SEXP),
+    Standard(SEXP),
 }
 
 pub enum BindingValue {
@@ -41,26 +43,16 @@ pub enum BindingValue {
 
 impl BindingValue {
     // Use id() to compare binding values by their pointers.
-    pub fn id(&self) -> RObjectId {
+    pub fn id(&self) -> RObjectValueId {
         match self {
-            BindingValue::Active { fun } => RObjectId::Cons(fun.sexp, Box::new(RObjectId::Nil)),
-            BindingValue::Promise { promise } => {
-                RObjectId::Cons(promise.sexp, Box::new(RObjectId::Nil))
-            },
+            BindingValue::Active { fun } => RObjectValueId::Active(fun.sexp),
+            BindingValue::Promise { promise } => RObjectValueId::Promise(promise.sexp),
             BindingValue::Altrep {
                 object,
                 data1,
                 data2,
-            } => RObjectId::Cons(
-                object.sexp,
-                Box::new(RObjectId::Cons(
-                    data1.sexp,
-                    Box::new(RObjectId::Cons(data2.sexp, Box::new(RObjectId::Nil))),
-                )),
-            ),
-            BindingValue::Standard { object } => {
-                RObjectId::Cons(object.sexp, Box::new(RObjectId::Nil))
-            },
+            } => RObjectValueId::Altrep(object.sexp, data1.sexp, data2.sexp),
+            BindingValue::Standard { object } => RObjectValueId::Standard(object.sexp),
         }
     }
 }
@@ -149,8 +141,8 @@ impl Binding {
     }
 
     // Use id() to compare bindings by their pointers.
-    pub fn id(&self) -> RObjectId {
-        RObjectId::Cons(self.name.sexp, Box::new(self.value.id()))
+    pub fn id(&self) -> (SEXP, RObjectValueId) {
+        (self.name.sexp, self.value.id())
     }
 }
 #[cfg(test)]
