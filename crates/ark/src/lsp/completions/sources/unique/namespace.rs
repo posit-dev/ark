@@ -24,6 +24,7 @@ use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NamespaceOperatorType;
@@ -31,15 +32,15 @@ use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
 /// Extension trait for providing namespace completions
-pub trait NamespaceCompletionProvider {
-    /// Get completions for namespace members (`::`/`:::` operator)
-    fn get_namespace_completions(&self) -> Result<Option<Vec<CompletionItem>>>;
-}
+pub struct NamespaceSource;
 
-impl<'a> NamespaceCompletionProvider for CompletionBuilder<'a> {
-    fn get_namespace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
-        // For now, just delegate to the existing function
-        completions_from_namespace(self.context, &self.parameter_hints)
+impl CompletionSource for NamespaceSource {
+    fn name(&self) -> &'static str {
+        "namespace"
+    }
+
+    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_namespace(builder.context, &builder.parameter_hints)
     }
 }
 

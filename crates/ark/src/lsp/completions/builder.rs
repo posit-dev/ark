@@ -1,3 +1,10 @@
+//
+// builder.rs
+//
+// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+//
+//
+
 use std::cell::OnceCell;
 use std::collections::HashSet;
 
@@ -24,8 +31,9 @@ use crate::lsp::completions::sources::unique::comment::completions_from_comment;
 use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
 use crate::lsp::completions::sources::unique::extractor::completions_from_at;
 use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
-use crate::lsp::completions::sources::unique::namespace::NamespaceCompletionProvider;
+use crate::lsp::completions::sources::unique::namespace::NamespaceSource;
 use crate::lsp::completions::sources::unique::string::completions_from_string;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 
@@ -92,7 +100,7 @@ impl<'a> CompletionBuilder<'a> {
             return Ok(Some(completions));
         }
 
-        if let Some(completions) = self.get_namespace_completions()? {
+        if let Some(completions) = NamespaceSource::provide_completions(self)? {
             return Ok(Some(completions));
         }
 
