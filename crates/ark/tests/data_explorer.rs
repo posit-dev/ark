@@ -54,6 +54,7 @@ use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use amalthea::socket::comm::CommSocket;
+use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
@@ -1853,7 +1854,7 @@ fn test_frequency_table() {
     expect_column_profile_results(&socket, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
         assert_eq!(freq_table, ColumnFrequencyTable {
-            values: format_string(
+            values: format_column(
                 harp::parse_eval_global("letters[1:5]").unwrap().sexp,
                 &default_format_options()
             ),

@@ -1,7 +1,7 @@
 // @generated
 
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -352,7 +352,10 @@ pub struct ColumnSummaryStats {
 	pub date_stats: Option<SummaryStatsDate>,
 
 	/// Statistics for a datetime data type
-	pub datetime_stats: Option<SummaryStatsDatetime>
+	pub datetime_stats: Option<SummaryStatsDatetime>,
+
+	/// Summary statistics for any other data types
+	pub other_stats: Option<SummaryStatsOther>
 }
 
 /// SummaryStatsNumber in Schemas
@@ -382,6 +385,13 @@ pub struct SummaryStatsBoolean {
 
 	/// The number of non-null false values
 	pub false_count: i64
+}
+
+/// SummaryStatsOther in Schemas
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SummaryStatsOther {
+	/// The number of unique values
+	pub num_unique: Option<i64>
 }
 
 /// SummaryStatsString in Schemas
@@ -474,7 +484,7 @@ pub struct ColumnFrequencyTableParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ColumnFrequencyTable {
 	/// The formatted top values
-	pub values: Vec<String>,
+	pub values: Vec<ColumnValue>,
 
 	/// Counts of top values
 	pub counts: Vec<i64>,
@@ -680,6 +690,10 @@ pub enum ColumnDisplayType {
 	#[serde(rename = "time")]
 	#[strum(to_string = "time")]
 	Time,
+
+	#[serde(rename = "interval")]
+	#[strum(to_string = "interval")]
+	Interval,
 
 	#[serde(rename = "object")]
 	#[strum(to_string = "object")]
