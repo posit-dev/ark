@@ -19,19 +19,33 @@ use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp;
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub fn completions_from_custom_source(
+pub struct CustomSource;
+
+impl CompletionSource for CustomSource {
+    fn name(&self) -> &'static str {
+        "custom"
+    }
+
+    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_custom_source(builder.context)
+    }
+}
+
+fn completions_from_custom_source(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_custom_source()");

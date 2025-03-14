@@ -9,11 +9,25 @@ use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use super::file_path::completions_from_string_file_path;
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::treesitter::node_find_string;
 
-pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+pub struct StringSource;
+
+impl CompletionSource for StringSource {
+    fn name(&self) -> &'static str {
+        "string"
+    }
+
+    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_string(builder.context)
+    }
+}
+
+fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_string()");
 
     let node = context.node;
