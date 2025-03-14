@@ -59,6 +59,8 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
+    use crate::lsp::completions::sources::unique::UniqueCompletionsSource;
+    use crate::lsp::completions::sources::CompletionSource;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
@@ -118,7 +120,8 @@ mod tests {
             let state = WorldState::default();
             let builder =
                 crate::lsp::completions::builder::CompletionBuilder::new(&context, &state);
-            let res = builder.completions_from_unique_sources().unwrap();
+            let res = UniqueCompletionsSource::provide_completions(&builder).unwrap();
+
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })
     }
