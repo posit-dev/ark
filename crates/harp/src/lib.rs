@@ -6,6 +6,7 @@
 //
 pub mod attrib;
 pub mod call;
+mod column_names;
 pub mod command;
 pub mod data_frame;
 pub mod environment;
@@ -20,6 +21,7 @@ pub mod format;
 pub mod json;
 pub mod library;
 pub mod line_ending;
+mod matrix;
 pub mod modules;
 pub mod object;
 pub mod parse;
@@ -41,8 +43,10 @@ pub mod vec_format;
 pub mod vector;
 
 // Reexport API
+pub use column_names::*;
 pub use data_frame::*;
 pub use eval::*;
+pub use matrix::*;
 pub use object::*;
 pub use parse::*;
 pub use parser::*;

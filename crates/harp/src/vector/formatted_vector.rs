@@ -17,7 +17,6 @@ use crate::r_format_vec;
 use crate::r_is_object;
 use crate::r_length;
 use crate::r_subset_vec;
-use crate::table_info;
 use crate::utils::r_assert_type;
 use crate::utils::r_typeof;
 use crate::vector::CharacterVector;
@@ -102,12 +101,9 @@ impl FormattedVector {
     }
 
     fn column_iter_indices(&self, column: isize) -> anyhow::Result<std::ops::Range<i64>> {
-        let dim = table_info(self.vector.sexp)
-            .ok_or(anyhow!("Not a mtrix"))?
-            .dims;
-
-        let start = column as i64 * dim.num_rows as i64;
-        let end = start + dim.num_rows as i64;
+        let (n_row, n_col) = harp::mat_dim(self.vector.sexp)?;
+        let start = column as i64 * n_row as i64;
+        let end = start + n_col as i64;
         Ok(start..end)
     }
 }
