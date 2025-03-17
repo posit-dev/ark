@@ -26,6 +26,12 @@ options(device = function() {
     .ps.Call("ps_graphics_device")
 })
 
+# Register our password handler as the generic `askpass` option.
+# Same as RStudio, see `?rstudioapi::askForPassword` for rationale.
+options(askpass = function(prompt) {
+    .ps.ui.askForPassword(prompt)
+})
+
 # Show Plumber apps in the viewer
 options(plumber.docs.callback = function(url) {
     .ps.ui.showUrl(url)

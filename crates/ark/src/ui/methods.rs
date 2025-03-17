@@ -1,10 +1,11 @@
 //
 // methods.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2025 by Posit Software, PBC
 //
 //
 
+use amalthea::comm::ui_comm::AskForPasswordParams;
 use amalthea::comm::ui_comm::DebugSleepParams;
 use amalthea::comm::ui_comm::EvaluateWhenClauseParams;
 use amalthea::comm::ui_comm::ExecuteCodeParams;
@@ -93,6 +94,17 @@ pub unsafe extern "C-unwind" fn ps_ui_show_question(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_ui_ask_for_password(prompt: SEXP) -> anyhow::Result<SEXP> {
+    let params = AskForPasswordParams {
+        prompt: RObject::view(prompt).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::AskForPassword(params))?;
     Ok(out.sexp)
 }
 

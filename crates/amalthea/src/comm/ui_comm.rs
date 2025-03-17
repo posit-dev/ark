@@ -170,6 +170,13 @@ pub struct ShowDialogParams {
 	pub message: String,
 }
 
+/// Parameters for the AskForPassword method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct AskForPasswordParams {
+	/// The prompt, such as 'Please enter your password'
+	pub prompt: String,
+}
+
 /// Parameters for the PromptState method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PromptStateParams {
@@ -329,6 +336,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "show_dialog")]
 	ShowDialog(ShowDialogParams),
 
+	/// Ask the user for a password
+	///
+	/// Use this for an input box where the user can input a password
+	#[serde(rename = "ask_for_password")]
+	AskForPassword(AskForPasswordParams),
+
 	/// Sleep for n seconds
 	///
 	/// Useful for testing in the backend a long running frontend method
@@ -390,6 +403,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the show_dialog method (no result)
 	ShowDialogReply(),
+
+	/// The input from the user
+	AskForPasswordReply(Option<String>),
 
 	/// Reply for the debug_sleep method (no result)
 	DebugSleepReply(),
@@ -485,6 +501,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::NewDocument(_) => Ok(UiFrontendReply::NewDocumentReply()),
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
+		UiFrontendRequest::AskForPassword(_) => Ok(UiFrontendReply::AskForPasswordReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
 		UiFrontendRequest::EvaluateWhenClause(_) => Ok(UiFrontendReply::EvaluateWhenClauseReply(serde_json::from_value(reply)?)),

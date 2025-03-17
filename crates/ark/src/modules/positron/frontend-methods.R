@@ -1,7 +1,7 @@
 #
 # frontend-methods.R
 #
-# Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -70,6 +70,11 @@
 #' @export
 .ps.ui.showQuestion <- function(title, message, ok, cancel) {
     .ps.Call("ps_ui_show_question", title, message, ok, cancel)
+}
+
+#' @export
+.ps.ui.askForPassword <- function(prompt) {
+    .ps.Call("ps_ui_ask_for_password", prompt)
 }
 
 #' @export
