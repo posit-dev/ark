@@ -17,6 +17,11 @@
 }
 
 #' @export
+.rs.api.askForPassword <- function(prompt = "Please enter your password") {
+    invisible(.ps.ui.askForPassword(prompt))
+}
+
+#' @export
 .rs.api.sendToConsole <- function(
     code,
     echo = TRUE,
