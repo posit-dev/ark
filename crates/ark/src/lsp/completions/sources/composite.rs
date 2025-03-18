@@ -45,28 +45,20 @@ impl CompletionSource for CompositeCompletionsSource {
 
         let mut completions: Vec<CompletionItem> = vec![];
 
-        let call_source = call::CallSource;
-        let pipe_source = pipe::PipeSource;
-        let subset_source = subset::SubsetSource;
-        let keyword_source = keyword::KeywordSource;
-        let snippet_source = snippets::SnippetSource;
-        let search_path_source = search_path::SearchPathSource;
-        let document_source = document::DocumentSource;
-        let workspace_source = workspace::WorkspaceSource;
+        let always_sources: &[&dyn CompletionSource] =
+            &[&call::CallSource, &pipe::PipeSource, &subset::SubsetSource];
+        for source in always_sources {
+            let source_name = source.name();
+            log::debug!("Trying completions from source: {}", source_name);
 
-        // Try argument completions
-        if let Some(mut additional_completions) = call_source.provide_completions(builder)? {
-            completions.append(&mut additional_completions);
-        }
-
-        // Try pipe completions
-        if let Some(mut additional_completions) = pipe_source.provide_completions(builder)? {
-            completions.append(&mut additional_completions);
-        }
-
-        // Try subset completions (`[` or `[[`)
-        if let Some(mut additional_completions) = subset_source.provide_completions(builder)? {
-            completions.append(&mut additional_completions);
+            if let Some(mut additional_completions) = source.provide_completions(builder)? {
+                log::debug!(
+                    "Found {} completions from source: {}",
+                    additional_completions.len(),
+                    source_name
+                );
+                completions.append(&mut additional_completions);
+            }
         }
 
         // Call, pipe, and subset completions should show up no matter what when
@@ -75,30 +67,26 @@ impl CompletionSource for CompositeCompletionsSource {
         // general completions, we require an identifier to begin showing
         // anything.
         if is_identifier_like(builder.context.node) {
-            if let Some(mut additional_completions) = keyword_source.provide_completions(builder)? {
-                completions.append(&mut additional_completions);
-            }
+            let identifier_only_sources: &[&dyn CompletionSource] = &[
+                &keyword::KeywordSource,
+                &snippets::SnippetSource,
+                &search_path::SearchPathSource,
+                &document::DocumentSource,
+                &workspace::WorkspaceSource,
+            ];
 
-            if let Some(mut additional_completions) = snippet_source.provide_completions(builder)? {
-                completions.append(&mut additional_completions);
-            }
+            for source in identifier_only_sources {
+                let source_name = source.name();
+                log::debug!("Trying completions from source: {}", source_name);
 
-            if let Some(mut additional_completions) =
-                search_path_source.provide_completions(builder)?
-            {
-                completions.append(&mut additional_completions);
-            }
-
-            if let Some(mut additional_completions) =
-                document_source.provide_completions(builder)?
-            {
-                completions.append(&mut additional_completions);
-            }
-
-            if let Some(mut additional_completions) =
-                workspace_source.provide_completions(builder)?
-            {
-                completions.append(&mut additional_completions);
+                if let Some(mut additional_completions) = source.provide_completions(builder)? {
+                    log::debug!(
+                        "Found {} completions from source: {}",
+                        additional_completions.len(),
+                        source_name
+                    );
+                    completions.append(&mut additional_completions);
+                }
             }
         }
 
