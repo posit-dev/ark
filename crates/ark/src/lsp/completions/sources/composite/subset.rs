@@ -9,8 +9,13 @@ use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
+use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 pub struct SubsetSource;
 
@@ -26,12 +31,6 @@ impl CompletionSource for SubsetSource {
         completions_from_subset(builder.context)
     }
 }
-
-use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
-use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
-use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::NodeType;
-use crate::treesitter::NodeTypeExt;
 
 /// Checks for `[` and `[[` completions
 ///
