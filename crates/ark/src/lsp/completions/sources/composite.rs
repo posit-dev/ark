@@ -45,8 +45,11 @@ impl CompletionSource for CompositeCompletionsSource {
         "composite_sources"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
-        log::info!("completions_from_composite_sources()");
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        log::info!("Getting completions from composite sources");
 
         let mut completions: Vec<CompletionItem> = vec![];
 

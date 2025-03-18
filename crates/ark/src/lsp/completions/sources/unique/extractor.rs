@@ -34,7 +34,10 @@ impl CompletionSource for DollarSource {
         "dollar"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_dollar(builder.context)
     }
 }
@@ -46,7 +49,10 @@ impl CompletionSource for AtSource {
         "at"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_at(builder.context)
     }
 }

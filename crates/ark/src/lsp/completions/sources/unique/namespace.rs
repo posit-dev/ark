@@ -39,7 +39,10 @@ impl CompletionSource for NamespaceSource {
         "namespace"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_namespace(builder.context, &builder.parameter_hints)
     }
 }

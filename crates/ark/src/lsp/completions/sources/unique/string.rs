@@ -22,7 +22,10 @@ impl CompletionSource for StringSource {
         "string"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_string(builder.context)
     }
 }
@@ -134,7 +137,8 @@ mod tests {
             let state = WorldState::default();
             let builder =
                 crate::lsp::completions::builder::CompletionBuilder::new(&context, &state);
-            let res = UniqueCompletionsSource::provide_completions(&builder).unwrap();
+            let unique_sources = UniqueCompletionsSource;
+            let res = unique_sources.provide_completions(&builder).unwrap();
 
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })

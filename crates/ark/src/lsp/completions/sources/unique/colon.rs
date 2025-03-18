@@ -20,7 +20,10 @@ impl CompletionSource for SingleColonSource {
         "single_colon"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_single_colon(builder.context)
     }
 }

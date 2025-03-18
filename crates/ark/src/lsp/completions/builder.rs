@@ -57,15 +57,16 @@ impl<'a> CompletionBuilder<'a> {
 
     pub fn build(self) -> Result<Vec<CompletionItem>> {
         // Try unique sources first
-        if let Some(completions) = UniqueCompletionsSource::provide_completions(&self)? {
+        let unique_sources = UniqueCompletionsSource;
+        if let Some(completions) = unique_sources.provide_completions(&self)? {
             return Ok(completions);
         }
 
         // At this point we aren't in a "unique" completion case, so just return a
         // set of reasonable completions from composite sources
-        match CompositeCompletionsSource::provide_completions(&self)? {
-            Some(completions) => Ok(completions),
-            None => Ok(Vec::new()), // This shouldn't happen, but just in case
-        }
+        let composite_sources = CompositeCompletionsSource;
+        Ok(composite_sources
+            .provide_completions(&self)?
+            .unwrap_or_default())
     }
 }
