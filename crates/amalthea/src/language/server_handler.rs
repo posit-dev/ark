@@ -9,6 +9,8 @@ use async_trait::async_trait;
 use crossbeam::channel::Sender;
 
 use crate::comm::comm_channel::CommMsg;
+use crate::comm::server_comm::ServerStartMessage;
+use crate::comm::server_comm::ServerStartedMessage;
 use crate::error::Error;
 
 /// A trait for handling LSP and DAP requests. Not all kernels will support
@@ -16,11 +18,12 @@ use crate::error::Error;
 /// optional addition for Amalthea-based kernels.
 #[async_trait]
 pub trait ServerHandler: Send {
-    /// Starts the server and binds it to the given TCP address.
+    /// Starts the server using [ServerStartMessage] and sends back a
+    /// [ServerStartedMessage]
     fn start(
         &mut self,
-        tcp_address: String,
-        conn_init_tx: Sender<bool>,
+        server_start: ServerStartMessage,
+        server_started_tx: Sender<ServerStartedMessage>,
         comm_tx: Sender<CommMsg>,
     ) -> Result<(), Error>;
 }

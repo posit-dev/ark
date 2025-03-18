@@ -22,6 +22,7 @@ use crate::comm::event::CommManagerEvent;
 use crate::comm::event::CommManagerInfoReply;
 use crate::comm::event::CommManagerRequest;
 use crate::comm::server_comm::ServerComm;
+use crate::comm::server_comm::ServerStartedMessage;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
 use crate::language::shell_handler::ShellHandler;
@@ -356,15 +357,6 @@ impl Shell {
             false => Comm::Other(msg.target_name.clone()),
         };
 
-        // Get the data parameter as a string (for error reporting)
-        let data_str = serde_json::to_string(&msg.data).map_err(|err| {
-            Error::InvalidCommMessage(
-                msg.target_name.clone(),
-                "unparseable".to_string(),
-                err.to_string(),
-            )
-        })?;
-
         // Create a comm socket for this comm. The initiator is FrontEnd here
         // because we're processing a request from the frontend to open a comm.
         let comm_id = msg.comm_id.clone();
@@ -375,7 +367,7 @@ impl Shell {
 
         // Optional notification channel used by server comms to indicate
         // they are ready to accept connections
-        let mut conn_init_rx: Option<Receiver<bool>> = None;
+        let mut server_started_rx: Option<Receiver<ServerStartedMessage>> = None;
 
         // Create a routine to send messages to the frontend over the IOPub
         // channel. This routine will be passed to the comm channel so it can
@@ -386,23 +378,19 @@ impl Shell {
             // If this is the special LSP or DAP comms, start the server and create
             // a comm that wraps it
             Comm::Dap => {
-                let init_rx = Self::start_server_comm(
-                    &msg,
-                    data_str,
+                server_started_rx = Some(Self::start_server_comm(
+                    msg,
                     self.dap_handler.clone(),
                     &comm_socket,
-                )?;
-                conn_init_rx = Some(init_rx);
+                )?);
                 true
             },
             Comm::Lsp => {
-                let init_rx = Self::start_server_comm(
-                    &msg,
-                    data_str,
+                server_started_rx = Some(Self::start_server_comm(
+                    msg,
                     self.lsp_handler.clone(),
                     &comm_socket,
-                )?;
-                conn_init_rx = Some(init_rx);
+                )?);
                 true
             },
 
@@ -415,36 +403,43 @@ impl Shell {
             },
         };
 
-        if opened {
-            // Send a notification to the comm message listener thread that a new
-            // comm has been opened
-            self.comm_manager_tx
-                .send(CommManagerEvent::Opened(comm_socket.clone(), comm_data))
-                .or_log_warning(&format!(
-                    "Failed to send '{}' comm open notification to listener thread",
-                    comm_socket.comm_name
-                ));
-
-            // If the comm wraps a server, send notification once the
-            // server is ready to accept connections
-            if let Some(rx) = conn_init_rx {
-                rx.recv()
-                    .or_log_warning("Expected notification for server comm init");
-
-                comm_socket
-                    .outgoing_tx
-                    .send(CommMsg::Data(json!({
-                        "msg_type": "server_started",
-                        "content": {}
-                    })))
-                    .or_log_warning(&format!(
-                        "Failed to send '{}' comm init notification to frontend comm",
-                        comm_socket.comm_name
-                    ));
-            }
-        } else {
+        if !opened {
             // Fail if the comm was not opened
             return Err(Error::UnknownCommName(comm_name.clone()));
+        }
+
+        // Send a notification to the comm message listener thread that a new
+        // comm has been opened
+        self.comm_manager_tx
+            .send(CommManagerEvent::Opened(comm_socket.clone(), comm_data))
+            .or_log_warning(&format!(
+                "Failed to send '{}' comm open notification to listener thread",
+                comm_socket.comm_name
+            ));
+
+        // If the comm wraps a server, send notification once the server is ready to
+        // accept connections. This also sends back the port number to connect on. Failing
+        // to send or receive this notification is a critical failure for this comm.
+        if let Some(server_started_rx) = server_started_rx {
+            match server_started_rx.recv() {
+                Ok(server_started) => {
+                    let message = CommMsg::Data(json!({
+                        "msg_type": "server_started",
+                        "content": server_started
+                    }));
+
+                    if let Err(error) = comm_socket.outgoing_tx.send(message) {
+                        log::error!(
+                            "For '{comm_name}', failed to send a `server_started` message: {error}"
+                        );
+                        return Err(Error::SendError(format!("{error}")));
+                    }
+                },
+                Err(error) => {
+                    log::error!("For '{comm_name}', failed to receive a `server_started_rx` message: {error}");
+                    return Err(Error::ReceiveError(format!("{error}")));
+                },
+            }
         }
 
         Ok(())
@@ -452,24 +447,27 @@ impl Shell {
 
     fn start_server_comm(
         msg: &CommOpen,
-        data_str: String,
         handler: Option<Arc<Mutex<dyn ServerHandler>>>,
         comm_socket: &CommSocket,
-    ) -> crate::Result<Receiver<bool>> {
+    ) -> crate::Result<Receiver<ServerStartedMessage>> {
         if let Some(handler) = handler {
-            let (init_tx, init_rx) = crossbeam::channel::bounded::<bool>(1);
-
-            // Parse the message as server address
-            let address = serde_json::from_value(msg.data.clone()).map_err(|err| {
-                Error::InvalidCommMessage(msg.target_name.clone(), data_str, err.to_string())
+            let server_start = serde_json::from_value(msg.data.clone()).map_err(|error| {
+                Error::InvalidCommMessage(
+                    msg.target_name.clone(),
+                    serde_json::to_string(&msg.data).unwrap_or(String::from("unparseable")),
+                    error.to_string(),
+                )
             })?;
+
+            let (server_started_tx, server_started_rx) =
+                crossbeam::channel::bounded::<ServerStartedMessage>(1);
 
             // Create the new comm wrapper for the server and start it in a
             // separate thread
             let comm = ServerComm::new(handler, comm_socket.outgoing_tx.clone());
-            comm.start(address, init_tx)?;
+            comm.start(server_start, server_started_tx)?;
 
-            Ok(init_rx)
+            Ok(server_started_rx)
         } else {
             // If we don't have the corresponding handler, return an error
             log::error!(

@@ -8,6 +8,8 @@
 use std::sync::Arc;
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::server_comm::ServerStartMessage;
+use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use bus::BusReader;
 use crossbeam::channel::Sender;
@@ -46,8 +48,8 @@ impl Lsp {
 impl ServerHandler for Lsp {
     fn start(
         &mut self,
-        tcp_address: String,
-        conn_init_tx: Sender<bool>,
+        server_start: ServerStartMessage,
+        server_started_tx: Sender<ServerStartedMessage>,
         _comm_tx: Sender<CommMsg>,
     ) -> Result<(), amalthea::error::Error> {
         // If the kernel hasn't been initialized yet, wait for it to finish.
@@ -67,7 +69,7 @@ impl ServerHandler for Lsp {
         let runtime = self.runtime.clone();
 
         spawn!("ark-lsp", move || {
-            backend::start_lsp(runtime, tcp_address, conn_init_tx)
+            backend::start_lsp(runtime, server_start, server_started_tx)
         });
         return Ok(());
     }
