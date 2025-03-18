@@ -22,5 +22,8 @@ pub trait CompletionSource {
     #[allow(dead_code)]
     fn name(&self) -> &'static str;
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>>;
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>>;
 }

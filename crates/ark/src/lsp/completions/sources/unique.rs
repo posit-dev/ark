@@ -38,35 +38,28 @@ impl CompletionSource for UniqueCompletionsSource {
         "unique_sources"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
-        // Try to detect a single colon first, which is a special case where we
-        // don't provide any completions
-        if let Some(completions) = SingleColonSource::provide_completions(builder)? {
-            return Ok(Some(completions));
-        }
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        let sources: &[&dyn CompletionSource] = &[
+            // Try to detect a single colon first, which is a special case where we
+            // don't provide any completions
+            &SingleColonSource,
+            &CommentSource,
+            &StringSource,
+            &NamespaceSource,
+            &CustomSource,
+            &DollarSource,
+            &AtSource,
+        ];
+        log::debug!("Getting completions from unique source");
 
-        if let Some(completions) = CommentSource::provide_completions(builder)? {
-            return Ok(Some(completions));
-        }
-
-        if let Some(completions) = StringSource::provide_completions(builder)? {
-            return Ok(Some(completions));
-        }
-
-        if let Some(completions) = NamespaceSource::provide_completions(builder)? {
-            return Ok(Some(completions));
-        }
-
-        if let Some(completions) = CustomSource::provide_completions(builder)? {
-            return Ok(Some(completions));
-        }
-
-        if let Some(completions) = DollarSource::provide_completions(builder)? {
-            return Ok(Some(completions));
-        }
-
-        if let Some(completions) = AtSource::provide_completions(builder)? {
-            return Ok(Some(completions));
+        for source in sources {
+            if let Some(completions) = source.provide_completions(builder)? {
+                log::debug!("Getting completions from source: {}", source.name());
+                return Ok(Some(completions));
+            }
         }
 
         // No unique sources of completions, allow composite sources to run

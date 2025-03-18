@@ -40,7 +40,10 @@ impl CompletionSource for CustomSource {
         "custom"
     }
 
-    fn provide_completions(builder: &CompletionBuilder) -> Result<Option<Vec<CompletionItem>>> {
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_custom_source(builder.context)
     }
 }
