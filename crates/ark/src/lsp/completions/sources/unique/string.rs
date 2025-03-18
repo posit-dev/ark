@@ -31,8 +31,6 @@ impl CompletionSource for StringSource {
 }
 
 fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_string()");
-
     let node = context.node;
 
     // Find actual `NodeType::String` node. Needed in case we are in its children.

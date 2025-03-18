@@ -51,8 +51,6 @@ impl CompletionSource for CustomSource {
 fn completions_from_custom_source(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_custom_source()");
-
     let mut node = context.node;
 
     let mut has_call = false;

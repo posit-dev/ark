@@ -42,6 +42,8 @@ impl CompletionSource for UniqueCompletionsSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
+        log::info!("Getting completions from unique sources");
+
         let sources: &[&dyn CompletionSource] = &[
             // Try to detect a single colon first, which is a special case where we
             // don't provide any completions
@@ -53,16 +55,18 @@ impl CompletionSource for UniqueCompletionsSource {
             &DollarSource,
             &AtSource,
         ];
-        log::debug!("Getting completions from unique source");
 
         for source in sources {
+            let source_name = source.name();
+            log::debug!("Trying completions from source: {}", source_name);
+
             if let Some(completions) = source.provide_completions(builder)? {
-                log::debug!("Getting completions from source: {}", source.name());
+                log::info!("Found completions from source: {}", source_name);
                 return Ok(Some(completions));
             }
         }
 
-        // No unique sources of completions, allow composite sources to run
+        log::debug!("No unique sources provided completions");
         Ok(None)
     }
 }
