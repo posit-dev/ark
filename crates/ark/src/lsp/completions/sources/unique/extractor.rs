@@ -78,8 +78,6 @@ fn completions_from_extractor(
     node_type: NodeType,
     fun: &str,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_extractor()");
-
     let node = context.node;
 
     let Some(node) = locate_extractor_node(node, node_type) else {

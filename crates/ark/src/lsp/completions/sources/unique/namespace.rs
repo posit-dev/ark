@@ -53,8 +53,6 @@ fn completions_from_namespace(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_namespace()");
-
     let node = context.node;
 
     // We expect `DocumentContext` to have drilled down into the CST to the anonymous node,

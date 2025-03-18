@@ -33,7 +33,7 @@ pub(super) fn completions_from_string_subset(
     node: &Node,
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_string_subset()");
+    log::debug!("completions_from_string_subset()");
 
     // Already inside a string
     const ENQUOTE: bool = false;

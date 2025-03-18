@@ -42,8 +42,6 @@ impl CompletionSource for CommentSource {
 }
 
 fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_comment()");
-
     let node = context.node;
 
     if !node.is_comment() {
