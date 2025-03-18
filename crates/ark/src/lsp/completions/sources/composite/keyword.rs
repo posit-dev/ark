@@ -24,13 +24,15 @@ impl CompletionSource for KeywordSource {
 
     fn provide_completions(
         &self,
-        _builder: &CompletionBuilder,
+        builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        Ok(Some(completions_from_keywords()))
+        completions_from_keywords(builder)
     }
 }
 
-pub fn completions_from_keywords() -> Vec<CompletionItem> {
+pub fn completions_from_keywords(
+    _builder: &CompletionBuilder,
+) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_keywords()");
 
     let mut completions = vec![];
@@ -72,5 +74,5 @@ pub fn completions_from_keywords() -> Vec<CompletionItem> {
         completions.push(item);
     }
 
-    completions
+    Ok(Some(completions))
 }
