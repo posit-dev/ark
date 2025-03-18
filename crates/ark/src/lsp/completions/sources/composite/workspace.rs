@@ -18,6 +18,7 @@ use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::completion_item_from_variable;
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
@@ -26,13 +27,18 @@ use crate::lsp::traits::string::StringExt;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub trait WorkspaceCompletionProvider {
-    fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>>;
-}
+pub struct WorkspaceSource;
 
-impl<'a> WorkspaceCompletionProvider for CompletionBuilder<'a> {
-    fn get_workspace_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_workspace(self.context, self.state, &self.parameter_hints)
+impl CompletionSource for WorkspaceSource {
+    fn name(&self) -> &'static str {
+        "workspace"
+    }
+
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_workspace(builder.context, builder.state, &builder.parameter_hints)
     }
 }
 

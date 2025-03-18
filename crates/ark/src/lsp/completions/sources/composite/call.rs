@@ -21,20 +21,25 @@ use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub trait CallCompletionProvider {
-    fn get_call_completions(&self) -> Result<Option<Vec<CompletionItem>>>;
-}
+pub struct CallSource;
 
-impl<'a> CallCompletionProvider for CompletionBuilder<'a> {
-    fn get_call_completions(&self) -> Result<Option<Vec<CompletionItem>>> {
-        // Use the cached pipe_root from self instead of passing it in
-        let root = self.get_pipe_root()?;
-        completions_from_call(self.context, root)
+impl CompletionSource for CallSource {
+    fn name(&self) -> &'static str {
+        "call"
+    }
+
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        let root = builder.get_pipe_root()?;
+        completions_from_call(builder.context, root)
     }
 }
 

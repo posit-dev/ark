@@ -25,25 +25,29 @@ use crate::lsp::completions::completion_item::completion_item_from_symbol;
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
-/// Extension trait for providing search path completions
-pub trait SearchPathCompletionProvider {
-    /// Get completions from the R search path
-    fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>>;
-}
+pub struct SearchPathSource;
 
-impl<'a> SearchPathCompletionProvider for CompletionBuilder<'a> {
-    fn get_search_path_completions(&self) -> Result<Vec<CompletionItem>> {
-        completions_from_search_path(self.context, &self.parameter_hints)
+impl CompletionSource for SearchPathSource {
+    fn name(&self) -> &'static str {
+        "search_path"
+    }
+
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_search_path(builder.context, &builder.parameter_hints)
     }
 }
 
 fn completions_from_search_path(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
-) -> Result<Vec<CompletionItem>> {
+) -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_search_path()");
 
     let mut completions = vec![];
@@ -137,5 +141,5 @@ fn completions_from_search_path(
     // bottom of the sort list (like those starting with `.`, or `%>%`)
     set_sort_text_by_words_first(&mut completions);
 
-    Ok(completions)
+    Ok(Some(completions))
 }

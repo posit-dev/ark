@@ -1,16 +1,34 @@
 //
 // keyword.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
+use anyhow::Result;
 use stdext::unwrap;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
+
+pub struct KeywordSource;
+
+impl CompletionSource for KeywordSource {
+    fn name(&self) -> &'static str {
+        "keyword"
+    }
+
+    fn provide_completions(
+        &self,
+        _builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        Ok(Some(completions_from_keywords()))
+    }
+}
 
 pub fn completions_from_keywords() -> Vec<CompletionItem> {
     log::info!("completions_from_keywords()");
