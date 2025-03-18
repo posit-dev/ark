@@ -1,3 +1,10 @@
+//
+// parameter_hints.rs
+//
+// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+//
+//
+
 use ropey::Rope;
 use tree_sitter::Node;
 
