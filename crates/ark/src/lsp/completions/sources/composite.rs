@@ -24,14 +24,6 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
 use crate::lsp::completions::builder::CompletionBuilder;
-use crate::lsp::completions::sources::composite::call::CallCompletionProvider;
-use crate::lsp::completions::sources::composite::document::completions_from_document;
-use crate::lsp::completions::sources::composite::keyword::completions_from_keywords;
-use crate::lsp::completions::sources::composite::pipe::PipeCompletionProvider;
-use crate::lsp::completions::sources::composite::search_path::SearchPathCompletionProvider;
-use crate::lsp::completions::sources::composite::snippets::completions_from_snippets;
-use crate::lsp::completions::sources::composite::subset::completions_from_subset;
-use crate::lsp::completions::sources::composite::workspace::WorkspaceCompletionProvider;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -53,18 +45,27 @@ impl CompletionSource for CompositeCompletionsSource {
 
         let mut completions: Vec<CompletionItem> = vec![];
 
+        let call_source = call::CallSource;
+        let pipe_source = pipe::PipeSource;
+        let subset_source = subset::SubsetSource;
+        let keyword_source = keyword::KeywordSource;
+        let snippet_source = snippets::SnippetSource;
+        let search_path_source = search_path::SearchPathSource;
+        let document_source = document::DocumentSource;
+        let workspace_source = workspace::WorkspaceSource;
+
         // Try argument completions
-        if let Some(mut additional_completions) = builder.get_call_completions()? {
+        if let Some(mut additional_completions) = call_source.provide_completions(builder)? {
             completions.append(&mut additional_completions);
         }
 
         // Try pipe completions
-        if let Some(mut additional_completions) = builder.get_pipe_completions()? {
+        if let Some(mut additional_completions) = pipe_source.provide_completions(builder)? {
             completions.append(&mut additional_completions);
         }
 
         // Try subset completions (`[` or `[[`)
-        if let Some(mut additional_completions) = completions_from_subset(builder.context)? {
+        if let Some(mut additional_completions) = subset_source.provide_completions(builder)? {
             completions.append(&mut additional_completions);
         }
 
@@ -74,15 +75,29 @@ impl CompletionSource for CompositeCompletionsSource {
         // general completions, we require an identifier to begin showing
         // anything.
         if is_identifier_like(builder.context.node) {
-            completions.append(&mut completions_from_keywords());
-            completions.append(&mut completions_from_snippets());
-            completions.append(&mut builder.get_search_path_completions()?);
-
-            if let Some(mut additional_completions) = completions_from_document(builder.context)? {
+            if let Some(mut additional_completions) = keyword_source.provide_completions(builder)? {
                 completions.append(&mut additional_completions);
             }
 
-            if let Some(mut additional_completions) = builder.get_workspace_completions()? {
+            if let Some(mut additional_completions) = snippet_source.provide_completions(builder)? {
+                completions.append(&mut additional_completions);
+            }
+
+            if let Some(mut additional_completions) =
+                search_path_source.provide_completions(builder)?
+            {
+                completions.append(&mut additional_completions);
+            }
+
+            if let Some(mut additional_completions) =
+                document_source.provide_completions(builder)?
+            {
+                completions.append(&mut additional_completions);
+            }
+
+            if let Some(mut additional_completions) =
+                workspace_source.provide_completions(builder)?
+            {
                 completions.append(&mut additional_completions);
             }
         }

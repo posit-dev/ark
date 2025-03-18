@@ -1,7 +1,7 @@
 //
 // document.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -10,9 +10,11 @@ use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item_from_assignment;
 use crate::lsp::completions::completion_item::completion_item_from_scope_parameter;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
@@ -20,6 +22,21 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+pub struct DocumentSource;
+
+impl CompletionSource for DocumentSource {
+    fn name(&self) -> &'static str {
+        "document"
+    }
+
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_document(builder.context)
+    }
+}
 
 pub fn completions_from_document(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
     // get reference to AST

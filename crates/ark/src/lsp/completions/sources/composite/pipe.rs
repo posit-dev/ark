@@ -5,6 +5,7 @@
 //
 //
 
+use anyhow::Result;
 use harp::error::Error;
 use harp::eval::RParseEvalOptions;
 use harp::object::RObject;
@@ -13,18 +14,23 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub trait PipeCompletionProvider {
-    fn get_pipe_completions(&self) -> Result<Option<Vec<CompletionItem>>, anyhow::Error>;
-}
+pub struct PipeSource;
 
-impl<'a> PipeCompletionProvider for CompletionBuilder<'a> {
-    fn get_pipe_completions(&self) -> Result<Option<Vec<CompletionItem>>, anyhow::Error> {
-        // Use the cached pipe_root from self
-        let root = self.get_pipe_root()?;
+impl CompletionSource for PipeSource {
+    fn name(&self) -> &'static str {
+        "pipe"
+    }
+
+    fn provide_completions(
+        &self,
+        builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        let root = builder.get_pipe_root()?;
         completions_from_pipe(root)
     }
 }

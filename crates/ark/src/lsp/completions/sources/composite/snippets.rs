@@ -1,13 +1,14 @@
 //
 // snippets.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use anyhow::Result;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use tower_lsp::lsp_types::CompletionItem;
@@ -17,7 +18,9 @@ use tower_lsp::lsp_types::InsertTextFormat;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
+use crate::lsp::completions::builder::CompletionBuilder;
 use crate::lsp::completions::completion_item::completion_item;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 
 #[derive(RustEmbed)]
@@ -38,13 +41,28 @@ enum SnippetBody {
     Vector(Vec<String>),
 }
 
-pub fn completions_from_snippets() -> Vec<CompletionItem> {
+pub struct SnippetSource;
+
+impl CompletionSource for SnippetSource {
+    fn name(&self) -> &'static str {
+        "snippet"
+    }
+
+    fn provide_completions(
+        &self,
+        _builder: &CompletionBuilder,
+    ) -> Result<Option<Vec<CompletionItem>>> {
+        completions_from_snippets()
+    }
+}
+
+pub(crate) fn completions_from_snippets() -> Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_snippets()");
 
     // Return clone of cached snippet completion items
     let completions = get_completions_from_snippets().clone();
 
-    completions
+    Ok(Some(completions))
 }
 
 fn get_completions_from_snippets() -> &'static Vec<CompletionItem> {
@@ -99,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_snippets() {
-        let snippets = completions_from_snippets();
+        let snippets = completions_from_snippets().unwrap().unwrap();
 
         // Hash map isn't stable with regards to ordering
         let item = snippets.iter().find(|item| item.label == "lib").unwrap();
