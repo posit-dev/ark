@@ -133,7 +133,7 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
 }
 
 fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_extractor_object({text:?}, {fun:?})");
+    log::debug!("completions_from_extractor_object({text:?}, {fun:?})");
 
     const ENQUOTE: bool = false;
 

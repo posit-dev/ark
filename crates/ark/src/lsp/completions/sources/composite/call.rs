@@ -47,8 +47,6 @@ fn completions_from_call(
     context: &DocumentContext,
     root: Option<PipeRoot>,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_call()");
-
     let mut node = context.node;
     let mut has_call = false;
 
@@ -168,7 +166,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
             Error::TryCatchError { message, .. } => {
-                log::info!("Can't evaluate first argument: {message}");
+                log::debug!("Can't evaluate first argument: {message}");
                 return Ok(None);
             },
             _ => {
@@ -186,7 +184,7 @@ fn completions_from_arguments(
     callable: &str,
     object: RObject,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_arguments({callable:?})");
+    log::debug!("completions_from_arguments({callable:?})");
 
     // Try looking up session function first, as the "current state of the world"
     // will provide the most accurate completions
@@ -206,7 +204,7 @@ fn completions_from_session_arguments(
     callable: &str,
     object: RObject,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_session_arguments({callable:?})");
+    log::debug!("completions_from_session_arguments({callable:?})");
 
     let mut completions = vec![];
 
@@ -265,7 +263,7 @@ fn completions_from_workspace_arguments(
     context: &DocumentContext,
     callable: &str,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_workspace_arguments({callable:?})");
+    log::debug!("completions_from_workspace_arguments({callable:?})");
 
     // Try to find the `callable` in the workspace and use its arguments
     // if we can

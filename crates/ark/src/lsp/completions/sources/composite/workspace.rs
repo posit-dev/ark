@@ -47,8 +47,6 @@ fn completions_from_workspace(
     state: &WorldState,
     parameter_hints: &ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_workspace()");
-
     let node = context.node;
 
     if node.is_namespace_operator() {

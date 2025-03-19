@@ -57,8 +57,6 @@ impl CompletionSource for SnippetSource {
 }
 
 pub(crate) fn completions_from_snippets() -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_snippets()");
-
     // Return clone of cached snippet completion items
     let completions = get_completions_from_snippets().clone();
 

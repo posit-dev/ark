@@ -48,8 +48,6 @@ fn completions_from_search_path(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_search_path()");
-
     let mut completions = vec![];
 
     const R_CONTROL_FLOW_KEYWORDS: &[&str] = &[

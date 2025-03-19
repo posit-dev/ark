@@ -39,8 +39,6 @@ impl CompletionSource for SubsetSource {
 pub(crate) fn completions_from_subset(
     context: &DocumentContext,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_subset()");
-
     const ENQUOTE: bool = true;
 
     let mut node = context.node;

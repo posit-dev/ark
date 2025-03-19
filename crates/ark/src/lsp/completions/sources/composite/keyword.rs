@@ -33,8 +33,6 @@ impl CompletionSource for KeywordSource {
 pub fn completions_from_keywords(
     _builder: &CompletionBuilder,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_keywords()");
-
     let mut completions = vec![];
 
     // provide keyword completion results
