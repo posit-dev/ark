@@ -24,7 +24,7 @@ pub(crate) struct CompletionBuilder<'a> {
     pub(crate) context: &'a DocumentContext<'a>,
     pub(crate) state: &'a WorldState,
     parameter_hints_cell: OnceCell<ParameterHints>,
-    pipe_root: OnceCell<Option<PipeRoot>>,
+    pipe_root_cell: OnceCell<Option<PipeRoot>>,
 }
 
 impl<'a> CompletionBuilder<'a> {
@@ -33,7 +33,7 @@ impl<'a> CompletionBuilder<'a> {
             context,
             state,
             parameter_hints_cell: OnceCell::new(),
-            pipe_root: OnceCell::new(),
+            pipe_root_cell: OnceCell::new(),
         }
     }
 
@@ -43,17 +43,15 @@ impl<'a> CompletionBuilder<'a> {
         })
     }
 
-    pub fn get_pipe_root(&self) -> Result<Option<PipeRoot>> {
-        if let Some(root) = self.pipe_root.get() {
-            // Already computed, just clone and return
+    pub fn pipe_root(&self) -> Result<Option<PipeRoot>> {
+        if let Some(root) = self.pipe_root_cell.get() {
             return Ok(root.clone());
         }
 
-        // Not yet computed, find the pipe root
         let root = find_pipe_root(self.context)?;
 
         // Cache it for future calls (ignore failure if race condition, which shouldn't happen)
-        let _ = self.pipe_root.set(root.clone());
+        let _ = self.pipe_root_cell.set(root.clone());
 
         // Return the result
         Ok(root)

@@ -38,7 +38,7 @@ impl CompletionSource for CallSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        let root = builder.get_pipe_root()?;
+        let root = builder.pipe_root()?;
         completions_from_call(builder.context, root)
     }
 }
