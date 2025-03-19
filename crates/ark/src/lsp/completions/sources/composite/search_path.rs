@@ -40,7 +40,7 @@ impl CompletionSource for SearchPathSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_search_path(builder.context, &builder.parameter_hints)
+        completions_from_search_path(builder.context, builder.parameter_hints())
     }
 }
 
