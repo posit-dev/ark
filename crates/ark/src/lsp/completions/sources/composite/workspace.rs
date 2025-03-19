@@ -38,7 +38,7 @@ impl CompletionSource for WorkspaceSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_workspace(builder.context, builder.state, &builder.parameter_hints)
+        completions_from_workspace(builder.context, builder.state, builder.parameter_hints())
     }
 }
 

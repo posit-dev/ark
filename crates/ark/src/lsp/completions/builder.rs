@@ -23,20 +23,24 @@ use crate::lsp::state::WorldState;
 pub(crate) struct CompletionBuilder<'a> {
     pub(crate) context: &'a DocumentContext<'a>,
     pub(crate) state: &'a WorldState,
-    pub(crate) parameter_hints: ParameterHints,
+    parameter_hints_cell: OnceCell<ParameterHints>,
     pipe_root: OnceCell<Option<PipeRoot>>,
 }
 
 impl<'a> CompletionBuilder<'a> {
     pub fn new(context: &'a DocumentContext, state: &'a WorldState) -> Self {
-        let parameter_hints =
-            parameter_hints::parameter_hints(context.node, &context.document.contents);
         Self {
             context,
             state,
-            parameter_hints,
+            parameter_hints_cell: OnceCell::new(),
             pipe_root: OnceCell::new(),
         }
+    }
+
+    pub fn parameter_hints(&self) -> &ParameterHints {
+        self.parameter_hints_cell.get_or_init(|| {
+            parameter_hints::parameter_hints(self.context.node, &self.context.document.contents)
+        })
     }
 
     pub fn get_pipe_root(&self) -> Result<Option<PipeRoot>> {

@@ -43,7 +43,7 @@ impl CompletionSource for NamespaceSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_namespace(builder.context, &builder.parameter_hints)
+        completions_from_namespace(builder.context, builder.parameter_hints())
     }
 }
 
