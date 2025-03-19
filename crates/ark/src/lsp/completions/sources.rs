@@ -18,8 +18,6 @@ use crate::lsp::completions::builder::CompletionBuilder;
 /// Interface for any source we consult for completions
 pub trait CompletionSource {
     /// Name of this source for logging/debugging
-    /// Not used (yet?) but seems like a good idea
-    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 
     fn provide_completions(
