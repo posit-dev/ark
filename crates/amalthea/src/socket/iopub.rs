@@ -46,6 +46,12 @@ pub struct IOPub {
     /// for delivery to the frontend
     outbound_tx: Sender<OutboundMessage>,
 
+    /// A channel that sends a notification when we've received a [SubscriptionMessage],
+    /// which ensures that any future IOPub messages sent out from this channel won't be
+    /// dropped. We treat this as a one shot channel, and drop it when we've received
+    /// the first subscription message, as we only expect one subscriber.
+    first_subscription_tx: Option<Sender<()>>,
+
     /// ZMQ session used to create messages
     session: Session,
 
@@ -105,6 +111,7 @@ impl IOPub {
         rx: Receiver<IOPubMessage>,
         inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
         outbound_tx: Sender<OutboundMessage>,
+        first_subscription_tx: Sender<()>,
         session: Session,
     ) -> Self {
         let buffer = StreamBuffer::new(Stream::Stdout);
@@ -113,6 +120,7 @@ impl IOPub {
             rx,
             inbound_rx,
             outbound_tx,
+            first_subscription_tx: Some(first_subscription_tx),
             session,
             shell_context: None,
             control_context: None,
@@ -252,7 +260,7 @@ impl IOPub {
     /// When we get a subscription notification, we forward along an IOPub
     /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
     /// that don't know how to process this `Welcome` message should just ignore it.
-    fn process_inbound_message(&self, message: SubscriptionMessage) -> crate::Result<()> {
+    fn process_inbound_message(&mut self, message: SubscriptionMessage) -> crate::Result<()> {
         let subscription = message.subscription;
 
         match message.kind {
@@ -260,6 +268,7 @@ impl IOPub {
                 log::info!(
                     "Received subscribe message on IOPub with subscription '{subscription}'."
                 );
+                self.send_first_subscription_confirmation();
                 let content = Welcome { subscription };
                 self.forward(Message::Welcome(self.message(content)))
             },
@@ -269,6 +278,19 @@ impl IOPub {
                 );
                 // We don't do anything on unsubscribes
                 return Ok(());
+            },
+        }
+    }
+
+    fn send_first_subscription_confirmation(&mut self) {
+        match &self.first_subscription_tx {
+            Some(first_subscription_tx) => {
+                log::info!("Sending first subscription confirmation");
+                first_subscription_tx.send(()).unwrap();
+                self.first_subscription_tx = None;
+            },
+            None => {
+                log::info!("Received subscription message, but no `first_subscription_tx` is available to confirm on");
             },
         }
     }

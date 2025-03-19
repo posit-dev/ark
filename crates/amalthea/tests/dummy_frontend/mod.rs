@@ -55,6 +55,13 @@ impl DummyAmaltheaFrontend {
 
         let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
+        // For the amalthea tests, there isn't anything that might send out IOPub messages
+        // before the first execute request (unlike with ark, where `.Rprofile` runs very
+        // early on), and [DummyFrontend::from_connection] blocks until the client has
+        // received the welcome message before sending any execute requests, so we don't
+        // need the receiver here.
+        let (iopub_first_subscription_tx, _iopub_first_subscription_rx) = bounded::<()>(1);
+
         let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
 
         let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
@@ -87,6 +94,7 @@ impl DummyAmaltheaFrontend {
                     StreamBehavior::None,
                     iopub_tx,
                     iopub_rx,
+                    iopub_first_subscription_tx,
                     comm_manager_tx,
                     comm_manager_rx,
                     stdin_request_rx,

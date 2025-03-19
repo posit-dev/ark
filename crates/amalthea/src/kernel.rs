@@ -68,6 +68,7 @@ pub fn connect(
     stream_behavior: StreamBehavior,
     iopub_tx: Sender<IOPubMessage>,
     iopub_rx: Receiver<IOPubMessage>,
+    iopub_first_subscription_tx: Sender<()>,
     comm_manager_tx: Sender<CommManagerEvent>,
     comm_manager_rx: Receiver<CommManagerEvent>,
     // Receiver channel for the stdin socket; when input is needed, the
@@ -134,7 +135,13 @@ pub fn connect(
     let iopub_outbound_tx = outbound_tx.clone();
 
     spawn!(format!("{name}-iopub"), move || {
-        iopub_thread(iopub_rx, iopub_inbound_rx, iopub_outbound_tx, iopub_session)
+        iopub_thread(
+            iopub_rx,
+            iopub_inbound_rx,
+            iopub_outbound_tx,
+            iopub_first_subscription_tx,
+            iopub_session,
+        )
     });
 
     // Create the heartbeat socket and start a thread to listen for
@@ -348,9 +355,10 @@ fn iopub_thread(
     rx: Receiver<IOPubMessage>,
     inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
     outbound_tx: Sender<OutboundMessage>,
+    first_subscription_tx: Sender<()>,
     session: Session,
 ) -> Result<(), Error> {
-    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, session);
+    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, first_subscription_tx, session);
     iopub.listen();
     Ok(())
 }

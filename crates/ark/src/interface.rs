@@ -163,10 +163,6 @@ thread_local! {
 }
 
 pub struct RMain {
-    kernel_init_tx: Bus<KernelInfo>,
-
-    kernel_info_request_rx: Receiver<()>,
-
     kernel_request_rx: Receiver<KernelRequest>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
@@ -233,8 +229,9 @@ pub struct RMain {
 
     pending_lines: Vec<String>,
 
-    /// Banner output accumulated during startup
-    r_banner: String,
+    /// Banner output accumulated during startup, but set to `None` after we complete
+    /// the initialization procedure and forward the banner on
+    banner: Option<String>,
 
     /// Raw error buffer provided to `Rf_error()` when throwing `r_read_console()` errors.
     /// Stored in `RMain` to avoid memory leakage when `Rf_error()` jumps.
@@ -314,8 +311,8 @@ impl RMain {
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
+        iopub_first_subscription_rx: Receiver<()>,
         kernel_init_tx: Bus<KernelInfo>,
-        kernel_info_request_rx: Receiver<()>,
         kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
@@ -343,8 +340,6 @@ impl RMain {
             stdin_request_tx,
             stdin_reply_rx,
             iopub_tx,
-            kernel_init_tx,
-            kernel_info_request_rx,
             kernel_request_rx,
             dap,
             session_mode,
@@ -468,15 +463,19 @@ impl RMain {
             if let Err(err) = apply_default_repos(default_repos) {
                 log::error!("Error setting default repositories: {err:?}");
             }
-
-            // Now that R has started (emitting any startup messages), and now that we have set
-            // up all hooks and handlers, officially finish the R initialization process to
-            // unblock the kernel-info request and also allow the LSP to start.
-            log::info!(
-                "R has started and ark handlers have been registered, completing initialization."
-            );
-            main.complete_initialization();
         }
+
+        // Now that R has started (emitting any startup messages that we capture in the
+        // banner), and now that we have set up all hooks and handlers, officially finish
+        // the R initialization process.
+        log::info!(
+            "R has started and ark handlers have been registered, completing initialization."
+        );
+        Self::complete_initialization(
+            main.banner.take(),
+            kernel_init_tx,
+            iopub_first_subscription_rx,
+        );
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -492,10 +491,34 @@ impl RMain {
     }
 
     /// Completes the kernel's initialization.
-    /// Unlike `RMain::start()`, this has access to `R_MAIN`'s state, such as
-    /// the kernel-info banner.
-    /// SAFETY: Can only be called from the R thread, and only once.
-    pub unsafe fn complete_initialization(&mut self) {
+    ///
+    /// This is a very important part of the startup procedure for timing reasons. It has
+    /// two important jobs:
+    ///
+    /// - It broadcasts [KernelInfo] over `kernel_init_tx`, which has two side effects:
+    ///
+    ///   - It unblocks a kernel-info request on shell, freeing the client to begin
+    ///     sending messages of their own. We need R to be fully started up before we
+    ///     can field any requests.
+    ///
+    ///   - It unblocks the LSP startup procedure, allowing it to start. We again need
+    ///     R to be fully started up before we can initialize the LSP and field requests.
+    ///
+    /// - It blocks until we have received an IOPub subscription confirmation message. Up
+    ///   until this point we have not run anything that would send messages over IOPub.
+    ///   If we run user/site `.Rprofile` or start the REPL without an IOPub subscription
+    ///   active, we would simply drop important Busy/Idle messages and any Stream
+    ///   messages (like stdout/stderr). So we wait until we've received a subscription,
+    ///   then allow the rest of the startup procedure to continue.
+    ///
+    /// # Safety
+    ///
+    /// Can only be called from the R thread, and only once.
+    pub fn complete_initialization(
+        banner: Option<String>,
+        mut kernel_init_tx: Bus<KernelInfo>,
+        iopub_first_subscription_rx: Receiver<()>,
+    ) {
         let version = unsafe {
             let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
             RObject::new(version).to::<String>().unwrap()
@@ -507,22 +530,25 @@ impl RMain {
 
         let kernel_info = KernelInfo {
             version: version.clone(),
-            banner: self.r_banner.clone(),
+            banner: banner.unwrap_or_default(),
             input_prompt: Some(input_prompt),
             continuation_prompt: Some(continuation_prompt),
         };
 
         log::info!("Sending kernel info: {version}");
-        self.kernel_init_tx.broadcast(kernel_info);
-        log::info!("Sent kernel info, waiting on kernel info request confirmation");
+        kernel_init_tx.broadcast(kernel_info);
 
-        if let Err(_) = self
-            .kernel_info_request_rx
-            .recv_timeout(std::time::Duration::from_secs(30))
-        {
-            panic!("Failed to receive kernel info request confirmation. Aborting.");
+        log::info!("Waiting on IOPub subscription confirmation");
+        match iopub_first_subscription_rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(_) => {
+                log::info!("Received IOPub subscription confirmation, completing initialization");
+            },
+            Err(err) => {
+                panic!(
+                    "Failed to receive IOPub subscription confirmation. Aborting. Error: {err:?}"
+                );
+            },
         }
-        log::info!("Received kernel info request confirmation, completing initialization");
 
         // Thread-safe initialisation flag for R
         R_INIT.set(()).expect("`R_INIT` can only be set once");
@@ -536,8 +562,6 @@ impl RMain {
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
-        kernel_init_tx: Bus<KernelInfo>,
-        kernel_info_request_rx: Receiver<()>,
         kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
@@ -548,8 +572,6 @@ impl RMain {
             stdin_request_tx,
             stdin_reply_rx,
             iopub_tx,
-            kernel_init_tx,
-            kernel_info_request_rx,
             kernel_request_rx,
             active_request: None,
             execution_count: 0,
@@ -569,7 +591,7 @@ impl RMain {
             session_mode,
             positron_ns: None,
             pending_lines: Vec::new(),
-            r_banner: String::new(),
+            banner: None,
             r_error_buffer: None,
         }
     }
@@ -1640,7 +1662,10 @@ impl RMain {
 
         if !RMain::is_initialized() {
             // During init, consider all output to be part of the startup banner
-            r_main.r_banner.push_str(&content);
+            match r_main.banner.as_mut() {
+                Some(banner) => banner.push_str(&content),
+                None => r_main.banner = Some(content),
+            }
             return;
         }
 

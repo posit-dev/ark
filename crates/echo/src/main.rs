@@ -30,6 +30,8 @@ use crate::shell::Shell;
 fn start_kernel(connection_file: ConnectionFile, registration_file: Option<RegistrationFile>) {
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
+    let (iopub_first_subscription_tx, _iopub_first_subscription_rx) = bounded::<()>(1);
+
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
 
     // Communication channel with StdIn
@@ -57,6 +59,7 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
         StreamBehavior::None,
         iopub_tx,
         iopub_rx,
+        iopub_first_subscription_tx,
         comm_manager_tx,
         comm_manager_rx,
         stdin_request_rx,
