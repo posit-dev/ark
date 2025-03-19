@@ -311,7 +311,6 @@ impl RMain {
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
         iopub_tx: Sender<IOPubMessage>,
-        iopub_first_subscription_rx: Receiver<()>,
         kernel_init_tx: Bus<KernelInfo>,
         kernel_request_rx: Receiver<KernelRequest>,
         dap: Arc<Mutex<Dap>>,
@@ -471,11 +470,7 @@ impl RMain {
         log::info!(
             "R has started and ark handlers have been registered, completing initialization."
         );
-        Self::complete_initialization(
-            main.banner.take(),
-            kernel_init_tx,
-            iopub_first_subscription_rx,
-        );
+        Self::complete_initialization(main.banner.take(), kernel_init_tx);
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -492,8 +487,7 @@ impl RMain {
 
     /// Completes the kernel's initialization.
     ///
-    /// This is a very important part of the startup procedure for timing reasons. It has
-    /// two important jobs:
+    /// This is a very important part of the startup procedure for timing reasons.
     ///
     /// - It broadcasts [KernelInfo] over `kernel_init_tx`, which has two side effects:
     ///
@@ -504,21 +498,10 @@ impl RMain {
     ///   - It unblocks the LSP startup procedure, allowing it to start. We again need
     ///     R to be fully started up before we can initialize the LSP and field requests.
     ///
-    /// - It blocks until we have received an IOPub subscription confirmation message. Up
-    ///   until this point we have not run anything that would send messages over IOPub.
-    ///   If we run user/site `.Rprofile` or start the REPL without an IOPub subscription
-    ///   active, we would simply drop important Busy/Idle messages and any Stream
-    ///   messages (like stdout/stderr). So we wait until we've received a subscription,
-    ///   then allow the rest of the startup procedure to continue.
-    ///
     /// # Safety
     ///
     /// Can only be called from the R thread, and only once.
-    pub fn complete_initialization(
-        banner: Option<String>,
-        mut kernel_init_tx: Bus<KernelInfo>,
-        iopub_first_subscription_rx: Receiver<()>,
-    ) {
+    pub fn complete_initialization(banner: Option<String>, mut kernel_init_tx: Bus<KernelInfo>) {
         let version = unsafe {
             let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
             RObject::new(version).to::<String>().unwrap()
@@ -537,18 +520,6 @@ impl RMain {
 
         log::info!("Sending kernel info: {version}");
         kernel_init_tx.broadcast(kernel_info);
-
-        log::info!("Waiting on IOPub subscription confirmation");
-        match iopub_first_subscription_rx.recv_timeout(std::time::Duration::from_secs(30)) {
-            Ok(_) => {
-                log::info!("Received IOPub subscription confirmation, completing initialization");
-            },
-            Err(err) => {
-                panic!(
-                    "Failed to receive IOPub subscription confirmation. Aborting. Error: {err:?}"
-                );
-            },
-        }
 
         // Thread-safe initialisation flag for R
         R_INIT.set(()).expect("`R_INIT` can only be set once");

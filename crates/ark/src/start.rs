@@ -41,12 +41,6 @@ pub fn start_kernel(
     // as they need to be shared across different components / threads.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    // Create the channel used for notifying the kernel that the XPUB socket for IOPub has
-    // received a subscription message, meaning that messages the kernel sends out at
-    // this point won't be dropped. We expect this to be a one shot channel containing
-    // only the first subscription message (because we only expect one subscriber).
-    let (iopub_first_subscription_tx, iopub_first_subscription_rx) = bounded::<()>(1);
-
     // Create the pair of channels that will be used to relay messages from
     // the open comms
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
@@ -108,7 +102,6 @@ pub fn start_kernel(
         stream_behavior,
         iopub_tx.clone(),
         iopub_rx,
-        iopub_first_subscription_tx,
         comm_manager_tx.clone(),
         comm_manager_rx,
         stdin_request_rx,
@@ -127,7 +120,6 @@ pub fn start_kernel(
         stdin_request_tx,
         stdin_reply_rx,
         iopub_tx,
-        iopub_first_subscription_rx,
         kernel_init_tx,
         kernel_request_rx,
         dap,

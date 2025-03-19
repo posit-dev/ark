@@ -68,7 +68,6 @@ pub fn connect(
     stream_behavior: StreamBehavior,
     iopub_tx: Sender<IOPubMessage>,
     iopub_rx: Receiver<IOPubMessage>,
-    iopub_first_subscription_tx: Sender<()>,
     comm_manager_tx: Sender<CommManagerEvent>,
     comm_manager_rx: Receiver<CommManagerEvent>,
     // Receiver channel for the stdin socket; when input is needed, the
@@ -133,6 +132,11 @@ pub fn connect(
     let (iopub_inbound_tx, iopub_inbound_rx) = unbounded();
     let iopub_session = iopub_socket.session.clone();
     let iopub_outbound_tx = outbound_tx.clone();
+
+    // Channel used for notifying back that the XPUB socket for IOPub has received a
+    // subscription message, meaning the messages we send over IOPub will no longer be
+    // dropped by our socket on the way out.
+    let (iopub_first_subscription_tx, iopub_first_subscription_rx) = bounded::<()>(1);
 
     spawn!(format!("{name}-iopub"), move || {
         iopub_thread(
@@ -272,6 +276,24 @@ pub fn connect(
             hb_port,
         )?;
     };
+
+    // Wait until we have our first (and usually only) IOPub subscription message come in.
+    // This means that someone is actually connected on the other side. Without a
+    // subscriber, the IOPub socket will simply drop any critical messages we try and send
+    // out too early (which can happen with stdout emitted from `.Rprofile`, or busy/idle
+    // messages that are sent very early on). Even the handshake above isn't a replacement
+    // for this. The `HandshakeReply` ensures that the client has received our port
+    // numbers, but does not ensure that the client's IOPub socket has connected or
+    // subscribed.
+    log::info!("Waiting on IOPub subscription confirmation");
+    match iopub_first_subscription_rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(_) => {
+            log::info!("Received IOPub subscription confirmation, completing kernel connection");
+        },
+        Err(err) => {
+            panic!("Failed to receive IOPub subscription confirmation. Aborting. Error: {err:?}");
+        },
+    }
 
     Ok(())
 }
