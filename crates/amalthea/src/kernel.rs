@@ -136,14 +136,14 @@ pub fn connect(
     // Channel used for notifying back that the XPUB socket for IOPub has received a
     // subscription message, meaning the messages we send over IOPub will no longer be
     // dropped by our socket on the way out.
-    let (iopub_first_subscription_tx, iopub_first_subscription_rx) = bounded::<()>(1);
+    let (iopub_subscription_tx, iopub_subscription_rx) = bounded::<()>(1);
 
     spawn!(format!("{name}-iopub"), move || {
         iopub_thread(
             iopub_rx,
             iopub_inbound_rx,
             iopub_outbound_tx,
-            iopub_first_subscription_tx,
+            iopub_subscription_tx,
             iopub_session,
         )
     });
@@ -286,7 +286,7 @@ pub fn connect(
     // numbers, but does not ensure that the client's IOPub socket has connected or
     // subscribed.
     log::info!("Waiting on IOPub subscription confirmation");
-    match iopub_first_subscription_rx.recv_timeout(std::time::Duration::from_secs(10)) {
+    match iopub_subscription_rx.recv_timeout(std::time::Duration::from_secs(10)) {
         Ok(_) => {
             log::info!("Received IOPub subscription confirmation, completing kernel connection");
         },
@@ -377,10 +377,10 @@ fn iopub_thread(
     rx: Receiver<IOPubMessage>,
     inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
     outbound_tx: Sender<OutboundMessage>,
-    first_subscription_tx: Sender<()>,
+    subscription_tx: Sender<()>,
     session: Session,
 ) -> Result<(), Error> {
-    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, first_subscription_tx, session);
+    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, subscription_tx, session);
     iopub.listen();
     Ok(())
 }
