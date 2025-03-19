@@ -61,7 +61,11 @@ impl CompletionSource for UniqueCompletionsSource {
             log::debug!("Trying completions from source: {}", source_name);
 
             if let Some(completions) = source.provide_completions(builder)? {
-                log::info!("Found completions from source: {}", source_name);
+                log::info!(
+                    "Found {} completions from source: {}",
+                    completions.len(),
+                    source_name
+                );
                 return Ok(Some(completions));
             }
         }
