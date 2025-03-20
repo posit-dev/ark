@@ -15,6 +15,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::server_comm::ServerStartMessage;
+use amalthea::comm::server_comm::ServerStartedMessage;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
@@ -44,18 +46,33 @@ use crate::request::RRequest;
 const THREAD_ID: i64 = -1;
 
 pub fn start_dap(
-    tcp_address: String,
     state: Arc<Mutex<Dap>>,
-    conn_init_tx: Sender<bool>,
+    server_start: ServerStartMessage,
+    server_started_tx: Sender<ServerStartedMessage>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Sender<CommMsg>,
 ) {
-    log::trace!("DAP: Thread starting at address {}.", tcp_address);
+    let ip_address = server_start.ip_address();
 
-    let listener = TcpListener::bind(tcp_address).unwrap();
+    // Binding to port `0` to allow the OS to allocate a port for us to bind to
+    let listener = TcpListener::bind(format!("{ip_address}:0",)).unwrap();
 
-    conn_init_tx
-        .send(true)
+    let address = match listener.local_addr() {
+        Ok(address) => address,
+        Err(error) => {
+            log::error!("DAP: Failed to bind to {ip_address}:0: {error}");
+            return;
+        },
+    };
+
+    // Get the OS allocated port
+    let port = address.port();
+
+    log::trace!("DAP: Thread starting at address {ip_address}:{port}.");
+
+    // Send the port back to `Shell` and eventually out to the frontend so it can connect
+    server_started_tx
+        .send(ServerStartedMessage::new(port))
         .or_log_error("DAP: Can't send init notification");
 
     loop {

@@ -9,17 +9,45 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Sender;
-use serde::Deserialize;
-use serde::Serialize;
 
 use crate::comm::comm_channel::CommMsg;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct StartServer {
-    /// The address on which the client is listening for server requests.
-    pub client_address: String,
+/// Message sent from the frontend requesting a server to start
+#[derive(Debug, serde::Deserialize)]
+pub struct ServerStartMessage {
+    /// The IP address on which the client is listening for server requests. The server is
+    /// in charge of picking the exact port to communicate over, since the server is the
+    /// one that binds to the port (to prevent race conditions).
+    ip_address: String,
+}
+
+impl ServerStartMessage {
+    pub fn new(ip_address: String) -> Self {
+        Self { ip_address }
+    }
+
+    pub fn ip_address(&self) -> &str {
+        &self.ip_address
+    }
+}
+
+/// Message sent to the frontend to acknowledge that the corresponding server has started
+#[derive(Debug, serde::Serialize)]
+pub struct ServerStartedMessage {
+    /// The port that the frontend should connect to on the `ip_address` it sent over
+    port: u16,
+}
+
+impl ServerStartedMessage {
+    pub fn new(port: u16) -> Self {
+        Self { port }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 }
 
 pub struct ServerComm {
@@ -41,14 +69,14 @@ impl ServerComm {
 
     /// This should return immediately after starting the server in a
     /// separate thread. Signal that the server is ready to accept
-    /// connection by sending `true` via `conn_init_tx`.
-    pub fn start(&self, data: StartServer, conn_init_tx: Sender<bool>) -> Result<(), Error> {
+    /// connection by sending `true` via `server_started_tx`.
+    pub fn start(
+        &self,
+        server_start: ServerStartMessage,
+        server_started_tx: Sender<ServerStartedMessage>,
+    ) -> Result<(), Error> {
         let mut handler = self.handler.lock().unwrap();
-        handler.start(
-            data.client_address.clone(),
-            conn_init_tx,
-            self.msg_tx.clone(),
-        )?;
+        handler.start(server_start, server_started_tx, self.msg_tx.clone())?;
         Ok(())
     }
 

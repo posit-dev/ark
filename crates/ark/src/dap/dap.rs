@@ -10,6 +10,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::server_comm::ServerStartMessage;
+use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
@@ -252,8 +254,8 @@ impl Dap {
 impl ServerHandler for Dap {
     fn start(
         &mut self,
-        tcp_address: String,
-        conn_init_tx: Sender<bool>,
+        server_start: ServerStartMessage,
+        server_started_tx: Sender<ServerStartedMessage>,
         comm_tx: Sender<CommMsg>,
     ) -> Result<(), amalthea::error::Error> {
         log::info!("DAP: Spawning thread");
@@ -272,9 +274,9 @@ impl ServerHandler for Dap {
 
         spawn!("ark-dap", move || {
             dap_server::start_dap(
-                tcp_address,
                 state_clone,
-                conn_init_tx,
+                server_start,
+                server_started_tx,
                 r_request_tx_clone,
                 comm_tx,
             )

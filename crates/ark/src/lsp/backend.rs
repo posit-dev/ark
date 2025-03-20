@@ -10,6 +10,8 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
+use amalthea::comm::server_comm::ServerStartMessage;
+use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::comm::ui_comm::ShowMessageParams as UiShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use crossbeam::channel::Sender;
@@ -436,18 +438,38 @@ impl Backend {
     }
 }
 
-pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bool>) {
+pub fn start_lsp(
+    runtime: Arc<Runtime>,
+    server_start: ServerStartMessage,
+    server_started_tx: Sender<ServerStartedMessage>,
+) {
     runtime.block_on(async {
-        log::trace!("Connecting to LSP at '{}'", &address);
-        let listener = TcpListener::bind(&address).await.unwrap();
+        let ip_address = server_start.ip_address();
 
-        // Notify frontend that we are ready to accept connections
-        conn_init_tx
-            .send(true)
-            .or_log_warning("Couldn't send LSP server init notification");
+        // Binding to port `0` to allow the OS to allocate a port for us to bind to
+        let listener = TcpListener::bind(format!("{ip_address}:0")).await.unwrap();
 
-        let (stream, _) = listener.accept().await.unwrap();
-        log::trace!("Connected to LSP at '{}'", address);
+        let address = match listener.local_addr() {
+            Ok(address) => address,
+            Err(error) => {
+                log::error!("LSP: Failed to bind to {ip_address}:0: {error}");
+                return;
+            },
+        };
+
+        // Get the OS allocated port
+        let port = address.port();
+
+        log::trace!("LSP: Thread starting at address {ip_address}:{port}.");
+
+        // Send the port back to `Shell` and eventually out to the frontend so it can connect
+        server_started_tx
+            .send(ServerStartedMessage::new(port))
+            .or_log_error("LSP: Can't send server started notification");
+
+        log::trace!("LSP: Waiting for client");
+        let (stream, address) = listener.accept().await.unwrap();
+        log::trace!("LSP: Connected to client: '{address}'");
         let (read, write) = tokio::io::split(stream);
 
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -468,8 +490,7 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
             r_task({
                 let events_tx = events_tx.clone();
                 move || {
-                    let main = RMain::get_mut();
-                    main.set_lsp_channel(events_tx);
+                    RMain::with_mut(|main| main.set_lsp_channel(events_tx));
                 }
             });
 
@@ -500,17 +521,25 @@ pub fn start_lsp(runtime: Arc<Runtime>, address: String, conn_init_tx: Sender<bo
         tokio::select! {
             _ = server.serve(service) => {
                 log::trace!(
-                    "LSP thread exiting gracefully after connection closed ({:?}).",
+                    "LSP: Thread exiting gracefully after connection closed ({:?}).",
                     address
                 );
             },
             _ = shutdown_rx.recv() => {
                 log::trace!(
-                    "LSP thread exiting after receiving a shutdown request ({:?}).",
+                    "LSP: Thread exiting after receiving a shutdown request ({:?}).",
                     address
                 );
             }
         }
+
+        // Remove the LSP channel on the way out, we can no longer handle any LSP updates
+        // from `RMain`, at least until someone starts the LSP up again.
+        r_task({
+            move || {
+                RMain::with_mut(|main| main.remove_lsp_channel());
+            }
+        });
     })
 }
 

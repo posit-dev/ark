@@ -1864,7 +1864,7 @@ impl RMain {
             log::error!(
                 "Failed to send LSP notification. Removing LSP events channel. Error: {err:?}"
             );
-            self.lsp_events_tx = None;
+            self.remove_lsp_channel();
         }
     }
 
@@ -1878,6 +1878,10 @@ impl RMain {
         log::trace!("LSP channel opened. Refreshing state.");
         self.refresh_lsp();
         self.notify_lsp_of_known_virtual_documents();
+    }
+
+    pub(crate) fn remove_lsp_channel(&mut self) {
+        self.lsp_events_tx = None;
     }
 
     fn refresh_lsp(&mut self) {
