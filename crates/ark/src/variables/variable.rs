@@ -25,7 +25,6 @@ use harp::object::RObject;
 use harp::r_null;
 use harp::r_symbol;
 use harp::symbol::RSymbol;
-use harp::table_info;
 use harp::utils::pairlist_size;
 use harp::utils::r_altrep_class;
 use harp::utils::r_assert_type;
@@ -51,7 +50,7 @@ use harp::vector::CharacterVector;
 use harp::vector::IntegerVector;
 use harp::vector::Vector;
 use harp::List;
-use harp::TableDim;
+use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
 use stdext::local;
@@ -90,7 +89,7 @@ impl WorkspaceVariableDisplayValue {
 
         let out = match r_typeof(value) {
             NILSXP => Self::new(String::from("NULL"), false),
-            VECSXP if r_inherits(value, "data.frame") => Self::from_data_frame(value),
+            VECSXP if r_is_data_frame(value) => Self::from_data_frame(value)?,
             VECSXP if !r_inherits(value, "POSIXlt") => Self::from_list(value),
             LISTSXP => Self::empty(),
             SYMSXP if value == unsafe { R_MissingArg } => {
@@ -157,15 +156,16 @@ impl WorkspaceVariableDisplayValue {
         Ok(Self::new(display_value, truncated))
     }
 
-    fn from_data_frame(value: SEXP) -> Self {
-        let dim = match unsafe { harp::df_dim(value) } {
-            Ok(dim) => dim,
-            // FIXME: Needs more type safety
-            Err(_) => TableDim {
-                num_rows: -1,
-                num_cols: -1,
-            },
+    fn from_data_frame(value: SEXP) -> anyhow::Result<Self> {
+        // Avoid materializing ALTREP compact row names (duckplyr)
+        let n_row = harp::df_n_row_if_possible(value)?;
+        let (n_row, row_word) = match n_row {
+            Some(n_row) => (n_row.to_string(), plural("row", n_row)),
+            None => (String::from("?"), String::from("rows")),
         };
+
+        let n_col = harp::df_n_col(value)?;
+        let (n_col, col_word) = (n_col.to_string(), plural("column", n_col));
 
         let class = match r_classes(value) {
             None => String::from(""),
@@ -175,15 +175,9 @@ impl WorkspaceVariableDisplayValue {
             },
         };
 
-        let value = format!(
-            "[{} {} x {} {}]{}",
-            dim.num_rows,
-            plural("row", dim.num_rows),
-            dim.num_cols,
-            plural("column", dim.num_cols),
-            class
-        );
-        Self::new(value, false)
+        let value = format!("[{n_row} {row_word} x {n_col} {col_word}]{class}");
+
+        Ok(Self::new(value, false))
     }
 
     fn from_list(value: SEXP) -> Self {
@@ -305,13 +299,7 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_matrix(value: SEXP) -> anyhow::Result<Self> {
-        let (n_row, n_col) = match harp::table_info(value) {
-            Some(info) => (info.dims.num_rows, info.dims.num_cols),
-            None => {
-                log::error!("Failed to get matrix dimensions");
-                (-1, -1)
-            },
-        };
+        let (n_row, n_col) = harp::mat_dim(value)?;
 
         let class = match r_classes(value) {
             None => String::from(" <matrix>"),
@@ -496,13 +484,25 @@ impl WorkspaceVariableDisplayType {
                     let dfclass = classes.get_unchecked(0).unwrap();
                     match include_length {
                         true => {
-                            let dim = table_info(value);
-                            let shape = match dim {
-                                Some(info) => {
-                                    format!("{}, {}", info.dims.num_rows, info.dims.num_cols)
+                            // Avoid materializing ALTREP compact row names (duckplyr)
+                            let n_row = match harp::df_n_row_if_possible(value) {
+                                Ok(n_row) => match n_row {
+                                    Some(n_row) => n_row.to_string(),
+                                    None => String::from("?"),
                                 },
-                                None => String::from("?, ?"),
+                                Err(error) => {
+                                    log::error!("Can't compute number of rows: {error}");
+                                    String::from("?")
+                                },
                             };
+                            let n_col = match harp::df_n_col(value) {
+                                Ok(n_col) => n_col.to_string(),
+                                Err(error) => {
+                                    log::error!("Can't compute number of columns: {error}");
+                                    String::from("?")
+                                },
+                            };
+                            let shape = format!("{n_row}, {n_col}");
                             let display_type = format!("{} [{}]", dfclass, shape);
                             Self::simple(display_type)
                         },
@@ -731,8 +731,23 @@ impl PositronVariable {
 
     fn variable_length(x: SEXP) -> usize {
         // Check for tabular data
-        if let Some(info) = harp::table_info(x) {
-            return info.dims.num_cols as usize;
+        if let Some(kind) = harp::table_kind(x) {
+            return match kind {
+                TableKind::Dataframe => match harp::df_n_col(x) {
+                    Ok(n_col) => n_col as usize,
+                    Err(error) => {
+                        log::error!("Can't compute number of data frame columns: {error}");
+                        0
+                    },
+                },
+                TableKind::Matrix => match harp::mat_dim(x) {
+                    Ok((_n_row, n_col)) => n_col as usize,
+                    Err(error) => {
+                        log::error!("Can't compute matrix dimensions: {error}");
+                        0
+                    },
+                },
+            };
         }
 
         // Otherwise treat as vector
@@ -1201,14 +1216,7 @@ impl PositronVariable {
 
     fn inspect_matrix(matrix: SEXP) -> anyhow::Result<Vec<Variable>> {
         let matrix = RObject::new(matrix);
-
-        let n_col = match harp::table_info(matrix.sexp) {
-            Some(info) => info.dims.num_cols,
-            None => {
-                log::warn!("Unexpected matrix object. Couldn't get dimensions.");
-                return Ok(vec![]);
-            },
-        };
+        let (_n_row, n_col) = harp::mat_dim(matrix.sexp)?;
 
         let make_variable = |access_key, display_name, display_value, is_truncated| Variable {
             access_key,
