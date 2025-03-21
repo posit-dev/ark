@@ -46,6 +46,12 @@ pub struct IOPub {
     /// for delivery to the frontend
     outbound_tx: Sender<OutboundMessage>,
 
+    /// A channel that sends a notification when we've received a [SubscriptionMessage],
+    /// which ensures that any future IOPub messages sent out from this channel won't be
+    /// dropped. We treat this as a one shot channel, and drop it when we've received
+    /// the first subscription message, as we only expect one subscriber.
+    subscription_tx: Option<Sender<()>>,
+
     /// ZMQ session used to create messages
     session: Session,
 
@@ -105,6 +111,7 @@ impl IOPub {
         rx: Receiver<IOPubMessage>,
         inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
         outbound_tx: Sender<OutboundMessage>,
+        subscription_tx: Sender<()>,
         session: Session,
     ) -> Self {
         let buffer = StreamBuffer::new(Stream::Stdout);
@@ -113,6 +120,7 @@ impl IOPub {
             rx,
             inbound_rx,
             outbound_tx,
+            subscription_tx: Some(subscription_tx),
             session,
             shell_context: None,
             control_context: None,
@@ -122,9 +130,6 @@ impl IOPub {
 
     /// Listen for IOPub messages from other threads. Does not return.
     pub fn listen(&mut self) {
-        // Begin by emitting the starting state
-        self.emit_state(ExecutionState::Starting);
-
         // Flush the active stream (either stdout or stderr) at regular
         // intervals
         let flush_interval = *StreamBuffer::interval();
@@ -252,7 +257,7 @@ impl IOPub {
     /// When we get a subscription notification, we forward along an IOPub
     /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
     /// that don't know how to process this `Welcome` message should just ignore it.
-    fn process_inbound_message(&self, message: SubscriptionMessage) -> crate::Result<()> {
+    fn process_inbound_message(&mut self, message: SubscriptionMessage) -> crate::Result<()> {
         let subscription = message.subscription;
 
         match message.kind {
@@ -260,8 +265,7 @@ impl IOPub {
                 log::info!(
                     "Received subscribe message on IOPub with subscription '{subscription}'."
                 );
-                let content = Welcome { subscription };
-                self.forward(Message::Welcome(self.message(content)))
+                self.confirm_subscription(subscription)
             },
             SubscriptionKind::Unsubscribe => {
                 log::info!(
@@ -271,6 +275,34 @@ impl IOPub {
                 return Ok(());
             },
         }
+    }
+
+    fn confirm_subscription(&mut self, subscription: String) -> crate::Result<()> {
+        let Some(subscription_tx) = &self.subscription_tx else {
+            let message = "Received subscription message, but no `subscription_tx` is available to confirm on. Have we already received a subscription message once before?";
+            log::error!("{message}");
+            return Err(crate::anyhow!("{message}"));
+        };
+
+        log::info!("Sending `Welcome` message, `Starting` status, and subscription confirmation");
+
+        // Welcome the SUB, in compliance with JEP 65
+        self.forward(Message::Welcome(self.message(Welcome { subscription })))?;
+
+        // Follow up with the `ExecutionState::Starting` state for the kernel, which is
+        // sent exactly once. Should be after the `Welcome` message in case the client is
+        // waiting on the `Welcome` message to proceed.
+        self.forward(Message::Status(self.message(KernelStatus {
+            execution_state: ExecutionState::Starting,
+        })))?;
+
+        // Notify our subscription receiver that we've got a subscriber
+        subscription_tx.send(()).unwrap();
+
+        // Unset since this is a once-per process procedure
+        self.subscription_tx = None;
+
+        Ok(())
     }
 
     /// Create a message using the underlying socket with the given content.
@@ -379,21 +411,6 @@ impl IOPub {
     fn process_wait_request(&mut self, message: Wait) -> crate::Result<()> {
         message.wait_tx.send(()).unwrap();
         Ok(())
-    }
-
-    /// Emits the given kernel state to the client.
-    fn emit_state(&self, state: ExecutionState) {
-        log::trace!("Entering kernel state: {:?}", state);
-
-        let content = KernelStatus {
-            execution_state: state,
-        };
-
-        let message = Message::Status(self.message(content));
-
-        if let Err(err) = self.forward(message) {
-            log::warn!("Could not emit kernel's state due to: {err:?}")
-        };
     }
 }
 

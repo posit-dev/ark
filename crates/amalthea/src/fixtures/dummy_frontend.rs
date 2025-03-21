@@ -190,6 +190,12 @@ impl DummyFrontend {
         assert_matches!(Self::recv(&iopub_socket), Message::Welcome(data) => {
             assert_eq!(data.content.subscription, String::from(""));
         });
+        // We also go ahead and handle the `ExecutionState::Starting` status that we know
+        // is coming from the kernel right after the `Welcome` message, so tests don't
+        // have to care about this.
+        assert_matches!(Self::recv(&iopub_socket), Message::Status(data) => {
+            assert_eq!(data.content.execution_state, ExecutionState::Starting);
+        });
 
         Self {
             _control_socket,

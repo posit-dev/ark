@@ -120,8 +120,9 @@ impl ShellHandler for Shell {
         if self.kernel_info.is_none() {
             trace!("Got kernel info request; waiting for R to complete initialization");
             self.kernel_info = Some(self.kernel_init_rx.recv().unwrap());
+            trace!("R completed initialization, replying to kernel info request");
         } else {
-            trace!("R already started, using existing kernel information")
+            trace!("Got kernel info request; R has already started, replying to kernel info request with existing kernel information")
         }
         let kernel_info = self.kernel_info.as_ref().unwrap();
 

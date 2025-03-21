@@ -133,8 +133,19 @@ pub fn connect(
     let iopub_session = iopub_socket.session.clone();
     let iopub_outbound_tx = outbound_tx.clone();
 
+    // Channel used for notifying back that the XPUB socket for IOPub has received a
+    // subscription message, meaning the messages we send over IOPub will no longer be
+    // dropped by our socket on the way out.
+    let (iopub_subscription_tx, iopub_subscription_rx) = bounded::<()>(1);
+
     spawn!(format!("{name}-iopub"), move || {
-        iopub_thread(iopub_rx, iopub_inbound_rx, iopub_outbound_tx, iopub_session)
+        iopub_thread(
+            iopub_rx,
+            iopub_inbound_rx,
+            iopub_outbound_tx,
+            iopub_subscription_tx,
+            iopub_session,
+        )
     });
 
     // Create the heartbeat socket and start a thread to listen for
@@ -266,6 +277,24 @@ pub fn connect(
         )?;
     };
 
+    // Wait until we have our first (and usually only) IOPub subscription message come in.
+    // This means that someone is actually connected on the other side. Without a
+    // subscriber, the IOPub socket will simply drop any critical messages we try and send
+    // out too early (which can happen with stdout emitted from `.Rprofile`, or busy/idle
+    // messages that are sent very early on). Even the handshake above isn't a replacement
+    // for this. The `HandshakeReply` ensures that the client has received our port
+    // numbers, but does not ensure that the client's IOPub socket has connected or
+    // subscribed.
+    log::info!("Waiting on IOPub subscription confirmation");
+    match iopub_subscription_rx.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(_) => {
+            log::info!("Received IOPub subscription confirmation, completing kernel connection");
+        },
+        Err(err) => {
+            panic!("Failed to receive IOPub subscription confirmation. Aborting. Error: {err:?}");
+        },
+    }
+
     Ok(())
 }
 
@@ -348,9 +377,10 @@ fn iopub_thread(
     rx: Receiver<IOPubMessage>,
     inbound_rx: Receiver<crate::Result<SubscriptionMessage>>,
     outbound_tx: Sender<OutboundMessage>,
+    subscription_tx: Sender<()>,
     session: Session,
 ) -> Result<(), Error> {
-    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, session);
+    let mut iopub = IOPub::new(rx, inbound_rx, outbound_tx, subscription_tx, session);
     iopub.listen();
     Ok(())
 }
