@@ -37,6 +37,24 @@ impl<'a> CompletionBuilder<'a> {
         }
     }
 
+    pub fn build(self) -> Result<Vec<CompletionItem>> {
+        // Try unique sources first
+        let unique_sources = UniqueCompletionsSource;
+        if let Some(completions) = unique_sources.provide_completions(&self)? {
+            // TO THINK ON: If completions come from a unique source, I think we
+            // can identify the relevant source, via logging. Is there any
+            // reason to use CompletionItemWithSource in this case?
+            return Ok(completions);
+        }
+
+        // At this point we aren't in a "unique" completion case, so just return a
+        // set of reasonable completions from composite sources
+        let composite_sources = CompositeCompletionsSource;
+        Ok(composite_sources
+            .provide_completions(&self)?
+            .unwrap_or_default())
+    }
+
     pub fn parameter_hints(&self) -> &ParameterHints {
         self.parameter_hints_cell.get_or_init(|| {
             parameter_hints::parameter_hints(self.context.node, &self.context.document.contents)
@@ -54,20 +72,5 @@ impl<'a> CompletionBuilder<'a> {
         let _ = self.pipe_root_cell.set(root.clone());
 
         Ok(root)
-    }
-
-    pub fn build(self) -> Result<Vec<CompletionItem>> {
-        // Try unique sources first
-        let unique_sources = UniqueCompletionsSource;
-        if let Some(completions) = unique_sources.provide_completions(&self)? {
-            return Ok(completions);
-        }
-
-        // At this point we aren't in a "unique" completion case, so just return a
-        // set of reasonable completions from composite sources
-        let composite_sources = CompositeCompletionsSource;
-        Ok(composite_sources
-            .provide_completions(&self)?
-            .unwrap_or_default())
     }
 }

@@ -14,13 +14,12 @@ mod snippets;
 mod subset;
 mod workspace;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use anyhow::Result;
 pub use pipe::find_pipe_root;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
-use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
 use crate::lsp::completions::builder::CompletionBuilder;
@@ -41,9 +40,45 @@ impl CompletionSource for CompositeCompletionsSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        log::info!("Getting completions from composite sources");
+        let mut completions = HashMap::new();
 
-        let mut completions: Vec<CompletionItem> = vec![];
+        // Gather completions into our local collection
+        self.gather_completions(builder, &mut completions)?;
+
+        // Turn local collection into a sorted list of plain CompletionItems
+        Ok(Some(self.get_completions(&completions)))
+    }
+}
+
+// Locally useful data structures for tracking completions and their source(s)
+#[derive(Hash, Eq, PartialEq, Clone)]
+struct CompletionKey {
+    label: String,
+    insert_text: Option<String>,
+}
+
+impl From<&CompletionItem> for CompletionKey {
+    fn from(item: &CompletionItem) -> Self {
+        CompletionKey {
+            label: item.label.clone(),
+            insert_text: item.insert_text.clone(),
+        }
+    }
+}
+
+#[derive(Default)]
+struct CompletionWithSource {
+    item: CompletionItem,
+    sources: Vec<String>,
+}
+
+impl CompositeCompletionsSource {
+    fn gather_completions(
+        &self,
+        builder: &CompletionBuilder,
+        completions: &mut HashMap<CompletionKey, CompletionWithSource>,
+    ) -> Result<()> {
+        log::info!("Getting completions from composite sources");
 
         let always_sources: &[&dyn CompletionSource] = &[
             &call::CallSource,     // argument completions
@@ -54,13 +89,13 @@ impl CompletionSource for CompositeCompletionsSource {
             let source_name = source.name();
             log::debug!("Trying completions from source: {}", source_name);
 
-            if let Some(mut additional_completions) = source.provide_completions(builder)? {
+            if let Some(source_completions) = source.provide_completions(builder)? {
                 log::debug!(
                     "Found {} completions from source: {}",
-                    additional_completions.len(),
+                    source_completions.len(),
                     source_name
                 );
-                completions.append(&mut additional_completions);
+                self.add_completions(source_name, source_completions, completions);
             }
         }
 
@@ -82,27 +117,89 @@ impl CompletionSource for CompositeCompletionsSource {
                 let source_name = source.name();
                 log::debug!("Trying completions from source: {}", source_name);
 
-                if let Some(mut additional_completions) = source.provide_completions(builder)? {
+                if let Some(source_completions) = source.provide_completions(builder)? {
                     log::debug!(
                         "Found {} completions from source: {}",
-                        additional_completions.len(),
+                        source_completions.len(),
                         source_name
                     );
-                    completions.append(&mut additional_completions);
+                    self.add_completions(source_name, source_completions, completions);
                 }
             }
         }
 
-        // Remove duplicates
-        let mut uniques = HashSet::new();
-        completions.retain(|x| uniques.insert(x.label.clone()));
+        Ok(())
+    }
 
-        // Sort completions by providing custom 'sort' text to be used when
-        // ordering completion results. we use some placeholders at the front
-        // to 'bin' different completion types differently; e.g. we place parameter
-        // completions at the front, followed by variable completions (like pipe
-        // completions and subset completions), followed by anything else.
-        for item in &mut completions {
+    fn add_completions(
+        &self,
+        source_name: &str,
+        items: Vec<CompletionItem>,
+        completions: &mut HashMap<CompletionKey, CompletionWithSource>,
+    ) {
+        for item in items {
+            let key = CompletionKey::from(&item);
+
+            if let Some(sourced_item) = completions.get_mut(&key) {
+                // Item already exists, just add this source
+                sourced_item.sources.push(source_name.to_string());
+                log::debug!(
+                    "Completion '{}' contributed by multiple sources: {:?}",
+                    key.label,
+                    sourced_item.sources
+                );
+            } else {
+                // New item
+                let mut sourced_item = CompletionWithSource::default();
+                sourced_item.item = item;
+                sourced_item.sources.push(source_name.to_string());
+                completions.insert(key, sourced_item);
+            }
+        }
+    }
+
+    // Produce and sort plain ol' CompletionItems, with source information
+    // stashed in `data`. I'm not entirely sure if we really want to even hold
+    // on to this information, but it's here for now.
+    fn get_completions(
+        &self,
+        completions: &HashMap<CompletionKey, CompletionWithSource>,
+    ) -> Vec<CompletionItem> {
+        let mut items: Vec<CompletionItem> = completions
+            .values()
+            .map(|sourced_item| {
+                let mut item = sourced_item.item.clone();
+
+                // Store source information in the `data` field as a simple string
+                if !sourced_item.sources.is_empty() {
+                    let sources_string = sourced_item.sources.join(",");
+                    item.data = Some(serde_json::Value::String(sources_string.clone()));
+                    log::debug!(
+                        "Completion '{}' has sources: {}",
+                        item.label,
+                        sources_string
+                    );
+                }
+
+                item
+            })
+            .collect();
+
+        // Sort the completions
+        Self::sort_completions(&mut items);
+
+        items
+    }
+
+    // Sort completions by providing custom 'sort' text to be used when
+    // ordering completion results. we use some placeholders at the front
+    // to 'bin' different completion types differently; e.g. we place parameter
+    // completions at the front, followed by variable completions (like pipe
+    // completions and subset completions), followed by anything else.
+    fn sort_completions(completions: &mut Vec<CompletionItem>) {
+        use tower_lsp::lsp_types::CompletionItemKind;
+
+        for item in completions {
             // Start with existing `sort_text` if one exists
             let sort_text = item.sort_text.take();
             let sort_text = match sort_text {
@@ -130,8 +227,6 @@ impl CompletionSource for CompositeCompletionsSource {
                 }
             }
         }
-
-        Ok(Some(completions))
     }
 }
 
