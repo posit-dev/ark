@@ -51,7 +51,7 @@
             stop("Should not install a package if it's already attached.")
         }
     }
-    utils::install.packages(packages)
+    utils::install.packages(unlist(packages))
     TRUE
 }
 
@@ -62,4 +62,9 @@
     }
 
     pkg %in% .packages()
+}
+
+#' @export
+.ps.rpc.get_loaded_packages <- function(...) {
+    .packages()
 }
