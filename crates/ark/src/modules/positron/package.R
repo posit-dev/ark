@@ -1,7 +1,7 @@
 #
 # package.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -51,7 +51,7 @@
             stop("Should not install a package if it's already attached.")
         }
     }
-    utils::install.packages(packages)
+    utils::install.packages(unlist(packages))
     TRUE
 }
 
@@ -62,4 +62,9 @@
     }
 
     pkg %in% .packages()
+}
+
+#' @export
+.ps.rpc.get_attached_packages <- function(...) {
+    .packages()
 }
