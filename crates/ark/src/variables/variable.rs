@@ -730,6 +730,9 @@ impl PositronVariable {
 
     fn variable_length(x: SEXP) -> usize {
         // Check for tabular data
+        // We don't currently provide an ark hook for variable length, so we are somewhat
+        // careful to only query n-col and never n-row for data frames, to avoid duckplyr
+        // query materialization.
         if let Some(kind) = harp::table_kind(x) {
             return match kind {
                 TableKind::Dataframe => match harp::df_n_col(x) {
