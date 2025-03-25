@@ -48,12 +48,12 @@ impl CompletionSource for UniqueCompletionsSource {
             // Try to detect a single colon first, which is a special case where we
             // don't provide any completions
             &SingleColonSource,
-            &CommentSource,
-            &StringSource,
-            &NamespaceSource,
-            &CustomSource,
-            &DollarSource,
-            &AtSource,
+            &CommentSource,   // really about roxygen2 tags
+            &StringSource,    // could be a file path
+            &NamespaceSource, // pkg::xxx or pkg::::xxx
+            &CustomSource,    // custom completions for, eg, options or env vars
+            &DollarSource,    // as in foo$bar
+            &AtSource,        // as in foo@bar
         ];
 
         for source in sources {
