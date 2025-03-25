@@ -570,7 +570,7 @@ impl RDataExplorer {
             };
 
             // `df_n_row()` will materialize duckplyr compact row names, but we are ok
-            // with that for the data explorer
+            // with that for the data explorer and don't provide a hook to opt out.
             let (n_row, n_col, column_names) = match kind {
                 TableKind::Dataframe => (
                     harp::df_n_row(table_sexp)?,

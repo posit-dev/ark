@@ -157,15 +157,16 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_data_frame(value: SEXP) -> anyhow::Result<Self> {
-        // Avoid materializing ALTREP compact row names (duckplyr)
-        let n_row = harp::df_n_row_if_possible(value)?;
-        let (n_row, row_word) = match n_row {
-            Some(n_row) => (n_row.to_string(), plural("row", n_row)),
-            None => (String::from("?"), String::from("rows")),
-        };
-
+        // Classes should provide an `ark_positron_variable_display_value()` method
+        // if they need to opt out of ALTREP materialization here.
+        let n_row = harp::df_n_row(value)?;
         let n_col = harp::df_n_col(value)?;
-        let (n_col, col_word) = (n_col.to_string(), plural("column", n_col));
+
+        let row_word = plural("row", n_row);
+        let col_word = plural("column", n_col);
+
+        let n_row = n_row.to_string();
+        let n_col = n_col.to_string();
 
         let class = match r_classes(value) {
             None => String::from(""),
@@ -484,12 +485,10 @@ impl WorkspaceVariableDisplayType {
                     let dfclass = classes.get_unchecked(0).unwrap();
                     match include_length {
                         true => {
-                            // Avoid materializing ALTREP compact row names (duckplyr)
-                            let n_row = match harp::df_n_row_if_possible(value) {
-                                Ok(n_row) => match n_row {
-                                    Some(n_row) => n_row.to_string(),
-                                    None => String::from("?"),
-                                },
+                            // Classes should provide an `ark_positron_variable_display_type()` method
+                            // if they need to opt out of ALTREP materialization here.
+                            let n_row: String = match harp::df_n_row(value) {
+                                Ok(n_row) => n_row.to_string(),
                                 Err(error) => {
                                     log::error!("Can't compute number of rows: {error}");
                                     String::from("?")
