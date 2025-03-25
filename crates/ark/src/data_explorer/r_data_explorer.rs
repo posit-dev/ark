@@ -563,9 +563,8 @@ impl RDataExplorer {
     fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
         unsafe {
             let table = table.clone();
-            let table_sexp = table.sexp;
 
-            let Some(kind) = table_kind(table_sexp) else {
+            let Some(kind) = table_kind(table.sexp) else {
                 return Err(anyhow!("Unsupported type for the data viewer"));
             };
 
@@ -573,13 +572,13 @@ impl RDataExplorer {
             // with that for the data explorer and don't provide a hook to opt out.
             let (n_row, n_col, column_names) = match kind {
                 TableKind::Dataframe => (
-                    harp::df_n_row(table_sexp)?,
-                    harp::df_n_col(table_sexp)?,
-                    ColumnNames::from_data_frame(table_sexp)?,
+                    harp::df_n_row(table.sexp)?,
+                    harp::df_n_col(table.sexp)?,
+                    ColumnNames::from_data_frame(table.sexp)?,
                 ),
                 TableKind::Matrix => {
-                    let (n_row, n_col) = harp::mat_dim(table_sexp)?;
-                    (n_row, n_col, ColumnNames::from_matrix(table_sexp)?)
+                    let (n_row, n_col) = harp::mat_dim(table.sexp)?;
+                    (n_row, n_col, ColumnNames::from_matrix(table.sexp)?)
                 },
             };
 
@@ -593,8 +592,8 @@ impl RDataExplorer {
                 // TODO: handling for nested data frame columns
 
                 let col = match kind {
-                    harp::TableKind::Dataframe => VECTOR_ELT(table_sexp, i),
-                    harp::TableKind::Matrix => table_sexp,
+                    harp::TableKind::Dataframe => VECTOR_ELT(table.sexp, i),
+                    harp::TableKind::Matrix => table.sexp,
                 };
 
                 let type_name = WorkspaceVariableDisplayType::from(col, false).display_type;
