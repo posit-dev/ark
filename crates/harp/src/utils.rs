@@ -393,7 +393,21 @@ pub unsafe fn r_envir_remove(symbol: &str, envir: SEXP) {
     R_removeVarFromFrame(r_symbol!(symbol), envir);
 }
 
-/// Get the names attribute of a vector
+/// Get the row names attribute of an object
+///
+/// Raw access to the [R_RowNamesSymbol] attribute. Will return [R_NilValue] when no names
+/// are present.
+///
+/// Note that [Rf_getAttrib()] will turn compact row names of the form `c(NA, -5)` into
+/// ALTREP compact intrange objects. If you really need to avoid this, use
+/// `.row_names_info(x, 0L)` instead, which goes through `getAttrib0()`, but note that R
+/// core frowns on this.
+/// https://github.com/wch/r-source/blob/e11e04d1f9966551991569b43da2ba6ab2251f30/src/main/attrib.c#L177-L187
+pub fn r_row_names(x: SEXP) -> SEXP {
+    unsafe { Rf_getAttrib(x, R_RowNamesSymbol) }
+}
+
+/// Get the names attribute of an object
 ///
 /// Raw access to the [R_NamesSymbol] attribute. Will return [R_NilValue] when no names
 /// are present.

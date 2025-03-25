@@ -1,10 +1,5 @@
 use libr::*;
 
-use crate::environment::R_ENVS;
-use crate::exec::RFunction;
-use crate::exec::RFunctionExt;
-use crate::r_int_get;
-use crate::r_int_na;
 use crate::r_length;
 use crate::utils::*;
 use crate::vector::Vector;
@@ -32,7 +27,8 @@ impl DataFrame {
         let list = List::new(sexp)?;
         harp::assert_class(sexp, "data.frame")?;
 
-        // This materializes ALTREP compact row names (duckplyr)
+        // This materializes ALTREP compact row names (duckplyr) and we are okay with
+        // that even without providing a hook to opt out
         let nrow = df_n_row(list.obj.sexp)? as usize;
         let ncol = df_n_col(list.obj.sexp)? as usize;
 
@@ -83,8 +79,6 @@ impl DataFrame {
 }
 
 /// Compute the number of columns in a data frame
-///
-/// This is easy, it's the length of the VECSXP
 pub fn df_n_col(x: SEXP) -> crate::Result<i32> {
     if !r_is_data_frame(x) {
         return Err(crate::anyhow!("`x` must be a data frame"));
@@ -100,113 +94,36 @@ pub fn df_n_col(x: SEXP) -> crate::Result<i32> {
     }
 }
 
-/// Strategy used when encountering ALTREP compact rownames when determining the number of
-/// rows within a data frame
-///
-/// This is particularly needed for duckdb, where materializing the ALTREP compact
-/// rownames to determine the number of rows would materialize the whole query, which we
-/// want to avoid because that defeats the purpose of laziness. In the Variables pane we
-/// avoid materializing, but in the Data Explorer we have to materialize.
-#[derive(Debug, PartialEq)]
-enum AltrepCompactRownamesStrategy {
-    Materialize,
-    DontMaterialize,
-}
-
 /// Compute the number of rows in a data frame
-///
-/// # Safety
-///
-/// If `x` is a data frame with an ALTREP compact row names attribute (like in duckplyr),
-/// then this function will materialize those row names to be able to determine the size.
-/// See [df_n_row_if_known()] if you'd like to bail in that scenario instead.
 pub fn df_n_row(x: SEXP) -> crate::Result<i32> {
-    // Unwrap safety: The `Materialize` strategy ensures this is never `None`
-    Ok(df_n_row_impl(x, AltrepCompactRownamesStrategy::Materialize)?.unwrap())
-}
-
-/// Compute the number of rows in a data frame, returning [None] if this isn't possible
-/// without materializing ALTREP compact row names (like in duckplyr)
-pub fn df_n_row_if_possible(x: SEXP) -> crate::Result<Option<i32>> {
-    df_n_row_impl(x, AltrepCompactRownamesStrategy::DontMaterialize)
-}
-
-fn df_n_row_impl(
-    x: SEXP,
-    altrep_compact_rownames_strategy: AltrepCompactRownamesStrategy,
-) -> crate::Result<Option<i32>> {
     if !r_is_data_frame(x) {
         return Err(crate::anyhow!("`x` must be a data frame"));
     }
 
     r_assert_type(x, &[VECSXP])?;
 
-    // We can't go through `Rf_getAttrib()` directly, this materializes ALTREP compact row
-    // name objects like in duckplyr. Instead we use `.row_names_info(x, 0)` which goes
-    // through `getAttrib0()` and does not materialize.
-    let row_names = RFunction::new("base", ".row_names_info")
-        .param("x", x)
-        .param("type", 0)
-        .call_in(R_ENVS.global)?;
+    // Note that this turns compact row names of the form `c(NA, -5)` into ALTREP compact
+    // intrange objects. This is fine for our purposes because the row names are never
+    // fully expanded as we determine their length.
+    //
+    // There is a special case with duckplyr where the row names object can be an ALTREP
+    // integer vector that looks like an instance of compact row names like `c(NA, -5)`.
+    // Touching this with `INTEGER()` or `INTEGER_ELT()` to determine the number of rows
+    // will materialize the whole query (and run arbitrary R code). We've determined the
+    // only maintainable strategy for classes like this is to provide higher level ark
+    // hooks where packages like duckplyr can intercede before we even get here, providing
+    // their own custom methods (like for the variables pane). That keeps our hot path
+    // simpler, as we unconditionally materialize ALTREP vectors, while still providing a
+    // way to opt out.
+    let row_names = RObject::new(harp::r_row_names(x));
 
-    // If the row names object is ALTREP and looks like an instance of compact row names,
-    // we can't touch it if [AltrepCompactRownamesStrategy::DontMaterialize] is set.
-    if altrep_compact_rownames_strategy == AltrepCompactRownamesStrategy::DontMaterialize &&
-        is_likely_altrep_compact_row_names(row_names.sexp)
-    {
-        return Ok(None);
-    }
-
-    // If the row names object is just in compact form like `c(NA, -5)`, we extract the
-    // number of rows from that
-    if is_compact_row_names(row_names.sexp) {
-        return Ok(Some(compact_row_names_n_row(row_names.sexp)));
-    }
-
-    // Otherwise the row names object is typically an integer vector or character vector,
-    // and we just take the length of that to get the number of rows
+    // The row names object is typically an integer vector (possibly ALTREP compact
+    // intrange that knows its length) or character vector, and we just take the length of
+    // that to get the number of rows
     match i32::try_from(r_length(row_names.sexp)) {
-        Ok(n_row) => Ok(Some(n_row)),
+        Ok(n_row) => Ok(n_row),
         Err(_) => Err(crate::anyhow!("Number of rows of `x` must fit in a `i32`.")),
     }
-}
-
-/// Is `x` an instance of compact row names?
-///
-/// These take the form `c(NA, -5L)`, i.e.
-/// - INTSXP
-/// - Length 2
-/// - The first element is `NA`
-///
-/// The second element will be the row names, typically as a negative value.
-fn is_compact_row_names(x: SEXP) -> bool {
-    r_typeof(x) == INTSXP && r_length(x) == 2 && r_int_get(x, 0) == r_int_na()
-}
-
-/// Is `x` likely an instance of ALTREP compact row names?
-///
-/// In the case of duckdb, their compact row names object is actually an ALTREP object
-/// that knows it is an INTSXP and knows it is length 2, but you can't query any values
-/// in the vector, otherwise it will materialize the full duckdb query to be able to
-/// return the number of rows. You can't even call `INTEGER_ELT(x, 0)` on this currently,
-/// even though in theory only `INTEGER_ELT(x, 1)` should trigger the materialization.
-///
-/// This means we can't do the full check for compact row names, so we leave off the `NA`
-/// check and say that if the object meets the following criteria, it is probably an
-/// ALTREP compact row names object and we can't query the number of rows:
-/// - ALTREP
-/// - INTSXP
-/// - Length 2
-///
-/// TODO: We should ask duckdb to add `ALTREP_ELT` support so that we can query
-/// `INTEGER_ELT(x, 0)` without materializing the duckdb query, and then we can do
-/// the full [is_compact_row_names()] check!
-fn is_likely_altrep_compact_row_names(x: SEXP) -> bool {
-    r_is_altrep(x) && r_typeof(x) == INTSXP && r_length(x) == 2
-}
-
-fn compact_row_names_n_row(x: SEXP) -> i32 {
-    i32::abs(r_int_get(x, 1))
 }
 
 #[cfg(test)]
@@ -311,68 +228,4 @@ mod tests {
             });
         })
     }
-
-    // TODO: This is a very heavy test.
-    //
-    // - It requires `duckplyr` and `duckdb` as dependencies.
-    // - It greatly modifies the global state, as duckplyr shims dplyr verbs.
-    // - It relies on `duckdb` internals to check ALTREP materialization.
-    //
-    // When we switch to nextest with 1 R session per test, we should consider running
-    // this test in CI, but we should not feel too much pressure to run it if it gives us
-    // trouble.
-    //
-    //     #[test]
-    //     fn test_duckplyr_not_materialized() {
-    //         use crate::df_n_row;
-    //         use crate::df_n_row_if_known;
-    //         use crate::exec::RFunction;
-    //         use crate::exec::RFunctionExt;
-    //         use crate::fixtures::package::package_is_installed;
-    //
-    //         crate::r_task(|| {
-    //             if !package_is_installed("duckplyr") {
-    //                 return;
-    //             }
-    //
-    //             // Turn off autoupload startup message
-    //             harp::parse_eval_global("Sys.setenv(DUCKPLYR_FALLBACK_AUTOUPLOAD = 0)").unwrap();
-    //
-    //             let df = harp::parse_eval_global("duckplyr::duckdb_tibble(x = 1:100)").unwrap();
-    //
-    //             // Should not be able to compute `n_row` with `df_n_row_if_known()`
-    //             let n_row = df_n_row_if_known(df.sexp).expect("Can return `None` without `Error`");
-    //             assert!(n_row.is_none());
-    //
-    //             // And `df` should not be materialized
-    //             // This relies on duckdb internals
-    //             let is_materialized = unsafe {
-    //                 RFunction::new_internal("duckdb", "df_is_materialized")
-    //                     .param("df", df)
-    //                     .call()
-    //                     .unwrap()
-    //                     .to::<bool>()
-    //                     .unwrap()
-    //             };
-    //             assert!(!is_materialized);
-    //
-    //             let df = harp::parse_eval_global("duckplyr::duckdb_tibble(x = 1:100)").unwrap();
-    //
-    //             // Should be able to compute `n_row` with `df_n_row()`
-    //             let n_row = df_n_row(df.sexp).expect("Can compute `n_row`");
-    //             assert_eq!(n_row, 100);
-    //
-    //             // And `df` should be materialized
-    //             // This relies on duckdb internals
-    //             let is_materialized = unsafe {
-    //                 RFunction::new_internal("duckdb", "df_is_materialized")
-    //                     .param("df", df)
-    //                     .call()
-    //                     .unwrap()
-    //                     .to::<bool>()
-    //                     .unwrap()
-    //             };
-    //             assert!(is_materialized);
-    //         })
-    //     }
 }
