@@ -65,6 +65,6 @@
 }
 
 #' @export
-.ps.rpc.get_loaded_packages <- function(...) {
+.ps.rpc.get_attached_packages <- function(...) {
     .packages()
 }
