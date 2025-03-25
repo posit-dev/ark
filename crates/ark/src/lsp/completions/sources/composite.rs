@@ -135,7 +135,7 @@ impl CompletionSource for CompositeCompletionsSource {
     }
 }
 
-pub fn is_identifier_like(x: Node) -> bool {
+fn is_identifier_like(x: Node) -> bool {
     if x.is_identifier() {
         // Obvious case
         return true;
