@@ -1,5 +1,8 @@
 {
     "languages": {
+        "Rust": {
+            "format_on_save": "on"
+        },
         "R": {
             "hard_tabs": false,
             "tab_size": 4,
