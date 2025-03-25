@@ -7,7 +7,7 @@
 
 mod common;
 pub(crate) mod composite;
-pub mod unique;
+pub(crate) mod unique;
 mod utils;
 
 use anyhow::Result;
