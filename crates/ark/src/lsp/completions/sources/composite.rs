@@ -45,8 +45,11 @@ impl CompletionSource for CompositeCompletionsSource {
 
         let mut completions: Vec<CompletionItem> = vec![];
 
-        let always_sources: &[&dyn CompletionSource] =
-            &[&call::CallSource, &pipe::PipeSource, &subset::SubsetSource];
+        let always_sources: &[&dyn CompletionSource] = &[
+            &call::CallSource,     // argument completions
+            &pipe::PipeSource,     // pipe completions, e.g. column names
+            &subset::SubsetSource, // subset completions (`[` or `[[`)
+        ];
         for source in always_sources {
             let source_name = source.name();
             log::debug!("Trying completions from source: {}", source_name);
