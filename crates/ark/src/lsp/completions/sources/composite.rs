@@ -171,15 +171,15 @@ impl CompositeCompletionsSource {
                 let mut item = sourced_item.item.clone();
 
                 // Store source information in the `data` field as a simple string
-                if !sourced_item.sources.is_empty() {
-                    let sources_string = sourced_item.sources.join(",");
-                    item.data = Some(serde_json::Value::String(sources_string.clone()));
-                    log::debug!(
-                        "Completion '{}' has sources: {}",
-                        item.label,
-                        sources_string
-                    );
-                }
+                // if !sourced_item.sources.is_empty() {
+                //     let sources_string = sourced_item.sources.join(",");
+                //     item.data = Some(serde_json::Value::String(sources_string.clone()));
+                //     log::debug!(
+                //         "Completion '{}' has sources: {}",
+                //         item.label,
+                //         sources_string
+                //     );
+                // }
 
                 item
             })
