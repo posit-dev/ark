@@ -147,6 +147,15 @@ impl DeviceContext {
         }
     }
 
+    // Reset state with defaults when the current plot is closed
+    fn reset(&self) {
+        self.has_changes.replace(false);
+        self.is_new_page.replace(true);
+        self.is_drawing.replace(false);
+        self.should_render.replace(true);
+        *self.id.borrow_mut() = Self::new_id();
+    }
+
     /// Should plot events be sent over [CommSocket]s to the frontend?
     ///
     /// This allows plots to be dynamically resized by their `id`. Only possible if the UI
@@ -360,6 +369,12 @@ impl DeviceContext {
             .call_in(ARK_ENVS.positron_ns)
         {
             log::error!("Can't clean up plot (id: {id}): {err:?}");
+        }
+
+        // If the currently active plot is closed, reset the state.
+        // See https://github.com/posit-dev/positron/issues/6702.
+        if *self.id.borrow() == *id {
+            self.reset();
         }
     }
 
