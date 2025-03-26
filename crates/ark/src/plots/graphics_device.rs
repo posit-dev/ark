@@ -301,7 +301,11 @@ impl DeviceContext {
                     log::error!("{error:?}");
                     // Refcell Safety: Short borrows in the file.
                     self.sockets.borrow_mut().remove(id);
-                    return;
+
+                    // Process remaining messages. Safe to do because we have
+                    // removed the `DeviceContext`'s copy off the sockets but we
+                    // are working through our own copy of them.
+                    continue;
                 },
             };
 
