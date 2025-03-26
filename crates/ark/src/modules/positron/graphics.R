@@ -29,10 +29,10 @@ add_recording <- function(id, recording) {
     RECORDINGS[[id]] <<- recording
 }
 
-# TODO: Use this when we get notified that we can remove a recording
-# remove_recording <- function(id) {
-#     RECORDINGS[[id]] <<- NULL
-# }
+# Called when a plot comm is closed by the frontend
+remove_recording <- function(id) {
+    RECORDINGS[[id]] <<- NULL
+}
 
 render_directory <- function() {
     directory <- file.path(tempdir(), "positron-plot-renderings")

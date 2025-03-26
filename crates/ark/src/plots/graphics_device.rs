@@ -46,6 +46,7 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 use crate::interface::SessionMode;
+use crate::modules::ARK_ENVS;
 use crate::r_task;
 
 thread_local! {
@@ -299,6 +300,12 @@ impl DeviceContext {
                 },
             };
 
+            // The user closed the plot. Clean up associated resources.
+            if let CommMsg::Close = message {
+                self.close_plot(id);
+                return;
+            }
+
             log::trace!("Handling RPC for plot `id` {id}");
             socket.handle_request(message, |req| self.handle_rpc(req, id));
         }
@@ -337,6 +344,22 @@ impl DeviceContext {
                     mime_type: mime_type.to_string(),
                 }))
             },
+        }
+    }
+
+    #[tracing::instrument(level = "trace", skip(self))]
+    fn close_plot(&self, id: &PlotId) {
+        // RefCell safety: Short borrows in the file
+        self.sockets.borrow_mut().remove(id);
+
+        // The plot data is stored at R level. Assumes we're called on the R
+        // thread at idle time so there's no race issues (see
+        // `on_process_idle_events()`).
+        if let Err(err) = RFunction::from("remove_recording")
+            .param("id", id)
+            .call_in(ARK_ENVS.positron_ns)
+        {
+            log::error!("Can't clean up plot (id: {id}): {err:?}");
         }
     }
 
