@@ -17,7 +17,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub struct SubsetSource;
+pub(super) struct SubsetSource;
 
 impl CompletionSource for SubsetSource {
     fn name(&self) -> &'static str {

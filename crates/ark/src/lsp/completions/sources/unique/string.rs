@@ -15,7 +15,7 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::treesitter::node_find_string;
 
-pub struct StringSource;
+pub(super) struct StringSource;
 
 impl CompletionSource for StringSource {
     fn name(&self) -> &'static str {

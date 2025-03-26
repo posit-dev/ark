@@ -27,7 +27,7 @@ use crate::treesitter::ExtractOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub struct DollarSource;
+pub(super) struct DollarSource;
 
 impl CompletionSource for DollarSource {
     fn name(&self) -> &'static str {
@@ -42,7 +42,7 @@ impl CompletionSource for DollarSource {
     }
 }
 
-pub struct AtSource;
+pub(super) struct AtSource;
 
 impl CompletionSource for AtSource {
     fn name(&self) -> &'static str {

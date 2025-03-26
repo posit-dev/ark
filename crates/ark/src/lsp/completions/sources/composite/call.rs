@@ -27,7 +27,7 @@ use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub struct CallSource;
+pub(super) struct CallSource;
 
 impl CompletionSource for CallSource {
     fn name(&self) -> &'static str {
@@ -38,8 +38,7 @@ impl CompletionSource for CallSource {
         &self,
         builder: &CompletionBuilder,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        let root = builder.pipe_root()?;
-        completions_from_call(builder.context, root)
+        completions_from_call(builder.context, builder.pipe_root()?)
     }
 }
 

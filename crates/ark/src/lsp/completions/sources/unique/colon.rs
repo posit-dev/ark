@@ -13,7 +13,7 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 
-pub struct SingleColonSource;
+pub(super) struct SingleColonSource;
 
 impl CompletionSource for SingleColonSource {
     fn name(&self) -> &'static str {

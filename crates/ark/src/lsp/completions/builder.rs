@@ -53,7 +53,6 @@ impl<'a> CompletionBuilder<'a> {
         // Cache it for future calls (ignore failure if race condition, which shouldn't happen)
         let _ = self.pipe_root_cell.set(root.clone());
 
-        // Return the result
         Ok(root)
     }
 

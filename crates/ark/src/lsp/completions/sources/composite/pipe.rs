@@ -19,7 +19,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub struct PipeSource;
+pub(super) struct PipeSource;
 
 impl CompletionSource for PipeSource {
     fn name(&self) -> &'static str {

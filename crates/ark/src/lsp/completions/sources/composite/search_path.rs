@@ -29,7 +29,7 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
-pub struct SearchPathSource;
+pub(super) struct SearchPathSource;
 
 impl CompletionSource for SearchPathSource {
     fn name(&self) -> &'static str {

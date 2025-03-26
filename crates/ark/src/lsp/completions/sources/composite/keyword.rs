@@ -15,7 +15,7 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 
-pub struct KeywordSource;
+pub(super) struct KeywordSource;
 
 impl CompletionSource for KeywordSource {
     fn name(&self) -> &'static str {
