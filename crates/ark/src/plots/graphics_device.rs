@@ -147,13 +147,11 @@ impl DeviceContext {
         }
     }
 
-    // Reset state with defaults when the current plot is closed
-    fn reset(&self) {
-        self.has_changes.replace(false);
+    /// Create a new id for this new plot page (from Positron's perspective)
+    /// and note that this is a new page
+    fn new_positron_page(&self) {
         self.is_new_page.replace(true);
-        self.is_drawing.replace(false);
-        self.should_render.replace(true);
-        *self.id.borrow_mut() = Self::new_id();
+        self.id.replace(Self::new_id());
     }
 
     /// Should plot events be sent over [CommSocket]s to the frontend?
@@ -219,9 +217,7 @@ impl DeviceContext {
     /// [ps_graphics_before_plot_new()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
-        // Create a new id for this new plot page and note that this is a new page
-        self.id.replace(Self::new_id());
-        self.is_new_page.replace(true);
+        self.new_positron_page()
     }
 
     fn id(&self) -> PlotId {
@@ -371,10 +367,10 @@ impl DeviceContext {
             log::error!("Can't clean up plot (id: {id}): {err:?}");
         }
 
-        // If the currently active plot is closed, reset the state.
+        // If the currently active plot is closed, advance to a new Positron page
         // See https://github.com/posit-dev/positron/issues/6702.
         if *self.id.borrow() == *id {
-            self.reset();
+            self.new_positron_page();
         }
     }
 
