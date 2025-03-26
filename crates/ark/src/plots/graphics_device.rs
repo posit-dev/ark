@@ -305,14 +305,19 @@ impl DeviceContext {
                 },
             };
 
-            // The user closed the plot. Clean up associated resources.
-            if let CommMsg::Close = message {
-                self.close_plot(id);
-                return;
+            match message {
+                CommMsg::Rpc(_, _) => {
+                    log::trace!("Handling `RPC` for plot `id` {id}");
+                    socket.handle_request(message, |req| self.handle_rpc(req, id));
+                },
+                CommMsg::Close => {
+                    log::trace!("Handling `Close` for plot `id` {id}");
+                    self.close_plot(id)
+                },
+                message => {
+                    log::error!("Received unexpected comm message for plot `id` {id}: {message:?}")
+                },
             }
-
-            log::trace!("Handling RPC for plot `id` {id}");
-            socket.handle_request(message, |req| self.handle_rpc(req, id));
         }
     }
 
