@@ -126,6 +126,13 @@ fn completions_from_search_path(
             .param("all.available", true)
             .call()?;
 
+        // JB TO THINK: Should we exclude packages that are already in the
+        // search path and have already been covered? The current approach
+        // causes duplicate completion items within this specific completion
+        // source, which I had not expected to be possible.
+        // Alternatively, should this actually be a separate completion source?
+        // Arguably "all installed packages" isn't really on the search path.
+
         let strings = packages.to::<Vec<String>>()?;
         for string in strings.iter() {
             let item = completion_item_from_package(string, true)?;
