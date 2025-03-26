@@ -70,7 +70,7 @@ impl CompletionSource for UniqueCompletionsSource {
             }
         }
 
-        log::debug!("No unique sources provided completions");
+        log::debug!("No unique source provided completions");
         Ok(None)
     }
 }
