@@ -84,8 +84,6 @@ pub fn df_n_col(x: SEXP) -> crate::Result<i32> {
         return Err(crate::anyhow!("`x` must be a data frame"));
     }
 
-    r_assert_type(x, &[VECSXP])?;
-
     match i32::try_from(r_length(x)) {
         Ok(n_col) => Ok(n_col),
         Err(_) => Err(crate::anyhow!(
@@ -99,8 +97,6 @@ pub fn df_n_row(x: SEXP) -> crate::Result<i32> {
     if !r_is_data_frame(x) {
         return Err(crate::anyhow!("`x` must be a data frame"));
     }
-
-    r_assert_type(x, &[VECSXP])?;
 
     // Note that this turns compact row names of the form `c(NA, -5)` into ALTREP compact
     // intrange objects. This is fine for our purposes because the row names are never
