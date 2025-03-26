@@ -31,8 +31,7 @@ use crate::treesitter::NamespaceOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-/// Extension trait for providing namespace completions
-pub struct NamespaceSource;
+pub(super) struct NamespaceSource;
 
 impl CompletionSource for NamespaceSource {
     fn name(&self) -> &'static str {

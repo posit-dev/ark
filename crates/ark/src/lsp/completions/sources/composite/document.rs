@@ -23,7 +23,7 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub struct DocumentSource;
+pub(super) struct DocumentSource;
 
 impl CompletionSource for DocumentSource {
     fn name(&self) -> &'static str {

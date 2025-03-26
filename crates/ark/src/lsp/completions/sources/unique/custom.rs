@@ -33,7 +33,7 @@ use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub struct CustomSource;
+pub(super) struct CustomSource;
 
 impl CompletionSource for CustomSource {
     fn name(&self) -> &'static str {

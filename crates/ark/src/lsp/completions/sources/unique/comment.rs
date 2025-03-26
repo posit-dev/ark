@@ -26,7 +26,7 @@ use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub struct CommentSource;
+pub(super) struct CommentSource;
 
 impl CompletionSource for CommentSource {
     fn name(&self) -> &'static str {

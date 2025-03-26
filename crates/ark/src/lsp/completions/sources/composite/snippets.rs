@@ -41,7 +41,7 @@ enum SnippetBody {
     Vector(Vec<String>),
 }
 
-pub struct SnippetSource;
+pub(super) struct SnippetSource;
 
 impl CompletionSource for SnippetSource {
     fn name(&self) -> &'static str {

@@ -27,7 +27,7 @@ use crate::lsp::traits::string::StringExt;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub struct WorkspaceSource;
+pub(super) struct WorkspaceSource;
 
 impl CompletionSource for WorkspaceSource {
     fn name(&self) -> &'static str {
