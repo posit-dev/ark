@@ -1,5 +1,5 @@
 //
-// builder.rs
+// completion_context.rs
 //
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
@@ -20,17 +20,17 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 
-pub(crate) struct CompletionBuilder<'a> {
-    pub(crate) context: &'a DocumentContext<'a>,
+pub(crate) struct CompletionContext<'a> {
+    pub(crate) document_context: &'a DocumentContext<'a>,
     pub(crate) state: &'a WorldState,
     parameter_hints_cell: OnceCell<ParameterHints>,
     pipe_root_cell: OnceCell<Option<PipeRoot>>,
 }
 
-impl<'a> CompletionBuilder<'a> {
-    pub fn new(context: &'a DocumentContext, state: &'a WorldState) -> Self {
+impl<'a> CompletionContext<'a> {
+    pub fn new(document_context: &'a DocumentContext, state: &'a WorldState) -> Self {
         Self {
-            context,
+            document_context,
             state,
             parameter_hints_cell: OnceCell::new(),
             pipe_root_cell: OnceCell::new(),
@@ -39,7 +39,10 @@ impl<'a> CompletionBuilder<'a> {
 
     pub fn parameter_hints(&self) -> &ParameterHints {
         self.parameter_hints_cell.get_or_init(|| {
-            parameter_hints::parameter_hints(self.context.node, &self.context.document.contents)
+            parameter_hints::parameter_hints(
+                self.document_context.node,
+                &self.document_context.document.contents,
+            )
         })
     }
 
@@ -48,7 +51,7 @@ impl<'a> CompletionBuilder<'a> {
             return Ok(root.clone());
         }
 
-        let root = find_pipe_root(self.context)?;
+        let root = find_pipe_root(self.document_context)?;
 
         // Cache it for future calls (ignore failure if race condition, which shouldn't happen)
         let _ = self.pipe_root_cell.set(root.clone());

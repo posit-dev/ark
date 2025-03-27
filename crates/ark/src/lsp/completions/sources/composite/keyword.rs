@@ -10,7 +10,7 @@ use stdext::unwrap;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
@@ -24,15 +24,13 @@ impl CompletionSource for KeywordSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        _completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_keywords(builder)
+        completions_from_keywords()
     }
 }
 
-pub fn completions_from_keywords(
-    _builder: &CompletionBuilder,
-) -> Result<Option<Vec<CompletionItem>>> {
+pub fn completions_from_keywords() -> Result<Option<Vec<CompletionItem>>> {
     let mut completions = vec![];
 
     // provide keyword completion results

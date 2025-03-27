@@ -8,7 +8,7 @@
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::completions::sources::CompletionSource;
@@ -26,9 +26,9 @@ impl CompletionSource for SubsetSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_subset(builder.context)
+        completions_from_subset(completion_context.document_context)
     }
 }
 

@@ -19,7 +19,7 @@ use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp;
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
@@ -42,9 +42,9 @@ impl CompletionSource for CustomSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_custom_source(builder.context)
+        completions_from_custom_source(completion_context.document_context)
     }
 }
 

@@ -18,7 +18,7 @@ use tower_lsp::lsp_types::InsertTextFormat;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
@@ -50,7 +50,7 @@ impl CompletionSource for SnippetSource {
 
     fn provide_completions(
         &self,
-        _builder: &CompletionBuilder,
+        _completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
         completions_from_snippets()
     }

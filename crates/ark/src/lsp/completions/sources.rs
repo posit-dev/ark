@@ -13,7 +13,7 @@ mod utils;
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 
 /// Interface for any source we consult for completions
 pub trait CompletionSource {
@@ -22,6 +22,6 @@ pub trait CompletionSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>>;
 }

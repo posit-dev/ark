@@ -19,7 +19,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::parameter_hints::ParameterHints;
@@ -40,9 +40,12 @@ impl CompletionSource for NamespaceSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_namespace(builder.context, builder.parameter_hints())
+        completions_from_namespace(
+            completion_context.document_context,
+            completion_context.parameter_hints(),
+        )
     }
 }
 

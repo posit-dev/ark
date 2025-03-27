@@ -17,7 +17,7 @@ use libr::STRSXP;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::CompletionSource;
@@ -36,9 +36,9 @@ impl CompletionSource for DollarSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_dollar(builder.context)
+        completions_from_dollar(completion_context.document_context)
     }
 }
 
@@ -51,9 +51,9 @@ impl CompletionSource for AtSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        builder: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_at(builder.context)
+        completions_from_at(builder.document_context)
     }
 }
 

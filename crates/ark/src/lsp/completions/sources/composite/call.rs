@@ -16,7 +16,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
 use super::pipe::PipeRoot;
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
@@ -36,9 +36,12 @@ impl CompletionSource for CallSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_call(builder.context, builder.pipe_root()?)
+        completions_from_call(
+            completion_context.document_context,
+            completion_context.pipe_root()?,
+        )
     }
 }
 

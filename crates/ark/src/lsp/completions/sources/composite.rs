@@ -23,7 +23,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -39,7 +39,7 @@ impl CompletionSource for CompositeCompletionsSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
         log::info!("Getting completions from composite sources");
 
@@ -54,7 +54,9 @@ impl CompletionSource for CompositeCompletionsSource {
             let source_name = source.name();
             log::debug!("Trying completions from source: {}", source_name);
 
-            if let Some(mut additional_completions) = source.provide_completions(builder)? {
+            if let Some(mut additional_completions) =
+                source.provide_completions(completion_context)?
+            {
                 log::debug!(
                     "Found {} completions from source: {}",
                     additional_completions.len(),
@@ -69,7 +71,7 @@ impl CompletionSource for CompositeCompletionsSource {
         // completions effectively without typing anything). For the rest of the
         // general completions, we require an identifier to begin showing
         // anything.
-        if is_identifier_like(builder.context.node) {
+        if is_identifier_like(completion_context.document_context.node) {
             let identifier_only_sources: &[&dyn CompletionSource] = &[
                 &keyword::KeywordSource,
                 &snippets::SnippetSource,
@@ -82,7 +84,9 @@ impl CompletionSource for CompositeCompletionsSource {
                 let source_name = source.name();
                 log::debug!("Trying completions from source: {}", source_name);
 
-                if let Some(mut additional_completions) = source.provide_completions(builder)? {
+                if let Some(mut additional_completions) =
+                    source.provide_completions(completion_context)?
+                {
                     log::debug!(
                         "Found {} completions from source: {}",
                         additional_completions.len(),

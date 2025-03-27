@@ -17,7 +17,7 @@ mod subset;
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::unique::colon::SingleColonSource;
 use crate::lsp::completions::sources::unique::comment::CommentSource;
 use crate::lsp::completions::sources::unique::custom::CustomSource;
@@ -40,7 +40,7 @@ impl CompletionSource for UniqueCompletionsSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
         log::info!("Getting completions from unique sources");
 
@@ -60,7 +60,7 @@ impl CompletionSource for UniqueCompletionsSource {
             let source_name = source.name();
             log::debug!("Trying completions from source: {}", source_name);
 
-            if let Some(completions) = source.provide_completions(builder)? {
+            if let Some(completions) = source.provide_completions(completion_context)? {
                 log::info!(
                     "Found {} completions from source: {}",
                     completions.len(),

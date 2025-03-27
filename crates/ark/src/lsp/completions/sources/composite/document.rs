@@ -10,7 +10,7 @@ use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_assignment;
 use crate::lsp::completions::completion_item::completion_item_from_scope_parameter;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
@@ -32,9 +32,9 @@ impl CompletionSource for DocumentSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_document(builder.context)
+        completions_from_document(completion_context.document_context)
     }
 }
 

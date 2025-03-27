@@ -12,7 +12,7 @@ use harp::object::RObject;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
@@ -28,9 +28,9 @@ impl CompletionSource for PipeSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        let root = builder.pipe_root()?;
+        let root = completion_context.pipe_root()?;
         completions_from_pipe(root)
     }
 }

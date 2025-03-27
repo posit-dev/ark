@@ -8,7 +8,7 @@
 use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
@@ -22,9 +22,9 @@ impl CompletionSource for SingleColonSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_single_colon(builder.context)
+        completions_from_single_colon(completion_context.document_context)
     }
 }
 

@@ -18,7 +18,7 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 use yaml_rust::YamlLoader;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
@@ -35,9 +35,9 @@ impl CompletionSource for CommentSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_comment(builder.context)
+        completions_from_comment(completion_context.document_context)
     }
 }
 

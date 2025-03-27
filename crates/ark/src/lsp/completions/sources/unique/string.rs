@@ -9,7 +9,7 @@ use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use super::file_path::completions_from_string_file_path;
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
@@ -24,9 +24,9 @@ impl CompletionSource for StringSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_string(builder.context)
+        completions_from_string(completion_context.document_context)
     }
 }
 
@@ -133,8 +133,9 @@ mod tests {
 
             // Check for same result when consulting (potentially all) unique sources
             let state = WorldState::default();
-            let builder =
-                crate::lsp::completions::builder::CompletionBuilder::new(&context, &state);
+            let builder = crate::lsp::completions::completion_context::CompletionContext::new(
+                &context, &state,
+            );
             let unique_sources = UniqueCompletionsSource;
             let res = unique_sources.provide_completions(&builder).unwrap();
 

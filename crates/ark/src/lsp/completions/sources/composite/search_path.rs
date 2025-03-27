@@ -19,7 +19,7 @@ use libr::R_lsInternal;
 use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::builder::CompletionBuilder;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
 use crate::lsp::completions::parameter_hints::ParameterHints;
@@ -38,9 +38,12 @@ impl CompletionSource for SearchPathSource {
 
     fn provide_completions(
         &self,
-        builder: &CompletionBuilder,
+        completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>> {
-        completions_from_search_path(builder.context, builder.parameter_hints())
+        completions_from_search_path(
+            completion_context.document_context,
+            completion_context.parameter_hints(),
+        )
     }
 }
 
