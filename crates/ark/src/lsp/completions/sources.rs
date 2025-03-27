@@ -25,3 +25,39 @@ pub trait CompletionSource {
         completion_context: &CompletionContext,
     ) -> Result<Option<Vec<CompletionItem>>>;
 }
+
+pub fn collect_completions<S>(
+    source: S,
+    completion_context: &CompletionContext,
+) -> Result<Option<Vec<CompletionItem>>>
+where
+    S: CompletionSource,
+{
+    let source_name = source.name();
+    log::debug!("Trying completions from source: {}", source_name);
+
+    if let Some(completions) = source.provide_completions(completion_context)? {
+        log::info!(
+            "Found {} completions from source: {}",
+            completions.len(),
+            source_name
+        );
+        Ok(Some(completions))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn collect_and_append_completions<S>(
+    source: S,
+    completion_context: &CompletionContext,
+    completions: &mut Vec<CompletionItem>,
+) -> Result<()>
+where
+    S: CompletionSource,
+{
+    if let Some(mut additional_completions) = collect_completions(source, completion_context)? {
+        completions.append(&mut additional_completions);
+    }
+    Ok(())
+}

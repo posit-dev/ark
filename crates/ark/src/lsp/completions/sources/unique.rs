@@ -18,6 +18,7 @@ use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::sources::collect_completions;
 use crate::lsp::completions::sources::unique::colon::SingleColonSource;
 use crate::lsp::completions::sources::unique::comment::CommentSource;
 use crate::lsp::completions::sources::unique::custom::CustomSource;
@@ -44,30 +45,40 @@ impl CompletionSource for UniqueCompletionsSource {
     ) -> Result<Option<Vec<CompletionItem>>> {
         log::info!("Getting completions from unique sources");
 
-        let sources: &[&dyn CompletionSource] = &[
-            // Try to detect a single colon first, which is a special case where we
-            // don't provide any completions
-            &SingleColonSource,
-            &CommentSource,   // really about roxygen2 tags
-            &StringSource,    // could be a file path
-            &NamespaceSource, // pkg::xxx or pkg::::xxx
-            &CustomSource,    // custom completions for, eg, options or env vars
-            &DollarSource,    // as in foo$bar
-            &AtSource,        // as in foo@bar
-        ];
+        // Try to detect a single colon first, which is a special case where we
+        // don't provide any completions
+        if let Some(completions) = collect_completions(SingleColonSource, completion_context)? {
+            return Ok(Some(completions));
+        }
 
-        for source in sources {
-            let source_name = source.name();
-            log::debug!("Trying completions from source: {}", source_name);
+        // really about roxygen2 tags
+        if let Some(completions) = collect_completions(CommentSource, completion_context)? {
+            return Ok(Some(completions));
+        }
 
-            if let Some(completions) = source.provide_completions(completion_context)? {
-                log::info!(
-                    "Found {} completions from source: {}",
-                    completions.len(),
-                    source_name
-                );
-                return Ok(Some(completions));
-            }
+        // could be a file path
+        if let Some(completions) = collect_completions(StringSource, completion_context)? {
+            return Ok(Some(completions));
+        }
+
+        // pkg::xxx or pkg:::xxx
+        if let Some(completions) = collect_completions(NamespaceSource, completion_context)? {
+            return Ok(Some(completions));
+        }
+
+        // custom completions for, e.g., options or env vars
+        if let Some(completions) = collect_completions(CustomSource, completion_context)? {
+            return Ok(Some(completions));
+        }
+
+        // as in foo$bar
+        if let Some(completions) = collect_completions(DollarSource, completion_context)? {
+            return Ok(Some(completions));
+        }
+
+        // as in foo@bar
+        if let Some(completions) = collect_completions(AtSource, completion_context)? {
+            return Ok(Some(completions));
         }
 
         log::debug!("No unique source provided completions");

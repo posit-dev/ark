@@ -24,6 +24,7 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::sources::collect_and_append_completions;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -45,56 +46,51 @@ impl CompletionSource for CompositeCompletionsSource {
 
         let mut completions: Vec<CompletionItem> = vec![];
 
-        let always_sources: &[&dyn CompletionSource] = &[
-            &call::CallSource,     // argument completions
-            &pipe::PipeSource,     // pipe completions, e.g. column names
-            &subset::SubsetSource, // subset completions (`[` or `[[`)
-        ];
-        for source in always_sources {
-            let source_name = source.name();
-            log::debug!("Trying completions from source: {}", source_name);
-
-            if let Some(mut additional_completions) =
-                source.provide_completions(completion_context)?
-            {
-                log::debug!(
-                    "Found {} completions from source: {}",
-                    additional_completions.len(),
-                    source_name
-                );
-                completions.append(&mut additional_completions);
-            }
-        }
-
         // Call, pipe, and subset completions should show up no matter what when
-        // the user requests completions (this allows them to Tab their way through
-        // completions effectively without typing anything). For the rest of the
-        // general completions, we require an identifier to begin showing
-        // anything.
+        // the user requests completions. This allows them to "tab" their way
+        // through completions effectively without typing anything.
+
+        // argument completions
+        collect_and_append_completions(call::CallSource, completion_context, &mut completions)?;
+
+        // pipe completions, such as column names of a data frame
+        collect_and_append_completions(pipe::PipeSource, completion_context, &mut completions)?;
+
+        // subset completions (`[` or `[[`)
+        collect_and_append_completions(subset::SubsetSource, completion_context, &mut completions)?;
+
+        // For the rest of the general completions, we require an identifier to
+        // begin showing anything.
         if is_identifier_like(completion_context.document_context.node) {
-            let identifier_only_sources: &[&dyn CompletionSource] = &[
-                &keyword::KeywordSource,
-                &snippets::SnippetSource,
-                &search_path::SearchPathSource,
-                &document::DocumentSource,
-                &workspace::WorkspaceSource,
-            ];
+            collect_and_append_completions(
+                keyword::KeywordSource,
+                completion_context,
+                &mut completions,
+            )?;
 
-            for source in identifier_only_sources {
-                let source_name = source.name();
-                log::debug!("Trying completions from source: {}", source_name);
+            collect_and_append_completions(
+                snippets::SnippetSource,
+                completion_context,
+                &mut completions,
+            )?;
 
-                if let Some(mut additional_completions) =
-                    source.provide_completions(completion_context)?
-                {
-                    log::debug!(
-                        "Found {} completions from source: {}",
-                        additional_completions.len(),
-                        source_name
-                    );
-                    completions.append(&mut additional_completions);
-                }
-            }
+            collect_and_append_completions(
+                search_path::SearchPathSource,
+                completion_context,
+                &mut completions,
+            )?;
+
+            collect_and_append_completions(
+                document::DocumentSource,
+                completion_context,
+                &mut completions,
+            )?;
+
+            collect_and_append_completions(
+                workspace::WorkspaceSource,
+                completion_context,
+                &mut completions,
+            )?;
         }
 
         // Remove duplicates
