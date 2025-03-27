@@ -46,6 +46,7 @@ use uuid::Uuid;
 
 use crate::interface::RMain;
 use crate::interface::SessionMode;
+use crate::modules::ARK_ENVS;
 use crate::r_task;
 
 thread_local! {
@@ -146,6 +147,13 @@ impl DeviceContext {
         }
     }
 
+    /// Create a new id for this new plot page (from Positron's perspective)
+    /// and note that this is a new page
+    fn new_positron_page(&self) {
+        self.is_new_page.replace(true);
+        self.id.replace(Self::new_id());
+    }
+
     /// Should plot events be sent over [CommSocket]s to the frontend?
     ///
     /// This allows plots to be dynamically resized by their `id`. Only possible if the UI
@@ -209,9 +217,7 @@ impl DeviceContext {
     /// [ps_graphics_before_plot_new()] instead.
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_new_page(&self) {
-        // Create a new id for this new plot page and note that this is a new page
-        self.id.replace(Self::new_id());
-        self.is_new_page.replace(true);
+        self.new_positron_page()
     }
 
     fn id(&self) -> PlotId {
@@ -295,12 +301,36 @@ impl DeviceContext {
                     log::error!("{error:?}");
                     // Refcell Safety: Short borrows in the file.
                     self.sockets.borrow_mut().remove(id);
-                    return;
+
+                    // Process remaining messages. Safe to do because we have
+                    // removed the `DeviceContext`'s copy off the sockets but we
+                    // are working through our own copy of them.
+                    continue;
                 },
             };
 
-            log::trace!("Handling RPC for plot `id` {id}");
-            socket.handle_request(message, |req| self.handle_rpc(req, id));
+            match message {
+                CommMsg::Rpc(_, _) => {
+                    log::trace!("Handling `RPC` for plot `id` {id}");
+                    socket.handle_request(message, |req| self.handle_rpc(req, id));
+                },
+
+                // Note that ideally this handler should be invoked before we
+                // check for `should_render`. I.e. we should acknowledge a plot
+                // has been closed on the frontend side even when `dev.hold()`
+                // is active. Doing so would require some more careful
+                // bookkeeping of the state though, and since this is a very
+                // unlikely sequence of action nothing really bad happens with
+                // the current approach, we decided to keep handling here.
+                CommMsg::Close => {
+                    log::trace!("Handling `Close` for plot `id` {id}");
+                    self.close_plot(id)
+                },
+
+                message => {
+                    log::error!("Received unexpected comm message for plot `id` {id}: {message:?}")
+                },
+            }
         }
     }
 
@@ -337,6 +367,28 @@ impl DeviceContext {
                     mime_type: mime_type.to_string(),
                 }))
             },
+        }
+    }
+
+    #[tracing::instrument(level = "trace", skip(self))]
+    fn close_plot(&self, id: &PlotId) {
+        // RefCell safety: Short borrows in the file
+        self.sockets.borrow_mut().remove(id);
+
+        // The plot data is stored at R level. Assumes we're called on the R
+        // thread at idle time so there's no race issues (see
+        // `on_process_idle_events()`).
+        if let Err(err) = RFunction::from("remove_recording")
+            .param("id", id)
+            .call_in(ARK_ENVS.positron_ns)
+        {
+            log::error!("Can't clean up plot (id: {id}): {err:?}");
+        }
+
+        // If the currently active plot is closed, advance to a new Positron page
+        // See https://github.com/posit-dev/positron/issues/6702.
+        if *self.id.borrow() == *id {
+            self.new_positron_page();
         }
     }
 
