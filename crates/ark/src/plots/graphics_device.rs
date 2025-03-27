@@ -314,10 +314,19 @@ impl DeviceContext {
                     log::trace!("Handling `RPC` for plot `id` {id}");
                     socket.handle_request(message, |req| self.handle_rpc(req, id));
                 },
+
+                // Note that ideally this handler should be invoked before we
+                // check for `should_render`. I.e. we should acknowledge a plot
+                // has been closed on the frontend side even when `dev.hold()`
+                // is active. Doing so would require some more careful
+                // bookkeeping of the state though, and since this is a very
+                // unlikely sequence of action nothing really bad happens with
+                // the current approach, we decided to keep handling here.
                 CommMsg::Close => {
                     log::trace!("Handling `Close` for plot `id` {id}");
                     self.close_plot(id)
                 },
+
                 message => {
                     log::error!("Received unexpected comm message for plot `id` {id}: {message:?}")
                 },
