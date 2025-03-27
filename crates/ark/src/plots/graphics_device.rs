@@ -27,6 +27,7 @@ use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
+use anyhow::anyhow;
 use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
@@ -132,9 +133,10 @@ struct DeviceContext {
     wrapped_callbacks: WrappedDeviceCallbacks,
 
     // Current rendering policy
-    current_rendering_policy: RenderPolicy,
+    current_rendering_policy: Cell<RenderPolicy>,
 }
 
+#[derive(Clone, Copy)]
 struct RenderPolicy {
     width: i64,
     height: i64,
@@ -154,12 +156,12 @@ impl DeviceContext {
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
-            current_rendering_policy: RenderPolicy {
+            current_rendering_policy: Cell::new(RenderPolicy {
                 width: 800,
                 height: 640,
                 pixel_ratio: 1.,
                 format: RenderFormat::Png,
-            },
+            }),
         }
     }
 
@@ -365,7 +367,16 @@ impl DeviceContext {
                 log::trace!("PlotBackendRequest::Render");
 
                 let size = unwrap!(plot_meta.size, None => {
-                    bail!("Intrinsically sized plots are not yet supported.");
+                    return Err(anyhow!("Intrinsically sized plots are not yet supported."));
+                });
+
+                // Update the current rendering policy so that pre-rendering is
+                // as accurate as possible
+                self.current_rendering_policy.replace(RenderPolicy {
+                    width: size.width,
+                    height: size.height,
+                    pixel_ratio: plot_meta.pixel_ratio,
+                    format: plot_meta.format,
                 });
 
                 let data = self.render_plot(
@@ -467,13 +478,15 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
+        let policy = self.current_rendering_policy.get();
+
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
         let data = match self.render_plot(
             id,
-            self.current_rendering_policy.width,
-            self.current_rendering_policy.height,
-            self.current_rendering_policy.pixel_ratio,
-            &self.current_rendering_policy.format,
+            policy.width,
+            policy.height,
+            policy.pixel_ratio,
+            &policy.format,
         ) {
             Ok(pre_render) => {
                 let mime_type = Self::get_mime_type(&RenderFormat::Png);
