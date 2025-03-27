@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -27,7 +26,7 @@ impl CompletionSource for SubsetSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_subset(completion_context.document_context)
     }
 }
@@ -38,7 +37,7 @@ impl CompletionSource for SubsetSource {
 /// completions.
 pub(crate) fn completions_from_subset(
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     const ENQUOTE: bool = true;
 
     let mut node = context.node;

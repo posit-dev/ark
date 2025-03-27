@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -41,7 +40,7 @@ impl CompletionSource for NamespaceSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_namespace(
             completion_context.document_context,
             completion_context.parameter_hints(),
@@ -54,7 +53,7 @@ impl CompletionSource for NamespaceSource {
 fn completions_from_namespace(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     // We expect `DocumentContext` to have drilled down into the CST to the anonymous node,
@@ -186,7 +185,7 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
 fn completions_from_namespace_lazydata(
     namespace: SEXP,
     package: &str,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_namespace_lazydata()");
 
     unsafe {

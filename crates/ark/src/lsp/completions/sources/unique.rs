@@ -14,7 +14,6 @@ mod namespace;
 mod string;
 mod subset;
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -42,7 +41,7 @@ impl CompletionSource for UniqueCompletionsSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         log::info!("Getting completions from unique sources");
 
         // Try to detect a single colon first, which is a special case where we

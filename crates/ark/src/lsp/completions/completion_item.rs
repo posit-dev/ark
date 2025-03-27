@@ -8,7 +8,6 @@
 use std::fs::DirEntry;
 
 use anyhow::bail;
-use anyhow::Result;
 use harp::r_symbol;
 use harp::utils::is_symbol_valid;
 use harp::utils::r_env_binding_is_active;
@@ -52,7 +51,7 @@ use crate::treesitter::NodeTypeExt;
 pub(super) fn completion_item(
     label: impl AsRef<str>,
     data: CompletionData,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     Ok(CompletionItem {
         label: label.as_ref().to_string(),
         data: Some(serde_json::to_value(data)?),
@@ -60,7 +59,7 @@ pub(super) fn completion_item(
     })
 }
 
-pub(super) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_file(entry: DirEntry) -> anyhow::Result<CompletionItem> {
     let name = entry.file_name().to_string_lossy().to_string();
     let mut item = completion_item(name, CompletionData::File { path: entry.path() })?;
 
@@ -68,7 +67,7 @@ pub(super) fn completion_item_from_file(entry: DirEntry) -> Result<CompletionIte
     Ok(item)
 }
 
-pub(super) fn completion_item_from_directory(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_directory(entry: DirEntry) -> anyhow::Result<CompletionItem> {
     let mut name = entry.file_name().to_string_lossy().to_string();
     name.push('/');
 
@@ -84,7 +83,7 @@ pub(super) fn completion_item_from_directory(entry: DirEntry) -> Result<Completi
     Ok(item)
 }
 
-pub(super) fn completion_item_from_direntry(entry: DirEntry) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_direntry(entry: DirEntry) -> anyhow::Result<CompletionItem> {
     let is_dir = entry
         .file_type()
         .map(|value| value.is_dir())
@@ -99,7 +98,7 @@ pub(super) fn completion_item_from_direntry(entry: DirEntry) -> Result<Completio
 pub(super) fn completion_item_from_assignment(
     node: &Node,
     context: &DocumentContext,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
@@ -143,7 +142,7 @@ pub(super) fn completion_item_from_assignment(
 pub(super) unsafe fn completion_item_from_package(
     package: &str,
     append_colons: bool,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(package.to_string(), CompletionData::Package {
         name: package.to_string(),
     })?;
@@ -171,7 +170,7 @@ pub(super) fn completion_item_from_function(
     name: &str,
     package: Option<&str>,
     parameter_hints: &ParameterHints,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let label = format!("{}", name);
     let mut item = completion_item(label, CompletionData::Function {
         name: name.to_string(),
@@ -219,7 +218,7 @@ fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
 }
 
 // TODO
-pub(super) unsafe fn completion_item_from_dataset(name: &str) -> Result<CompletionItem> {
+pub(super) unsafe fn completion_item_from_dataset(name: &str) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(name.to_string(), CompletionData::Unknown)?;
     item.kind = Some(CompletionItemKind::STRUCT);
     Ok(item)
@@ -229,7 +228,7 @@ pub(super) unsafe fn completion_item_from_data_variable(
     name: &str,
     owner: &str,
     enquote: bool,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(name.to_string(), CompletionData::DataVariable {
         name: name.to_string(),
         owner: owner.to_string(),
@@ -254,7 +253,7 @@ pub(super) unsafe fn completion_item_from_object(
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
     parameter_hints: &ParameterHints,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
         return completion_item_from_promise(
             name,
@@ -304,7 +303,7 @@ pub(super) unsafe fn completion_item_from_promise(
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
     parameter_hints: &ParameterHints,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     if r_promise_is_forced(object) {
         // Promise has already been evaluated before.
         // Generate completion item from underlying value.
@@ -352,7 +351,7 @@ pub(super) unsafe fn completion_item_from_promise(
     Ok(item)
 }
 
-pub(super) fn completion_item_from_active_binding(name: &str) -> Result<CompletionItem> {
+pub(super) fn completion_item_from_active_binding(name: &str) -> anyhow::Result<CompletionItem> {
     // We never want to force active bindings, so we return a fairly
     // generic completion item
     let mut item = completion_item(name, CompletionData::Object {
@@ -374,7 +373,7 @@ pub(super) unsafe fn completion_item_from_namespace(
     namespace: SEXP,
     package: &str,
     parameter_hints: &ParameterHints,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     // First, look in the namespace itself.
     if let Some(item) = completion_item_from_symbol(
         name,
@@ -410,7 +409,7 @@ pub(super) unsafe fn completion_item_from_lazydata(
     name: &str,
     env: SEXP,
     package: &str,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     // Important to use `Simple` here, as lazydata bindings are calls to `lazyLoadDBfetch()`
     // but we don't want to force them during completion generation because they often take a
     // long time to load.
@@ -435,7 +434,7 @@ pub(super) unsafe fn completion_item_from_symbol(
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
     parameter_hints: &ParameterHints,
-) -> Option<Result<CompletionItem>> {
+) -> Option<anyhow::Result<CompletionItem>> {
     let symbol = r_symbol!(name);
 
     match r_env_binding_is_active(envir, symbol) {
@@ -476,7 +475,7 @@ pub(super) unsafe fn completion_item_from_symbol(
 pub(super) fn completion_item_from_scope_parameter(
     parameter: &str,
     _context: &DocumentContext,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let mut item = completion_item(parameter, CompletionData::ScopeParameter {
         name: parameter.to_string(),
     })?;
@@ -489,7 +488,7 @@ pub(super) fn completion_item_from_parameter(
     parameter: &str,
     callee: &str,
     context: &DocumentContext,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     if parameter == "..." {
         return completion_item_from_dot_dot_dot(callee, context);
     }
@@ -523,7 +522,7 @@ pub(super) fn completion_item_from_parameter(
 fn completion_item_from_dot_dot_dot(
     callee: &str,
     context: &DocumentContext,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     // Special behavior for `...` arguments, where we want to show them
     // in quick suggestions (to show help docs for them), but not actually
     // insert any text for them if the user selects them. Can't use an

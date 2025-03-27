@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -17,7 +16,7 @@ use crate::lsp::state::WorldState;
 pub(crate) fn provide_completions(
     document_context: &DocumentContext,
     state: &WorldState,
-) -> Result<Vec<CompletionItem>> {
+) -> anyhow::Result<Vec<CompletionItem>> {
     log::info!("provide_completions()");
 
     CompletionContext::new(document_context, state).build()

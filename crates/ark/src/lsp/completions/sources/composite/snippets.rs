@@ -8,7 +8,6 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use anyhow::Result;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
 use tower_lsp::lsp_types::CompletionItem;
@@ -51,12 +50,12 @@ impl CompletionSource for SnippetSource {
     fn provide_completions(
         &self,
         _completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_snippets()
     }
 }
 
-pub(crate) fn completions_from_snippets() -> Result<Option<Vec<CompletionItem>>> {
+pub(crate) fn completions_from_snippets() -> anyhow::Result<Option<Vec<CompletionItem>>> {
     // Return clone of cached snippet completion items
     let completions = get_completions_from_snippets().clone();
 

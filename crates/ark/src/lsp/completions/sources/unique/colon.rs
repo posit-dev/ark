@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -23,7 +22,7 @@ impl CompletionSource for SingleColonSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_single_colon(completion_context.document_context)
     }
 }
@@ -31,7 +30,7 @@ impl CompletionSource for SingleColonSource {
 // Don't provide completions if on a single `:`, which typically precedes
 // a `::` or `:::`. It means we don't provide completions for `1:` but we
 // accept that.
-fn completions_from_single_colon(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+fn completions_from_single_colon(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     if is_single_colon(context) {
         // Return an empty vector to signal that we are done
         Ok(Some(vec![]))

@@ -7,7 +7,6 @@
 
 use std::path::Path;
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use regex::Regex;
@@ -36,12 +35,12 @@ impl CompletionSource for CommentSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_comment(completion_context.document_context)
     }
 }
 
-fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+fn completions_from_comment(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     if !node.is_comment() {
@@ -108,7 +107,7 @@ fn completion_item_from_roxygen(
     name: &str,
     template: Option<&str>,
     description: Option<&str>,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let label = name.to_string();
 
     let mut item = completion_item(label.clone(), CompletionData::RoxygenTag {

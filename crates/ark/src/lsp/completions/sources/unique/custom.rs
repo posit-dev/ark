@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -43,14 +42,14 @@ impl CompletionSource for CustomSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_custom_source(completion_context.document_context)
     }
 }
 
 fn completions_from_custom_source(
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut node = context.node;
 
     let mut has_call = false;
@@ -85,7 +84,7 @@ fn completions_from_custom_source(
 
 pub fn completions_from_custom_source_impl(
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let point = context.point;
     let node = context.node;
 

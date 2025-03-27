@@ -8,7 +8,6 @@
 use std::env::current_dir;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use harp::object::RObject;
 use harp::string::r_string_decode;
 use harp::utils::r_normalize_path;
@@ -25,7 +24,7 @@ use crate::lsp::traits::rope::RopeExt;
 pub(super) fn completions_from_string_file_path(
     node: &Node,
     context: &DocumentContext,
-) -> Result<Vec<CompletionItem>> {
+) -> anyhow::Result<Vec<CompletionItem>> {
     log::trace!("completions_from_string_file_path()");
 
     let mut completions: Vec<CompletionItem> = vec![];

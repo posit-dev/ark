@@ -10,7 +10,6 @@ pub(crate) mod composite;
 pub(crate) mod unique;
 mod utils;
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::completion_context::CompletionContext;
@@ -23,13 +22,13 @@ pub trait CompletionSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>>;
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>>;
 }
 
 pub fn collect_completions<S>(
     source: S,
     completion_context: &CompletionContext,
-) -> Result<Option<Vec<CompletionItem>>>
+) -> anyhow::Result<Option<Vec<CompletionItem>>>
 where
     S: CompletionSource,
 {
@@ -52,7 +51,7 @@ pub fn collect_and_append_completions<S>(
     source: S,
     completion_context: &CompletionContext,
     completions: &mut Vec<CompletionItem>,
-) -> Result<()>
+) -> anyhow::Result<()>
 where
     S: CompletionSource,
 {

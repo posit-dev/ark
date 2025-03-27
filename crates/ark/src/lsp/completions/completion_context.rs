@@ -7,7 +7,6 @@
 
 use std::cell::OnceCell;
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp::completions::parameter_hints::ParameterHints;
@@ -46,7 +45,7 @@ impl<'a> CompletionContext<'a> {
         })
     }
 
-    pub fn pipe_root(&self) -> Result<Option<PipeRoot>> {
+    pub fn pipe_root(&self) -> anyhow::Result<Option<PipeRoot>> {
         if let Some(root) = self.pipe_root_cell.get() {
             return Ok(root.clone());
         }
@@ -59,7 +58,7 @@ impl<'a> CompletionContext<'a> {
         Ok(root)
     }
 
-    pub fn build(self) -> Result<Vec<CompletionItem>> {
+    pub fn build(self) -> anyhow::Result<Vec<CompletionItem>> {
         // Try unique sources first
         let unique_sources = UniqueCompletionsSource;
         if let Some(completions) = unique_sources.provide_completions(&self)? {

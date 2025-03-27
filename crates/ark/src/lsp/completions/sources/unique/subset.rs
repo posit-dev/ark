@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use ropey::Rope;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
@@ -32,7 +31,7 @@ use crate::treesitter::NodeTypeExt;
 pub(super) fn completions_from_string_subset(
     node: &Node,
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_string_subset()");
 
     // Already inside a string

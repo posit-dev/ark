@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -37,7 +36,7 @@ impl CompletionSource for DollarSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_dollar(completion_context.document_context)
     }
 }
@@ -52,12 +51,14 @@ impl CompletionSource for AtSource {
     fn provide_completions(
         &self,
         builder: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_at(builder.document_context)
     }
 }
 
-fn completions_from_dollar(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+fn completions_from_dollar(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     completions_from_extractor(
         context,
         NodeType::ExtractOperator(ExtractOperatorType::Dollar),
@@ -65,7 +66,7 @@ fn completions_from_dollar(context: &DocumentContext) -> Result<Option<Vec<Compl
     )
 }
 
-fn completions_from_at(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+fn completions_from_at(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     completions_from_extractor(
         context,
         NodeType::ExtractOperator(ExtractOperatorType::At),
@@ -77,7 +78,7 @@ fn completions_from_extractor(
     context: &DocumentContext,
     node_type: NodeType,
     fun: &str,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     let Some(node) = locate_extractor_node(node, node_type) else {
@@ -132,7 +133,7 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
     }
 }
 
-fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<CompletionItem>> {
+fn completions_from_extractor_object(text: &str, fun: &str) -> anyhow::Result<Vec<CompletionItem>> {
     log::trace!("completions_from_extractor_object({text:?}, {fun:?})");
 
     const ENQUOTE: bool = false;

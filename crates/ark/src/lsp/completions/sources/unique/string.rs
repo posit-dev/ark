@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use super::file_path::completions_from_string_file_path;
@@ -25,12 +24,12 @@ impl CompletionSource for StringSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_string(completion_context.document_context)
     }
 }
 
-fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+fn completions_from_string(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     // Find actual `NodeType::String` node. Needed in case we are in its children.

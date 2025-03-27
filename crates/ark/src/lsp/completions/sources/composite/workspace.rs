@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use log::*;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
@@ -37,7 +36,7 @@ impl CompletionSource for WorkspaceSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_workspace(
             completion_context.document_context,
             completion_context.state,
@@ -50,7 +49,7 @@ fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
     parameter_hints: &ParameterHints,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     if node.is_namespace_operator() {

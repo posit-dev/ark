@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
@@ -33,12 +32,14 @@ impl CompletionSource for DocumentSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_document(completion_context.document_context)
     }
 }
 
-pub fn completions_from_document(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+pub fn completions_from_document(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     // get reference to AST
     let mut node = context.node;
 
@@ -147,7 +148,7 @@ fn completions_from_document_variables(
 fn completions_from_document_function_arguments(
     node: &Node,
     context: &DocumentContext,
-) -> Result<Vec<CompletionItem>> {
+) -> anyhow::Result<Vec<CompletionItem>> {
     let mut completions = vec![];
 
     // get the parameters node
@@ -180,7 +181,7 @@ fn completions_from_document_function_arguments(
 }
 
 fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
-    let result: Result<()> = local! {
+    let result: anyhow::Result<()> = local! {
 
         let lhs = node.child(0).into_result()?;
         lhs.is_identifier_or_string().into_result()?;

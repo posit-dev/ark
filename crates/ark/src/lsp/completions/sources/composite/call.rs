@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::error::Error;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
@@ -37,7 +36,7 @@ impl CompletionSource for CallSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_call(
             completion_context.document_context,
             completion_context.pipe_root()?,
@@ -48,7 +47,7 @@ impl CompletionSource for CallSource {
 fn completions_from_call(
     context: &DocumentContext,
     root: Option<PipeRoot>,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut node = context.node;
     let mut has_call = false;
 
@@ -122,7 +121,7 @@ fn completions_from_call(
     completions_from_arguments(context, &callee, object)
 }
 
-fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<RObject>> {
+fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {
     // Get the first argument, if any (object used for dispatch).
     // TODO: We should have some way of matching calls, so we can
     // take a function signature from R and see how the call matches
@@ -185,7 +184,7 @@ fn completions_from_arguments(
     context: &DocumentContext,
     callable: &str,
     object: RObject,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_arguments({callable:?})");
 
     // Try looking up session function first, as the "current state of the world"
@@ -205,7 +204,7 @@ fn completions_from_session_arguments(
     context: &DocumentContext,
     callable: &str,
     object: RObject,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_session_arguments({callable:?})");
 
     let mut completions = vec![];
@@ -264,7 +263,7 @@ fn completions_from_session_arguments(
 fn completions_from_workspace_arguments(
     context: &DocumentContext,
     callable: &str,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::trace!("completions_from_workspace_arguments({callable:?})");
 
     // Try to find the `callable` in the workspace and use its arguments

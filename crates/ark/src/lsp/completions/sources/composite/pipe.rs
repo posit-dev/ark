@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::error::Error;
 use harp::eval::RParseEvalOptions;
 use harp::object::RObject;
@@ -29,7 +28,7 @@ impl CompletionSource for PipeSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         let root = completion_context.pipe_root()?;
         completions_from_pipe(root)
     }

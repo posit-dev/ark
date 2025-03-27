@@ -16,7 +16,6 @@ mod workspace;
 
 use std::collections::HashSet;
 
-use anyhow::Result;
 pub use pipe::find_pipe_root;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
@@ -41,7 +40,7 @@ impl CompletionSource for CompositeCompletionsSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         log::info!("Getting completions from composite sources");
 
         let mut completions: Vec<CompletionItem> = vec![];

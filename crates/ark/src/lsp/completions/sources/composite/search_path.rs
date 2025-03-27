@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_env_is_pkg_env;
@@ -39,7 +38,7 @@ impl CompletionSource for SearchPathSource {
     fn provide_completions(
         &self,
         completion_context: &CompletionContext,
-    ) -> Result<Option<Vec<CompletionItem>>> {
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_search_path(
             completion_context.document_context,
             completion_context.parameter_hints(),
@@ -50,7 +49,7 @@ impl CompletionSource for SearchPathSource {
 fn completions_from_search_path(
     context: &DocumentContext,
     parameter_hints: &ParameterHints,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut completions = vec![];
 
     const R_CONTROL_FLOW_KEYWORDS: &[&str] = &[
