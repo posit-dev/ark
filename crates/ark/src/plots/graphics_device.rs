@@ -157,8 +157,8 @@ impl DeviceContext {
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
             current_rendering_policy: Cell::new(RenderPolicy {
-                width: 800,
-                height: 640,
+                width: 640,
+                height: 400,
                 pixel_ratio: 1.,
                 format: RenderFormat::Png,
             }),
