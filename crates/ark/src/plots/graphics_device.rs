@@ -130,6 +130,16 @@ struct DeviceContext {
 
     /// The callbacks of the wrapped device, initialized on graphics device creation
     wrapped_callbacks: WrappedDeviceCallbacks,
+
+    // Current rendering policy
+    current_rendering_policy: RenderPolicy,
+}
+
+struct RenderPolicy {
+    width: i64,
+    height: i64,
+    pixel_ratio: f64,
+    format: RenderFormat,
 }
 
 impl DeviceContext {
@@ -144,6 +154,12 @@ impl DeviceContext {
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
+            current_rendering_policy: RenderPolicy {
+                width: 800,
+                height: 640,
+                pixel_ratio: 1.,
+                format: RenderFormat::Png,
+            },
         }
     }
 
@@ -451,7 +467,31 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);
+        // Prepare a pre-rendering of the plot so Positron has something to display immediately
+        let data = match self.render_plot(
+            id,
+            self.current_rendering_policy.width,
+            self.current_rendering_policy.height,
+            self.current_rendering_policy.pixel_ratio,
+            &self.current_rendering_policy.format,
+        ) {
+            Ok(pre_render) => {
+                let mime_type = Self::get_mime_type(&RenderFormat::Png);
+
+                let pre_render = PlotResult {
+                    data: pre_render.to_string(),
+                    mime_type: mime_type.to_string(),
+                };
+
+                serde_json::json!({ "pre_render": pre_render })
+            },
+            Err(err) => {
+                log::warn!("Can't pre-render plot: {err:?}");
+                serde_json::Value::Null
+            },
+        };
+
+        let event = CommManagerEvent::Opened(socket.clone(), data);
         if let Err(error) = self.comm_manager_tx.send(event) {
             log::error!("{error:?}");
         }
