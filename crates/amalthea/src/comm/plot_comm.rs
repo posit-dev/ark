@@ -48,7 +48,7 @@ pub struct PlotSize {
 }
 
 /// Possible values for Format in Render
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum RenderFormat {
 	#[serde(rename = "png")]
 	#[strum(to_string = "png")]
