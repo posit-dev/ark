@@ -15,7 +15,7 @@
         },
         {
             "type": "cargo",
-            "command": "test",
+            "command": "nextest",
             "problemMatcher": [
                 "$rustc",
                 "$rust-panic"
@@ -24,7 +24,10 @@
                 "kind": "test",
                 "isDefault": true
             },
-            "label": "rust: cargo test"
+            "args": [
+                "run"
+            ],
+            "label": "rust: cargo nextest run"
         }
     ]
 }

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       ssh:
-        description: 'Set up an SSH session before running `cargo test`?'
+        description: 'Set up an SSH session before running `cargo nextest run`?'
         type: boolean
         required: true
         default: false
@@ -45,6 +45,11 @@ jobs:
         # Cache isn't useful on nightly, it would be thrown away every day
         if: matrix.config.rust != 'nightly'
 
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Install R
         uses: r-lib/actions/setup-r@v2
         with:
@@ -72,8 +77,10 @@ jobs:
 
       - name: Build
         run: |
-            cargo build
+          cargo build
 
-      - name: Run Unit Tests
+      - name: Run Tests
+        env:
+          NEXTEST_PROFILE: "ci"
         run: |
-            cargo test --verbose -- --nocapture
+          cargo nextest run

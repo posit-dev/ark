@@ -17,7 +17,7 @@ fn main() {
     //
     // We also do this for ark.
     //
-    // We don't generate a main `harp.exe` binary, but `cargo test` does generate a `harp-*.exe`
+    // We don't generate a main `harp.exe` binary, but `cargo nextest run` does generate a `harp-*.exe`
     // binary for unit testing, and those unit tests also start R and test UTF-8 related capabilities!
     // So we need that test executable to include a manifest file too.
     let resource = Path::new("resources")
