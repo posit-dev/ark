@@ -81,7 +81,7 @@ impl CompletionSource for UniqueCompletionsSource {
             return Ok(Some(completions));
         }
 
-        log::debug!("No unique source provided completions");
+        log::trace!("No unique source provided completions");
         Ok(None)
     }
 }

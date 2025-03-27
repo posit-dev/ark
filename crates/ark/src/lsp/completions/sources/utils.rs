@@ -173,7 +173,7 @@ pub(super) fn completions_from_evaluated_object_names(
     enquote: bool,
     node_type: NodeType,
 ) -> Result<Option<Vec<CompletionItem>>> {
-    log::debug!("completions_from_evaluated_object_names({name:?})");
+    log::trace!("completions_from_evaluated_object_names({name:?})");
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
@@ -193,7 +193,7 @@ pub(super) fn completions_from_evaluated_object_names(
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
             Error::TryCatchError { message, .. } => {
-                log::debug!("Can't evaluate object: {message}");
+                log::trace!("Can't evaluate object: {message}");
                 return Ok(None);
             },
             _ => {
@@ -244,7 +244,7 @@ fn completions_from_object_names_impl(
     enquote: bool,
     function: &str,
 ) -> Result<Vec<CompletionItem>> {
-    log::debug!("completions_from_object_names_impl({object:?})");
+    log::trace!("completions_from_object_names_impl({object:?})");
 
     let mut completions = vec![];
 

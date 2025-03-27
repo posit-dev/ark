@@ -69,7 +69,7 @@ fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<Co
 /// Loop should be kept in sync with `completions_from_call()` so they find
 /// the same call to detect the pipe root of
 pub fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
-    log::debug!("find_pipe_root()");
+    log::trace!("find_pipe_root()");
 
     let mut node = context.node;
     let mut has_call = false;
@@ -125,7 +125,7 @@ fn eval_pipe_root(name: &str) -> Option<RObject> {
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return None,
             Error::TryCatchError { message, .. } => {
-                log::debug!("Can't evaluate pipe root: {message}");
+                log::trace!("Can't evaluate pipe root: {message}");
                 return None;
             },
             _ => {
