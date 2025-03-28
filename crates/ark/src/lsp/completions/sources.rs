@@ -47,7 +47,7 @@ where
     }
 }
 
-pub fn collect_and_append_completions<S>(
+pub fn push_completions<S>(
     source: S,
     completion_context: &CompletionContext,
     completions: &mut Vec<CompletionItem>,

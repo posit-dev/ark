@@ -23,7 +23,7 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::sources::collect_and_append_completions;
+use crate::lsp::completions::sources::push_completions;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -40,43 +40,39 @@ pub(crate) fn get_completions(
     // through completions effectively without typing anything.
 
     // argument completions
-    collect_and_append_completions(call::CallSource, completion_context, &mut completions)?;
+    push_completions(call::CallSource, completion_context, &mut completions)?;
 
     // pipe completions, such as column names of a data frame
-    collect_and_append_completions(pipe::PipeSource, completion_context, &mut completions)?;
+    push_completions(pipe::PipeSource, completion_context, &mut completions)?;
 
     // subset completions (`[` or `[[`)
-    collect_and_append_completions(subset::SubsetSource, completion_context, &mut completions)?;
+    push_completions(subset::SubsetSource, completion_context, &mut completions)?;
 
     // For the rest of the general completions, we require an identifier to
     // begin showing anything.
     if is_identifier_like(completion_context.document_context.node) {
         // Consulted settings.json
-        collect_and_append_completions(
-            keyword::KeywordSource,
-            completion_context,
-            &mut completions,
-        )?;
+        push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
-        collect_and_append_completions(
+        push_completions(
             snippets::SnippetSource,
             completion_context,
             &mut completions,
         )?;
 
-        collect_and_append_completions(
+        push_completions(
             search_path::SearchPathSource,
             completion_context,
             &mut completions,
         )?;
 
-        collect_and_append_completions(
+        push_completions(
             document::DocumentSource,
             completion_context,
             &mut completions,
         )?;
 
-        collect_and_append_completions(
+        push_completions(
             workspace::WorkspaceSource,
             completion_context,
             &mut completions,
