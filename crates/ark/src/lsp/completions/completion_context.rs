@@ -40,16 +40,15 @@ impl<'a> CompletionContext<'a> {
         })
     }
 
-    pub fn pipe_root(&self) -> anyhow::Result<Option<PipeRoot>> {
-        if let Some(root) = self.pipe_root_cell.get() {
-            return Ok(root.clone());
-        }
-
-        let root = find_pipe_root(self.document_context)?;
-
-        // Cache it for future calls (ignore failure if race condition, which shouldn't happen)
-        let _ = self.pipe_root_cell.set(root.clone());
-
-        Ok(root)
+    pub fn pipe_root(&self) -> Option<PipeRoot> {
+        self.pipe_root_cell
+            .get_or_init(|| match find_pipe_root(self.document_context) {
+                Ok(root) => root,
+                Err(e) => {
+                    log::error!("Error trying to find pipe root: {}", e);
+                    None
+                },
+            })
+            .clone()
     }
 }

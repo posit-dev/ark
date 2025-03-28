@@ -1,7 +1,7 @@
 //
 // pipe.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -29,8 +29,7 @@ impl CompletionSource for PipeSource {
         &self,
         completion_context: &CompletionContext,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        let root = completion_context.pipe_root()?;
-        completions_from_pipe(root)
+        completions_from_pipe(completion_context.pipe_root())
     }
 }
 

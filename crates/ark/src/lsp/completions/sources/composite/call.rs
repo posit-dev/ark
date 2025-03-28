@@ -39,7 +39,7 @@ impl CompletionSource for CallSource {
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
         completions_from_call(
             completion_context.document_context,
-            completion_context.pipe_root()?,
+            completion_context.pipe_root(),
         )
     }
 }
