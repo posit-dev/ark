@@ -29,7 +29,9 @@ impl CompletionSource for StringSource {
     }
 }
 
-fn completions_from_string(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+fn completions_from_string(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     // Find actual `NodeType::String` node. Needed in case we are in its children.
@@ -72,9 +74,9 @@ mod tests {
     use stdext::assert_match;
 
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::completion_context::CompletionContext;
+    use crate::lsp::completions::sources::unique;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
-    use crate::lsp::completions::sources::unique::UniqueCompletionsSource;
-    use crate::lsp::completions::sources::CompletionSource;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
@@ -132,11 +134,8 @@ mod tests {
 
             // Check for same result when consulting (potentially all) unique sources
             let state = WorldState::default();
-            let builder = crate::lsp::completions::completion_context::CompletionContext::new(
-                &context, &state,
-            );
-            let unique_sources = UniqueCompletionsSource;
-            let res = unique_sources.provide_completions(&builder).unwrap();
+            let completion_context = CompletionContext::new(&context, &state);
+            let res = unique::get_completions(&completion_context).unwrap();
 
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })

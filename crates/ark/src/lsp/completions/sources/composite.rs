@@ -24,114 +24,104 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::collect_and_append_completions;
-use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-/// Aggregator for composite completion sources
-/// Does deduplication and sorting also
-pub struct CompositeCompletionsSource;
+/// Gets completions from all composite sources, with deduplication and sorting
+pub(crate) fn get_completions(
+    completion_context: &CompletionContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    log::info!("Getting completions from composite sources");
 
-impl CompletionSource for CompositeCompletionsSource {
-    fn name(&self) -> &'static str {
-        "composite_sources"
+    let mut completions: Vec<CompletionItem> = vec![];
+
+    // Call, pipe, and subset completions should show up no matter what when
+    // the user requests completions. This allows them to "tab" their way
+    // through completions effectively without typing anything.
+
+    // argument completions
+    collect_and_append_completions(call::CallSource, completion_context, &mut completions)?;
+
+    // pipe completions, such as column names of a data frame
+    collect_and_append_completions(pipe::PipeSource, completion_context, &mut completions)?;
+
+    // subset completions (`[` or `[[`)
+    collect_and_append_completions(subset::SubsetSource, completion_context, &mut completions)?;
+
+    // For the rest of the general completions, we require an identifier to
+    // begin showing anything.
+    if is_identifier_like(completion_context.document_context.node) {
+        // Consulted settings.json
+        collect_and_append_completions(
+            keyword::KeywordSource,
+            completion_context,
+            &mut completions,
+        )?;
+
+        collect_and_append_completions(
+            snippets::SnippetSource,
+            completion_context,
+            &mut completions,
+        )?;
+
+        collect_and_append_completions(
+            search_path::SearchPathSource,
+            completion_context,
+            &mut completions,
+        )?;
+
+        collect_and_append_completions(
+            document::DocumentSource,
+            completion_context,
+            &mut completions,
+        )?;
+
+        collect_and_append_completions(
+            workspace::WorkspaceSource,
+            completion_context,
+            &mut completions,
+        )?;
     }
 
-    fn provide_completions(
-        &self,
-        completion_context: &CompletionContext,
-    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        log::info!("Getting completions from composite sources");
+    // Remove duplicates
+    let mut uniques = HashSet::new();
+    completions.retain(|x| uniques.insert(x.label.clone()));
 
-        let mut completions: Vec<CompletionItem> = vec![];
+    // Sort completions by providing custom 'sort' text to be used when
+    // ordering completion results. we use some placeholders at the front
+    // to 'bin' different completion types differently; e.g. we place parameter
+    // completions at the front, followed by variable completions (like pipe
+    // completions and subset completions), followed by anything else.
+    for item in &mut completions {
+        // Start with existing `sort_text` if one exists
+        let sort_text = item.sort_text.take();
+        let sort_text = match sort_text {
+            Some(sort_text) => sort_text,
+            None => item.label.clone(),
+        };
 
-        // Call, pipe, and subset completions should show up no matter what when
-        // the user requests completions. This allows them to "tab" their way
-        // through completions effectively without typing anything.
-
-        // argument completions
-        collect_and_append_completions(call::CallSource, completion_context, &mut completions)?;
-
-        // pipe completions, such as column names of a data frame
-        collect_and_append_completions(pipe::PipeSource, completion_context, &mut completions)?;
-
-        // subset completions (`[` or `[[`)
-        collect_and_append_completions(subset::SubsetSource, completion_context, &mut completions)?;
-
-        // For the rest of the general completions, we require an identifier to
-        // begin showing anything.
-        if is_identifier_like(completion_context.document_context.node) {
-            collect_and_append_completions(
-                keyword::KeywordSource,
-                completion_context,
-                &mut completions,
-            )?;
-
-            collect_and_append_completions(
-                snippets::SnippetSource,
-                completion_context,
-                &mut completions,
-            )?;
-
-            collect_and_append_completions(
-                search_path::SearchPathSource,
-                completion_context,
-                &mut completions,
-            )?;
-
-            collect_and_append_completions(
-                document::DocumentSource,
-                completion_context,
-                &mut completions,
-            )?;
-
-            collect_and_append_completions(
-                workspace::WorkspaceSource,
-                completion_context,
-                &mut completions,
-            )?;
-        }
-
-        // Remove duplicates
-        let mut uniques = HashSet::new();
-        completions.retain(|x| uniques.insert(x.label.clone()));
-
-        // Sort completions by providing custom 'sort' text to be used when
-        // ordering completion results. we use some placeholders at the front
-        // to 'bin' different completion types differently; e.g. we place parameter
-        // completions at the front, followed by variable completions (like pipe
-        // completions and subset completions), followed by anything else.
-        for item in &mut completions {
-            // Start with existing `sort_text` if one exists
-            let sort_text = item.sort_text.take();
-            let sort_text = match sort_text {
-                Some(sort_text) => sort_text,
-                None => item.label.clone(),
-            };
-
-            case! {
-                // Argument name
-                item.kind == Some(CompletionItemKind::FIELD) => {
-                    item.sort_text = Some(join!["1-", sort_text]);
-                }
-                // Something like pipe completions, or data frame column names
-                item.kind == Some(CompletionItemKind::VARIABLE) => {
-                    item.sort_text = Some(join!["2-", sort_text]);
-                }
-                // Package names generally have higher preference than function
-                // names. Particularly useful for `dev|` to get to `devtools::`,
-                // as that has a lot of base R functions with similar names.
-                item.kind == Some(CompletionItemKind::MODULE) => {
-                    item.sort_text = Some(join!["3-", sort_text]);
-                }
-                => {
-                    item.sort_text = Some(join!["4-", sort_text]);
-                }
+        case! {
+            // Argument name
+            item.kind == Some(CompletionItemKind::FIELD) => {
+                item.sort_text = Some(join!["1-", sort_text]);
+            }
+            // Something like pipe completions, or data frame column names
+            item.kind == Some(CompletionItemKind::VARIABLE) => {
+                item.sort_text = Some(join!["2-", sort_text]);
+            }
+            // Package names generally have higher preference than function
+            // names. Particularly useful for `dev|` to get to `devtools::`,
+            // as that has a lot of base R functions with similar names.
+            item.kind == Some(CompletionItemKind::MODULE) => {
+                item.sort_text = Some(join!["3-", sort_text]);
+            }
+            => {
+                item.sort_text = Some(join!["4-", sort_text]);
             }
         }
-
-        Ok(Some(completions))
     }
+
+    Ok(Some(completions))
 }
 
 fn is_identifier_like(x: Node) -> bool {

@@ -7,15 +7,10 @@
 
 use std::cell::OnceCell;
 
-use tower_lsp::lsp_types::CompletionItem;
-
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::parameter_hints::{self};
 use crate::lsp::completions::sources::composite::find_pipe_root;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
-use crate::lsp::completions::sources::composite::CompositeCompletionsSource;
-use crate::lsp::completions::sources::unique::UniqueCompletionsSource;
-use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 
@@ -56,20 +51,5 @@ impl<'a> CompletionContext<'a> {
         let _ = self.pipe_root_cell.set(root.clone());
 
         Ok(root)
-    }
-
-    pub fn build(self) -> anyhow::Result<Vec<CompletionItem>> {
-        // Try unique sources first
-        let unique_sources = UniqueCompletionsSource;
-        if let Some(completions) = unique_sources.provide_completions(&self)? {
-            return Ok(completions);
-        }
-
-        // At this point we aren't in a "unique" completion case, so just return a
-        // set of reasonable completions from composite sources
-        let composite_sources = CompositeCompletionsSource;
-        Ok(composite_sources
-            .provide_completions(&self)?
-            .unwrap_or_default())
     }
 }
