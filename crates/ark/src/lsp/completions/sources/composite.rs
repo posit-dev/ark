@@ -16,7 +16,6 @@ mod workspace;
 
 use std::collections::HashSet;
 
-pub use pipe::find_pipe_root;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;

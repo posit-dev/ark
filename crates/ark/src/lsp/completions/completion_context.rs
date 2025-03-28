@@ -9,7 +9,7 @@ use std::cell::OnceCell;
 
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::parameter_hints::{self};
-use crate::lsp::completions::sources::composite::find_pipe_root;
+use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
