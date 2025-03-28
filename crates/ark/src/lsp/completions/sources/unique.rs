@@ -1,7 +1,7 @@
 //
 // unique.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -14,62 +14,60 @@ mod namespace;
 mod string;
 mod subset;
 
-use anyhow::Result;
-use colon::completions_from_single_colon;
-use comment::completions_from_comment;
-use custom::completions_from_custom_source;
-use extractor::completions_from_at;
-use extractor::completions_from_dollar;
-use namespace::completions_from_namespace;
-use string::completions_from_string;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::lsp::completions::parameter_hints::ParameterHints;
-use crate::lsp::document_context::DocumentContext;
+use crate::lsp::completions::completion_context::CompletionContext;
+use crate::lsp::completions::sources::collect_completions;
+use crate::lsp::completions::sources::unique::colon::SingleColonSource;
+use crate::lsp::completions::sources::unique::comment::CommentSource;
+use crate::lsp::completions::sources::unique::custom::CustomSource;
+use crate::lsp::completions::sources::unique::extractor::AtSource;
+use crate::lsp::completions::sources::unique::extractor::DollarSource;
+use crate::lsp::completions::sources::unique::namespace::NamespaceSource;
+use crate::lsp::completions::sources::unique::string::StringSource;
 
-pub fn completions_from_unique_sources(
-    context: &DocumentContext,
-    parameter_hints: ParameterHints,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_unique_sources()");
+/// Each unique source is tried in order until one returns completions
+pub(crate) fn get_completions(
+    completion_context: &CompletionContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    log::info!("Getting completions from unique sources");
 
     // Try to detect a single colon first, which is a special case where we
     // don't provide any completions
-    if let Some(completions) = completions_from_single_colon(context) {
+    if let Some(completions) = collect_completions(SingleColonSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // Try comment / roxygen2 completions
-    if let Some(completions) = completions_from_comment(context)? {
+    // really about roxygen2 tags
+    if let Some(completions) = collect_completions(CommentSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // Try string (like file path) completions
-    if let Some(completions) = completions_from_string(context)? {
+    // could be a file path
+    if let Some(completions) = collect_completions(StringSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // Try `package::prefix` (or `:::`) namespace completions
-    if let Some(completions) = completions_from_namespace(context, parameter_hints)? {
+    // pkg::xxx or pkg:::xxx
+    if let Some(completions) = collect_completions(NamespaceSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // Try specialized custom completions
-    // (Should be before more general ast / call completions)
-    if let Some(completions) = completions_from_custom_source(context)? {
+    // custom completions for, e.g., options or env vars
+    if let Some(completions) = collect_completions(CustomSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // Try `$` completions
-    if let Some(completions) = completions_from_dollar(context)? {
+    // as in foo$bar
+    if let Some(completions) = collect_completions(DollarSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // Try `@` completions
-    if let Some(completions) = completions_from_at(context)? {
+    // as in foo@bar
+    if let Some(completions) = collect_completions(AtSource, completion_context)? {
         return Ok(Some(completions));
     }
 
-    // No unique sources of completions, allow composite sources to run
+    log::info!("No unique source provided completions");
     Ok(None)
 }

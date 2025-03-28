@@ -1,14 +1,13 @@
 //
 // file_path.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::env::current_dir;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use harp::object::RObject;
 use harp::string::r_string_decode;
 use harp::utils::r_normalize_path;
@@ -25,8 +24,8 @@ use crate::lsp::traits::rope::RopeExt;
 pub(super) fn completions_from_string_file_path(
     node: &Node,
     context: &DocumentContext,
-) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_string_file_path()");
+) -> anyhow::Result<Vec<CompletionItem>> {
+    log::trace!("completions_from_string_file_path()");
 
     let mut completions: Vec<CompletionItem> = vec![];
 
@@ -37,14 +36,14 @@ pub(super) fn completions_from_string_file_path(
     // before searching the path entries.
     let token = context.document.contents.node_slice(&node)?.to_string();
     let contents = unsafe { r_string_decode(token.as_str()).into_result()? };
-    log::info!("String value (decoded): {}", contents);
+    log::trace!("String value (decoded): {}", contents);
 
     // Use R to normalize the path.
     let path = r_normalize_path(RObject::from(contents))?;
 
     // parse the file path and get the directory component
     let mut path = PathBuf::from(path.as_str());
-    log::info!("Normalized path: {}", path.display());
+    log::trace!("Normalized path: {}", path.display());
 
     // if this path doesn't have a root, add it on
     if !path.has_root() {
@@ -60,7 +59,7 @@ pub(super) fn completions_from_string_file_path(
     }
 
     // look for files in this directory
-    log::info!("Reading directory: {}", path.display());
+    log::trace!("Reading directory: {}", path.display());
     let entries = std::fs::read_dir(path)?;
 
     for entry in entries.into_iter() {

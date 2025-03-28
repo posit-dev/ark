@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use harp::error::Error;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
@@ -172,8 +171,8 @@ pub(super) fn completions_from_evaluated_object_names(
     name: &str,
     enquote: bool,
     node_type: NodeType,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_evaluated_object_names({name:?})");
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    log::trace!("completions_from_evaluated_object_names({name:?})");
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
@@ -193,7 +192,7 @@ pub(super) fn completions_from_evaluated_object_names(
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
             Error::TryCatchError { message, .. } => {
-                log::info!("Can't evaluate object: {message}");
+                log::trace!("Can't evaluate object: {message}");
                 return Ok(None);
             },
             _ => {
@@ -226,7 +225,7 @@ pub(super) fn completions_from_object_names(
     object: RObject,
     name: &str,
     enquote: bool,
-) -> Result<Vec<CompletionItem>> {
+) -> anyhow::Result<Vec<CompletionItem>> {
     completions_from_object_names_impl(object, name, enquote, "names")
 }
 
@@ -234,7 +233,7 @@ pub(super) fn completions_from_object_colnames(
     object: RObject,
     name: &str,
     enquote: bool,
-) -> Result<Vec<CompletionItem>> {
+) -> anyhow::Result<Vec<CompletionItem>> {
     completions_from_object_names_impl(object, name, enquote, "colnames")
 }
 
@@ -243,8 +242,8 @@ fn completions_from_object_names_impl(
     name: &str,
     enquote: bool,
     function: &str,
-) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_object_names_impl({object:?})");
+) -> anyhow::Result<Vec<CompletionItem>> {
+    log::trace!("completions_from_object_names_impl({object:?})");
 
     let mut completions = vec![];
 

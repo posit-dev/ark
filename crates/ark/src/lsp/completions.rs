@@ -5,6 +5,7 @@
 //
 //
 
+mod completion_context;
 mod completion_item;
 mod parameter_hints;
 mod provide;

@@ -1,13 +1,12 @@
 //
 // comment.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::path::Path;
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use regex::Regex;
@@ -18,15 +17,30 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 use yaml_rust::YamlLoader;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub fn completions_from_comment(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_comment()");
+pub(super) struct CommentSource;
 
+impl CompletionSource for CommentSource {
+    fn name(&self) -> &'static str {
+        "comment"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_comment(completion_context.document_context)
+    }
+}
+
+fn completions_from_comment(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     if !node.is_comment() {
@@ -93,7 +107,7 @@ fn completion_item_from_roxygen(
     name: &str,
     template: Option<&str>,
     description: Option<&str>,
-) -> Result<CompletionItem> {
+) -> anyhow::Result<CompletionItem> {
     let label = name.to_string();
 
     let mut item = completion_item(label.clone(), CompletionData::RoxygenTag {

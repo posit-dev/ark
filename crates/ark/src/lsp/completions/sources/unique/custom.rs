@@ -1,11 +1,10 @@
 //
 // custom.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -19,23 +18,38 @@ use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::completion_item::completion_item_from_dataset;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub fn completions_from_custom_source(
-    context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_custom_source()");
+pub(super) struct CustomSource;
 
+impl CompletionSource for CustomSource {
+    fn name(&self) -> &'static str {
+        "custom"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_custom_source(completion_context.document_context)
+    }
+}
+
+fn completions_from_custom_source(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut node = context.node;
 
     let mut has_call = false;
@@ -70,7 +84,7 @@ pub fn completions_from_custom_source(
 
 pub fn completions_from_custom_source_impl(
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let point = context.point;
     let node = context.node;
 

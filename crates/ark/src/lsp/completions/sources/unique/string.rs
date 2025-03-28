@@ -1,21 +1,37 @@
 //
 // string.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
 use super::file_path::completions_from_string_file_path;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::treesitter::node_find_string;
 
-pub fn completions_from_string(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_string()");
+pub(super) struct StringSource;
 
+impl CompletionSource for StringSource {
+    fn name(&self) -> &'static str {
+        "string"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_string(completion_context.document_context)
+    }
+}
+
+fn completions_from_string(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     // Find actual `NodeType::String` node. Needed in case we are in its children.
@@ -58,11 +74,12 @@ mod tests {
     use stdext::assert_match;
 
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::completions::parameter_hints::ParameterHints;
-    use crate::lsp::completions::sources::completions_from_unique_sources;
+    use crate::lsp::completions::completion_context::CompletionContext;
+    use crate::lsp::completions::sources::unique;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::r_task;
     use crate::treesitter::node_find_string;
     use crate::treesitter::NodeTypeExt;
@@ -115,8 +132,11 @@ mod tests {
             let res = completions_from_string(&context).unwrap();
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
 
-            // Check one level up too
-            let res = completions_from_unique_sources(&context, ParameterHints::Enabled).unwrap();
+            // Check for same result when consulting (potentially all) unique sources
+            let state = WorldState::default();
+            let completion_context = CompletionContext::new(&context, &state);
+            let res = unique::get_completions(&completion_context).unwrap();
+
             assert_match!(res, Some(items) => { assert!(items.len() == 0) });
         })
     }

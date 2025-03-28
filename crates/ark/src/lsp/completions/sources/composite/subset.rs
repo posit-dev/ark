@@ -1,29 +1,43 @@
 //
 // subset.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+pub(super) struct SubsetSource;
+
+impl CompletionSource for SubsetSource {
+    fn name(&self) -> &'static str {
+        "subset"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_subset(completion_context.document_context)
+    }
+}
+
 /// Checks for `[` and `[[` completions
 ///
 /// `$` and `@` are handled elsewhere as they can't be composed with other
 /// completions.
-pub(super) fn completions_from_subset(
+pub(crate) fn completions_from_subset(
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_subset()");
-
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     const ENQUOTE: bool = true;
 
     let mut node = context.node;

@@ -1,18 +1,19 @@
 //
 // document.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_assignment;
 use crate::lsp::completions::completion_item::completion_item_from_scope_parameter;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::point::PointExt;
@@ -21,9 +22,24 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) fn completions_from_document(
+pub(super) struct DocumentSource;
+
+impl CompletionSource for DocumentSource {
+    fn name(&self) -> &'static str {
+        "document"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_document(completion_context.document_context)
+    }
+}
+
+pub fn completions_from_document(
     context: &DocumentContext,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     // get reference to AST
     let mut node = context.node;
 
@@ -132,7 +148,7 @@ fn completions_from_document_variables(
 fn completions_from_document_function_arguments(
     node: &Node,
     context: &DocumentContext,
-) -> Result<Vec<CompletionItem>> {
+) -> anyhow::Result<Vec<CompletionItem>> {
     let mut completions = vec![];
 
     // get the parameters node
@@ -165,7 +181,7 @@ fn completions_from_document_function_arguments(
 }
 
 fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
-    let result: Result<()> = local! {
+    let result: anyhow::Result<()> = local! {
 
         let lhs = node.child(0).into_result()?;
         lhs.is_identifier_or_string().into_result()?;

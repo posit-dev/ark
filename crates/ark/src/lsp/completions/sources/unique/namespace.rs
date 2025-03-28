@@ -1,11 +1,10 @@
 //
 // namespace.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -19,24 +18,42 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NamespaceOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+pub(super) struct NamespaceSource;
+
+impl CompletionSource for NamespaceSource {
+    fn name(&self) -> &'static str {
+        "namespace"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_namespace(
+            completion_context.document_context,
+            completion_context.parameter_hints(),
+        )
+    }
+}
+
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
-pub fn completions_from_namespace(
+fn completions_from_namespace(
     context: &DocumentContext,
-    parameter_hints: ParameterHints,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_namespace()");
-
+    parameter_hints: &ParameterHints,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     // We expect `DocumentContext` to have drilled down into the CST to the anonymous node,
@@ -168,7 +185,7 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
 fn completions_from_namespace_lazydata(
     namespace: SEXP,
     package: &str,
-) -> Result<Option<Vec<CompletionItem>>> {
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::info!("completions_from_namespace_lazydata()");
 
     unsafe {
@@ -238,7 +255,7 @@ mod tests {
             let point = Point { row: 0, column: 7 };
             let document = Document::new("utils::", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
 
@@ -255,7 +272,7 @@ mod tests {
             let point = Point { row: 0, column: 8 };
             let document = Document::new("utils:::", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             let completion = completions
@@ -268,7 +285,7 @@ mod tests {
             let point = Point { row: 0, column: 11 };
             let document = Document::new("utils::blah", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             let completion = completions.iter().find(|item| item.label == "adist");
@@ -283,7 +300,7 @@ mod tests {
             let document = Document::new("base::+", None);
             let context = DocumentContext::new(&document, point, None);
             let completions =
-                completions_from_namespace(&context, ParameterHints::Enabled).unwrap();
+                completions_from_namespace(&context, &ParameterHints::Enabled).unwrap();
             assert!(completions.is_none());
         })
     }
@@ -294,7 +311,7 @@ mod tests {
             let point = Point { row: 0, column: 2 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -307,7 +324,7 @@ mod tests {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -315,7 +332,7 @@ mod tests {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base:::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());
@@ -323,7 +340,7 @@ mod tests {
             let point = Point { row: 0, column: 6 };
             let document = Document::new("base:::ab", None);
             let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, ParameterHints::Enabled)
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
                 .unwrap();
             assert!(completions.is_empty());

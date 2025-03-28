@@ -1,11 +1,10 @@
 //
 // call.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use harp::error::Error;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
@@ -16,21 +15,39 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
 use super::pipe::PipeRoot;
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::sources::utils::call_node_position_type;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) fn completions_from_call(
+pub(super) struct CallSource;
+
+impl CompletionSource for CallSource {
+    fn name(&self) -> &'static str {
+        "call"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_call(
+            completion_context.document_context,
+            completion_context.pipe_root(),
+        )
+    }
+}
+
+fn completions_from_call(
     context: &DocumentContext,
     root: Option<PipeRoot>,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_call()");
-
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut node = context.node;
     let mut has_call = false;
 
@@ -104,7 +121,7 @@ pub(super) fn completions_from_call(
     completions_from_arguments(context, &callee, object)
 }
 
-fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<RObject>> {
+fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {
     // Get the first argument, if any (object used for dispatch).
     // TODO: We should have some way of matching calls, so we can
     // take a function signature from R and see how the call matches
@@ -150,7 +167,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> Result<Option<R
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
             Error::TryCatchError { message, .. } => {
-                log::info!("Can't evaluate first argument: {message}");
+                log::trace!("Can't evaluate first argument: {message}");
                 return Ok(None);
             },
             _ => {
@@ -167,8 +184,8 @@ fn completions_from_arguments(
     context: &DocumentContext,
     callable: &str,
     object: RObject,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_arguments({callable:?})");
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    log::trace!("completions_from_arguments({callable:?})");
 
     // Try looking up session function first, as the "current state of the world"
     // will provide the most accurate completions
@@ -187,8 +204,8 @@ fn completions_from_session_arguments(
     context: &DocumentContext,
     callable: &str,
     object: RObject,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_session_arguments({callable:?})");
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    log::trace!("completions_from_session_arguments({callable:?})");
 
     let mut completions = vec![];
 
@@ -246,8 +263,8 @@ fn completions_from_session_arguments(
 fn completions_from_workspace_arguments(
     context: &DocumentContext,
     callable: &str,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_workspace_arguments({callable:?})");
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    log::trace!("completions_from_workspace_arguments({callable:?})");
 
     // Try to find the `callable` in the workspace and use its arguments
     // if we can

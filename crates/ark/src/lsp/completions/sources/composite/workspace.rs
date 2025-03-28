@@ -5,7 +5,6 @@
 //
 //
 
-use anyhow::Result;
 use log::*;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
@@ -13,10 +12,12 @@ use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::completion_item_from_variable;
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::state::WorldState;
@@ -25,13 +26,30 @@ use crate::lsp::traits::string::StringExt;
 use crate::treesitter::node_in_string;
 use crate::treesitter::NodeTypeExt;
 
-pub(super) fn completions_from_workspace(
+pub(super) struct WorkspaceSource;
+
+impl CompletionSource for WorkspaceSource {
+    fn name(&self) -> &'static str {
+        "workspace"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_workspace(
+            completion_context.document_context,
+            completion_context.state,
+            completion_context.parameter_hints(),
+        )
+    }
+}
+
+fn completions_from_workspace(
     context: &DocumentContext,
     state: &WorldState,
-    parameter_hints: ParameterHints,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_workspace()");
-
+    parameter_hints: &ParameterHints,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     if node.is_namespace_operator() {

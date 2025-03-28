@@ -1,11 +1,10 @@
 //
 // extractor.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use harp::eval::RParseEvalOptions;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -17,15 +16,49 @@ use libr::STRSXP;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::ExtractOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub fn completions_from_dollar(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+pub(super) struct DollarSource;
+
+impl CompletionSource for DollarSource {
+    fn name(&self) -> &'static str {
+        "dollar"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_dollar(completion_context.document_context)
+    }
+}
+
+pub(super) struct AtSource;
+
+impl CompletionSource for AtSource {
+    fn name(&self) -> &'static str {
+        "at"
+    }
+
+    fn provide_completions(
+        &self,
+        builder: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_at(builder.document_context)
+    }
+}
+
+fn completions_from_dollar(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     completions_from_extractor(
         context,
         NodeType::ExtractOperator(ExtractOperatorType::Dollar),
@@ -33,7 +66,7 @@ pub fn completions_from_dollar(context: &DocumentContext) -> Result<Option<Vec<C
     )
 }
 
-pub fn completions_from_at(context: &DocumentContext) -> Result<Option<Vec<CompletionItem>>> {
+fn completions_from_at(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     completions_from_extractor(
         context,
         NodeType::ExtractOperator(ExtractOperatorType::At),
@@ -45,9 +78,7 @@ fn completions_from_extractor(
     context: &DocumentContext,
     node_type: NodeType,
     fun: &str,
-) -> Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_extractor()");
-
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     let Some(node) = locate_extractor_node(node, node_type) else {
@@ -102,8 +133,8 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
     }
 }
 
-fn completions_from_extractor_object(text: &str, fun: &str) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_extractor_object({text:?}, {fun:?})");
+fn completions_from_extractor_object(text: &str, fun: &str) -> anyhow::Result<Vec<CompletionItem>> {
+    log::trace!("completions_from_extractor_object({text:?}, {fun:?})");
 
     const ENQUOTE: bool = false;
 

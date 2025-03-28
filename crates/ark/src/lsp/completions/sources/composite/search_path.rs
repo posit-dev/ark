@@ -1,11 +1,10 @@
 //
 // search_path.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
-use anyhow::Result;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_env_is_pkg_env;
@@ -19,20 +18,38 @@ use libr::R_lsInternal;
 use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
 use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
 
-pub(super) fn completions_from_search_path(
-    context: &DocumentContext,
-    parameter_hints: ParameterHints,
-) -> Result<Vec<CompletionItem>> {
-    log::info!("completions_from_search_path()");
+pub(super) struct SearchPathSource;
 
+impl CompletionSource for SearchPathSource {
+    fn name(&self) -> &'static str {
+        "search_path"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_search_path(
+            completion_context.document_context,
+            completion_context.parameter_hints(),
+        )
+    }
+}
+
+fn completions_from_search_path(
+    context: &DocumentContext,
+    parameter_hints: &ParameterHints,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut completions = vec![];
 
     const R_CONTROL_FLOW_KEYWORDS: &[&str] = &[
@@ -124,5 +141,5 @@ pub(super) fn completions_from_search_path(
     // bottom of the sort list (like those starting with `.`, or `%>%`)
     set_sort_text_by_words_first(&mut completions);
 
-    Ok(completions)
+    Ok(Some(completions))
 }

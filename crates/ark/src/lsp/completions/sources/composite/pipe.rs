@@ -1,7 +1,7 @@
 //
 // pipe.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -11,13 +11,30 @@ use harp::object::RObject;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
+pub(super) struct PipeSource;
+
+impl CompletionSource for PipeSource {
+    fn name(&self) -> &'static str {
+        "pipe"
+    }
+
+    fn provide_completions(
+        &self,
+        completion_context: &CompletionContext,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        completions_from_pipe(completion_context.pipe_root())
+    }
+}
+
 #[derive(Clone)]
-pub(super) struct PipeRoot {
+pub struct PipeRoot {
     pub(super) name: String,
 
     /// If `None`, we found a pipe root and tried to evaluate it, but the
@@ -25,9 +42,7 @@ pub(super) struct PipeRoot {
     pub(super) object: Option<RObject>,
 }
 
-pub(super) fn completions_from_pipe(
-    root: Option<PipeRoot>,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let Some(root) = root else {
         // No pipe
         return Ok(None);
@@ -51,8 +66,8 @@ pub(super) fn completions_from_pipe(
 
 /// Loop should be kept in sync with `completions_from_call()` so they find
 /// the same call to detect the pipe root of
-pub(super) fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
-    log::info!("find_pipe_root()");
+pub fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
+    log::trace!("find_pipe_root()");
 
     let mut node = context.node;
     let mut has_call = false;
@@ -108,7 +123,7 @@ fn eval_pipe_root(name: &str) -> Option<RObject> {
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return None,
             Error::TryCatchError { message, .. } => {
-                log::info!("Can't evaluate pipe root: {message}");
+                log::trace!("Can't evaluate pipe root: {message}");
                 return None;
             },
             _ => {
