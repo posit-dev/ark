@@ -24,7 +24,7 @@ ark_methods_table$ark_positron_variable_get_children <- new.env(
 )
 lockEnvironment(ark_methods_table, TRUE)
 
-ark_methods_allowed_packages <- c("torch", "reticulate")
+ark_methods_allowed_packages <- c("torch", "reticulate", "duckplyr")
 
 # check if the calling package is allowed to touch the methods table
 check_caller_allowed <- function() {
@@ -77,7 +77,9 @@ check_register_args <- function(generic, class) {
     check_register_args(generic, class)
 
     for (cls in class) {
-        if (exists(cls, envir = ark_methods_table[[generic]], inherits = FALSE)) {
+        if (
+            exists(cls, envir = ark_methods_table[[generic]], inherits = FALSE)
+        ) {
             remove(list = cls, envir = ark_methods_table[[generic]])
         }
     }
