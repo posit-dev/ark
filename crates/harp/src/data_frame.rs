@@ -28,9 +28,10 @@ impl DataFrame {
         harp::assert_class(sexp, "data.frame")?;
 
         // This materializes ALTREP compact row names (duckplyr) and we are okay with
-        // that even without providing a hook to opt out
-        let nrow = df_n_row(list.obj.sexp)? as usize;
-        let ncol = df_n_col(list.obj.sexp)? as usize;
+        // that. If you just need the number of columns without full validation, use
+        // the static method [DataFrame::n_col()].
+        let nrow = Self::n_row(list.obj.sexp)? as usize;
+        let ncol = Self::n_col(list.obj.sexp)? as usize;
 
         let Some(names) = list.obj.names() else {
             return Err(harp::anyhow!("Data frame must have names"));
@@ -76,49 +77,62 @@ impl DataFrame {
             .get(idx as isize)?
             .ok_or_else(|| harp::unreachable!("missing column"))
     }
-}
 
-/// Compute the number of columns in a data frame
-pub fn df_n_col(x: SEXP) -> crate::Result<i32> {
-    if !r_is_data_frame(x) {
-        return Err(crate::anyhow!("`x` must be a data frame"));
+    /// Compute the number of columns of a data frame
+    ///
+    /// # Notes
+    ///
+    /// In general, prefer [DataFrame::new()] followed by accessing the `ncol` field,
+    /// as that validates the data frame on the way in. Use this static method if you
+    /// need maximal performance, or if you only need the number of columns, and computing
+    /// the number of rows would materialize ALTREP objects unnecessarily.
+    pub fn n_col(x: libr::SEXP) -> crate::Result<i32> {
+        if !r_is_data_frame(x) {
+            return Err(crate::anyhow!("`x` must be a data frame"));
+        }
+
+        match i32::try_from(r_length(x)) {
+            Ok(n_col) => Ok(n_col),
+            Err(_) => Err(crate::anyhow!(
+                "Number of columns of `x` must fit in a `i32`."
+            )),
+        }
     }
 
-    match i32::try_from(r_length(x)) {
-        Ok(n_col) => Ok(n_col),
-        Err(_) => Err(crate::anyhow!(
-            "Number of columns of `x` must fit in a `i32`."
-        )),
-    }
-}
+    /// Compute the number of rows of a data frame
+    ///
+    /// # Notes
+    ///
+    /// In general, prefer [DataFrame::new()] followed by accessing the `nrow` field,
+    /// as that validates the data frame on the way in. Use this static method if you
+    /// need maximal performance.
+    pub fn n_row(x: SEXP) -> crate::Result<i32> {
+        if !r_is_data_frame(x) {
+            return Err(crate::anyhow!("`x` must be a data frame"));
+        }
 
-/// Compute the number of rows in a data frame
-pub fn df_n_row(x: SEXP) -> crate::Result<i32> {
-    if !r_is_data_frame(x) {
-        return Err(crate::anyhow!("`x` must be a data frame"));
-    }
+        // Note that this turns compact row names of the form `c(NA, -5)` into ALTREP compact
+        // intrange objects. This is fine for our purposes because the row names are never
+        // fully expanded as we determine their length.
+        //
+        // There is a special case with duckplyr where the row names object can be an ALTREP
+        // integer vector that looks like an instance of compact row names like `c(NA, -5)`.
+        // Touching this with `INTEGER()` or `INTEGER_ELT()` to determine the number of rows
+        // will materialize the whole query (and run arbitrary R code). We've determined the
+        // only maintainable strategy for classes like this is to provide higher level ark
+        // hooks where packages like duckplyr can intercede before we even get here, providing
+        // their own custom methods (like for the variables pane). That keeps our hot path
+        // simpler, as we unconditionally materialize ALTREP vectors, while still providing a
+        // way to opt out.
+        let row_names = RObject::new(harp::r_row_names(x));
 
-    // Note that this turns compact row names of the form `c(NA, -5)` into ALTREP compact
-    // intrange objects. This is fine for our purposes because the row names are never
-    // fully expanded as we determine their length.
-    //
-    // There is a special case with duckplyr where the row names object can be an ALTREP
-    // integer vector that looks like an instance of compact row names like `c(NA, -5)`.
-    // Touching this with `INTEGER()` or `INTEGER_ELT()` to determine the number of rows
-    // will materialize the whole query (and run arbitrary R code). We've determined the
-    // only maintainable strategy for classes like this is to provide higher level ark
-    // hooks where packages like duckplyr can intercede before we even get here, providing
-    // their own custom methods (like for the variables pane). That keeps our hot path
-    // simpler, as we unconditionally materialize ALTREP vectors, while still providing a
-    // way to opt out.
-    let row_names = RObject::new(harp::r_row_names(x));
-
-    // The row names object is typically an integer vector (possibly ALTREP compact
-    // intrange that knows its length) or character vector, and we just take the length of
-    // that to get the number of rows
-    match i32::try_from(r_length(row_names.sexp)) {
-        Ok(n_row) => Ok(n_row),
-        Err(_) => Err(crate::anyhow!("Number of rows of `x` must fit in a `i32`.")),
+        // The row names object is typically an integer vector (possibly ALTREP compact
+        // intrange that knows its length) or character vector, and we just take the length of
+        // that to get the number of rows
+        match i32::try_from(r_length(row_names.sexp)) {
+            Ok(n_row) => Ok(n_row),
+            Err(_) => Err(crate::anyhow!("Number of rows of `x` must fit in a `i32`.")),
+        }
     }
 }
 

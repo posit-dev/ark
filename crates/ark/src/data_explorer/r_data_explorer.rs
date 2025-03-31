@@ -568,12 +568,12 @@ impl RDataExplorer {
                 return Err(anyhow!("Unsupported type for the data viewer"));
             };
 
-            // `df_n_row()` will materialize duckplyr compact row names, but we are ok
-            // with that for the data explorer and don't provide a hook to opt out.
+            // `DataFrame::n_row()` will materialize duckplyr compact row names, but we
+            // are ok with that for the data explorer and don't provide a hook to opt out.
             let (n_row, n_col, column_names) = match kind {
                 TableKind::Dataframe => (
-                    harp::df_n_row(table.sexp)?,
-                    harp::df_n_col(table.sexp)?,
+                    harp::DataFrame::n_row(table.sexp)?,
+                    harp::DataFrame::n_col(table.sexp)?,
                     ColumnNames::from_data_frame(table.sexp)?,
                 ),
                 TableKind::Matrix => {

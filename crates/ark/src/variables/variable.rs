@@ -159,8 +159,8 @@ impl WorkspaceVariableDisplayValue {
     fn from_data_frame(value: SEXP) -> anyhow::Result<Self> {
         // Classes should provide an `ark_positron_variable_display_value()` method
         // if they need to opt out of ALTREP materialization here.
-        let n_row = harp::df_n_row(value)?;
-        let n_col = harp::df_n_col(value)?;
+        let n_row = harp::DataFrame::n_row(value)?;
+        let n_col = harp::DataFrame::n_col(value)?;
 
         let row_word = plural("row", n_row);
         let col_word = plural("column", n_col);
@@ -487,14 +487,14 @@ impl WorkspaceVariableDisplayType {
                         true => {
                             // Classes should provide an `ark_positron_variable_display_type()` method
                             // if they need to opt out of ALTREP materialization here.
-                            let n_row: String = match harp::df_n_row(value) {
+                            let n_row: String = match harp::DataFrame::n_row(value) {
                                 Ok(n_row) => n_row.to_string(),
                                 Err(error) => {
                                     log::error!("Can't compute number of rows: {error}");
                                     String::from("?")
                                 },
                             };
-                            let n_col = match harp::df_n_col(value) {
+                            let n_col = match harp::DataFrame::n_col(value) {
                                 Ok(n_col) => n_col.to_string(),
                                 Err(error) => {
                                     log::error!("Can't compute number of columns: {error}");
@@ -735,7 +735,7 @@ impl PositronVariable {
         // query materialization.
         if let Some(kind) = harp::table_kind(x) {
             return match kind {
-                TableKind::Dataframe => match harp::df_n_col(x) {
+                TableKind::Dataframe => match harp::DataFrame::n_col(x) {
                     Ok(n_col) => n_col as usize,
                     Err(error) => {
                         log::error!("Can't compute number of data frame columns: {error}");
