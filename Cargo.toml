@@ -15,11 +15,11 @@ members = [
     "crates/echo",
     "crates/harp",
     "crates/libr",
-    "crates/stdext"
+    "crates/stdext",
 ]
 
 [workspace.package]
-rust-version = "1.80"
+rust-version = "1.85"
 edition = "2021"
 license = "MIT"
 authors = ["Posit Software, PBC"]
