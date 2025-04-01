@@ -20,7 +20,7 @@ fn zap_srcref_fn(x: SEXP) -> RObject {
     unsafe {
         let x = RObject::view(x).shallow_duplicate();
 
-        x.set_attr("srcref", r_null());
+        x.set_attribute("srcref", r_null());
         libr::SET_BODY(x.sexp, zap_srcref(libr::R_ClosureExpr(x.sexp)).sexp);
 
         x
@@ -64,7 +64,7 @@ fn zap_srcref_expr(x: SEXP) -> RObject {
 
 fn zap_srcref_attrib(x: SEXP) {
     let x = RObject::view(x);
-    x.set_attr("srcfile", r_null());
-    x.set_attr("srcref", r_null());
-    x.set_attr("wholeSrcref", r_null());
+    x.set_attribute("srcfile", r_null());
+    x.set_attribute("srcref", r_null());
+    x.set_attribute("wholeSrcref", r_null());
 }

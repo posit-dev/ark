@@ -4,12 +4,9 @@
 // Copyright (C) 2022 Posit Software, PBC. All rights reserved.
 //
 //
-use libr::R_NamesSymbol;
-use libr::Rf_getAttrib;
 use libr::SEXP;
 
 use crate::object::RObject;
-use crate::utils::r_is_null;
 use crate::vector::CharacterVector;
 use crate::vector::Vector;
 
@@ -21,18 +18,17 @@ pub struct Names {
 impl Names {
     pub fn new(x: SEXP, default: impl Fn(isize) -> String + 'static) -> Self {
         unsafe {
-            let names = RObject::new(Rf_getAttrib(x, R_NamesSymbol));
+            let names = RObject::view(x).get_attribute_names();
             let default = Box::new(default);
-            if r_is_null(*names) {
-                Self {
+            match names {
+                Some(names) => Self {
+                    data: Some(CharacterVector::new_unchecked(names.sexp)),
+                    default,
+                },
+                None => Self {
                     data: None,
                     default,
-                }
-            } else {
-                Self {
-                    data: Some(CharacterVector::new_unchecked(names)),
-                    default,
-                }
+                },
             }
         }
     }

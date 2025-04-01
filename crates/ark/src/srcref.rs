@@ -139,7 +139,7 @@ fn generate_source(
     }
 
     // Ignore functions that already have sources
-    if let Some(_) = old.attr("srcref") {
+    if let Some(_) = old.get_attribute("srcref") {
         return Ok(None);
     }
 
