@@ -300,7 +300,7 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_matrix(value: SEXP) -> anyhow::Result<Self> {
-        let (n_row, n_col) = harp::mat_dim(value)?;
+        let (n_row, n_col) = harp::Matrix::dim(value)?;
 
         let class = match r_classes(value) {
             None => String::from(" <matrix>"),
@@ -742,7 +742,7 @@ impl PositronVariable {
                         0
                     },
                 },
-                TableKind::Matrix => match harp::mat_dim(x) {
+                TableKind::Matrix => match harp::Matrix::dim(x) {
                     Ok((_n_row, n_col)) => n_col as usize,
                     Err(error) => {
                         log::error!("Can't compute matrix dimensions: {error}");
@@ -1218,7 +1218,7 @@ impl PositronVariable {
 
     fn inspect_matrix(matrix: SEXP) -> anyhow::Result<Vec<Variable>> {
         let matrix = RObject::new(matrix);
-        let (_n_row, n_col) = harp::mat_dim(matrix.sexp)?;
+        let (_n_row, n_col) = harp::Matrix::dim(matrix.sexp)?;
 
         let make_variable = |access_key, display_name, display_value, is_truncated| Variable {
             access_key,

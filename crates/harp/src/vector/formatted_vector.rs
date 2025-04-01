@@ -101,7 +101,7 @@ impl FormattedVector {
     }
 
     fn column_iter_indices(&self, column: isize) -> anyhow::Result<std::ops::Range<i64>> {
-        let (n_row, _n_col) = harp::mat_dim(self.vector.sexp)?;
+        let (n_row, _n_col) = harp::Matrix::dim(self.vector.sexp)?;
         let start = column as i64 * n_row as i64;
         let end = start + n_row as i64;
         Ok(start..end)

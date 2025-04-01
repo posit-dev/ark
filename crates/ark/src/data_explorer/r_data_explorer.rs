@@ -577,7 +577,7 @@ impl RDataExplorer {
                     ColumnNames::from_data_frame(table.sexp)?,
                 ),
                 TableKind::Matrix => {
-                    let (n_row, n_col) = harp::mat_dim(table.sexp)?;
+                    let (n_row, n_col) = harp::Matrix::dim(table.sexp)?;
                     (n_row, n_col, ColumnNames::from_matrix(table.sexp)?)
                 },
             };
