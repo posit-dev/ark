@@ -193,7 +193,31 @@ with_graphics_device <- function(
     expr
 }
 
-use_ragg <- function() {
+use_ragg <- local({
+    USE_RAGG <- NULL
+
+    function() {
+        if (is.null(USE_RAGG)) {
+            USE_RAGG <<- init_use_ragg()
+        }
+
+        USE_RAGG
+    }
+})
+
+init_use_ragg <- function() {
+    option <- getOption("ark.use_ragg", default = TRUE)
+
+    if (!isTRUE(option)) {
+        # Bail on any non-`TRUE` option value
+        return(FALSE)
+    }
+
+    if (!.ps.is_installed("ragg", minimum_version = "1.3.3.9000")) {
+        # Need support for `agg_record()`
+        return(FALSE)
+    }
+
     TRUE
 }
 
