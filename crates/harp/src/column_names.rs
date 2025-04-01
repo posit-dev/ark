@@ -5,6 +5,7 @@ use crate::exec::RFunctionExt;
 use crate::utils::*;
 use crate::vector::Vector;
 use crate::CharacterVector;
+use crate::RObject;
 
 /// Column names
 ///
@@ -17,21 +18,22 @@ pub struct ColumnNames {
 
 impl ColumnNames {
     pub fn new(names: SEXP) -> Self {
-        unsafe {
-            let names = if r_typeof(names) == STRSXP {
-                Some(CharacterVector::new_unchecked(names))
-            } else {
-                None
-            };
-            Self { names }
-        }
+        let names = if r_typeof(names) == STRSXP {
+            Some(unsafe { CharacterVector::new_unchecked(names) })
+        } else {
+            None
+        };
+        Self { names }
     }
 
     pub fn from_data_frame(x: SEXP) -> crate::Result<Self> {
         if !r_is_data_frame(x) {
             return Err(crate::anyhow!("`x` must be a data frame."));
         }
-        Ok(Self::new(r_names(x)))
+        let Some(column_names) = RObject::view(x).get_attribute_names() else {
+            return Err(crate::anyhow!("`x` must have column names."));
+        };
+        Ok(Self::new(column_names.sexp))
     }
 
     pub fn from_matrix(x: SEXP) -> crate::Result<Self> {

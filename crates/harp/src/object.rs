@@ -19,7 +19,6 @@ use libr::*;
 use crate::error::Error;
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
-use crate::protect::RProtect;
 use crate::r_inherits;
 use crate::r_symbol;
 use crate::size::r_size;
@@ -31,7 +30,6 @@ use crate::utils::r_is_altrep;
 use crate::utils::r_is_null;
 use crate::utils::r_is_object;
 use crate::utils::r_is_s4;
-use crate::utils::r_names;
 use crate::utils::r_str_to_owned_utf8;
 use crate::utils::r_typeof;
 
@@ -460,30 +458,55 @@ impl RObject {
     /// Gets a vector containing names for the object's values (from the `names`
     /// attribute). Returns `None` if the object's value(s) don't have names.
     pub fn names(&self) -> Option<Vec<Option<String>>> {
-        let names = r_names(self.sexp);
-        let names = RObject::from(names);
-        match names.kind() {
-            STRSXP => Vec::<Option<String>>::try_from(names).ok(),
-            _ => None,
+        match self.get_attribute_names() {
+            Some(names) => match names.kind() {
+                STRSXP => Vec::<Option<String>>::try_from(names).ok(),
+                _ => None,
+            },
+            None => None,
         }
     }
 
-    /// Gets a named attribute from the object. Returns `None` if the attribute
-    /// doesn't exist.
-    pub fn attr(&self, name: &str) -> Option<RObject> {
-        let val = unsafe { Rf_getAttrib(self.sexp, r_symbol!(name)) };
-        if r_is_null(val) {
-            None
-        } else {
-            Some(RObject::new(val))
-        }
-    }
-
-    pub fn set_attr(&self, name: &str, value: SEXP) {
+    pub fn set_attribute(&self, name: &str, value: SEXP) {
         unsafe {
             Rf_protect(value);
             Rf_setAttrib(self.sexp, r_symbol!(name), value);
             Rf_unprotect(1);
+        }
+    }
+
+    /// Gets a named attribute from the object. Returns `None` if the attribute
+    /// was `NULL`.
+    pub fn get_attribute(&self, name: &str) -> Option<RObject> {
+        self.get_attribute_from_symbol(unsafe { r_symbol!(name) })
+    }
+
+    /// Gets the [R_NamesSymbol] attribute from the object. Returns `None` if there are no
+    /// names.
+    pub fn get_attribute_names(&self) -> Option<RObject> {
+        self.get_attribute_from_symbol(unsafe { R_NamesSymbol })
+    }
+
+    /// Gets the [R_RowNamesSymbol] attribute from the object. Returns `None` if there are
+    /// no row names.
+    ///
+    /// # Notes
+    ///
+    /// Note that [Rf_getAttrib()] will turn compact row names of the form `c(NA, -5)`
+    /// into ALTREP compact intrange objects. If you really need to avoid this, use
+    /// `.row_names_info(x, 0L)` instead, which goes through `getAttrib0()`, but note that
+    /// R core frowns on this.
+    /// https://github.com/wch/r-source/blob/e11e04d1f9966551991569b43da2ba6ab2251f30/src/main/attrib.c#L177-L187
+    pub fn get_attribute_row_names(&self) -> Option<RObject> {
+        self.get_attribute_from_symbol(unsafe { R_RowNamesSymbol })
+    }
+
+    fn get_attribute_from_symbol(&self, symbol: SEXP) -> Option<RObject> {
+        let out = unsafe { Rf_getAttrib(self.sexp, symbol) };
+        if r_is_null(out) {
+            None
+        } else {
+            Some(RObject::new(out))
         }
     }
 
@@ -492,7 +515,7 @@ impl RObject {
     }
 
     pub fn class(&self) -> harp::Result<Option<Vec<String>>> {
-        let Some(class) = self.attr("class") else {
+        let Some(class) = self.get_attribute("class") else {
             return Ok(None);
         };
 
@@ -1050,28 +1073,26 @@ impl TryFrom<&Vec<i32>> for RObject {
 impl TryFrom<RObject> for HashMap<String, String> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(*value, &[STRSXP, VECSXP])?;
+        r_assert_type(value.sexp, &[STRSXP, VECSXP])?;
 
-            let mut protect = RProtect::new();
-            let names = protect.add(r_names(*value));
-            r_assert_type(names, &[STRSXP])?;
+        let Some(names) = value.get_attribute_names() else {
+            return Err(Error::UnexpectedType(NILSXP, vec![STRSXP]));
+        };
 
-            let value = protect.add(Rf_coerceVector(*value, STRSXP));
+        let value = RObject::new(unsafe { Rf_coerceVector(value.sexp, STRSXP) });
 
-            let n = Rf_xlength(names);
-            let mut map = HashMap::<String, String>::with_capacity(n as usize);
+        let n = names.length();
+        let mut map = HashMap::<String, String>::with_capacity(n as usize);
 
-            for i in (0..Rf_xlength(names)).rev() {
-                // Translate the name and value into Rust strings.
-                let lhs = r_chr_get_owned_utf8(names, i)?;
-                let rhs = r_chr_get_owned_utf8(value, i)?;
+        for i in (0..n).rev() {
+            // Translate the name and value into Rust strings.
+            let lhs = r_chr_get_owned_utf8(names.sexp, i)?;
+            let rhs = r_chr_get_owned_utf8(value.sexp, i)?;
 
-                map.insert(lhs, rhs);
-            }
-
-            Ok(map)
+            map.insert(lhs, rhs);
         }
+
+        Ok(map)
     }
 }
 
@@ -1080,28 +1101,26 @@ impl TryFrom<RObject> for HashMap<String, String> {
 impl TryFrom<RObject> for HashMap<String, i32> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(*value, &[INTSXP, VECSXP])?;
+        r_assert_type(*value, &[INTSXP, VECSXP])?;
 
-            let mut protect = RProtect::new();
-            let names = protect.add(r_names(*value));
-            r_assert_type(names, &[STRSXP])?;
+        let Some(names) = value.get_attribute_names() else {
+            return Err(Error::UnexpectedType(NILSXP, vec![STRSXP]));
+        };
 
-            let value = protect.add(Rf_coerceVector(*value, INTSXP));
+        let value = RObject::new(unsafe { Rf_coerceVector(value.sexp, INTSXP) });
 
-            let n = Rf_xlength(names);
-            let mut map = HashMap::<String, i32>::with_capacity(n as usize);
+        let n = names.length();
+        let mut map = HashMap::<String, i32>::with_capacity(n as usize);
 
-            for i in (0..Rf_xlength(names)).rev() {
-                // Translate the name and value into Rust strings.
-                let name = r_chr_get_owned_utf8(names, i)?;
-                let val = r_int_get(value, i);
+        for i in (0..n).rev() {
+            // Translate the name and value into Rust strings.
+            let name = r_chr_get_owned_utf8(names.sexp, i)?;
+            let val = r_int_get(value.sexp, i);
 
-                map.insert(name, val);
-            }
-
-            Ok(map)
+            map.insert(name, val);
         }
+
+        Ok(map)
     }
 }
 
@@ -1110,23 +1129,23 @@ impl TryFrom<RObject> for HashMap<String, i32> {
 impl TryFrom<RObject> for HashMap<String, RObject> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            let mut protect = RProtect::new();
-            let names = protect.add(r_names(*value));
-            r_assert_type(names, &[STRSXP])?;
+        r_assert_type(*value, &[VECSXP])?;
 
-            let n = Rf_xlength(names);
-            let mut map = HashMap::<String, RObject>::with_capacity(n as usize);
+        let Some(names) = value.get_attribute_names() else {
+            return Err(Error::UnexpectedType(NILSXP, vec![STRSXP]));
+        };
 
-            // iterate in the reverse order to keep the first occurence of a name
-            for i in (0..n).rev() {
-                let name = r_chr_get_owned_utf8(names, i)?;
-                let value: RObject = RObject::new(VECTOR_ELT(*value, i));
-                map.insert(name, value);
-            }
+        let n = names.length();
+        let mut map = HashMap::<String, RObject>::with_capacity(n as usize);
 
-            Ok(map)
+        // iterate in the reverse order to keep the first occurence of a name
+        for i in (0..n).rev() {
+            let name = r_chr_get_owned_utf8(names.sexp, i)?;
+            let value = RObject::new(list_get(value.sexp, i));
+            map.insert(name, value);
         }
+
+        Ok(map)
     }
 }
 

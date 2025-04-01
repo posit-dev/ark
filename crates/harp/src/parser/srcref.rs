@@ -40,7 +40,7 @@ pub struct SrcFile {
 // attributes.
 impl RObject {
     pub fn srcrefs(&self) -> anyhow::Result<Vec<SrcRef>> {
-        let srcref = unwrap!(self.attr("srcref"), None => {
+        let srcref = unwrap!(self.get_attribute("srcref"), None => {
             return Err(anyhow!("Can't find `srcref` attribute"));
         });
 

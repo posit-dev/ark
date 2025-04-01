@@ -124,7 +124,11 @@ impl DataFrame {
         // their own custom methods (like for the variables pane). That keeps our hot path
         // simpler, as we unconditionally materialize ALTREP vectors, while still providing a
         // way to opt out.
-        let row_names = RObject::new(harp::r_row_names(x));
+        let row_names = RObject::view(x).get_attribute_row_names();
+
+        let Some(row_names) = row_names else {
+            return Err(crate::anyhow!("`x` must have row names"));
+        };
 
         // The row names object is typically an integer vector (possibly ALTREP compact
         // intrange that knows its length) or character vector, and we just take the length of
@@ -143,6 +147,7 @@ mod tests {
     use crate::r_alloc_integer;
     use crate::r_chr_poke;
     use crate::r_list_poke;
+    use crate::r_null;
     use crate::vector::Vector;
     use crate::DataFrame;
     use crate::List;
@@ -167,7 +172,7 @@ mod tests {
     fn test_data_frame_no_names() {
         crate::r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
-            df.set_attr("names", RObject::null().sexp);
+            df.set_attribute("names", r_null());
             let df = DataFrame::new(df.sexp);
 
             assert_match!(df, harp::Result::Err(err) => {
@@ -180,7 +185,7 @@ mod tests {
     fn test_data_frame_bad_names() {
         crate::r_task(|| {
             let df = harp::parse_eval_base("data.frame(x = 1:2, y = 3:4)").unwrap();
-            let nms = df.attr("names").unwrap();
+            let nms = df.get_attribute("names").unwrap();
             unsafe {
                 r_chr_poke(nms.sexp, 0, libr::R_NaString);
             }
