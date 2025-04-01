@@ -22,6 +22,11 @@ use crate::interface::RMain;
 static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
     LazyLock::new(|| Mutex::new(None));
 
+// Each ark session has a unique session id which is used by the Positron frontend
+// to associate a client id with a session.
+static RETICULATE_ID: LazyLock<String> =
+    LazyLock::new(|| format!("reticulate-{}", Uuid::new_v4().to_string()));
+
 #[derive(Clone)]
 pub struct ReticulateService {
     comm: CommSocket,
@@ -53,7 +58,8 @@ impl ReticulateService {
         let event = CommManagerEvent::Opened(
             service.comm.clone(),
             json!({
-                "input": input
+                "input": input,
+                "reticulate_id": (*RETICULATE_ID).clone(),
             }),
         );
         service
@@ -136,4 +142,9 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     ReticulateService::start(id, main.get_comm_manager_tx().clone(), input_code)?;
 
     Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_reticulate_id() -> Result<SEXP, anyhow::Error> {
+    Ok(RObject::from((*RETICULATE_ID).clone()).sexp)
 }
