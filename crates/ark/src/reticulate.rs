@@ -23,7 +23,7 @@ use crate::interface::RMain;
 static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
     LazyLock::new(|| Mutex::new(None));
 
-// Each ark session has it's unique session id which is used by Positron's front-end
+// Each ark session has a unique session id which is used by the Positron frontend
 // to associate a client id with a session.
 static RETICULATE_ID: Lazy<String> =
     Lazy::new(|| format!("reticulate-{}", Uuid::new_v4().to_string()));
