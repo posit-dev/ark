@@ -11,7 +11,6 @@ use harp::utils::r_is_null;
 use harp::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
-use once_cell::sync::Lazy;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
@@ -25,8 +24,8 @@ static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
 
 // Each ark session has a unique session id which is used by the Positron frontend
 // to associate a client id with a session.
-static RETICULATE_ID: Lazy<String> =
-    Lazy::new(|| format!("reticulate-{}", Uuid::new_v4().to_string()));
+static RETICULATE_ID: LazyLock<String> =
+    LazyLock::new(|| format!("reticulate-{}", Uuid::new_v4().to_string()));
 
 #[derive(Clone)]
 pub struct ReticulateService {
