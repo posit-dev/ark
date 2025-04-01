@@ -127,3 +127,8 @@
         }
     )
 }
+
+#' @export
+.ps.rpc.reticulate_id <- function() {
+    .ps.Call("ps_reticulate_id")
+}

@@ -11,6 +11,7 @@ use harp::utils::r_is_null;
 use harp::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
+use once_cell::sync::Lazy;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
@@ -21,6 +22,11 @@ use crate::interface::RMain;
 
 static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
     LazyLock::new(|| Mutex::new(None));
+
+// Each ark session has it's unique session id which is used by Positron's front-end
+// to associate a client id with a session.
+static RETICULATE_ID: Lazy<String> =
+    Lazy::new(|| format!("reticulate-{}", Uuid::new_v4().to_string()));
 
 #[derive(Clone)]
 pub struct ReticulateService {
@@ -53,7 +59,8 @@ impl ReticulateService {
         let event = CommManagerEvent::Opened(
             service.comm.clone(),
             json!({
-                "input": input
+                "input": input,
+                "reticulate_id": (*RETICULATE_ID).clone(),
             }),
         );
         service
@@ -136,4 +143,9 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     ReticulateService::start(id, main.get_comm_manager_tx().clone(), input_code)?;
 
     Ok(R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_reticulate_id() -> Result<SEXP, anyhow::Error> {
+    Ok(RObject::from((*RETICULATE_ID).clone()).sexp)
 }
