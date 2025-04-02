@@ -46,17 +46,3 @@ where
         Ok(None)
     }
 }
-
-pub fn push_completions<S>(
-    source: S,
-    completion_context: &CompletionContext,
-    completions: &mut Vec<CompletionItem>,
-) -> anyhow::Result<()>
-where
-    S: CompletionSource,
-{
-    if let Some(mut additional_completions) = collect_completions(source, completion_context)? {
-        completions.append(&mut additional_completions);
-    }
-    Ok(())
-}
