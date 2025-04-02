@@ -33,7 +33,7 @@ where
     S: CompletionSource,
 {
     let source_name = source.name();
-    log::trace!("Trying completions from source: {}", source_name);
+    log::info!("Trying completions from source: {}", source_name);
 
     if let Some(completions) = source.provide_completions(completion_context)? {
         log::info!(
