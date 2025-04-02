@@ -21,14 +21,11 @@ pub(crate) fn provide_completions(
     document_context: &DocumentContext,
     state: &WorldState,
 ) -> anyhow::Result<Vec<CompletionItem>> {
-    let node = document_context.node;
-    let node_text = node_text(&node, &document_context.document.contents).unwrap_or_default();
-    let node_type = format!("{:?}", node.node_type());
-
     log::info!(
-        "provide_completions() - Completion node text: '{}', Node type: '{}'",
-        node_text,
-        node_type
+        "provide_completions() - Completion node text: '{node_text}', Node type: '{node_type:?}'",
+        node_text = node_text(&document_context.node, &document_context.document.contents)
+            .unwrap_or_default(),
+        node_type = document_context.node.node_type()
     );
 
     let completion_context = CompletionContext::new(document_context, state);
