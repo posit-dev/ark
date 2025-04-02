@@ -27,26 +27,11 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-// Locally useful data structures for tracking completions and their source(s)
-#[derive(Hash, Eq, PartialEq, Clone)]
-struct CompletionKey {
-    label: String,
-    insert_text: Option<String>,
-}
-
-impl From<&CompletionItem> for CompletionKey {
-    fn from(item: &CompletionItem) -> Self {
-        CompletionKey {
-            label: item.label.clone(),
-            insert_text: item.insert_text.clone(),
-        }
-    }
-}
-
-#[derive(Default)]
-struct CompletionWithSource {
+// Locally useful data structure for tracking completions and their source
+#[derive(Clone, Default)]
+struct CompletionItemWithSource {
     item: CompletionItem,
-    sources: Vec<String>,
+    source: String,
 }
 
 /// Gets completions from all composite sources, with deduplication and sorting
@@ -55,7 +40,7 @@ pub(crate) fn get_completions(
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::info!("Getting completions from composite sources");
 
-    let mut completions: HashMap<CompletionKey, CompletionWithSource> = HashMap::new();
+    let mut completions: HashMap<String, CompletionItemWithSource> = HashMap::new();
 
     // Call, pipe, and subset completions should show up no matter what when
     // the user requests completions. This allows them to "tab" their way
@@ -102,7 +87,7 @@ pub(crate) fn get_completions(
     }
 
     // Simplify to plain old CompletionItems and sort them
-    let completions = finalize_completions(&completions);
+    let completions = finalize_completions(completions);
 
     Ok(Some(completions))
 }
@@ -110,7 +95,7 @@ pub(crate) fn get_completions(
 fn push_completions<S>(
     source: S,
     completion_context: &CompletionContext,
-    completion_map: &mut HashMap<CompletionKey, CompletionWithSource>,
+    completions: &mut HashMap<String, CompletionItemWithSource>,
 ) -> anyhow::Result<()>
 where
     S: CompletionSource,
@@ -119,22 +104,18 @@ where
 
     if let Some(source_completions) = collect_completions(source, completion_context)? {
         for item in source_completions {
-            let key = CompletionKey::from(&item);
-
-            if let Some(sourced_item) = completion_map.get_mut(&key) {
-                // Item already exists, just add this source
-                sourced_item.sources.push(source_name.to_string());
+            if let Some(existing) = completions.get(&item.label) {
                 log::debug!(
-                    "Completion '{}' contributed by multiple sources: {:?}",
-                    key.label,
-                    sourced_item.sources
+                    "Completion with label '{}' already exists (first contributed by source: {}, now also from: {})",
+                    item.label,
+                    existing.source,
+                    source_name
                 );
             } else {
-                // New item
-                let mut sourced_item = CompletionWithSource::default();
-                sourced_item.item = item;
-                sourced_item.sources.push(source_name.to_string());
-                completion_map.insert(key, sourced_item);
+                completions.insert(item.label.clone(), CompletionItemWithSource {
+                    item,
+                    source: source_name.to_string(),
+                });
             }
         }
     }
@@ -142,20 +123,15 @@ where
     Ok(())
 }
 
-/// Produce and sort plain CompletionItems, with source information
-/// stashed in `data` if needed
+/// Produce plain old CompletionItems and sort them
 fn finalize_completions(
-    completion_map: &HashMap<CompletionKey, CompletionWithSource>,
+    completions: HashMap<String, CompletionItemWithSource>,
 ) -> Vec<CompletionItem> {
-    let mut items: Vec<CompletionItem> = completion_map
-        .values()
-        .map(|sourced_item| {
-            let mut item = sourced_item.item.clone();
-            item
-        })
+    let mut items: Vec<CompletionItem> = completions
+        .into_values()
+        .map(|completion_with_source| completion_with_source.item)
         .collect();
 
-    // Sort the completions
     sort_completions(&mut items);
 
     items
