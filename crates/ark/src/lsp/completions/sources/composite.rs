@@ -161,7 +161,11 @@ fn finalize_completions(
     items
 }
 
-/// Sort completions by providing custom 'sort' text
+// Sort completions by providing custom 'sort' text to be used when
+// ordering completion results. we use some placeholders at the front
+// to 'bin' different completion types differently; e.g. we place parameter
+// completions at the front, followed by variable completions (like pipe
+// completions and subset completions), followed by anything else.
 fn sort_completions(completions: &mut Vec<CompletionItem>) {
     for item in completions {
         // Start with existing `sort_text` if one exists
