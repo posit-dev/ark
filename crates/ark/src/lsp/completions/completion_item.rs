@@ -447,10 +447,6 @@ pub(super) unsafe fn completion_item_from_symbol(
             // are handled extremely specially.
             return Some(completion_item_from_active_binding(name));
         },
-        // TO THINK: we see this for any thing that is imported from another
-        // package, then re-exported
-        // so, for dplyr, for example, this generates a lot of noise in the log
-        // which isn't really helpful
         Err(err) => {
             log::error!("Can't determine if binding is active: {err:?}");
             return None;
