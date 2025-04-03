@@ -40,7 +40,7 @@ pub(crate) fn get_completions(
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::info!("Getting completions from composite sources");
 
-    let mut completions: HashMap<String, CompletionItemWithSource> = HashMap::new();
+    let mut completions = HashMap::new();
 
     // Call, pipe, and subset completions should show up no matter what when
     // the user requests completions. This allows them to "tab" their way
