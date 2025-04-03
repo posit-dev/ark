@@ -16,8 +16,11 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::result::Result::Ok;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::task::Poll;
 use std::time::Duration;
 
@@ -125,6 +128,12 @@ use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 
+// Interact with these file descriptors to always send output
+// to the original stdout and stderr destinations.
+pub static ORIGINAL_STDOUT: OnceLock<std::os::fd::RawFd> = OnceLock::new();
+pub static ORIGINAL_STDERR: OnceLock<std::os::fd::RawFd> = OnceLock::new();
+
+pub static WRITE_CONSOLE_TO_STDOUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// An enum representing the different modes in which the R session can run.
@@ -1668,6 +1677,17 @@ impl RMain {
 
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
+        if WRITE_CONSOLE_TO_STDOUT.load(Ordering::SeqCst) {
+            let content = &console_to_utf8(buf).unwrap();
+            let stdout_fd = if otype == 0 {
+                *ORIGINAL_STDOUT.get().unwrap()
+            } else {
+                *ORIGINAL_STDERR.get().unwrap()
+            };
+            nix::unistd::write(stdout_fd, content.as_bytes()).unwrap();
+            return;
+        }
+
         let content = match console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),

@@ -13,6 +13,8 @@ use std::env;
 use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
 use ark::interface::SessionMode;
+use ark::interface::ORIGINAL_STDERR;
+use ark::interface::ORIGINAL_STDOUT;
 use ark::logger;
 use ark::repos::DefaultRepos;
 use ark::signals::initialize_signal_block;
@@ -59,6 +61,13 @@ Available options:
 
 fn main() -> anyhow::Result<()> {
     ON_R_THREAD.set(true);
+
+    ORIGINAL_STDOUT
+        .set(nix::unistd::dup(libc::STDOUT_FILENO).unwrap())
+        .unwrap();
+    ORIGINAL_STDERR
+        .set(nix::unistd::dup(libc::STDERR_FILENO).unwrap())
+        .unwrap();
 
     // Block signals in this thread (and any child threads).
     initialize_signal_block();
