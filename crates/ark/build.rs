@@ -59,4 +59,7 @@ fn main() {
         .join("manifest")
         .join("ark-manifest.rc");
     embed_resource::compile_for_everything(resource, embed_resource::NONE);
+
+    println!("cargo:rerun-if-changed=src/debug.c");
+    cc::Build::new().file("src/debug.c").compile("debug");
 }
