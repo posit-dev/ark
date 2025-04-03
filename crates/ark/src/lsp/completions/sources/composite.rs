@@ -105,7 +105,7 @@ where
     if let Some(source_completions) = collect_completions(source, completion_context)? {
         for item in source_completions {
             if let Some(existing) = completions.get(&item.label) {
-                log::debug!(
+                log::trace!(
                     "Completion with label '{}' already exists (first contributed by source: {}, now also from: {})",
                     item.label,
                     existing.source,
