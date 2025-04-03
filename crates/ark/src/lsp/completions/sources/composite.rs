@@ -58,7 +58,6 @@ pub(crate) fn get_completions(
     // For the rest of the general completions, we require an identifier to
     // begin showing anything.
     if is_identifier_like(completion_context.document_context.node) {
-        // Consulted settings.json
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
         push_completions(
