@@ -14,7 +14,7 @@ mod snippets;
 mod subset;
 mod workspace;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
@@ -22,9 +22,17 @@ use tower_lsp::lsp_types::CompletionItemKind;
 use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
-use crate::lsp::completions::sources::push_completions;
+use crate::lsp::completions::sources::collect_completions;
+use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+// Locally useful data structure for tracking completions and their source
+#[derive(Clone, Default)]
+struct CompletionItemWithSource {
+    item: CompletionItem,
+    source: String,
+}
 
 /// Gets completions from all composite sources, with deduplication and sorting
 pub(crate) fn get_completions(
@@ -32,7 +40,7 @@ pub(crate) fn get_completions(
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     log::info!("Getting completions from composite sources");
 
-    let mut completions: Vec<CompletionItem> = vec![];
+    let mut completions = HashMap::new();
 
     // Call, pipe, and subset completions should show up no matter what when
     // the user requests completions. This allows them to "tab" their way
@@ -50,7 +58,6 @@ pub(crate) fn get_completions(
     // For the rest of the general completions, we require an identifier to
     // begin showing anything.
     if is_identifier_like(completion_context.document_context.node) {
-        // Consulted settings.json
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
         push_completions(
@@ -78,16 +85,64 @@ pub(crate) fn get_completions(
         )?;
     }
 
-    // Remove duplicates
-    let mut uniques = HashSet::new();
-    completions.retain(|x| uniques.insert(x.label.clone()));
+    // Simplify to plain old CompletionItems and sort them
+    let completions = finalize_completions(completions);
 
-    // Sort completions by providing custom 'sort' text to be used when
-    // ordering completion results. we use some placeholders at the front
-    // to 'bin' different completion types differently; e.g. we place parameter
-    // completions at the front, followed by variable completions (like pipe
-    // completions and subset completions), followed by anything else.
-    for item in &mut completions {
+    Ok(Some(completions))
+}
+
+fn push_completions<S>(
+    source: S,
+    completion_context: &CompletionContext,
+    completions: &mut HashMap<String, CompletionItemWithSource>,
+) -> anyhow::Result<()>
+where
+    S: CompletionSource,
+{
+    let source_name = source.name();
+
+    if let Some(source_completions) = collect_completions(source, completion_context)? {
+        for item in source_completions {
+            if let Some(existing) = completions.get(&item.label) {
+                log::trace!(
+                    "Completion with label '{}' already exists (first contributed by source: {}, now also from: {})",
+                    item.label,
+                    existing.source,
+                    source_name
+                );
+            } else {
+                completions.insert(item.label.clone(), CompletionItemWithSource {
+                    item,
+                    source: source_name.to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Produce plain old CompletionItems and sort them
+fn finalize_completions(
+    completions: HashMap<String, CompletionItemWithSource>,
+) -> Vec<CompletionItem> {
+    let mut items: Vec<CompletionItem> = completions
+        .into_values()
+        .map(|completion_with_source| completion_with_source.item)
+        .collect();
+
+    sort_completions(&mut items);
+
+    items
+}
+
+// Sort completions by providing custom 'sort' text to be used when
+// ordering completion results. we use some placeholders at the front
+// to 'bin' different completion types differently; e.g. we place parameter
+// completions at the front, followed by variable completions (like pipe
+// completions and subset completions), followed by anything else.
+fn sort_completions(completions: &mut Vec<CompletionItem>) {
+    for item in completions {
         // Start with existing `sort_text` if one exists
         let sort_text = item.sort_text.take();
         let sort_text = match sort_text {
@@ -115,8 +170,6 @@ pub(crate) fn get_completions(
             }
         }
     }
-
-    Ok(Some(completions))
 }
 
 fn is_identifier_like(x: Node) -> bool {

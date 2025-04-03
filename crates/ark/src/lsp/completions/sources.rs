@@ -33,7 +33,7 @@ where
     S: CompletionSource,
 {
     let source_name = source.name();
-    log::trace!("Trying completions from source: {}", source_name);
+    log::info!("Trying completions from source: {}", source_name);
 
     if let Some(completions) = source.provide_completions(completion_context)? {
         log::info!(
@@ -45,18 +45,4 @@ where
     } else {
         Ok(None)
     }
-}
-
-pub fn push_completions<S>(
-    source: S,
-    completion_context: &CompletionContext,
-    completions: &mut Vec<CompletionItem>,
-) -> anyhow::Result<()>
-where
-    S: CompletionSource,
-{
-    if let Some(mut additional_completions) = collect_completions(source, completion_context)? {
-        completions.append(&mut additional_completions);
-    }
-    Ok(())
 }
