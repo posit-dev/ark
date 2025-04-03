@@ -186,8 +186,6 @@ fn completions_from_namespace_lazydata(
     namespace: SEXP,
     package: &str,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    log::info!("completions_from_namespace_lazydata()");
-
     unsafe {
         let ns = Rf_findVarInFrame(namespace, r_symbol!(".__NAMESPACE__."));
         if ns == R_UnboundValue {
