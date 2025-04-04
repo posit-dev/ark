@@ -101,20 +101,23 @@ fn completions_from_search_path(
                 }
 
                 // Add the completion item.
-                let Some(item) = completion_item_from_symbol(
+                match completion_item_from_symbol(
                     symbol,
                     envir,
                     name,
                     promise_strategy.clone(),
                     parameter_hints,
-                ) else {
-                    log::error!("Completion symbol '{symbol}' was unexpectedly not found.");
-                    continue;
-                };
-
-                match item {
+                ) {
                     Ok(item) => completions.push(item),
-                    Err(error) => log::error!("{:?}", error),
+                    Err(err) => {
+                        // Log the error but continue processing other symbols
+                        log::error!(
+                            "Failed to get completion item for symbol '{}': {}",
+                            symbol,
+                            err
+                        );
+                        continue;
+                    },
                 };
             }
 
