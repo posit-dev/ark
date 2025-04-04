@@ -458,14 +458,18 @@ pub(super) unsafe fn completion_item_from_symbol(
         Err(err) => {
             // The only error we anticipate is the case where `envir` doesn't
             // have a binding for `name`.
-            bail!("Failed to check if binding is active: {err}");
+            return Err(anyhow::anyhow!(
+                "Failed to check if binding is active: {err}"
+            ));
         },
     }
 
     let object = Rf_findVarInFrame(envir, symbol);
 
     if object == R_UnboundValue {
-        bail!("Symbol '{name}' should have been found but wasn't");
+        return Err(anyhow::anyhow!(
+            "Symbol '{name}' should have been found but wasn't"
+        ));
     }
 
     completion_item_from_object(
