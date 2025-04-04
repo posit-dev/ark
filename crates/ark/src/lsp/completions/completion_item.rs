@@ -11,7 +11,6 @@ use anyhow::bail;
 use harp::r_symbol;
 use harp::utils::is_symbol_valid;
 use harp::utils::r_env_binding_is_active;
-use harp::utils::r_envir_name;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_is_lazy_load_binding;
@@ -374,35 +373,44 @@ pub(super) unsafe fn completion_item_from_namespace(
     package: &str,
     parameter_hints: &ParameterHints,
 ) -> anyhow::Result<CompletionItem> {
+    // We perform two passes to locate the object. It is normal for the first pass to
+    // error when the `namespace` doesn't have a binding for `name` because the associated
+    // object has been imported and re-exported. For example, the way dplyr imports and
+    // re-exports `rlang::.data` or `tidyselect::all_of()`. In such a case, we'll succeed
+    // in the second pass, when we try again in the imports environment. If both fail,
+    // something is seriously wrong.
+
     // First, look in the namespace itself.
-    if let Some(item) = completion_item_from_symbol(
+    let error_namespace = match completion_item_from_symbol(
         name,
         namespace,
         Some(package),
         PromiseStrategy::Force,
         parameter_hints,
     ) {
-        return item;
-    }
+        Ok(item) => return Ok(item),
+        Err(error) => error,
+    };
 
     // Otherwise, try the imports environment.
     let imports = ENCLOS(namespace);
-    if let Some(item) = completion_item_from_symbol(
+    let error_imports = match completion_item_from_symbol(
         name,
         imports,
         Some(package),
         PromiseStrategy::Force,
         parameter_hints,
     ) {
-        return item;
-    }
+        Ok(item) => return Ok(item),
+        Err(error) => error,
+    };
 
-    // If still not found, something is wrong.
-    bail!(
-        "Object '{}' not defined in namespace {:?}",
-        name,
-        r_envir_name(namespace)?
-    )
+    // This is really unexpected.
+    Err(anyhow::anyhow!(
+        "Failed to form completion item for '{name}' in namespace '{package}':
+        Namespace environment error: {error_namespace}
+        Imports environment error: {error_imports}"
+    ))
 }
 
 pub(super) unsafe fn completion_item_from_lazydata(
@@ -416,14 +424,14 @@ pub(super) unsafe fn completion_item_from_lazydata(
     let promise_strategy = PromiseStrategy::Simple;
 
     // Lazydata objects are never functions, so this doesn't really matter
-    let parameter_hints = ParameterHints::Enabled;
+    let parameter_hints = ParameterHints::Disabled;
 
     match completion_item_from_symbol(name, env, Some(package), promise_strategy, &parameter_hints)
     {
-        Some(item) => item,
-        None => {
+        Ok(item) => Ok(item),
+        Err(err) => {
             // Should be impossible, but we'll be extra safe
-            bail!("Object '{name}' not defined in lazydata environment for namespace {package}")
+            Err(anyhow::anyhow!("Object '{name}' not defined in lazydata environment for namespace {package}: {err}"))
         },
     }
 }
@@ -434,7 +442,7 @@ pub(super) unsafe fn completion_item_from_symbol(
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
     parameter_hints: &ParameterHints,
-) -> Option<anyhow::Result<CompletionItem>> {
+) -> anyhow::Result<CompletionItem> {
     let symbol = r_symbol!(name);
 
     match r_env_binding_is_active(envir, symbol) {
@@ -445,29 +453,33 @@ pub(super) unsafe fn completion_item_from_symbol(
         Ok(true) => {
             // We can't even extract out the object for active bindings so they
             // are handled extremely specially.
-            return Some(completion_item_from_active_binding(name));
+            return completion_item_from_active_binding(name);
         },
         Err(err) => {
-            log::error!("Can't determine if binding is active: {err:?}");
-            return None;
+            // The only error we anticipate is the case where `envir` doesn't
+            // have a binding for `name`.
+            return Err(anyhow::anyhow!(
+                "Failed to check if binding is active: {err}"
+            ));
         },
     }
 
     let object = Rf_findVarInFrame(envir, symbol);
 
     if object == R_UnboundValue {
-        log::error!("Symbol '{name}' should have been found.");
-        return None;
+        return Err(anyhow::anyhow!(
+            "Symbol '{name}' should have been found but wasn't"
+        ));
     }
 
-    Some(completion_item_from_object(
+    completion_item_from_object(
         name,
         object,
         envir,
         package,
         promise_strategy,
         parameter_hints,
-    ))
+    )
 }
 
 // This is used when providing completions for a parameter in a document
