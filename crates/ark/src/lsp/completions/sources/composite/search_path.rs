@@ -111,11 +111,7 @@ fn completions_from_search_path(
                     Ok(item) => completions.push(item),
                     Err(err) => {
                         // Log the error but continue processing other symbols
-                        log::error!(
-                            "Failed to get completion item for symbol '{}': {}",
-                            symbol,
-                            err
-                        );
+                        log::error!("Failed to get completion item for symbol '{symbol}': {err}");
                         continue;
                     },
                 };
