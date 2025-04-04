@@ -7,7 +7,6 @@
 
 use std::fs::DirEntry;
 
-use anyhow::bail;
 use harp::r_symbol;
 use harp::utils::is_symbol_valid;
 use harp::utils::r_env_binding_is_active;
