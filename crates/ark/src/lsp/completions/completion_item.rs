@@ -429,7 +429,7 @@ pub(super) unsafe fn completion_item_from_lazydata(
 
     match completion_item_from_symbol(name, env, Some(package), promise_strategy, &parameter_hints)
     {
-        Ok(item) => return Ok(item),
+        Ok(item) => Ok(item),
         Err(err) => {
             // Should be impossible, but we'll be extra safe
             bail!("Object '{name}' not defined in lazydata environment for namespace {package}: {err}")
