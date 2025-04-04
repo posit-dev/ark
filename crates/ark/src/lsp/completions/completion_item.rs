@@ -432,7 +432,7 @@ pub(super) unsafe fn completion_item_from_lazydata(
         Ok(item) => Ok(item),
         Err(err) => {
             // Should be impossible, but we'll be extra safe
-            bail!("Object '{name}' not defined in lazydata environment for namespace {package}: {err}")
+            Err(anyhow::anyhow!("Object '{name}' not defined in lazydata environment for namespace {package}: {err}"))
         },
     }
 }
