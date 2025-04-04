@@ -373,8 +373,15 @@ pub(super) unsafe fn completion_item_from_namespace(
     package: &str,
     parameter_hints: &ParameterHints,
 ) -> anyhow::Result<CompletionItem> {
+    // We perform two passes to locate the object. It is normal for the first pass to
+    // error when the `namespace` doesn't have a binding for `name` because the associated
+    // object has been imported and re-exported. For example, the way dplyr imports and
+    // re-exports `rlang::.data` or `tidyselect::all_of()`. In such a case, we'll succeed
+    // in the second pass, when we try again in the imports environment. If both fail,
+    // something is seriously wrong.
+
     // First, look in the namespace itself.
-    match completion_item_from_symbol(
+    let error_namespace = match completion_item_from_symbol(
         name,
         namespace,
         Some(package),
@@ -382,19 +389,12 @@ pub(super) unsafe fn completion_item_from_namespace(
         parameter_hints,
     ) {
         Ok(item) => return Ok(item),
-        Err(_) => {
-            // The only error we anticipate is the case where `namespace`
-            // doesn't have a binding for `name`, because the associated object
-            // has been imported and re-exported. For example, the way dplyr
-            // imports and re-exports `rlang::.data` or `tidyselect::all_of()`.
-            // In such a case, we'll succeed below, when we try again in the
-            // imports environment.
-        },
-    }
+        Err(error) => error,
+    };
 
     // Otherwise, try the imports environment.
     let imports = ENCLOS(namespace);
-    match completion_item_from_symbol(
+    let error_imports = match completion_item_from_symbol(
         name,
         imports,
         Some(package),
@@ -402,16 +402,15 @@ pub(super) unsafe fn completion_item_from_namespace(
         parameter_hints,
     ) {
         Ok(item) => return Ok(item),
-        Err(err) => {
-            // This is really unexpected.
-            bail!(
-                "Failed to form completion item for '{}' in namespace '{}': {}",
-                name,
-                package,
-                err
-            );
-        },
-    }
+        Err(error) => error,
+    };
+
+    // This is really unexpected.
+    Err(anyhow::anyhow!(
+        "Failed to form completion item for '{name}' in namespace '{package}':
+        Namespace environment error: {error_namespace}
+        Imports environment error: {error_imports}"
+    ))
 }
 
 pub(super) unsafe fn completion_item_from_lazydata(
