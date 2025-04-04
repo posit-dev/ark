@@ -459,7 +459,7 @@ pub(super) unsafe fn completion_item_from_symbol(
         Err(err) => {
             // The only error we anticipate is the case where `envir` doesn't
             // have a binding for `name`.
-            bail!("Failed to check if binding is active: {}", err);
+            bail!("Failed to check if binding is active: {err}");
         },
     }
 
