@@ -4,6 +4,6 @@ When a `match` expression is the last expression in a function, omit `return` ke
 
 For error messages and logging, prefer direct formatting syntax: `Err(anyhow!("Message: {err}"))` instead of `Err(anyhow!("Message: {}", err))`.
 
-Use `log::trace!` instead of `log::debug!` when `log::info!` is not appropriate.
+Use `log::trace!` instead of `log::debug!`.
 
 Use fully qualified result types (`anyhow::Result`) instead of importing them.
