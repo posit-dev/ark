@@ -2,7 +2,6 @@ use std::ffi;
 use std::sync::atomic::Ordering;
 
 use harp::utils::r_str_to_owned_utf8_unchecked;
-use libr::Rf_PrintValue;
 
 use crate::interface::RMain;
 use crate::interface::CAPTURE_CONSOLE_OUTPUT;
@@ -46,12 +45,19 @@ pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
     ffi::CString::new(out).unwrap().into_raw()
 }
 
-// Implementations for entry points in `debug.c`
+// Implementations for entry points in `debug.c`.
 
 #[no_mangle]
 pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
-        unsafe { Rf_PrintValue(x) };
+        unsafe { libr::Rf_PrintValue(x) };
+    })
+}
+
+#[no_mangle]
+pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
+    capture_console_output(|| {
+        unsafe { libr::R_inspect(x) };
     })
 }
 
