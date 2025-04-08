@@ -23,6 +23,18 @@ pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
 }
 
 #[no_mangle]
+pub extern "C" fn ark_trace_back_rs() -> *const ffi::c_char {
+    capture_console_output(|| {
+        // https://github.com/r-lib/rlang/issues/1059
+        unsafe {
+            let fun =
+                libr::R_GetCCallable(c"rlang".as_ptr(), c"rlang_print_backtrace".as_ptr()).unwrap();
+            fun(1);
+        };
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
     let value = unsafe {
         let kind = tidy_kind(libr::TYPEOF(x) as u32);

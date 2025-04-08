@@ -770,6 +770,7 @@ pub fn r_subset_vec(x: SEXP, indices: Vec<i64>) -> Result<SEXP> {
 extern "C" {
     fn ark_print(x: libr::SEXP) -> *const ffi::c_char;
     fn ark_inspect(x: libr::SEXP) -> *const ffi::c_char;
+    fn ark_trace_back() -> *const ffi::c_char;
     fn ark_display_value(x: libr::SEXP) -> *const ffi::c_char;
 }
 
@@ -777,6 +778,7 @@ extern "C" {
 pub extern "C" fn _placeholder() {
     unsafe { ark_print(libr::R_NilValue) };
     unsafe { ark_inspect(libr::R_NilValue) };
+    unsafe { ark_trace_back() };
     unsafe { ark_display_value(libr::R_NilValue) };
 }
 
