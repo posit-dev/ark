@@ -53,7 +53,7 @@ fn completions_from_search_path(
     let mut completions = vec![];
 
     const R_CONTROL_FLOW_KEYWORDS: &[&str] = &[
-        "if", "else", "for", "in", "while", "repeat", "break", "next", "function",
+        "if", "else", "for", "in", "while", "repeat", "break", "next",
     ];
 
     unsafe {
