@@ -17,24 +17,33 @@ pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     })
 }
 
-// Uses lobstr's `sxp()` function because libr can't find `R_inspect()`.
-// It's an `attribute_hidden` function but since the symbol is visible
-// on macOS (and you can call it in the debugger) I would have expected
-// libr to be able to find it.
+/// Inspect structure of R object
+///
+/// Uses lobstr's `sxp()` function because libr can't find `R_inspect()`.
+/// It's an `attribute_hidden` function but since the symbol is visible
+/// on macOS (and you can call it in the debugger) I would have expected
+/// libr to be able to find it.
+///
+/// Requires lldb setting:
+///
+/// ```
+/// settings set escape-non-printables false
+/// ```
 #[no_mangle]
 pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
-        // FIXME: These options don't seem to work
-        let one = harp::RObject::try_from(1).unwrap();
-        harp::raii::RLocalOption::new("cli.num_colors", one.sexp);
-
-        harp::raii::RLocalOptionBoolean::new("cli.unicode", false);
-
         let out = RFunction::new("lobstr", "sxp").add(x).call().unwrap();
         unsafe { libr::Rf_PrintValue(out.sexp) };
     })
 }
 
+/// Print backtrace via rlang
+///
+/// Requires lldb setting:
+///
+/// ```
+/// settings set escape-non-printables false
+/// ```
 #[no_mangle]
 pub extern "C" fn ark_trace_back_rs() -> *const ffi::c_char {
     capture_console_output(|| {
