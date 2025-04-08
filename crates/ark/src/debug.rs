@@ -6,45 +6,6 @@ use harp::utils::r_str_to_owned_utf8_unchecked;
 use crate::interface::RMain;
 use crate::interface::CAPTURE_CONSOLE_OUTPUT;
 
-/// Run closure and capture its console output.
-///
-/// Useful for debugging. For instance you can use this to call code from the
-/// lldb interpreter. Output from stdout and stderr is returned instead of being
-/// sent over IOPub.
-///
-/// The closure is run in a `harp::try_catch()` context to prevent R errors and
-/// other C longjumps from collapsing the debugging context. If a Rust panic
-/// occurs however, it is propagated as normal.
-///
-/// Note that the resulting string is stored on the R heap and never freed. This
-/// should only be used in a debugging context where leaking is not an issue.
-pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
-    let old = CAPTURE_CONSOLE_OUTPUT.swap(true, Ordering::SeqCst);
-
-    // We protect from panics to correctly restore `CAPTURE_CONSOLE_OUTPUT`'s
-    // state. The panic is resumed right after.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
-
-    CAPTURE_CONSOLE_OUTPUT.store(old, Ordering::SeqCst);
-    let mut out = std::mem::take(&mut RMain::get_mut().captured_output);
-
-    // Unwrap catch-unwind's result and resume panic if needed
-    let result = match result {
-        Ok(res) => res,
-        Err(err) => {
-            std::panic::resume_unwind(err);
-        },
-    };
-
-    // Unwrap try-catch's result
-    if let Err(err) = result {
-        out = format!("{out}\nUnexpected longjump in `capture_console_output()`: {err:?}");
-    }
-
-    // Intentionally leaks, should only be used in the debugger
-    ffi::CString::new(out).unwrap().into_raw()
-}
-
 // Implementations for entry points in `debug.c`.
 
 #[no_mangle]
@@ -125,4 +86,43 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
         libr::FUNSXP => "fun",
         _ => "unknown",
     }
+}
+
+/// Run closure and capture its console output.
+///
+/// Useful for debugging. For instance you can use this to call code from the
+/// lldb interpreter. Output from stdout and stderr is returned instead of being
+/// sent over IOPub.
+///
+/// The closure is run in a `harp::try_catch()` context to prevent R errors and
+/// other C longjumps from collapsing the debugging context. If a Rust panic
+/// occurs however, it is propagated as normal.
+///
+/// Note that the resulting string is stored on the R heap and never freed. This
+/// should only be used in a debugging context where leaking is not an issue.
+pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
+    let old = CAPTURE_CONSOLE_OUTPUT.swap(true, Ordering::SeqCst);
+
+    // We protect from panics to correctly restore `CAPTURE_CONSOLE_OUTPUT`'s
+    // state. The panic is resumed right after.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
+
+    CAPTURE_CONSOLE_OUTPUT.store(old, Ordering::SeqCst);
+    let mut out = std::mem::take(&mut RMain::get_mut().captured_output);
+
+    // Unwrap catch-unwind's result and resume panic if needed
+    let result = match result {
+        Ok(res) => res,
+        Err(err) => {
+            std::panic::resume_unwind(err);
+        },
+    };
+
+    // Unwrap try-catch's result
+    if let Err(err) = result {
+        out = format!("{out}\nUnexpected longjump in `capture_console_output()`: {err:?}");
+    }
+
+    // Intentionally leaks, should only be used in the debugger
+    ffi::CString::new(out).unwrap().into_raw()
 }
