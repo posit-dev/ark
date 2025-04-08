@@ -7,7 +7,12 @@ use libr::Rf_PrintValue;
 use crate::interface::RMain;
 use crate::interface::CAPTURE_CONSOLE_OUTPUT;
 
-pub fn with_console_to_stdout(cb: impl FnOnce()) -> *const ffi::c_char {
+/// Run closure and capture its console output.
+///
+/// Useful for debugging. For instance you can use this to call code from the
+/// lldb interpreter. Output from stdout and stderr is returned instead of being
+/// sent over IOPub.
+pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
     let old = CAPTURE_CONSOLE_OUTPUT.swap(true, Ordering::SeqCst);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(cb));
@@ -29,7 +34,7 @@ pub fn with_console_to_stdout(cb: impl FnOnce()) -> *const ffi::c_char {
 pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     // TODO: protect against longjumps, print can dispatch
 
-    with_console_to_stdout(|| {
+    capture_console_output(|| {
         unsafe { Rf_PrintValue(x) };
     })
 }
