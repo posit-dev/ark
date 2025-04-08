@@ -317,8 +317,6 @@ functions::generate! {
 
     pub fn Rf_PrintValue(x: SEXP);
 
-    pub fn R_inspect(x: SEXP) -> SEXP;
-
     pub fn R_PromiseExpr(p: SEXP) -> SEXP;
 
     pub fn R_BytecodeExpr(e: SEXP) -> SEXP;

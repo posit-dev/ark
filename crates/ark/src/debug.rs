@@ -1,6 +1,8 @@
 use std::ffi;
 use std::sync::atomic::Ordering;
 
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
 use harp::utils::r_str_to_owned_utf8_unchecked;
 
 use crate::interface::RMain;
@@ -15,10 +17,21 @@ pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     })
 }
 
+// Uses lobstr's `sxp()` function because libr can't find `R_inspect()`.
+// It's an `attribute_hidden` function but since the symbol is visible
+// on macOS (and you can call it in the debugger) I would have expected
+// libr to be able to find it.
 #[no_mangle]
 pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
-        unsafe { libr::R_inspect(x) };
+        // FIXME: These options don't seem to work
+        let one = harp::RObject::try_from(1).unwrap();
+        harp::raii::RLocalOption::new("cli.num_colors", one.sexp);
+
+        harp::raii::RLocalOptionBoolean::new("cli.unicode", false);
+
+        let out = RFunction::new("lobstr", "sxp").add(x).call().unwrap();
+        unsafe { libr::Rf_PrintValue(out.sexp) };
     })
 }
 
