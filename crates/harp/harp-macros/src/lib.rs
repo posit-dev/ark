@@ -10,7 +10,6 @@ use quote::format_ident;
 use quote::quote;
 use quote::ToTokens;
 use syn::parse_macro_input;
-use syn::ItemFn;
 use syn::ItemStruct;
 
 extern crate proc_macro;
@@ -213,33 +212,4 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Put everything together
     let all = quote! { #function #registration };
     all.into()
-}
-
-#[proc_macro_attribute]
-pub fn ensure_used(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemFn);
-
-    let fn_name = &input.sig.ident;
-    let static_name = format_ident!("_{fn_name}");
-
-    let inputs = &input.sig.inputs;
-    let output = &input.sig.output;
-    let abi = &input.sig.abi;
-    let fn_type = quote! {
-        #abi fn(#inputs) #output
-    };
-
-    let out = quote! {
-        #[no_mangle]
-        #input
-
-        // Generate a static variable that hold the function pointer to force the
-        // function to be compiled in
-        #[used]
-        #[no_mangle]
-        #[doc(hidden)]
-        static #static_name: #fn_type = #fn_name;
-    };
-
-    TokenStream::from(out)
 }

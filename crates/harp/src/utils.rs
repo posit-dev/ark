@@ -5,11 +5,9 @@
 //
 //
 
-use std::ffi;
 use std::ffi::CStr;
 use std::ffi::CString;
 
-use harp_macros::ensure_used;
 use itertools::Itertools;
 use libr::*;
 use once_cell::sync::Lazy;
@@ -761,25 +759,6 @@ pub fn r_subset_vec(x: SEXP, indices: Vec<i64>) -> Result<SEXP> {
         .add(&indices)
         .call_in(env)?;
     Ok(out.sexp)
-}
-
-// Ensure the compiler includes the C entry points in `debug.c` in the binary.
-// This must be in a module that is used by other parts of the program, i.e. not
-// in debug.rs. Otherwise the compiler will still omit the whole thing.
-
-extern "C" {
-    fn ark_print(x: libr::SEXP) -> *const ffi::c_char;
-    fn ark_inspect(x: libr::SEXP) -> *const ffi::c_char;
-    fn ark_trace_back() -> *const ffi::c_char;
-    fn ark_display_value(x: libr::SEXP) -> *const ffi::c_char;
-}
-
-#[ensure_used]
-pub extern "C" fn _placeholder() {
-    unsafe { ark_print(libr::R_NilValue) };
-    unsafe { ark_inspect(libr::R_NilValue) };
-    unsafe { ark_trace_back() };
-    unsafe { ark_display_value(libr::R_NilValue) };
 }
 
 #[cfg(test)]
