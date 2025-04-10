@@ -34,7 +34,7 @@ static _ARK_DISPLAY_VALUE: unsafe extern "C" fn(x: libr::SEXP) -> *const ffi::c_
 // Implementations for entry points in `debug.c`.
 
 #[no_mangle]
-pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
+pub extern "C-unwind" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
         unsafe { libr::Rf_PrintValue(x) };
     })
@@ -53,7 +53,7 @@ pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
 /// settings set escape-non-printables false
 /// ```
 #[no_mangle]
-pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
+pub extern "C-unwind" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
         // TODO: Should use C callable when implemented as that would avoid
         // messing with namedness and refcounts:
@@ -71,7 +71,7 @@ pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
 /// settings set escape-non-printables false
 /// ```
 #[no_mangle]
-pub extern "C" fn ark_trace_back_rs() -> *const ffi::c_char {
+pub extern "C-unwind" fn ark_trace_back_rs() -> *const ffi::c_char {
     capture_console_output(|| {
         // https://github.com/r-lib/rlang/issues/1059
         unsafe {
@@ -83,7 +83,7 @@ pub extern "C" fn ark_trace_back_rs() -> *const ffi::c_char {
 }
 
 #[no_mangle]
-pub extern "C" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
+pub extern "C-unwind" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
     let value = unsafe {
         let kind = tidy_kind(r_typeof(x));
         let tag = format!("<{kind}>");
