@@ -55,6 +55,9 @@ pub extern "C" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
 #[no_mangle]
 pub extern "C" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
+        // TODO: Should use C callable when implemented as that would avoid
+        // messing with namedness and refcounts:
+        // https://github.com/r-lib/lobstr/issues/77
         let out = RFunction::new("lobstr", "sxp").add(x).call().unwrap();
         unsafe { libr::Rf_PrintValue(out.sexp) };
     })
