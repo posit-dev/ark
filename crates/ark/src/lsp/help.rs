@@ -411,7 +411,7 @@ mod tests {
 
             let markdown = help.parameter("x").unwrap().unwrap();
             assert_eq!(markdown.kind, MarkupKind::Markdown);
-            markdown.value.contains("vector or `NULL`");
+            assert!(markdown.value.contains("vector or `NULL`"));
 
             assert!(help.parameter("not_a_parameter").unwrap().is_none());
         });
