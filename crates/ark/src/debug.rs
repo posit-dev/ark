@@ -155,8 +155,9 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
 /// other C longjumps from collapsing the debugging context. If a Rust panic
 /// occurs however, it is propagated as normal.
 ///
-/// Note that the resulting string is stored on the R heap and never freed. This
-/// should only be used in a debugging context where leaking is not an issue.
+/// Note that the resulting string is stored on the Rust heap and never freed.
+/// This should only be used in a debugging context where leaking is not an
+/// issue.
 pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
     let old = CAPTURE_CONSOLE_OUTPUT.swap(true, Ordering::SeqCst);
 
