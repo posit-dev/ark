@@ -8,11 +8,11 @@ use harp::utils::r_str_to_owned_utf8_unchecked;
 use crate::interface::RMain;
 use crate::interface::CAPTURE_CONSOLE_OUTPUT;
 
-// Ensure the compiler includes the C entry points in `debug.c` in the binary.
-// We store function pointers in global variables that are declared "used". The
-// compiler is able to follow the chain of dependency from these variables to
-// the C functions and ultimately their Rust implementations defined below.
-
+// To ensure the compiler includes the C entry points in `debug.c` in the binary,
+// we store function pointers in global variables that are declared "used" (even
+// though we never actually use them). The compiler is able to follow the chain
+// of dependency from these variables to the C functions and ultimately their
+// Rust implementations defined below.
 extern "C" {
     fn ark_print(x: libr::SEXP) -> *const ffi::c_char;
     fn ark_inspect(x: libr::SEXP) -> *const ffi::c_char;
