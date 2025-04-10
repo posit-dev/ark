@@ -240,6 +240,8 @@ pub struct RMain {
     /// Stored in `RMain` to avoid memory leakage when `Rf_error()` jumps.
     r_error_buffer: Option<CString>,
 
+    /// `WriteConsole` output diverted from IOPub is stored here. This is only used
+    /// to return R output to the debugger.
     pub(crate) captured_output: String,
 }
 
