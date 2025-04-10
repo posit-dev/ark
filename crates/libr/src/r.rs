@@ -42,7 +42,7 @@ functions::generate! {
     ) -> std::ffi::c_int;
 
     pub fn R_GetCCallable(pkg: *const std::ffi::c_char, fun: *const std::ffi::c_char) ->
-        Option<unsafe extern "C-unwind" fn(std::ffi::c_int) -> *mut std::ffi::c_void>;
+        DL_FUNC;
 
     pub fn vmaxget() -> *mut std::ffi::c_void;
 

@@ -73,7 +73,7 @@ pub extern "C" fn ark_trace_back_rs() -> *const ffi::c_char {
         // https://github.com/r-lib/rlang/issues/1059
         unsafe {
             let fun =
-                libr::R_GetCCallable(c"rlang".as_ptr(), c"rlang_print_backtrace".as_ptr()).unwrap();
+                get_c_callable_int(c"rlang".as_ptr(), c"rlang_print_backtrace".as_ptr()).unwrap();
             fun(1);
         };
     })
@@ -183,4 +183,17 @@ pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
 
     // Intentionally leaks, should only be used in the debugger
     ffi::CString::new(out).unwrap().into_raw()
+}
+
+// Cast `DL_FUNC` to correct function type
+fn get_c_callable_int(
+    pkg: *const std::ffi::c_char,
+    fun: *const std::ffi::c_char,
+) -> Option<unsafe extern "C-unwind" fn(std::ffi::c_int) -> *mut std::ffi::c_void> {
+    unsafe {
+        std::mem::transmute::<
+            Option<unsafe extern "C-unwind" fn() -> *mut std::ffi::c_void>,
+            Option<unsafe extern "C-unwind" fn(std::ffi::c_int) -> *mut std::ffi::c_void>,
+        >(libr::R_GetCCallable(pkg, fun))
+    }
 }
