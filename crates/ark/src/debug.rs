@@ -147,9 +147,9 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
 
 /// Run closure and capture its console output.
 ///
-/// Useful for debugging. For instance you can use this to call code from the
-/// lldb interpreter. Output from stdout and stderr is returned instead of being
-/// sent over IOPub.
+/// Useful for debugging. For instance you can use this to call code from the C
+/// debugger's interpreter. Output from stdout and stderr is returned instead of
+/// being sent over IOPub.
 ///
 /// The closure is run in a `harp::try_catch()` context to prevent R errors and
 /// other C longjumps from collapsing the debugging context. If a Rust panic
