@@ -1,3 +1,4 @@
+// Define `SEXP` as opaque struct. This replaces a dependency on `Rinternals.h`.
 typedef struct SEXPREC *SEXP;
 
 // C entry points that are visible to debuggers like lldb.
