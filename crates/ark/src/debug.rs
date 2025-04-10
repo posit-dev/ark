@@ -4,6 +4,7 @@ use std::sync::atomic::Ordering;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_str_to_owned_utf8_unchecked;
+use harp::utils::r_typeof;
 
 use crate::interface::RMain;
 use crate::interface::CAPTURE_CONSOLE_OUTPUT;
@@ -81,10 +82,10 @@ pub extern "C" fn ark_trace_back_rs() -> *const ffi::c_char {
 #[no_mangle]
 pub extern "C" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
     let value = unsafe {
-        let kind = tidy_kind(libr::TYPEOF(x) as u32);
+        let kind = tidy_kind(r_typeof(x));
         let tag = format!("<{kind}>");
 
-        match libr::TYPEOF(x) as u32 {
+        match r_typeof(x) {
             libr::SYMSXP => format!(
                 "{tag} ({name})",
                 name = r_str_to_owned_utf8_unchecked(libr::PRINTNAME(x))
