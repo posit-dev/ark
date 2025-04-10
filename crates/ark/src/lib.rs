@@ -12,6 +12,7 @@ pub mod control;
 pub mod coordinates;
 pub mod dap;
 pub mod data_explorer;
+pub mod debug;
 pub mod errors;
 pub mod fixtures;
 pub mod help;

@@ -16,6 +16,8 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::result::Result::Ok;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Poll;
@@ -125,6 +127,7 @@ use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 
+pub static CAPTURE_CONSOLE_OUTPUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// An enum representing the different modes in which the R session can run.
@@ -236,6 +239,10 @@ pub struct RMain {
     /// Raw error buffer provided to `Rf_error()` when throwing `r_read_console()` errors.
     /// Stored in `RMain` to avoid memory leakage when `Rf_error()` jumps.
     r_error_buffer: Option<CString>,
+
+    /// `WriteConsole` output diverted from IOPub is stored here. This is only used
+    /// to return R output to the debugger.
+    pub(crate) captured_output: String,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -567,6 +574,7 @@ impl RMain {
             pending_lines: Vec::new(),
             banner: None,
             r_error_buffer: None,
+            captured_output: String::new(),
         }
     }
 
@@ -1668,6 +1676,13 @@ impl RMain {
 
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
+        if CAPTURE_CONSOLE_OUTPUT.load(Ordering::SeqCst) {
+            RMain::get_mut()
+                .captured_output
+                .push_str(&console_to_utf8(buf).unwrap());
+            return;
+        }
+
         let content = match console_to_utf8(buf) {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),

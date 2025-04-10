@@ -41,6 +41,9 @@ functions::generate! {
         externalRoutines: *const R_ExternalMethodDef
     ) -> std::ffi::c_int;
 
+    pub fn R_GetCCallable(pkg: *const std::ffi::c_char, fun: *const std::ffi::c_char) ->
+        DL_FUNC;
+
     pub fn vmaxget() -> *mut std::ffi::c_void;
 
     pub fn vmaxset(arg1: *const std::ffi::c_void);
