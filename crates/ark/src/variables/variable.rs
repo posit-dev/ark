@@ -588,6 +588,28 @@ fn has_children(value: SEXP) -> bool {
     }
 }
 
+fn has_viewer(value: SEXP) -> bool {
+    if !(r_is_data_frame(value) || r_is_matrix(value)) {
+        return false;
+    }
+
+    // We have a data.frame or matrix. Dispatch to the has_viewer method
+    match ArkGenerics::VariableHasViewer.try_dispatch::<bool>(value, vec![]) {
+        Err(err) => {
+            log::error!(
+                "Error from '{}' method: {err}",
+                ArkGenerics::VariableHasViewer.to_string()
+            );
+            // The viewer exists, but failed
+            true
+        },
+        // A matching viewer method was not found
+        Ok(None) => true,
+        // The viewer method was found, use its result
+        Ok(Some(val)) => val,
+    }
+}
+
 enum EnvironmentVariableNode {
     Concrete { object: RObject },
     R6Node { object: RObject, name: String },
@@ -653,7 +675,7 @@ impl PositronVariable {
                 size: 0, // It's up to the caller to set the size.
                 has_children: has_children(x),
                 is_truncated,
-                has_viewer: r_is_data_frame(x) || r_is_matrix(x),
+                has_viewer: has_viewer(x),
                 updated_time: Self::update_timestamp(),
             },
         }
@@ -1681,6 +1703,10 @@ mod tests {
                     "other"
                 })
 
+                .ark.register_method("ark_positron_variable_has_viewer", "foo", function(x) {
+                    TRUE
+                })
+
                 .ark.register_method("ark_positron_variable_get_children", "foo", function(x) {
                     children <- list(
                         "hello" = list(a = 1, b = 2),
@@ -1741,6 +1767,10 @@ mod tests {
 
             assert_eq!(variable.kind, VariableKind::Other);
 
+            // Even though the viewer method returns TRUE, the object is not a data.frame
+            // or matrix, so it doesn't have a viewer.
+            assert_eq!(variable.has_viewer, false);
+
             // Now inspect `x`
             let path = vec![String::from("x")];
             let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
@@ -1766,9 +1796,56 @@ mod tests {
                 .ark.unregister_method("ark_positron_variable_display_value", "foo")
                 .ark.unregister_method("ark_positron_variable_display_type", "foo")
                 .ark.unregister_method("ark_positron_variable_has_children", "foo")
+                .ark.unregister_method("ark_positron_variable_has_viewer", "foo")
                 .ark.unregister_method("ark_positron_variable_kind", "foo")
                 .ark.unregister_method("ark_positron_variable_get_children", "foo")
                 .ark.unregister_method("ark_positron_variable_get_child_at", "foo")
+                "#,
+            )
+            .unwrap();
+        })
+    }
+
+    #[test]
+    fn test_has_viewer_data_frame_subclass() {
+        r_task(|| {
+            // Create an object with that class in an env.
+            let env = harp::parse_eval_base(
+                r#"
+            local({
+                env <- new.env(parent = emptyenv())
+                env$x <- structure(data.frame(x = 1, y = 2), class = c("foo", "data.frame"))
+                env
+            })
+            "#,
+            )
+            .unwrap();
+
+            let has_viewer = || {
+                let path = vec![];
+                let variables = PositronVariable::inspect(env.clone(), &path).unwrap();
+
+                assert_eq!(variables.len(), 1);
+                let variable = variables[0].clone();
+                variable.has_viewer
+            };
+
+            assert!(has_viewer());
+
+            harp::parse_eval_global(
+                r#"
+                .ark.register_method("ark_positron_variable_has_viewer", "foo", function(x) {
+                    FALSE
+                })
+                "#,
+            )
+            .unwrap();
+
+            assert!(!has_viewer());
+
+            harp::parse_eval_global(
+                r#"
+                .ark.unregister_method("ark_positron_variable_has_viewer", "foo")
                 "#,
             )
             .unwrap();
