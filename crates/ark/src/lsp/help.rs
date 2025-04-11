@@ -170,7 +170,7 @@ impl RHtmlHelp {
     /// <h3>Arguments</h3>
     ///
     /// <table>
-    /// <tr style="vertical-align: top;"><td><code>parameter</code></td>
+    /// <tr><td><code>parameter</code></td>
     /// <td>
     /// Parameter documentation.
     /// </td></tr>
@@ -212,7 +212,7 @@ impl RHtmlHelp {
 
             // Get the cells in this table.
             // I really wish R included classes on these table elements...
-            let selector = Selector::parse(r#"tr[style="vertical-align: top;"] > td"#).unwrap();
+            let selector = Selector::parse(r#"tr > td"#).unwrap();
             let mut cells = elt.select(&selector);
 
             // Start iterating through pairs of cells.
@@ -371,6 +371,8 @@ fn for_each_section(doc: &Html, mut callback: impl FnMut(ElementRef, Vec<Element
 
 #[cfg(test)]
 mod tests {
+    use tower_lsp::lsp_types::MarkupKind;
+
     use crate::lsp::help::RHtmlHelp;
     use crate::lsp::help::Status;
     use crate::r_task;
@@ -406,6 +408,12 @@ mod tests {
 
             let markdown = help.markdown().unwrap();
             markdown.contains("### Usage");
+
+            let markdown = help.parameter("x").unwrap().unwrap();
+            assert_eq!(markdown.kind, MarkupKind::Markdown);
+            assert!(markdown.value.contains("vector or `NULL`"));
+
+            assert!(help.parameter("not_a_parameter").unwrap().is_none());
         });
     }
 
