@@ -42,8 +42,7 @@ pub struct PlotResult {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RenderPolicy {
-    pub width: i64,
-    pub height: i64,
+    pub size: PlotSize,
     pub pixel_ratio: f64,
     pub format: RenderFormat,
 }
