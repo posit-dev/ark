@@ -80,8 +80,7 @@ ark_positron_variable_kind.foo <- function(x, ...) {
 
 ### Disabling the Viewer action
 
-The `ark_positron_variable_has_viewer` can be used to disable to `View` actions for `data.frame` and `matrix`
-objects that don't support it. This method is only called for such objects, other objects are not supported
+The `ark_positron_variable_has_viewer` can be used to disable the `View` actions for `data.frame` and `matrix`
 by Positron yet.
 
 ## Inspecting Objects
