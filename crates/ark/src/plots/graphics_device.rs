@@ -134,7 +134,7 @@ struct DeviceContext {
     wrapped_callbacks: WrappedDeviceCallbacks,
 
     // Current rendering policy
-    current_rendering_policy: Cell<RenderPolicy>,
+    current_render_policy: Cell<RenderPolicy>,
 }
 
 impl DeviceContext {
@@ -149,7 +149,7 @@ impl DeviceContext {
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
-            current_rendering_policy: Cell::new(RenderPolicy {
+            current_render_policy: Cell::new(RenderPolicy {
                 size: PlotSize {
                     width: 640,
                     height: 400,
@@ -376,7 +376,7 @@ impl DeviceContext {
 
                 // Update the current rendering policy so that pre-rendering is
                 // as accurate as possible
-                self.current_rendering_policy.replace(policy);
+                self.current_render_policy.replace(policy);
 
                 let data = self.render_plot(&id, &policy)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
@@ -471,7 +471,7 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let policy = self.current_rendering_policy.get();
+        let policy = self.current_render_policy.get();
 
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
         let data = match self.render_plot(id, &policy) {
