@@ -28,13 +28,13 @@ You can also register a method outside an R package using `.ps.register_ark_meth
 
 Ark currently supports six methods with the following signatures:
 
--   `ark_positron_variable_display_value(x, ..., width = getOption("width"))`
--   `ark_positron_variable_display_type(x, ..., include_length = TRUE)`
--   `ark_positron_variable_kind(x, ...)`
--   `ark_positron_variable_has_children(x, ...)`
--   `ark_positron_variable_get_children(x, ...)`
--   `ark_positron_variable_get_child_at(x, ..., index, name)`
--   `ark_positron_variable_has_viewer(x)`
+- `ark_positron_variable_display_value(x, ..., width = getOption("width"))`
+- `ark_positron_variable_display_type(x, ..., include_length = TRUE)`
+- `ark_positron_variable_kind(x, ...)`
+- `ark_positron_variable_has_children(x, ...)`
+- `ark_positron_variable_get_children(x, ...)`
+- `ark_positron_variable_get_child_at(x, ..., index, name)`
+- `ark_positron_variable_has_viewer(x)`
 
 ### Customizing Display Value
 
@@ -103,8 +103,8 @@ ark_positron_variable_has_children.foo <- function(x, ...) {
 
 To allow inspection, implement these methods:
 
--   `ark_positron_variable_get_children()`: Returns a named list of child objects to be displayed.
--   `ark_positron_variable_get_child_at()`: Retrieves a specific element from the object.
+- `ark_positron_variable_get_children()`: Returns a named list of child objects to be displayed.
+- `ark_positron_variable_get_child_at()`: Retrieves a specific element from the object.
 
 Example:
 
