@@ -375,7 +375,11 @@ impl DeviceContext {
                 };
 
                 // Update the current rendering policy so that pre-rendering is
-                // as accurate as possible
+                // as accurate as possible.
+                // TODO: Once we get render policy events we should use that instead.
+                // This way a one-off render request with special settings won't cause
+                // the next pre-render to be invalid and force the frontend to request
+                // a proper render.
                 self.current_render_policy.replace(policy);
 
                 let data = self.render_plot(&id, &policy)?;
