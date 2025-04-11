@@ -34,11 +34,22 @@ pub struct PlotResult {
 	pub data: String,
 
 	/// The MIME type of the plot data
-	pub mime_type: String
+	pub mime_type: String,
+
+	/// The policy used to render the plot
+	pub policy: RenderPolicy
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RenderPolicy {
+    pub width: i64,
+    pub height: i64,
+    pub pixel_ratio: f64,
+    pub format: RenderFormat,
 }
 
 /// The size of a plot
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotSize {
 	/// The plot's height, in pixels
 	pub height: i64,
@@ -162,4 +173,3 @@ pub enum PlotFrontendEvent {
 	Show,
 
 }
-

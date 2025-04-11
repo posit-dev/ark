@@ -21,6 +21,7 @@ use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::RenderFormat;
+use amalthea::comm::plot_comm::RenderPolicy;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -133,14 +134,6 @@ struct DeviceContext {
 
     // Current rendering policy
     current_rendering_policy: Cell<RenderPolicy>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct RenderPolicy {
-    width: i64,
-    height: i64,
-    pixel_ratio: f64,
-    format: RenderFormat,
 }
 
 impl DeviceContext {
@@ -386,6 +379,7 @@ impl DeviceContext {
                 Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: mime_type.to_string(),
+                    policy,
                 }))
             },
         }
@@ -482,6 +476,7 @@ impl DeviceContext {
                 let pre_render = PlotResult {
                     data: pre_render.to_string(),
                     mime_type: mime_type.to_string(),
+                    policy,
                 };
 
                 serde_json::json!({ "pre_render": pre_render })
