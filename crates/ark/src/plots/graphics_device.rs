@@ -20,6 +20,7 @@ use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
+use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::RenderFormat;
 use amalthea::comm::plot_comm::RenderPolicy;
 use amalthea::socket::comm::CommInitiator;
@@ -149,8 +150,10 @@ impl DeviceContext {
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
             current_rendering_policy: Cell::new(RenderPolicy {
-                width: 640,
-                height: 400,
+                size: PlotSize {
+                    width: 640,
+                    height: 400,
+                },
                 pixel_ratio: 1.,
                 format: RenderFormat::Png,
             }),
@@ -363,8 +366,10 @@ impl DeviceContext {
                 });
 
                 let policy = RenderPolicy {
-                    width: size.width,
-                    height: size.height,
+                    size: PlotSize {
+                        width: size.width,
+                        height: size.height,
+                    },
                     pixel_ratio: plot_meta.pixel_ratio,
                     format: plot_meta.format,
                 };
@@ -590,8 +595,10 @@ impl DeviceContext {
     fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
         let policy = RenderPolicy {
-            width: 800,
-            height: 600,
+            size: PlotSize {
+                width: 800,
+                height: 600,
+            },
             pixel_ratio: 1.0,
             format: RenderFormat::Png,
         };
@@ -613,8 +620,8 @@ impl DeviceContext {
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.render_plot_from_recording")
                 .param("id", id)
-                .param("width", RObject::try_from(policy.width)?)
-                .param("height", RObject::try_from(policy.height)?)
+                .param("width", RObject::try_from(policy.size.width)?)
+                .param("height", RObject::try_from(policy.size.height)?)
                 .param("pixel_ratio", policy.pixel_ratio)
                 .param("format", policy.format.to_string())
                 .call()?
