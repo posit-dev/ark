@@ -28,7 +28,6 @@ use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
-use anyhow::bail;
 use base64::engine::general_purpose;
 use base64::Engine;
 use crossbeam::channel::Select;
@@ -136,7 +135,7 @@ struct DeviceContext {
     current_rendering_policy: Cell<RenderPolicy>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct RenderPolicy {
     width: i64,
     height: i64,
@@ -370,23 +369,18 @@ impl DeviceContext {
                     return Err(anyhow!("Intrinsically sized plots are not yet supported."));
                 });
 
-                // Update the current rendering policy so that pre-rendering is
-                // as accurate as possible
-                self.current_rendering_policy.replace(RenderPolicy {
+                let policy = RenderPolicy {
                     width: size.width,
                     height: size.height,
                     pixel_ratio: plot_meta.pixel_ratio,
                     format: plot_meta.format,
-                });
+                };
 
-                let data = self.render_plot(
-                    &id,
-                    size.width,
-                    size.height,
-                    plot_meta.pixel_ratio,
-                    &plot_meta.format,
-                )?;
+                // Update the current rendering policy so that pre-rendering is
+                // as accurate as possible
+                self.current_rendering_policy.replace(policy);
 
+                let data = self.render_plot(&id, &policy)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
@@ -481,13 +475,7 @@ impl DeviceContext {
         let policy = self.current_rendering_policy.get();
 
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
-        let data = match self.render_plot(
-            id,
-            policy.width,
-            policy.height,
-            policy.pixel_ratio,
-            &policy.format,
-        ) {
+        let data = match self.render_plot(id, &policy) {
             Ok(pre_render) => {
                 let mime_type = Self::get_mime_type(&RenderFormat::Png);
 
@@ -606,13 +594,15 @@ impl DeviceContext {
 
     fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
-        let width = 800;
-        let height = 600;
-        let pixel_ratio = 1.0;
-        let format = RenderFormat::Png;
+        let policy = RenderPolicy {
+            width: 800,
+            height: 600,
+            pixel_ratio: 1.0,
+            format: RenderFormat::Png,
+        };
 
-        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio, &format), Err(error) => {
-            bail!("Failed to render plot with id {id} due to: {error}.");
+        let data = unwrap!(self.render_plot(id, &policy), Err(error) => {
+            return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
         });
 
         let mut map = serde_json::Map::new();
@@ -621,24 +611,17 @@ impl DeviceContext {
         Ok(serde_json::Value::Object(map))
     }
 
-    #[tracing::instrument(level = "trace", skip_all, fields(id = %id, width = %width, height = %height, pixel_ratio = %pixel_ratio, format = %format))]
-    fn render_plot(
-        &self,
-        id: &PlotId,
-        width: i64,
-        height: i64,
-        pixel_ratio: f64,
-        format: &RenderFormat,
-    ) -> anyhow::Result<String> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    fn render_plot(&self, id: &PlotId, policy: &RenderPolicy) -> anyhow::Result<String> {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.render_plot_from_recording")
                 .param("id", id)
-                .param("width", RObject::try_from(width)?)
-                .param("height", RObject::try_from(height)?)
-                .param("pixel_ratio", pixel_ratio)
-                .param("format", format.to_string())
+                .param("width", RObject::try_from(policy.width)?)
+                .param("height", RObject::try_from(policy.height)?)
+                .param("pixel_ratio", policy.pixel_ratio)
+                .param("format", policy.format.to_string())
                 .call()?
                 .to::<String>()
         });
