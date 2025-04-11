@@ -39,6 +39,9 @@ pub enum ArkGenerics {
 
     #[strum(serialize = "ark_positron_variable_get_children")]
     VariableGetChildren,
+
+    #[strum(serialize = "ark_positron_variable_has_viewer")]
+    VariableHasViewer,
 }
 
 impl ArkGenerics {
