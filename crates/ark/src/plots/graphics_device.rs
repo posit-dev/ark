@@ -133,7 +133,7 @@ struct DeviceContext {
     /// The callbacks of the wrapped device, initialized on graphics device creation
     wrapped_callbacks: WrappedDeviceCallbacks,
 
-    // Current rendering policy
+    /// The settings used for pre-renderings of new plots.
     current_render_policy: Cell<RenderPolicy>,
 }
 
