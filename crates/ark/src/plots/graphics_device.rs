@@ -388,7 +388,7 @@ impl DeviceContext {
                 Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: mime_type.to_string(),
-                    policy,
+                    policy: Some(policy),
                 }))
             },
         }
@@ -485,7 +485,7 @@ impl DeviceContext {
                 let pre_render = PlotResult {
                     data: pre_render.to_string(),
                     mime_type: mime_type.to_string(),
-                    policy,
+                    policy: Some(policy),
                 };
 
                 serde_json::json!({ "pre_render": pre_render })

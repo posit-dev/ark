@@ -37,14 +37,7 @@ pub struct PlotResult {
 	pub mime_type: String,
 
 	/// The policy used to render the plot
-	pub policy: RenderPolicy
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RenderPolicy {
-    pub size: PlotSize,
-    pub pixel_ratio: f64,
-    pub format: RenderFormat,
+	pub policy: Option<RenderPolicy>
 }
 
 /// The size of a plot
@@ -57,8 +50,21 @@ pub struct PlotSize {
 	pub width: i64
 }
 
-/// Possible values for Format in Render
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+/// The policy used to render the plot
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct RenderPolicy {
+	/// Plot size of the render policy
+	pub size: PlotSize,
+
+	/// The pixel ratio of the display device
+	pub pixel_ratio: f64,
+
+	/// Format of the render policy
+	pub format: RenderFormat
+}
+
+/// Possible values for RenderFormat
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum RenderFormat {
 	#[serde(rename = "png")]
 	#[strum(to_string = "png")]
@@ -82,7 +88,7 @@ pub enum RenderFormat {
 }
 
 /// Possible values for PlotUnit
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum PlotUnit {
 	#[serde(rename = "pixels")]
 	#[strum(to_string = "pixels")]
@@ -172,3 +178,4 @@ pub enum PlotFrontendEvent {
 	Show,
 
 }
+
