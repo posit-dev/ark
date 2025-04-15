@@ -34,7 +34,7 @@ Ark currently supports six methods with the following signatures:
 - `ark_positron_variable_has_children(x, ...)`
 - `ark_positron_variable_get_children(x, ...)`
 - `ark_positron_variable_get_child_at(x, ..., index, name)`
-- `ark_positron_variable_has_viewer(x)`
+- `ark_positron_variable_has_viewer(x, ...)`
 
 ### Customizing Display Value
 
@@ -88,7 +88,7 @@ Example:
 
 ```r
 #' @param x Object to check for Viewer support
-ark_positron_variable_has_viewer.foo <- function(x) {
+ark_positron_variable_has_viewer.foo <- function(x, ...) {
     # The viewer will not be enabled for `foo` objects.
     # This is only called if `foo` is a subclass of a data.frame or matrix.
     FALSE
