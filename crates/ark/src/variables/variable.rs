@@ -600,8 +600,8 @@ fn has_viewer(value: SEXP) -> bool {
                 "Error from '{}' method: {err}",
                 ArkGenerics::VariableHasViewer.to_string()
             );
-            // The viewer exists, but failed
-            true
+            // The viewer method exists, but failed
+            false
         },
         // A matching viewer method was not found
         Ok(None) => true,
