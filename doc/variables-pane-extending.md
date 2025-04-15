@@ -26,7 +26,7 @@ You can also register a method outside an R package using `.ps.register_ark_meth
 
 ## Available Methods
 
-Ark currently supports six methods with the following signatures:
+Ark currently supports seven methods with the following signatures:
 
 - `ark_positron_variable_display_value(x, ..., width = getOption("width"))`
 - `ark_positron_variable_display_type(x, ..., include_length = TRUE)`
