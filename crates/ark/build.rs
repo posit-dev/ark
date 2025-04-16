@@ -10,6 +10,13 @@ use std::process::Command;
 extern crate embed_resource;
 
 fn main() {
+    // Ensures that env vars are refreshed on any `src/` or `resources/` change, which is
+    // required for `.ps.ark.version()` to work as you'd expect. Notably this also ensures
+    // changes to `src/debug.c` force a refresh, which otherwise aren't considered by
+    // cargo's defaults as requiring a rebuild.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=resources");
+
     // Attempt to use `git rev-parse HEAD` to get the current git hash. If this
     // fails, we'll just use the string "<unknown>" to indicate that the git hash
     // could not be determined..
@@ -60,6 +67,5 @@ fn main() {
         .join("ark-manifest.rc");
     embed_resource::compile_for_everything(resource, embed_resource::NONE);
 
-    println!("cargo:rerun-if-changed=src/debug.c");
     cc::Build::new().file("src/debug.c").compile("debug");
 }
