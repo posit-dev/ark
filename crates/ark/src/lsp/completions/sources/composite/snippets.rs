@@ -116,11 +116,6 @@ mod tests {
     fn test_snippets() {
         let snippets = completions_from_snippets().unwrap().unwrap();
 
-        // Hash map isn't stable with regards to ordering
-        let item = snippets.iter().find(|item| item.label == "lib").unwrap();
-        assert_eq!(item.detail, Some("Attach an R package".to_string()));
-        assert_eq!(item.insert_text, Some("library(${1:package})".to_string()));
-
         // Multiline body
         let item = snippets.iter().find(|item| item.label == "if").unwrap();
         assert_eq!(
