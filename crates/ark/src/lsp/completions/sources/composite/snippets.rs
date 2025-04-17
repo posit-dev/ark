@@ -116,11 +116,7 @@ mod tests {
     fn test_snippets() {
         let snippets = completions_from_snippets().unwrap().unwrap();
 
-        // Multiline body
-        let item = snippets.iter().find(|item| item.label == "if").unwrap();
-        assert_eq!(
-            item.insert_text,
-            Some("if (${1:condition}) {\n\t${0}\n}".to_string())
-        );
+        // We should have an empty list since snippets have been moved to keyword source
+        assert!(snippets.is_empty());
     }
 }

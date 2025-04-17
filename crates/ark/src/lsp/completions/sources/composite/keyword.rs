@@ -8,6 +8,10 @@
 use stdext::unwrap;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::Documentation;
+use tower_lsp::lsp_types::InsertTextFormat;
+use tower_lsp::lsp_types::MarkupContent;
+use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item;
@@ -32,10 +36,13 @@ impl CompletionSource for KeywordSource {
 pub fn completions_from_keywords() -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut completions = vec![];
 
-    // provide keyword completion results
-    // NOTE: Some R keywords have definitions provided in the R
-    // base namespace, so we don't need to provide duplicate
-    // definitions for these here.
+    add_bare_keywords(&mut completions);
+    add_keyword_snippets(&mut completions);
+
+    Ok(Some(completions))
+}
+
+fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
     let keywords = vec![
         "NULL",
         "NA",
@@ -48,9 +55,9 @@ pub fn completions_from_keywords() -> anyhow::Result<Option<Vec<CompletionItem>>
         "NA_character_",
         "NA_complex_",
         "in",
-        "else",
         "next",
         "break",
+        "repeat",
     ];
 
     for keyword in keywords {
@@ -68,6 +75,80 @@ pub fn completions_from_keywords() -> anyhow::Result<Option<Vec<CompletionItem>>
 
         completions.push(item);
     }
+}
 
-    Ok(Some(completions))
+fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
+    // Transplanting previous snippet treatment of certain reserved words from
+    // the snippet source to this keyword source
+    let snippet_data = vec![
+        // Snippet data is a tuple of:
+        // - keyword: The reserved word
+        // - label: The label for the completion item
+        // - snippet: The snippet to be inserted
+        // - detail: The detail displayed in the completion UI
+
+        // The only case where `keyword != label` is `fun` for `function`.
+        // But in the name of preserving original behaviour, this is my opening
+        // move.
+        (
+            "for",
+            "for",
+            "for (${1:variable} in ${2:vector}) {\n\t${0}\n}",
+            "Define a loop",
+        ),
+        (
+            "if",
+            "if",
+            "if (${1:condition}) {\n\t${0}\n}",
+            "Conditional expression",
+        ),
+        (
+            "while",
+            "while",
+            "while (${1:condition}) {\n\t${0}\n}",
+            "Define a loop",
+        ),
+        (
+            "else",
+            "else",
+            "else {\n\t${0}\n}",
+            "Conditional expression",
+        ),
+        (
+            "function",
+            "fun",
+            "${1:name} <- function(${2:variables}) {\n\t${0}\n}",
+            "Function skeleton",
+        ),
+    ];
+
+    for (keyword, label, snippet, detail) in snippet_data {
+        let item = completion_item(label.to_string(), CompletionData::Snippet {
+            text: snippet.to_string(),
+        });
+
+        let mut item = match item {
+            Ok(item) => item,
+            Err(err) => {
+                log::trace!("Failed to construct completion item for reserved keyword '{keyword}' due to {err:?}");
+                continue;
+            },
+        };
+
+        // Markup shows up in the quick suggestion documentation window,
+        // so you can see what the snippet expands to
+        let markup = vec!["```r", snippet, "```"].join("\n");
+        let markup = MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markup,
+        };
+
+        item.detail = Some(detail.to_string());
+        item.documentation = Some(Documentation::MarkupContent(markup));
+        item.kind = Some(CompletionItemKind::KEYWORD);
+        item.insert_text = Some(snippet.to_string());
+        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+
+        completions.push(item);
+    }
 }
