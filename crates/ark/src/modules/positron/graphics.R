@@ -194,6 +194,7 @@ with_graphics_device <- function(
 }
 
 use_ragg <- local({
+    # Only check global option once per session
     USE_RAGG <- NULL
 
     function() {
