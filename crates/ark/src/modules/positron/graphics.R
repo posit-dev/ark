@@ -207,7 +207,7 @@ use_ragg <- local({
 })
 
 init_use_ragg <- function() {
-    option <- getOption("ark.use_ragg", default = TRUE)
+    option <- getOption("ark.ragg", default = TRUE)
 
     if (!isTRUE(option)) {
         # Bail on any non-`TRUE` option value
