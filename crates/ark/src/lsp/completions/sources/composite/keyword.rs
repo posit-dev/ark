@@ -42,25 +42,68 @@ pub fn completions_from_keywords() -> anyhow::Result<Option<Vec<CompletionItem>>
     Ok(Some(completions))
 }
 
-fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
-    let keywords = vec![
-        "NULL",
-        "NA",
-        "TRUE",
-        "FALSE",
-        "Inf",
-        "NaN",
-        "NA_integer_",
-        "NA_real_",
-        "NA_character_",
-        "NA_complex_",
-        "in",
-        "next",
-        "break",
-        "repeat",
-    ];
+const BARE_KEYWORDS: &[&str] = &[
+    "NULL",
+    "NA",
+    "TRUE",
+    "FALSE",
+    "Inf",
+    "NaN",
+    "NA_integer_",
+    "NA_real_",
+    "NA_character_",
+    "NA_complex_",
+    "in",
+    "next",
+    "break",
+    "repeat",
+];
 
-    for keyword in keywords {
+// Snippet data is a tuple of:
+// - keyword: The reserved word
+// - label: The label for the completion item
+// - snippet: The snippet to be inserted
+// - detail: The detail displayed in the completion UI
+
+// The only case where `keyword != label` is `fun` for `function`.
+// But in the name of preserving original behaviour, this is my opening
+// move.
+const KEYWORD_SNIPPETS: &[(&str, &str, &str, &str)] = &[
+    // (keyword, label, snippet, detail)
+    (
+        "for",
+        "for",
+        "for (${1:variable} in ${2:vector}) {\n\t${0}\n}",
+        "Define a loop",
+    ),
+    (
+        "if",
+        "if",
+        "if (${1:condition}) {\n\t${0}\n}",
+        "Conditional expression",
+    ),
+    (
+        "while",
+        "while",
+        "while (${1:condition}) {\n\t${0}\n}",
+        "Define a loop",
+    ),
+    (
+        "else",
+        "else",
+        "else {\n\t${0}\n}",
+        "Conditional expression",
+    ),
+    (
+        "function",
+        "fun",
+        "${1:name} <- function(${2:variables}) {\n\t${0}\n}",
+        "Function skeleton",
+    ),
+];
+
+fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
+    for keyword in BARE_KEYWORDS {
         let item = completion_item(keyword.to_string(), CompletionData::Keyword {
             name: keyword.to_string(),
         });
@@ -78,51 +121,8 @@ fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
 }
 
 fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
-    // Transplanting previous snippet treatment of certain reserved words from
-    // the snippet source to this keyword source
-    let snippet_data = vec![
-        // Snippet data is a tuple of:
-        // - keyword: The reserved word
-        // - label: The label for the completion item
-        // - snippet: The snippet to be inserted
-        // - detail: The detail displayed in the completion UI
-
-        // The only case where `keyword != label` is `fun` for `function`.
-        // But in the name of preserving original behaviour, this is my opening
-        // move.
-        (
-            "for",
-            "for",
-            "for (${1:variable} in ${2:vector}) {\n\t${0}\n}",
-            "Define a loop",
-        ),
-        (
-            "if",
-            "if",
-            "if (${1:condition}) {\n\t${0}\n}",
-            "Conditional expression",
-        ),
-        (
-            "while",
-            "while",
-            "while (${1:condition}) {\n\t${0}\n}",
-            "Define a loop",
-        ),
-        (
-            "else",
-            "else",
-            "else {\n\t${0}\n}",
-            "Conditional expression",
-        ),
-        (
-            "function",
-            "fun",
-            "${1:name} <- function(${2:variables}) {\n\t${0}\n}",
-            "Function skeleton",
-        ),
-    ];
-
-    for (keyword, label, snippet, detail) in snippet_data {
+    // Use the externalized constant
+    for (keyword, label, snippet, detail) in KEYWORD_SNIPPETS {
         let item = completion_item(label.to_string(), CompletionData::Snippet {
             text: snippet.to_string(),
         });
@@ -150,5 +150,52 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
 
         completions.push(item);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_presence_bare_keywords() {
+        let completions = super::completions_from_keywords().unwrap().unwrap();
+
+        for keyword in super::BARE_KEYWORDS {
+            let item = completions.iter().find(|item| item.label == *keyword);
+            assert!(
+                item.is_some(),
+                "Expected keyword '{}' not found in completions",
+                keyword
+            );
+            let item = item.unwrap();
+            assert_eq!(item.detail, Some("[keyword]".to_string()));
+            assert_eq!(
+                item.kind,
+                Some(tower_lsp::lsp_types::CompletionItemKind::KEYWORD)
+            );
+        }
+    }
+
+    #[test]
+    fn test_keyword_snippets_present() {
+        let completions = super::completions_from_keywords().unwrap().unwrap();
+
+        let snippet_labels: Vec<&str> = super::KEYWORD_SNIPPETS
+            .iter()
+            .map(|(_, label, _, _)| *label)
+            .collect();
+
+        for label in snippet_labels {
+            let item = completions.iter().find(|item| item.label == label);
+            assert!(
+                item.is_some(),
+                "Expected snippet '{}' not found in completions",
+                label
+            );
+            let item = item.unwrap();
+            assert_eq!(
+                item.kind,
+                Some(tower_lsp::lsp_types::CompletionItemKind::KEYWORD)
+            );
+        }
     }
 }
