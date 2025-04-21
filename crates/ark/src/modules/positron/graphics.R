@@ -222,6 +222,13 @@ init_use_ragg <- function() {
     TRUE
 }
 
+#' Create a device to shadow
+#'
+#' For both ragg and png, we are hopeful that providing a `res` of the default
+#' resolution should not affect the render time results much (since we are just
+#' writing display list instructions), even if at render time we can actually
+#' support a `pixel_ratio` of 2x the default resolution. We simply don't know
+#' the pixel ratio at this point.
 device_shadow <- function() {
     if (use_ragg()) {
         # For the shadow ragg device, we use a special device that only captures
