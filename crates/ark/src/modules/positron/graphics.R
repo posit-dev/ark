@@ -214,7 +214,7 @@ init_use_ragg <- function() {
         return(FALSE)
     }
 
-    if (!.ps.is_installed("ragg", minimum_version = "1.3.3.9000")) {
+    if (!.ps.is_installed("ragg", minimum_version = "1.4.0")) {
         # Need support for `agg_record()`
         return(FALSE)
     }
