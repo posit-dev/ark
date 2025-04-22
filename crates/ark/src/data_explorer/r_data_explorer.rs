@@ -231,6 +231,16 @@ impl RDataExplorer {
     }
 
     pub fn execution_thread(mut self) {
+        // Register a handler for console prompt events. We do this before sending
+        // `CommManagerEvent::Opened` to ensure we can't miss any console prompt events
+        // (#781).
+        let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
+        let listen_id = EVENTS.console_prompt.listen({
+            move |_| {
+                prompt_signal_tx.send(()).unwrap();
+            }
+        });
+
         let execute: anyhow::Result<()> = local! {
             let metadata = Metadata {
                 title: self.title.clone(),
@@ -245,14 +255,6 @@ impl RDataExplorer {
         if let Err(err) = execute {
             log::error!("Error while viewing object '{}': {}", self.title, err);
         };
-
-        // Register a handler for console prompt events
-        let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
-        let listen_id = EVENTS.console_prompt.listen({
-            move |_| {
-                prompt_signal_tx.send(()).unwrap();
-            }
-        });
 
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the frontend is closed)
