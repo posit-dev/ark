@@ -52,8 +52,8 @@ fn completions_from_search_path(
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut completions = vec![];
 
-    const R_CONTROL_FLOW_KEYWORDS: &[&str] = &[
-        "if", "else", "for", "in", "while", "repeat", "break", "next",
+    const KEYWORD_SOURCE: &[&str] = &[
+        "if", "else", "for", "in", "while", "repeat", "break", "next", "function",
     ];
 
     unsafe {
@@ -94,9 +94,9 @@ fn completions_from_search_path(
                     continue;
                 };
 
-                // Skip control flow keywords.
+                // Skip anything that is covered by the keyword source.
                 let symbol = symbol.as_str();
-                if R_CONTROL_FLOW_KEYWORDS.contains(&symbol) {
+                if KEYWORD_SOURCE.contains(&symbol) {
                     continue;
                 }
 

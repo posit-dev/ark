@@ -57,6 +57,7 @@ const BARE_KEYWORDS: &[&str] = &[
     "next",
     "break",
     "repeat",
+    "function",
 ];
 
 // Snippet data is a tuple of:
@@ -121,7 +122,7 @@ fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
 }
 
 fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
-    // Use the externalized constant
+    for (keyword, label, snippet, label_details_description) in KEYWORD_SNIPPETS {
     for (keyword, label, snippet, detail) in KEYWORD_SNIPPETS {
         let item = completion_item(label.to_string(), CompletionData::Snippet {
             text: snippet.to_string(),
@@ -145,7 +146,7 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
 
         item.detail = Some(detail.to_string());
         item.documentation = Some(Documentation::MarkupContent(markup));
-        item.kind = Some(CompletionItemKind::KEYWORD);
+        item.kind = Some(CompletionItemKind::SNIPPET);
         item.insert_text = Some(snippet.to_string());
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
 
@@ -176,7 +177,7 @@ mod tests {
     }
 
     #[test]
-    fn test_keyword_snippets_present() {
+    fn test_presence_keyword_snippets() {
         let completions = super::completions_from_keywords().unwrap().unwrap();
 
         let snippet_labels: Vec<&str> = super::KEYWORD_SNIPPETS
@@ -194,7 +195,7 @@ mod tests {
             let item = item.unwrap();
             assert_eq!(
                 item.kind,
-                Some(tower_lsp::lsp_types::CompletionItemKind::KEYWORD)
+                Some(tower_lsp::lsp_types::CompletionItemKind::SNIPPET)
             );
         }
     }
