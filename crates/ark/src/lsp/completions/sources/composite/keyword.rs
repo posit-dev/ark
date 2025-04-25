@@ -8,6 +8,7 @@
 use stdext::unwrap;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
+use tower_lsp::lsp_types::CompletionItemLabelDetails;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::InsertTextFormat;
 use tower_lsp::lsp_types::MarkupContent;
@@ -70,7 +71,7 @@ const BARE_KEYWORDS: &[&str] = &[
 // But in the name of preserving original behaviour, this is my opening
 // move.
 const KEYWORD_SNIPPETS: &[(&str, &str, &str, &str)] = &[
-    // (keyword, label, snippet, detail)
+    // (keyword, label, snippet, label_detail.description)
     (
         "for",
         "for",
@@ -114,8 +115,11 @@ fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
             continue;
         });
 
-        item.detail = Some("[keyword]".to_string());
         item.kind = Some(CompletionItemKind::KEYWORD);
+        item.label_details = Some(CompletionItemLabelDetails {
+            detail: None,
+            description: Some("[keyword]".to_string()),
+        });
 
         completions.push(item);
     }
@@ -123,7 +127,6 @@ fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
 
 fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
     for (keyword, label, snippet, label_details_description) in KEYWORD_SNIPPETS {
-    for (keyword, label, snippet, detail) in KEYWORD_SNIPPETS {
         let item = completion_item(label.to_string(), CompletionData::Snippet {
             text: snippet.to_string(),
         });
@@ -144,11 +147,14 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
             value: markup,
         };
 
-        item.detail = Some(detail.to_string());
         item.documentation = Some(Documentation::MarkupContent(markup));
         item.kind = Some(CompletionItemKind::SNIPPET);
         item.insert_text = Some(snippet.to_string());
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        item.label_details = Some(CompletionItemLabelDetails {
+            detail: None,
+            description: Some(label_details_description.to_string()),
+        });
 
         completions.push(item);
     }
@@ -156,6 +162,8 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
 
 #[cfg(test)]
 mod tests {
+    use tower_lsp::lsp_types::CompletionItemLabelDetails;
+
     #[test]
     fn test_presence_bare_keywords() {
         let completions = super::completions_from_keywords().unwrap().unwrap();
@@ -164,11 +172,16 @@ mod tests {
             let item = completions.iter().find(|item| item.label == *keyword);
             assert!(
                 item.is_some(),
-                "Expected keyword '{}' not found in completions",
-                keyword
+                "Expected keyword '{keyword}' not found in completions"
             );
             let item = item.unwrap();
-            assert_eq!(item.detail, Some("[keyword]".to_string()));
+            assert_eq!(
+                item.label_details,
+                Some(CompletionItemLabelDetails {
+                    detail: None,
+                    description: Some("[keyword]".to_string()),
+                })
+            );
             assert_eq!(
                 item.kind,
                 Some(tower_lsp::lsp_types::CompletionItemKind::KEYWORD)
@@ -189,8 +202,7 @@ mod tests {
             let item = completions.iter().find(|item| item.label == label);
             assert!(
                 item.is_some(),
-                "Expected snippet '{}' not found in completions",
-                label
+                "Expected snippet '{label}' not found in completions"
             );
             let item = item.unwrap();
             assert_eq!(
