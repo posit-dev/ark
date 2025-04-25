@@ -10,7 +10,6 @@ mod document;
 mod keyword;
 pub(crate) mod pipe;
 mod search_path;
-mod snippets;
 mod subset;
 mod workspace;
 
@@ -59,12 +58,6 @@ pub(crate) fn get_completions(
     // begin showing anything.
     if is_identifier_like(completion_context.document_context.node) {
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
-
-        push_completions(
-            snippets::SnippetSource,
-            completion_context,
-            &mut completions,
-        )?;
 
         push_completions(
             search_path::SearchPathSource,
@@ -183,8 +176,7 @@ fn is_identifier_like(x: Node) -> bool {
     // non-`identifier` kinds. However, we do still want to provide completions
     // here, especially in two cases:
     // - `for<tab>` should provide completions for things like `forcats`
-    // - `for<tab>` should provide snippet completions for the `for` snippet
-    // The keywords here come from matching snippets in `r.code-snippets`.
+    // - completions of certain reserved words from the keyword source
     if matches!(x.node_type(), NodeType::Anonymous(kind) if matches!(kind.as_str(), "if" | "for" | "while"))
     {
         return true;
@@ -208,7 +200,7 @@ mod tests {
     fn test_completions_on_anonymous_node_keywords() {
         r_task(|| {
             // `if`, `for`, and `while` in particular are both tree-sitter
-            // anonymous nodes and snippet keywords, so they need to look like
+            // anonymous nodes and keywords, so they need to look like
             // identifiers that we provide completions for
             for keyword in ["if", "for", "while"] {
                 let point = Point { row: 0, column: 0 };

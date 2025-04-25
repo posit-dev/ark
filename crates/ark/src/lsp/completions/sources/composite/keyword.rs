@@ -63,9 +63,10 @@ const BARE_KEYWORDS: &[&str] = &[
 
 // Snippet data is a tuple of:
 // - keyword: The reserved word
-// - label: The label for the completion item
+// - label: The label for the completion item, displayed on the left in the UI
 // - snippet: The snippet to be inserted
-// - detail: The detail displayed in the completion UI
+// - label_detail.description: The description displayed on the right in the
+//     completion UI
 
 // The only case where `keyword != label` is `fun` for `function`.
 // But in the name of preserving original behaviour, this is my opening
