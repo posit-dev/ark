@@ -44,6 +44,37 @@ help <- function(topic, package = NULL) {
 # found.
 #' @export
 .ps.help.showHelpTopic <- function(topic) {
+    help_handler <- tryCatch(
+        {
+            # Before we do anything to find the help page, we evaluate the topic expression
+            # to see if the object can be found in the current environment and if it has a
+            # custom help handler (eg. reticulate objects).
+            object <- eval(
+                parse(text = topic),
+                envir = new.env(parent = globalenv())
+            )
+            # call_ark_method() returns NULL if no method is found for the object
+            # ark_positron_help_get_handler() must return a function that's called for
+            # its side effects (potentially showing documentation) and returning `TRUE`
+            # if it could handle the request. We could also make it
+            # actually show help imediatelly, but that makes it hard to separate
+            # non-existant methods, from methods that return `NULL` and actual errors.
+            # This also allows methods to skip matching objects for which they don't want
+            # to support, by simply returning a `NULL` handler.
+            call_ark_method(
+                "ark_positron_help_get_handler",
+                object
+            )
+        },
+        error = function(e) {
+            NULL
+        }
+    )
+
+    if (!is.null(help_handler)) {
+        return(help_handler(topic))
+    }
+
     info <- split_topic(topic)
     topic <- info$topic
     package <- info$package
@@ -228,6 +259,11 @@ getHtmlHelpContentsDevImpl <- function(x) {
     port <- tools:::httpdPort()
     url <- tools:::dynamicHelpURL(url, port)
     .ps.Call("ps_browse_url", as.character(url))
+}
+
+#' @export
+.ps.help.browse_external_url <- function(url) {
+    .ps.Call("ps_help_browse_external_url", as.character(url))
 }
 
 # @param rd_file Path to an `.Rd` file.

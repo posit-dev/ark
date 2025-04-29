@@ -25,6 +25,9 @@ ark_methods_table$ark_positron_variable_get_children <- new.env(
 ark_methods_table$ark_positron_variable_has_viewer <- new.env(
     parent = emptyenv()
 )
+ark_methods_table$ark_positron_help_get_handler <- new.env(
+    parent = emptyenv()
+)
 lockEnvironment(ark_methods_table, TRUE)
 
 ark_methods_allowed_packages <- c("torch", "reticulate", "duckplyr")
