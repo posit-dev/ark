@@ -195,15 +195,8 @@ with_graphics_device <- function(
 
 use_ragg <- local({
     # Only check global option once per session
-    USE_RAGG <- NULL
-
-    function() {
-        if (is.null(USE_RAGG)) {
-            USE_RAGG <<- init_use_ragg()
-        }
-
-        USE_RAGG
-    }
+    delayedAssign("use_ragg", init_use_ragg())
+    function() use_ragg
 })
 
 init_use_ragg <- function() {
