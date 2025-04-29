@@ -20,14 +20,16 @@ use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
+use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::RenderFormat;
+use amalthea::comm::plot_comm::RenderPolicy;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
-use anyhow::bail;
+use anyhow::anyhow;
 use base64::engine::general_purpose;
 use base64::Engine;
 use crossbeam::channel::Select;
@@ -130,6 +132,9 @@ struct DeviceContext {
 
     /// The callbacks of the wrapped device, initialized on graphics device creation
     wrapped_callbacks: WrappedDeviceCallbacks,
+
+    /// The settings used for pre-renderings of new plots.
+    current_render_policy: Cell<RenderPolicy>,
 }
 
 impl DeviceContext {
@@ -144,6 +149,14 @@ impl DeviceContext {
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
+            current_render_policy: Cell::new(RenderPolicy {
+                size: PlotSize {
+                    width: 640,
+                    height: 400,
+                },
+                pixel_ratio: 1.,
+                format: RenderFormat::Png,
+            }),
         }
     }
 
@@ -349,22 +362,33 @@ impl DeviceContext {
                 log::trace!("PlotBackendRequest::Render");
 
                 let size = unwrap!(plot_meta.size, None => {
-                    bail!("Intrinsically sized plots are not yet supported.");
+                    return Err(anyhow!("Intrinsically sized plots are not yet supported."));
                 });
 
-                let data = self.render_plot(
-                    &id,
-                    size.width,
-                    size.height,
-                    plot_meta.pixel_ratio,
-                    &plot_meta.format,
-                )?;
+                let policy = RenderPolicy {
+                    size: PlotSize {
+                        width: size.width,
+                        height: size.height,
+                    },
+                    pixel_ratio: plot_meta.pixel_ratio,
+                    format: plot_meta.format,
+                };
 
+                // Update the current rendering policy so that pre-rendering is
+                // as accurate as possible.
+                // TODO: Once we get render policy events we should use that instead.
+                // This way a one-off render request with special settings won't cause
+                // the next pre-render to be invalid and force the frontend to request
+                // a proper render.
+                self.current_render_policy.replace(policy);
+
+                let data = self.render_plot(&id, &policy)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: mime_type.to_string(),
+                    policy: Some(policy),
                 }))
             },
         }
@@ -451,7 +475,28 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let event = CommManagerEvent::Opened(socket.clone(), serde_json::Value::Null);
+        let policy = self.current_render_policy.get();
+
+        // Prepare a pre-rendering of the plot so Positron has something to display immediately
+        let data = match self.render_plot(id, &policy) {
+            Ok(pre_render) => {
+                let mime_type = Self::get_mime_type(&RenderFormat::Png);
+
+                let pre_render = PlotResult {
+                    data: pre_render.to_string(),
+                    mime_type: mime_type.to_string(),
+                    policy: Some(policy),
+                };
+
+                serde_json::json!({ "pre_render": pre_render })
+            },
+            Err(err) => {
+                log::warn!("Can't pre-render plot: {err:?}");
+                serde_json::Value::Null
+            },
+        };
+
+        let event = CommManagerEvent::Opened(socket.clone(), data);
         if let Err(error) = self.comm_manager_tx.send(event) {
             log::error!("{error:?}");
         }
@@ -553,13 +598,17 @@ impl DeviceContext {
 
     fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
-        let width = 800;
-        let height = 600;
-        let pixel_ratio = 1.0;
-        let format = RenderFormat::Png;
+        let policy = RenderPolicy {
+            size: PlotSize {
+                width: 800,
+                height: 600,
+            },
+            pixel_ratio: 1.0,
+            format: RenderFormat::Png,
+        };
 
-        let data = unwrap!(self.render_plot(id, width, height, pixel_ratio, &format), Err(error) => {
-            bail!("Failed to render plot with id {id} due to: {error}.");
+        let data = unwrap!(self.render_plot(id, &policy), Err(error) => {
+            return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
         });
 
         let mut map = serde_json::Map::new();
@@ -568,24 +617,17 @@ impl DeviceContext {
         Ok(serde_json::Value::Object(map))
     }
 
-    #[tracing::instrument(level = "trace", skip_all, fields(id = %id, width = %width, height = %height, pixel_ratio = %pixel_ratio, format = %format))]
-    fn render_plot(
-        &self,
-        id: &PlotId,
-        width: i64,
-        height: i64,
-        pixel_ratio: f64,
-        format: &RenderFormat,
-    ) -> anyhow::Result<String> {
+    #[tracing::instrument(level = "trace", skip(self))]
+    fn render_plot(&self, id: &PlotId, policy: &RenderPolicy) -> anyhow::Result<String> {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.render_plot_from_recording")
                 .param("id", id)
-                .param("width", RObject::try_from(width)?)
-                .param("height", RObject::try_from(height)?)
-                .param("pixel_ratio", pixel_ratio)
-                .param("format", format.to_string())
+                .param("width", RObject::try_from(policy.size.width)?)
+                .param("height", RObject::try_from(policy.size.height)?)
+                .param("pixel_ratio", policy.pixel_ratio)
+                .param("format", policy.format.to_string())
                 .call()?
                 .to::<String>()
         });

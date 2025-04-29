@@ -665,7 +665,7 @@ pub struct ColumnSelection {
 }
 
 /// Possible values for ColumnDisplayType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnDisplayType {
 	#[serde(rename = "number")]
 	#[strum(to_string = "number")]
@@ -725,7 +725,7 @@ pub enum RowFilterCondition {
 }
 
 /// Possible values for RowFilterType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum RowFilterType {
 	#[serde(rename = "between")]
 	#[strum(to_string = "between")]
@@ -801,7 +801,7 @@ pub enum FilterComparisonOp {
 }
 
 /// Possible values for TextSearchType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum TextSearchType {
 	#[serde(rename = "contains")]
 	#[strum(to_string = "contains")]
@@ -825,7 +825,7 @@ pub enum TextSearchType {
 }
 
 /// Possible values for ColumnFilterType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnFilterType {
 	#[serde(rename = "text_search")]
 	#[strum(to_string = "text_search")]
@@ -837,7 +837,7 @@ pub enum ColumnFilterType {
 }
 
 /// Possible values for ColumnProfileType
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnProfileType {
 	#[serde(rename = "null_count")]
 	#[strum(to_string = "null_count")]
@@ -913,7 +913,7 @@ pub enum TableSelectionKind {
 }
 
 /// Possible values for ExportFormat
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ExportFormat {
 	#[serde(rename = "csv")]
 	#[strum(to_string = "csv")]
@@ -929,7 +929,7 @@ pub enum ExportFormat {
 }
 
 /// Possible values for SupportStatus
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum SupportStatus {
 	#[serde(rename = "unsupported")]
 	#[strum(to_string = "unsupported")]
