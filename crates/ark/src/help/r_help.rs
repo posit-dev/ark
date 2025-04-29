@@ -18,13 +18,18 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::RObject;
+use libr::R_NilValue;
+use libr::SEXP;
 use log::info;
 use log::trace;
 use log::warn;
 use stdext::spawn;
 
 use crate::help::message::HelpEvent;
+use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
+use crate::interface::RMain;
 use crate::r_task;
 
 /**
@@ -182,27 +187,37 @@ impl RHelp {
     /// coming through here has already been verified to look like a help URL with
     /// `is_help_url()`, so if we get an unexpected prefix, that's an error.
     fn handle_show_help_url(&self, params: ShowHelpUrlParams) -> anyhow::Result<()> {
-        let url = params.url;
+        let url = params.url.clone();
 
-        if !Self::is_help_url(url.as_str(), self.r_port) {
-            let prefix = Self::help_url_prefix(self.r_port);
-            return Err(anyhow!(
-                "Help URL '{url}' doesn't have expected prefix '{prefix}'."
-            ));
-        }
+        let url = match params.kind {
+            ShowHelpUrlKind::HelpProxy => {
+                if !Self::is_help_url(url.as_str(), self.r_port) {
+                    let prefix = Self::help_url_prefix(self.r_port);
+                    return Err(anyhow!(
+                        "Help URL '{url}' doesn't have expected prefix '{prefix}'."
+                    ));
+                }
 
-        // Re-direct the help event to our help proxy server.
-        let r_prefix = Self::help_url_prefix(self.r_port);
-        let proxy_prefix = Self::help_url_prefix(self.proxy_port);
+                // Re-direct the help event to our help proxy server.
+                let r_prefix = Self::help_url_prefix(self.r_port);
+                let proxy_prefix = Self::help_url_prefix(self.proxy_port);
 
-        let proxy_url = url.replace(r_prefix.as_str(), proxy_prefix.as_str());
+                url.replace(r_prefix.as_str(), proxy_prefix.as_str())
+            },
+            ShowHelpUrlKind::External => {
+                // The URL is not a help URL; just use it as-is.
+                url
+            },
+        };
 
         log::trace!(
-            "Sending frontend event `ShowHelp` with R url '{url}' and proxy url '{proxy_url}'"
+            "Sending frontend event `ShowHelp` with R url '{}' and proxy url '{}'",
+            params.url,
+            url
         );
 
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
-            content: proxy_url,
+            content: url,
             kind: ShowHelpKind::Url,
             focus: true,
         });
@@ -231,4 +246,16 @@ impl RHelp {
             .call()
             .and_then(|x| x.try_into())
     }
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_help_browse_external_url(
+    url: SEXP,
+) -> Result<SEXP, anyhow::Error> {
+    RMain::get().send_help_event(HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
+        url: RObject::view(url).to::<String>()?,
+        kind: ShowHelpUrlKind::External,
+    }))?;
+
+    Ok(R_NilValue)
 }
