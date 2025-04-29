@@ -53,7 +53,7 @@ fn completions_from_search_path(
     let mut completions = vec![];
 
     const KEYWORD_SOURCE: &[&str] = &[
-        "if", "else", "for", "in", "while", "repeat", "break", "next", "function",
+        "if", "else", "repeat", "while", "function", "for", "in", "next", "break",
     ];
 
     unsafe {
