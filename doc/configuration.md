@@ -18,6 +18,16 @@ Otherwise, the corresponding device from grDevices will be used.
 
 This global variable is only checked once per session, we recommend that you place it in an `.Rprofile` if you need to modify it.
 
+## ark.svglite
+
+A boolean, with a default value of `TRUE`.
+
+If `TRUE` and if svglite is installed, then svglite will be used for rendering SVG graphics.
+
+Otherwise, `grDevices::svg()` will be used.
+
+This global variable is only checked once per session, we recommend that you place it in an `.Rprofile` if you need to modify it.
+
 ## ark.resource_namespaces
 
 A boolean, with a default value of `TRUE`.

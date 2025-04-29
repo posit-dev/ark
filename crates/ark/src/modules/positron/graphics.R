@@ -158,7 +158,7 @@ with_graphics_device <- function(
         "svg" = device_svg(
             filename = path,
             width = width,
-            height = height,
+            height = height
         ),
         "pdf" = device_pdf(
             filename = path,
@@ -199,6 +199,12 @@ use_ragg <- local({
     function() use_ragg
 })
 
+use_svglite <- local({
+    # Only check global option once per session
+    delayedAssign("use_svglite", init_use_svglite())
+    function() use_svglite
+})
+
 init_use_ragg <- function() {
     option <- getOption("ark.ragg", default = TRUE)
 
@@ -209,6 +215,21 @@ init_use_ragg <- function() {
 
     if (!.ps.is_installed("ragg", minimum_version = "1.4.0")) {
         # Need support for `agg_record()`
+        return(FALSE)
+    }
+
+    TRUE
+}
+
+init_use_svglite <- function() {
+    option <- getOption("ark.svglite", default = TRUE)
+
+    if (!isTRUE(option)) {
+        # Bail on any non-`TRUE` option value
+        return(FALSE)
+    }
+
+    if (!.ps.is_installed("svglite")) {
         return(FALSE)
     }
 
@@ -269,11 +290,19 @@ device_png <- function(filename, width, height, res) {
 }
 
 device_svg <- function(filename, width, height) {
-    grDevices::svg(
-        filename = filename,
-        width = width,
-        height = height,
-    )
+    if (use_svglite()) {
+        svglite::svglite(
+            filename = filename,
+            width = width,
+            height = height
+        )
+    } else {
+        grDevices::svg(
+            filename = filename,
+            width = width,
+            height = height
+        )
+    }
 }
 
 device_pdf <- function(filename, width, height) {
