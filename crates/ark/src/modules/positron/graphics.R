@@ -40,9 +40,9 @@ render_directory <- function() {
     directory
 }
 
-render_path <- function(id) {
+render_path <- function(id, format) {
     directory <- render_directory()
-    file <- paste0("render-", id, ".png")
+    file <- paste0("render-", id, ".", format)
     file.path(directory, file)
 }
 
@@ -50,49 +50,25 @@ render_path <- function(id) {
 .ps.graphics.create_device <- function() {
     name <- "Ark Graphics Device"
 
-    # TODO: Remove the "shadow" device in favor of implementing our own
-    # minimal graphics device like {devoid}. That would allow us to remove
-    # all of the awkwardness here around:
-    # - A `filename` that we never look at
-    # - A `res` that isn't scaled by `pixel_ratio`
-    # - The fact that the `png` device is forcing double the work to happen,
-    #   as it is drawing graphics that we never look at.
-    # - The fact that `locator()` doesn't work b/c `png` doesn't support it.
-    directory <- render_directory()
-    filename <- file.path(directory, "current-plot.png")
-    type <- default_device_type()
-    res <- default_resolution_in_pixels_per_inch()
-
-    # Create the graphics device that we are going to shadow
-    withCallingHandlers(
-        grDevices::png(
-            filename = filename,
-            type = type,
-            res = res
-        ),
-        warning = function(w) {
-            stop("Error creating graphics device: ", conditionMessage(w))
-        }
-    )
+    # Create the graphics device that we are going to shadow.
+    # Creating a graphics device mutates global state, we don't need to capture
+    # the return value.
+    device_shadow()
 
     # Update the device name + description in the base environment.
     index <- grDevices::dev.cur()
-    oldDevice <- .Devices[[index]]
-    newDevice <- name
+    old_device <- .Devices[[index]]
+    new_device <- name
 
     # Copy device attributes. Usually, this is just the file path.
-    attributes(newDevice) <- attributes(oldDevice)
-
-    # Set other device properties.
-    attr(newDevice, "type") <- type
-    attr(newDevice, "res") <- res
+    attributes(new_device) <- attributes(old_device)
 
     # Update the devices list.
-    .Devices[[index]] <- newDevice
+    .Devices[[index]] <- new_device
 
     # Replace bindings.
     env_bind_force(baseenv(), ".Devices", .Devices)
-    env_bind_force(baseenv(), ".Device", newDevice)
+    env_bind_force(baseenv(), ".Device", new_device)
 
     # Also set ourselves as a known interactive device.
     # Used by `dev.interactive()`, which is used in `stats:::plot.lm()`
@@ -124,7 +100,7 @@ render_path <- function(id) {
     pixel_ratio,
     format
 ) {
-    path <- render_path(id)
+    path <- render_path(id, format)
     recording <- get_recording(id)
 
     if (is.null(recording)) {
@@ -169,42 +145,37 @@ with_graphics_device <- function(
     width <- args$width
     height <- args$height
     res <- args$res
-    type <- args$type
 
     # Create a new graphics device.
-    # TODO: Use 'ragg' if available?
     switch(
         format,
-        "png" = grDevices::png(
+        "png" = device_png(
             filename = path,
             width = width,
             height = height,
-            res = res,
-            type = type
+            res = res
         ),
-        "svg" = grDevices::svg(
+        "svg" = device_svg(
             filename = path,
-            width = width,
-            height = height,
-        ),
-        "pdf" = grDevices::pdf(
-            file = path,
             width = width,
             height = height
         ),
-        "jpeg" = grDevices::jpeg(
+        "pdf" = device_pdf(
             filename = path,
             width = width,
-            height = height,
-            res = res,
-            type = type
+            height = height
         ),
-        "tiff" = grDevices::tiff(
+        "jpeg" = device_jpeg(
             filename = path,
             width = width,
             height = height,
-            res = res,
-            type = type
+            res = res
+        ),
+        "tiff" = device_tiff(
+            filename = path,
+            width = width,
+            height = height,
+            res = res
         ),
         stop("Internal error: Unknown plot `format`.")
     )
@@ -222,6 +193,164 @@ with_graphics_device <- function(
     expr
 }
 
+use_ragg <- local({
+    # Only check global option once per session
+    delayedAssign("use_ragg", init_use_ragg())
+    function() use_ragg
+})
+
+use_svglite <- local({
+    # Only check global option once per session
+    delayedAssign("use_svglite", init_use_svglite())
+    function() use_svglite
+})
+
+init_use_ragg <- function() {
+    option <- getOption("ark.ragg", default = TRUE)
+
+    if (!isTRUE(option)) {
+        # Bail on any non-`TRUE` option value
+        return(FALSE)
+    }
+
+    if (!.ps.is_installed("ragg", minimum_version = "1.4.0")) {
+        # Need support for `agg_record()`
+        return(FALSE)
+    }
+
+    TRUE
+}
+
+init_use_svglite <- function() {
+    option <- getOption("ark.svglite", default = TRUE)
+
+    if (!isTRUE(option)) {
+        # Bail on any non-`TRUE` option value
+        return(FALSE)
+    }
+
+    if (!.ps.is_installed("svglite")) {
+        return(FALSE)
+    }
+
+    TRUE
+}
+
+#' Create a device to shadow
+#'
+#' For both ragg and png, we are hopeful that providing a `res` of the default
+#' resolution should not affect the render time results much (since we are just
+#' writing display list instructions), even if at render time we can actually
+#' support a `pixel_ratio` of 2x the default resolution. We simply don't know
+#' the pixel ratio at this point.
+device_shadow <- function() {
+    if (use_ragg()) {
+        # For the shadow ragg device, we use a special device that only captures
+        # the display list, it doesn't actually do any rendering!
+        ragg::agg_record(
+            res = default_resolution_in_pixels_per_inch()
+        )
+    } else {
+        # For the shadow png device, we need a dummy file to write to,
+        # even though we never look at it. We only utilize the png device for
+        # the action of recording the display list.
+        directory <- render_directory()
+        filename <- file.path(directory, "dummy-plot.png")
+
+        withCallingHandlers(
+            grDevices::png(
+                filename = filename,
+                type = default_device_type(),
+                res = default_resolution_in_pixels_per_inch()
+            ),
+            warning = function(w) {
+                stop("Error creating graphics device: ", conditionMessage(w))
+            }
+        )
+    }
+}
+
+device_png <- function(filename, width, height, res) {
+    if (use_ragg()) {
+        ragg::agg_png(
+            filename = filename,
+            width = width,
+            height = height,
+            res = res
+        )
+    } else {
+        grDevices::png(
+            filename = filename,
+            width = width,
+            height = height,
+            res = res,
+            type = default_device_type()
+        )
+    }
+}
+
+device_svg <- function(filename, width, height) {
+    if (use_svglite()) {
+        svglite::svglite(
+            filename = filename,
+            width = width,
+            height = height
+        )
+    } else {
+        grDevices::svg(
+            filename = filename,
+            width = width,
+            height = height
+        )
+    }
+}
+
+device_pdf <- function(filename, width, height) {
+    grDevices::pdf(
+        file = filename,
+        width = width,
+        height = height
+    )
+}
+
+device_jpeg <- function(filename, width, height, res) {
+    if (use_ragg()) {
+        ragg::agg_jpeg(
+            filename = filename,
+            width = width,
+            height = height,
+            res = res
+        )
+    } else {
+        grDevices::jpeg(
+            filename = filename,
+            width = width,
+            height = height,
+            res = res,
+            type = default_device_type()
+        )
+    }
+}
+
+device_tiff <- function(filename, width, height, res) {
+    if (use_ragg()) {
+        ragg::agg_tiff(
+            filename = filename,
+            width = width,
+            height = height,
+            res = res
+        )
+    } else {
+        grDevices::tiff(
+            filename = filename,
+            width = width,
+            height = height,
+            res = res,
+            type = default_device_type()
+        )
+    }
+}
+
 finalize_device_arguments <- function(format, width, height, pixel_ratio) {
     if (format == "png" || format == "jpeg" || format == "tiff") {
         # These devices require `width` and `height` in pixels, which is what
@@ -230,7 +359,6 @@ finalize_device_arguments <- function(format, width, height, pixel_ratio) {
         #
         # `res` is nominal resolution specified in pixels-per-inch (ppi).
         return(list(
-            type = default_device_type(),
             res = default_resolution_in_pixels_per_inch() * pixel_ratio,
             width = width * pixel_ratio,
             height = height * pixel_ratio
@@ -249,9 +377,8 @@ finalize_device_arguments <- function(format, width, height, pixel_ratio) {
         # `pixel_ratio` like we do above, which would have made it cancel out of
         # the equation below.
         #
-        # There is no `type` or `res` argument for these devices.
+        # There is no `res` argument for these devices.
         return(list(
-            type = NULL,
             res = NULL,
             width = width *
                 pixel_ratio /
