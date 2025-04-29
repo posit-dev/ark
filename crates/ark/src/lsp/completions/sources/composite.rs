@@ -10,7 +10,6 @@ mod document;
 mod keyword;
 pub(crate) mod pipe;
 mod search_path;
-mod snippets;
 mod subset;
 mod workspace;
 
@@ -26,6 +25,23 @@ use crate::lsp::completions::sources::collect_completions;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct CompletionItemKey {
+    label: String,
+    kind_str: String,
+}
+
+impl CompletionItemKey {
+    fn new(item: &CompletionItem) -> Self {
+        Self {
+            label: item.label.clone(),
+            kind_str: item
+                .kind
+                .map_or_else(|| "Text".to_string(), |k| format!("{:?}", k)),
+        }
+    }
+}
 
 // Locally useful data structure for tracking completions and their source
 #[derive(Clone, Default)]
@@ -61,12 +77,6 @@ pub(crate) fn get_completions(
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
         push_completions(
-            snippets::SnippetSource,
-            completion_context,
-            &mut completions,
-        )?;
-
-        push_completions(
             search_path::SearchPathSource,
             completion_context,
             &mut completions,
@@ -94,7 +104,7 @@ pub(crate) fn get_completions(
 fn push_completions<S>(
     source: S,
     completion_context: &CompletionContext,
-    completions: &mut HashMap<String, CompletionItemWithSource>,
+    completions: &mut HashMap<CompletionItemKey, CompletionItemWithSource>,
 ) -> anyhow::Result<()>
 where
     S: CompletionSource,
@@ -103,15 +113,17 @@ where
 
     if let Some(source_completions) = collect_completions(source, completion_context)? {
         for item in source_completions {
-            if let Some(existing) = completions.get(&item.label) {
+            let key = CompletionItemKey::new(&item);
+            if let Some(existing) = completions.get(&key) {
                 log::trace!(
-                    "Completion with label '{}' already exists (first contributed by source: {}, now also from: {})",
-                    item.label,
+                    "Completion with label '{}' and kind '{:?}' already exists (first contributed by source: {}, now also from: {})",
+                    key.label,
+                    key.kind_str,
                     existing.source,
                     source_name
                 );
             } else {
-                completions.insert(item.label.clone(), CompletionItemWithSource {
+                completions.insert(key, CompletionItemWithSource {
                     item,
                     source: source_name.to_string(),
                 });
@@ -124,7 +136,7 @@ where
 
 /// Produce plain old CompletionItems and sort them
 fn finalize_completions(
-    completions: HashMap<String, CompletionItemWithSource>,
+    completions: HashMap<CompletionItemKey, CompletionItemWithSource>,
 ) -> Vec<CompletionItem> {
     let mut items: Vec<CompletionItem> = completions
         .into_values()
@@ -183,8 +195,7 @@ fn is_identifier_like(x: Node) -> bool {
     // non-`identifier` kinds. However, we do still want to provide completions
     // here, especially in two cases:
     // - `for<tab>` should provide completions for things like `forcats`
-    // - `for<tab>` should provide snippet completions for the `for` snippet
-    // The keywords here come from matching snippets in `r.code-snippets`.
+    // - completions of certain reserved words from the keyword source
     if matches!(x.node_type(), NodeType::Anonymous(kind) if matches!(kind.as_str(), "if" | "for" | "while"))
     {
         return true;
@@ -208,7 +219,7 @@ mod tests {
     fn test_completions_on_anonymous_node_keywords() {
         r_task(|| {
             // `if`, `for`, and `while` in particular are both tree-sitter
-            // anonymous nodes and snippet keywords, so they need to look like
+            // anonymous nodes and keywords, so they need to look like
             // identifiers that we provide completions for
             for keyword in ["if", "for", "while"] {
                 let point = Point { row: 0, column: 0 };
