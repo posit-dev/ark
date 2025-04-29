@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionItemKind;
-use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::collect_completions;
@@ -57,7 +56,7 @@ pub(crate) fn get_completions(
 
     // For the rest of the general completions, we require an identifier to
     // begin showing anything.
-    if is_identifier_like(completion_context.document_context.node) {
+    if is_identifier_like(completion_context) {
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
         push_completions(
@@ -172,8 +171,10 @@ fn sort_completions(completions: &mut Vec<CompletionItem>) {
     }
 }
 
-fn is_identifier_like(x: Node) -> bool {
-    if x.is_identifier() {
+fn is_identifier_like(completion_context: &CompletionContext) -> bool {
+    let node = completion_context.document_context.node;
+
+    if node.is_identifier() {
         // Obvious case
         return true;
     }
@@ -185,12 +186,29 @@ fn is_identifier_like(x: Node) -> bool {
     // - `for<tab>` should provide completions for things like `forcats`
     // - `for<tab>` should provide snippet completions for the `for` snippet
     // The keywords here come from matching snippets in `r.code-snippets`.
-    if matches!(x.node_type(), NodeType::Anonymous(kind) if matches!(kind.as_str(), "if" | "for" | "while"))
+    if matches!(node.node_type(), NodeType::Anonymous(kind) if matches!(kind.as_str(), "if" | "for" | "while"))
     {
         return true;
     }
 
-    return false;
+    // Consider when the user asks for completions with no existing
+    // text-to-complete, such as at the R prompt in the Console or in an empty R
+    // file.
+    // Gesture-wise, a Positron user could do this with Ctrl + Space, which
+    // invokes the command editor.action.triggerSuggest.
+    // The nominal completion node in these cases is basically degenerate, i.e.
+    // it's just the root node of the AST.
+    // In this case, we should just provide "all" completions, for some
+    // reasonable definition of "all".
+    // TODO: Handle the related case of asking for completions on an empty line
+    // of a non-empty R file. In this case, we will have latched on to some
+    // neighboring node, but perhaps should not. The text extracted from this
+    // node is usually not an identifier and this function will return false.
+    if node.node_type() == NodeType::Program {
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -206,6 +224,9 @@ mod tests {
 
     #[test]
     fn test_completions_on_anonymous_node_keywords() {
+        use crate::lsp::completions::completion_context::CompletionContext;
+        use crate::lsp::state::WorldState;
+
         r_task(|| {
             // `if`, `for`, and `while` in particular are both tree-sitter
             // anonymous nodes and snippet keywords, so they need to look like
@@ -214,7 +235,9 @@ mod tests {
                 let point = Point { row: 0, column: 0 };
                 let document = Document::new(keyword, None);
                 let context = DocumentContext::new(&document, point, None);
-                assert!(is_identifier_like(context.node));
+                let state = WorldState::default();
+                let completion_context = CompletionContext::new(&context, &state);
+                assert!(is_identifier_like(&completion_context));
                 assert_eq!(
                     context.node.node_type(),
                     NodeType::Anonymous(keyword.to_string())
