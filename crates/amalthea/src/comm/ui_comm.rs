@@ -10,6 +10,7 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use super::plot_comm::PlotRenderSettings;
 
 /// Items in Params
 pub type Param = serde_json::Value;
@@ -95,6 +96,13 @@ pub struct Range {
 
 	/// End position of the selection
 	pub end: Position
+}
+
+/// Parameters for the DidChangePlotsRenderSettings method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DidChangePlotsRenderSettingsParams {
+	/// Plot rendering settings.
+	pub settings: PlotRenderSettings,
 }
 
 /// Parameters for the CallMethod method.
@@ -290,6 +298,15 @@ pub struct ShowHtmlFileParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiBackendRequest {
+	/// Notification that the settings to render a plot (i.e. the plot size)
+	/// have changed.
+	///
+	/// Typically fired when the plot component has been resized by the user.
+	/// This notification is useful to produce accurate pre-renderings of
+	/// plots.
+	#[serde(rename = "did_change_plots_render_settings")]
+	DidChangePlotsRenderSettings(DidChangePlotsRenderSettingsParams),
+
 	/// Run a method in the interpreter and return the result to the frontend
 	///
 	/// Unlike other RPC methods, `call_method` calls into methods implemented
@@ -306,6 +323,9 @@ pub enum UiBackendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiBackendReply {
+	/// Unused response to notification
+	DidChangePlotsRenderSettingsReply(),
+
 	/// The method result
 	CallMethodReply(CallMethodResult),
 

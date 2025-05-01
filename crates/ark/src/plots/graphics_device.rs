@@ -21,8 +21,8 @@ use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
-use amalthea::comm::plot_comm::RenderFormat;
-use amalthea::comm::plot_comm::RenderPolicy;
+use amalthea::comm::plot_comm::PlotRenderFormat;
+use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -134,7 +134,7 @@ struct DeviceContext {
     wrapped_callbacks: WrappedDeviceCallbacks,
 
     /// The settings used for pre-renderings of new plots.
-    current_render_policy: Cell<RenderPolicy>,
+    current_render_settings: Cell<PlotRenderSettings>,
 }
 
 impl DeviceContext {
@@ -149,13 +149,13 @@ impl DeviceContext {
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
-            current_render_policy: Cell::new(RenderPolicy {
+            current_render_settings: Cell::new(PlotRenderSettings {
                 size: PlotSize {
                     width: 640,
                     height: 400,
                 },
                 pixel_ratio: 1.,
-                format: RenderFormat::Png,
+                format: PlotRenderFormat::Png,
             }),
         }
     }
@@ -365,7 +365,7 @@ impl DeviceContext {
                     return Err(anyhow!("Intrinsically sized plots are not yet supported."));
                 });
 
-                let policy = RenderPolicy {
+                let settings = PlotRenderSettings {
                     size: PlotSize {
                         width: size.width,
                         height: size.height,
@@ -380,15 +380,15 @@ impl DeviceContext {
                 // This way a one-off render request with special settings won't cause
                 // the next pre-render to be invalid and force the frontend to request
                 // a proper render.
-                self.current_render_policy.replace(policy);
+                self.current_render_settings.replace(settings);
 
-                let data = self.render_plot(&id, &policy)?;
+                let data = self.render_plot(&id, &settings)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
                     data: data.to_string(),
                     mime_type: mime_type.to_string(),
-                    policy: Some(policy),
+                    settings: Some(settings),
                 }))
             },
         }
@@ -416,13 +416,13 @@ impl DeviceContext {
         }
     }
 
-    fn get_mime_type(format: &RenderFormat) -> String {
+    fn get_mime_type(format: &PlotRenderFormat) -> String {
         match format {
-            RenderFormat::Png => "image/png".to_string(),
-            RenderFormat::Svg => "image/svg+xml".to_string(),
-            RenderFormat::Pdf => "application/pdf".to_string(),
-            RenderFormat::Jpeg => "image/jpeg".to_string(),
-            RenderFormat::Tiff => "image/tiff".to_string(),
+            PlotRenderFormat::Png => "image/png".to_string(),
+            PlotRenderFormat::Svg => "image/svg+xml".to_string(),
+            PlotRenderFormat::Pdf => "application/pdf".to_string(),
+            PlotRenderFormat::Jpeg => "image/jpeg".to_string(),
+            PlotRenderFormat::Tiff => "image/tiff".to_string(),
         }
     }
 
@@ -475,17 +475,17 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let policy = self.current_render_policy.get();
+        let settings = self.current_render_settings.get();
 
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
-        let data = match self.render_plot(id, &policy) {
+        let data = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
-                let mime_type = Self::get_mime_type(&RenderFormat::Png);
+                let mime_type = Self::get_mime_type(&PlotRenderFormat::Png);
 
                 let pre_render = PlotResult {
                     data: pre_render.to_string(),
                     mime_type: mime_type.to_string(),
-                    policy: Some(policy),
+                    settings: Some(settings),
                 };
 
                 serde_json::json!({ "pre_render": pre_render })
@@ -598,13 +598,13 @@ impl DeviceContext {
 
     fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
-        let policy = RenderPolicy {
+        let policy = PlotRenderSettings {
             size: PlotSize {
                 width: 800,
                 height: 600,
             },
             pixel_ratio: 1.0,
-            format: RenderFormat::Png,
+            format: PlotRenderFormat::Png,
         };
 
         let data = unwrap!(self.render_plot(id, &policy), Err(error) => {
@@ -618,7 +618,7 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    fn render_plot(&self, id: &PlotId, policy: &RenderPolicy) -> anyhow::Result<String> {
+    fn render_plot(&self, id: &PlotId, policy: &PlotRenderSettings) -> anyhow::Result<String> {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
