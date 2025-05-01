@@ -140,6 +140,7 @@ impl UiComm {
     ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
         let request = match request {
             UiBackendRequest::CallMethod(request) => request,
+            UiBackendRequest::DidChangePlotsRenderSettings(_params) => todo!(),
         };
 
         log::trace!("Handling '{}' frontend RPC method", request.method);
