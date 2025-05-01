@@ -77,25 +77,25 @@ const KEYWORD_SNIPPETS: &[KeywordSnippet] = &[
         keyword: "if",
         label: "if",
         snippet: "if (${1:condition}) {\n\t${0}\n}",
-        label_details_description: "An if statement",
+        label_details_description: "Insert `if` statement",
     },
     KeywordSnippet {
         keyword: "else",
         label: "else",
         snippet: "else {\n\t${0}\n}",
-        label_details_description: "An else statement",
+        label_details_description: "Insert `else` statement",
     },
     KeywordSnippet {
         keyword: "repeat",
         label: "repeat",
         snippet: "repeat {\n\t${0}\n}",
-        label_details_description: "A repeat loop",
+        label_details_description: "Insert `repeat` loop",
     },
     KeywordSnippet {
         keyword: "while",
         label: "while",
         snippet: "while (${1:condition}) {\n\t${0}\n}",
-        label_details_description: "A while loop",
+        label_details_description: "Insert `while` loop",
     },
     KeywordSnippet {
         keyword: "function",
@@ -107,7 +107,7 @@ const KEYWORD_SNIPPETS: &[KeywordSnippet] = &[
         keyword: "for",
         label: "for",
         snippet: "for (${1:variable} in ${2:vector}) {\n\t${0}\n}",
-        label_details_description: "A for loop",
+        label_details_description: "Insert `for` loop",
     },
 ];
 
