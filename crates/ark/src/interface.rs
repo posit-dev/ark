@@ -52,7 +52,6 @@ use amalthea::Error;
 use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::bounded;
-use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::command::r_command;
@@ -347,9 +346,7 @@ impl RMain {
             };
         }
 
-        // Channels to send/receive tasks from auxiliary threads via `RTask`s
-        let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
-        let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
+        let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
 
         R_MAIN.set(UnsafeCell::new(RMain::new(
             tasks_interrupt_rx,
@@ -447,12 +444,6 @@ impl RMain {
                 harp::source(file)
                     .or_log_error(&format!("Failed to source startup file '{file}' due to"));
             }
-
-            // R and ark are now set up enough to allow interrupt-time and idle-time tasks
-            // to be sent through. Idle-time tasks will be run once we enter
-            // `read_console()` for the first time. Interrupt-time tasks could be run
-            // sooner if we hit a check-interrupt before then.
-            r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
 
             // Initialize support functions (after routine registration, after r_task initialization)
             match modules::initialize() {
@@ -813,10 +804,14 @@ impl RMain {
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
 
+        // Process R's polled events regularly while waiting for console input
+        let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
+
         let r_request_index = select.recv(&r_request_rx);
         let stdin_reply_index = select.recv(&stdin_reply_rx);
         let kernel_request_index = select.recv(&kernel_request_rx);
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
+        let polled_events_index = select.recv(&polled_events_rx);
 
         // Don't process idle tasks in browser prompts. We currently don't want
         // idle tasks (e.g. for srcref generation) to run when the call stack is
@@ -862,18 +857,7 @@ impl RMain {
                 }
             }
 
-            let oper = select.select_timeout(Duration::from_millis(200));
-
-            let Ok(oper) = oper else {
-                // We hit a timeout. Process idle events because we need to
-                // pump the event loop while waiting for console input.
-                //
-                // Alternatively, we could try to figure out the file
-                // descriptors that R has open and select() on those for
-                // available data?
-                unsafe { Self::process_idle_events() };
-                continue;
-            };
+            let oper = select.select();
 
             match oper.index() {
                 // We've got an execute request from the frontend
@@ -911,6 +895,12 @@ impl RMain {
                 i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
                     self.handle_task(task);
+                },
+
+                // It's time to run R's polled events
+                i if i == polled_events_index => {
+                    let _ = oper.recv(&polled_events_rx).unwrap();
+                    Self::process_idle_events();
                 },
 
                 i => log::error!("Unexpected index in Select: {i}"),
@@ -1848,6 +1838,14 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
+        // Don't process tasks until R is fully initialized
+        if !Self::is_initialized() {
+            if !self.tasks_interrupt_rx.is_empty() {
+                log::trace!("Delaying execution of interrupt task as R isn't initialized yet");
+            }
+            return;
+        }
+
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
@@ -1866,21 +1864,21 @@ impl RMain {
         }
     }
 
-    unsafe fn process_idle_events() {
+    fn process_idle_events() {
         // Process regular R events. We're normally running with polled
         // events disabled so that won't run here. We also run with
         // interrupts disabled, so on Windows those won't get run here
         // either (i.e. if `UserBreak` is set), but it will reset `UserBreak`
         // so we need to ensure we handle interrupts right before calling
         // this.
-        R_ProcessEvents();
+        unsafe { R_ProcessEvents() };
 
         crate::sys::interface::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.
         // https://github.com/rstudio/positron/issues/431
-        R_RunPendingFinalizers();
+        unsafe { R_RunPendingFinalizers() };
 
         // Check for Positron render requests
         graphics_device::on_process_idle_events();

@@ -78,6 +78,8 @@ pub(crate) fn init_graphics_device(
 }
 
 async fn process_notifications(graphics_device_rx: Receiver<GraphicsDeviceNotification>) {
+    log::trace!("Now listening for graphics device notifications");
+
     loop {
         let mut i = 0;
 
