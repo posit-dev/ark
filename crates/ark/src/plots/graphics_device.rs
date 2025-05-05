@@ -19,10 +19,10 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
-use amalthea::comm::plot_comm::PlotResult;
-use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::PlotRenderFormat;
 use amalthea::comm::plot_comm::PlotRenderSettings;
+use amalthea::comm::plot_comm::PlotResult;
+use amalthea::comm::plot_comm::PlotSize;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -32,6 +32,7 @@ use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
 use base64::engine::general_purpose;
 use base64::Engine;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -44,12 +45,18 @@ use libr::SEXP;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::unwrap;
+use tokio::task::yield_now;
 use uuid::Uuid;
 
 use crate::interface::RMain;
 use crate::interface::SessionMode;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
+
+#[derive(Debug)]
+pub(crate) enum GraphicsDeviceNotification {
+    DidChangePlotRenderSettings(PlotRenderSettings),
+}
 
 thread_local! {
   // Safety: Set once by `RMain` on initialization
@@ -62,8 +69,39 @@ const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 pub(crate) fn init_graphics_device(
     comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
+    graphics_device_rx: Receiver<GraphicsDeviceNotification>,
 ) {
-    DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx))
+    DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx));
+
+    // Launch an R thread task to process messages from the frontend
+    r_task::spawn_interrupt(|| async move { process_notifications(graphics_device_rx).await });
+}
+
+async fn process_notifications(graphics_device_rx: Receiver<GraphicsDeviceNotification>) {
+    loop {
+        let mut i = 0;
+
+        while let Ok(notification) = graphics_device_rx.try_recv() {
+            log::trace!("Got graphics device notification: {notification:#?}");
+            i = i + 1;
+
+            match notification {
+                GraphicsDeviceNotification::DidChangePlotRenderSettings(plot_render_settings) => {
+                    DEVICE_CONTEXT.with_borrow(|ctx| {
+                        ctx.current_render_settings.replace(plot_render_settings)
+                    });
+                },
+            }
+
+            // Yield regularly to the R thread when something went wrong on the
+            // frontend side and is spamming messages
+            if i >= 5 {
+                break;
+            }
+        }
+
+        yield_now().await;
+    }
 }
 
 /// Wrapped callbacks of the original graphics device we shadow
