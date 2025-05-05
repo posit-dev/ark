@@ -34,6 +34,12 @@ A boolean, with a default value of `TRUE`.
 
 If `TRUE`, virtual documents will be generated for packages without source references for usage during debugging.
 
+## positron.show_last_value
+
+A boolean, with a default value of `FALSE`.
+
+If `TRUE`, the special `.Last.value` will be shown in Positron's Variables pane.
+
 ## positron.error_entrace
 
 A boolean, with a default value of `TRUE`.

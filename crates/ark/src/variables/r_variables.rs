@@ -26,6 +26,7 @@ use harp::environment::Environment;
 use harp::environment::EnvironmentFilter;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::get_option;
 use harp::object::RObject;
 use harp::utils::r_assert_type;
 use harp::vector::CharacterVector;
@@ -196,6 +197,10 @@ impl RVariables {
         r_task(|| {
             self.update_bindings(self.bindings());
 
+            if let Some(last_value) = Self::last_value() {
+                variables.push(last_value.var());
+            }
+
             for binding in self.current_bindings.get() {
                 variables.push(PositronVariable::new(binding).var());
             }
@@ -357,6 +362,22 @@ impl RVariables {
         }
     }
 
+    fn last_value() -> Option<PositronVariable> {
+        let use_last_value = get_option("positron.show_last_value");
+        match use_last_value.get_bool(0) {
+            Ok(Some(true)) => {
+                let last_robj = harp::parse_eval_global(".Last.value").unwrap();
+
+                Some(PositronVariable::from(
+                    String::from(".Last.value"),
+                    String::from(".Last.value"),
+                    last_robj.sexp,
+                ))
+            },
+            _ => None,
+        }
+    }
+
     #[tracing::instrument(level = "trace", skip_all)]
     fn update(&mut self, request_id: Option<String>) {
         let mut assigned: Vec<Variable> = vec![];
@@ -364,20 +385,17 @@ impl RVariables {
 
         r_task(|| {
             let new_bindings = self.bindings();
-            let last_robj = harp::parse_eval_global(".Last.value").unwrap();
-
-            let last_value = PositronVariable::from(
-                String::from(".Last.value"),
-                String::from(".Last.value"),
-                last_robj.sexp,
-            );
-            assigned.push(last_value.var());
 
             let mut old_iter = self.current_bindings.get().iter();
             let mut old_next = old_iter.next();
 
             let mut new_iter = new_bindings.get().iter();
             let mut new_next = new_iter.next();
+
+            // Track the last value if the user has requested it
+            if let Some(last_value) = Self::last_value() {
+                assigned.push(last_value.var());
+            }
 
             loop {
                 match (old_next, new_next) {
