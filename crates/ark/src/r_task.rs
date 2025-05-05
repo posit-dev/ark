@@ -8,22 +8,65 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use crossbeam::channel::bounded;
+use crossbeam::channel::unbounded;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use uuid::Uuid;
 
 use crate::fixtures::r_test_init;
 use crate::interface::RMain;
 
+/// Task channels for interrupt-time tasks
+static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+
+/// Task channels for idle-time tasks
+static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
+
+/// Manages task channels for sending tasks to `R_MAIN`.
+struct TaskChannels {
+    tx: Sender<RTask>,
+    rx: Mutex<Option<Receiver<RTask>>>,
+}
+
+impl TaskChannels {
+    fn new() -> Self {
+        let (tx, rx) = unbounded::<RTask>();
+        Self {
+            tx,
+            rx: Mutex::new(Some(rx)),
+        }
+    }
+
+    fn tx(&self) -> Sender<RTask> {
+        self.tx.clone()
+    }
+
+    fn take_rx(&self) -> Option<Receiver<RTask>> {
+        let mut rx = self.rx.lock().unwrap();
+        rx.take()
+    }
+}
+
+/// Returns receivers for both interrupt and idle tasks.
+/// Initializes the task channels if they haven't been initialized yet.
+/// Can only be called once (intended for `RMain` during init).
+pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>) {
+    (
+        INTERRUPT_TASKS.take_rx().unwrap(),
+        IDLE_TASKS.take_rx().unwrap(),
+    )
+}
 
 pub enum RTask {
     Sync(RTaskSync),
@@ -191,7 +234,7 @@ where
             status_tx: Some(status_tx),
             start_info: RTaskStartInfo::new(false),
         });
-        get_tasks_interrupt_tx().send(task).unwrap();
+        INTERRUPT_TASKS.tx().send(task).unwrap();
 
         // Block until we get the signal that the task has started
         let status = status_rx.recv().unwrap();
@@ -265,9 +308,9 @@ where
     // Note that this blocks until the channels are initialized,
     // even though these are async tasks!
     let tasks_tx = if only_idle {
-        get_tasks_idle_tx()
+        IDLE_TASKS.tx()
     } else {
-        get_tasks_interrupt_tx()
+        INTERRUPT_TASKS.tx()
     };
 
     // Send the async task to the R thread
@@ -278,43 +321,6 @@ where
     });
 
     tasks_tx.send(task).unwrap();
-}
-
-/// Channel for sending tasks to `R_MAIN`. Initialized by `initialize()`, but
-/// is otherwise only accessed to create `RTask`s.
-static R_MAIN_TASKS_INTERRUPT_TX: OnceLock<Sender<RTask>> = OnceLock::new();
-static R_MAIN_TASKS_IDLE_TX: OnceLock<Sender<RTask>> = OnceLock::new();
-
-pub fn initialize(tasks_tx: Sender<RTask>, tasks_idle_tx: Sender<RTask>) {
-    R_MAIN_TASKS_INTERRUPT_TX.set(tasks_tx).unwrap();
-    R_MAIN_TASKS_IDLE_TX.set(tasks_idle_tx).unwrap();
-}
-
-// Be defensive for the case an auxiliary thread runs a task before R is initialized
-// by `RMain::start()` which calls `r_task::initialize()`
-fn get_tasks_interrupt_tx() -> &'static Sender<RTask> {
-    get_tx(&R_MAIN_TASKS_INTERRUPT_TX)
-}
-fn get_tasks_idle_tx() -> &'static Sender<RTask> {
-    get_tx(&R_MAIN_TASKS_IDLE_TX)
-}
-
-fn get_tx(once_tx: &'static OnceLock<Sender<RTask>>) -> &'static Sender<RTask> {
-    let now = std::time::Instant::now();
-
-    loop {
-        if let Some(tx) = once_tx.get() {
-            return tx;
-        }
-
-        // Wait for `initialize()`
-        log::info!("`tasks_tx` not yet initialized, going to sleep for 50ms.");
-        std::thread::sleep(Duration::from_millis(50));
-
-        if now.elapsed().as_secs() > 50 {
-            panic!("Can't acquire `tasks_tx` after 50 seconds.");
-        }
-    }
 }
 
 // Tests are tricky because `harp::fixtures::r_test_init()` is very bare bones and
