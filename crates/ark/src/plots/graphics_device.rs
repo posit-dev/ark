@@ -414,14 +414,6 @@ impl DeviceContext {
                     format: plot_meta.format,
                 };
 
-                // Update the current rendering policy so that pre-rendering is
-                // as accurate as possible.
-                // TODO: Once we get render policy events we should use that instead.
-                // This way a one-off render request with special settings won't cause
-                // the next pre-render to be invalid and force the frontend to request
-                // a proper render.
-                self.current_render_settings.replace(settings);
-
                 let data = self.render_plot(&id, &settings)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
