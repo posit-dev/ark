@@ -107,6 +107,7 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
+use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
@@ -321,7 +322,7 @@ impl RMain {
     /// Sets up the main R thread, initializes the `R_MAIN` singleton,
     /// and starts R. Does not return!
     /// SAFETY: Must be called only once. Enforced with a panic.
-    pub fn start(
+    pub(crate) fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
         comm_manager_tx: Sender<CommManagerEvent>,
@@ -334,6 +335,7 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
         default_repos: DefaultRepos,
+        graphics_device_rx: Receiver<GraphicsDeviceNotification>,
     ) {
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
@@ -368,6 +370,7 @@ impl RMain {
         graphics_device::init_graphics_device(
             main.get_comm_manager_tx().clone(),
             main.get_iopub_tx().clone(),
+            graphics_device_rx,
         );
 
         let mut r_args = r_args.clone();
