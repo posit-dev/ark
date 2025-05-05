@@ -1069,8 +1069,10 @@ impl PositronVariable {
         // Concrete nodes are objects that are treated as is. Accessing an element from them
         // might result in special node types.
 
+        // Check for the special access key `.Last.value`; we can only get the
+        // value for this object by evaluating it in R
         if *access_key == String::from(".Last.value") {
-            let last_robj = harp::parse_eval_global(".Last.value").unwrap();
+            let last_robj = harp::parse_eval_global(".Last.value")?;
             return Ok(EnvironmentVariableNode::Concrete { object: last_robj });
         }
 

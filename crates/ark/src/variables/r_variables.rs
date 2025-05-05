@@ -197,6 +197,9 @@ impl RVariables {
         r_task(|| {
             self.update_bindings(self.bindings());
 
+            // If the special .Last.value variable is enabled, add it to the
+            // list. This is a special R value that doesn't have its own
+            // binding.
             if let Some(last_value) = Self::last_value() {
                 variables.push(last_value.var());
             }
@@ -362,19 +365,34 @@ impl RVariables {
         }
     }
 
+    /// Gets the value of the special variable '.Last.value' (the value of the
+    /// last expression evaluated at the top level), if the corresponding
+    /// setting is TRUE.
+    ///
+    /// Returns None in all other cases.
     fn last_value() -> Option<PositronVariable> {
         let use_last_value = get_option("positron.show_last_value");
         match use_last_value.get_bool(0) {
             Ok(Some(true)) => {
-                let last_robj = harp::parse_eval_global(".Last.value").unwrap();
-
-                Some(PositronVariable::from(
-                    String::from(".Last.value"),
-                    String::from(".Last.value"),
-                    last_robj.sexp,
-                ))
+                match harp::parse_eval_global(".Last.value") {
+                    Ok(last_robj) => Some(PositronVariable::from(
+                        String::from(".Last.value"),
+                        String::from(".Last.value"),
+                        last_robj.sexp,
+                    )),
+                    Err(err) => {
+                        // This isn't a critical error but would also be very
+                        // unexpected.
+                        log::debug!("Environment: Could not evaluate .Last.value ({err:?})");
+                        None
+                    },
+                }
             },
-            _ => None,
+            _ => {
+                // The setting is not a logical value or is set to FALSE. Either
+                // way, don't return a last value.
+                None
+            },
         }
     }
 
@@ -392,7 +410,8 @@ impl RVariables {
             let mut new_iter = new_bindings.get().iter();
             let mut new_next = new_iter.next();
 
-            // Track the last value if the user has requested it
+            // Track the last value if the user has requested it. Treat this
+            // value as assigned every time we update the Variables list.
             if let Some(last_value) = Self::last_value() {
                 assigned.push(last_value.var());
             }
