@@ -651,7 +651,7 @@ impl PositronVariable {
     /**
      * Create a new Variable from an R object
      */
-    fn from(access_key: String, display_name: String, x: SEXP) -> Self {
+    pub fn from(access_key: String, display_name: String, x: SEXP) -> Self {
         let WorkspaceVariableDisplayValue {
             display_value,
             is_truncated,

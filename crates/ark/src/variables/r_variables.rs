@@ -1,7 +1,7 @@
 //
 // r_variables.rs
 //
-// Copyright (C) 2023-2024 by Posit Software, PBC
+// Copyright (C) 2023-2025 by Posit Software, PBC
 //
 //
 
@@ -364,6 +364,14 @@ impl RVariables {
 
         r_task(|| {
             let new_bindings = self.bindings();
+            let last_robj = harp::parse_eval_global(".Last.value").unwrap();
+
+            let last_value = PositronVariable::from(
+                String::from(".Last.value"),
+                String::from(".Last.value"),
+                last_robj.sexp,
+            );
+            assigned.push(last_value.var());
 
             let mut old_iter = self.current_bindings.get().iter();
             let mut old_next = old_iter.next();
