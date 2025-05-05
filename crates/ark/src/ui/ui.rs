@@ -198,6 +198,15 @@ impl UiComm {
         &self,
         params: DidChangePlotsRenderSettingsParams,
     ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+        // The frontend shoudn't send invalid sizes but be defensive. Sometimes
+        // the plot container is in a strange state when it's hidden.
+        if params.settings.size.height <= 0 || params.settings.size.width <= 0 {
+            return Err(anyhow::anyhow!(
+                "Got invalid plot render size: {size:?}",
+                size = params.settings.size,
+            ));
+        }
+
         self.graphics_device_tx
             .send(GraphicsDeviceNotification::DidChangePlotRenderSettings(
                 params.settings,
