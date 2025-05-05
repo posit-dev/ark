@@ -638,7 +638,7 @@ impl DeviceContext {
 
     fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
         // TODO: Take these from R global options? Like `ark.plot.width`?
-        let policy = PlotRenderSettings {
+        let settings = PlotRenderSettings {
             size: PlotSize {
                 width: 800,
                 height: 600,
@@ -647,7 +647,7 @@ impl DeviceContext {
             format: PlotRenderFormat::Png,
         };
 
-        let data = unwrap!(self.render_plot(id, &policy), Err(error) => {
+        let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
         });
 
@@ -658,16 +658,16 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    fn render_plot(&self, id: &PlotId, policy: &PlotRenderSettings) -> anyhow::Result<String> {
+    fn render_plot(&self, id: &PlotId, settings: &PlotRenderSettings) -> anyhow::Result<String> {
         log::trace!("Rendering plot");
 
         let image_path = r_task(|| unsafe {
             RFunction::from(".ps.graphics.render_plot_from_recording")
                 .param("id", id)
-                .param("width", RObject::try_from(policy.size.width)?)
-                .param("height", RObject::try_from(policy.size.height)?)
-                .param("pixel_ratio", policy.pixel_ratio)
-                .param("format", policy.format.to_string())
+                .param("width", RObject::try_from(settings.size.width)?)
+                .param("height", RObject::try_from(settings.size.height)?)
+                .param("pixel_ratio", settings.pixel_ratio)
+                .param("format", settings.format.to_string())
                 .call()?
                 .to::<String>()
         });
