@@ -59,7 +59,9 @@ impl BindingValue {
 
 impl EnvironmentIter {
     pub fn new(env: Environment) -> Self {
-        let names = env.names().into_iter();
+        let mut all_names = env.names();
+        all_names.push(String::from(".Last.value"));
+        let names = all_names.into_iter();
         Self { env, names }
     }
 }
