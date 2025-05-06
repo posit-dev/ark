@@ -37,6 +37,7 @@ use harp::ParseResult;
 use log::*;
 use serde_json::json;
 use stdext::unwrap;
+use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
@@ -56,7 +57,7 @@ pub struct Shell {
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
-    graphics_device_tx: Sender<GraphicsDeviceNotification>,
+    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 }
 
 #[derive(Debug)]
@@ -72,7 +73,7 @@ impl Shell {
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
-        graphics_device_tx: Sender<GraphicsDeviceNotification>,
+        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     ) -> Self {
         Self {
             comm_manager_tx,
@@ -254,7 +255,7 @@ fn handle_comm_open_ui(
     comm: CommSocket,
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
-    graphics_device_tx: Sender<GraphicsDeviceNotification>,
+    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 ) -> amalthea::Result<bool> {
     // Create a frontend to wrap the comm channel we were just given. This starts
     // a thread that proxies messages to the frontend.

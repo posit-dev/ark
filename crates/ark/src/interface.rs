@@ -88,6 +88,7 @@ use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
+use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
 use crate::dap::dap::DapBackendEvent;
@@ -334,7 +335,7 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
         default_repos: DefaultRepos,
-        graphics_device_rx: Receiver<GraphicsDeviceNotification>,
+        graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
     ) {
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
