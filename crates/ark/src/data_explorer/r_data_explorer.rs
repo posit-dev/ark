@@ -953,6 +953,7 @@ impl RDataExplorer {
                         RowFilterType::NotEmpty,
                         RowFilterType::NotNull,
                         RowFilterType::Search,
+                        RowFilterType::SetMembership,
                     ]
                     .iter()
                     .map(|row_filter_type| RowFilterTypeSupportStatus {
