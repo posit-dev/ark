@@ -72,7 +72,7 @@ pub fn start_kernel(
     // Communication channel between the graphics device (running on the R
     // thread) and the shell thread
     let (graphics_device_tx, graphics_device_rx) =
-        crossbeam::channel::unbounded::<GraphicsDeviceNotification>();
+        tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
 
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();

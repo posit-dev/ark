@@ -23,6 +23,7 @@ use harp::object::RObject;
 use serde_json::Value;
 use stdext::spawn;
 use stdext::unwrap;
+use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
@@ -40,14 +41,14 @@ pub struct UiComm {
     comm: CommSocket,
     ui_comm_rx: Receiver<UiCommMessage>,
     stdin_request_tx: Sender<StdInRequest>,
-    graphics_device_tx: Sender<GraphicsDeviceNotification>,
+    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 }
 
 impl UiComm {
     pub(crate) fn start(
         comm: CommSocket,
         stdin_request_tx: Sender<StdInRequest>,
-        graphics_device_tx: Sender<GraphicsDeviceNotification>,
+        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     ) -> Sender<UiCommMessage> {
         // Create a sender-receiver pair for Positron global events
         let (ui_comm_tx, ui_comm_rx) = crossbeam::channel::unbounded::<UiCommMessage>();
@@ -264,7 +265,7 @@ mod tests {
         let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
 
         let (graphics_device_tx, _graphics_device_rx) =
-            crossbeam::channel::unbounded::<GraphicsDeviceNotification>();
+            tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
 
         // Create a frontend instance, get access to the sender channel
         let ui_comm_tx = UiComm::start(comm_socket.clone(), stdin_request_tx, graphics_device_tx);

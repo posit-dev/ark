@@ -32,7 +32,6 @@ use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
 use base64::engine::general_purpose;
 use base64::Engine;
-use crossbeam::channel::Receiver;
 use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -45,7 +44,7 @@ use libr::SEXP;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::unwrap;
-use tokio::task::yield_now;
+use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
 use crate::interface::RMain;
@@ -69,7 +68,7 @@ const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 pub(crate) fn init_graphics_device(
     comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
-    graphics_device_rx: Receiver<GraphicsDeviceNotification>,
+    graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
 ) {
     DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx));
 
@@ -77,32 +76,27 @@ pub(crate) fn init_graphics_device(
     r_task::spawn_interrupt(|| async move { process_notifications(graphics_device_rx).await });
 }
 
-async fn process_notifications(graphics_device_rx: Receiver<GraphicsDeviceNotification>) {
+async fn process_notifications(
+    mut graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
+) {
     log::trace!("Now listening for graphics device notifications");
 
     loop {
-        let mut i = 0;
-
-        while let Ok(notification) = graphics_device_rx.try_recv() {
+        while let Some(notification) = graphics_device_rx.recv().await {
             log::trace!("Got graphics device notification: {notification:#?}");
-            i = i + 1;
 
             match notification {
                 GraphicsDeviceNotification::DidChangePlotRenderSettings(plot_render_settings) => {
+                    // Safety: Note that `DEVICE_CONTEXT` is accessed at
+                    // interrupt time. Other methods in this file should be
+                    // written in accordance and avoid causing R interrupt
+                    // checks while they themselves access the device.
                     DEVICE_CONTEXT.with_borrow(|ctx| {
                         ctx.current_render_settings.replace(plot_render_settings)
                     });
                 },
             }
-
-            // Yield regularly to the R thread when something went wrong on the
-            // frontend side and is spamming messages
-            if i >= 5 {
-                break;
-            }
         }
-
-        yield_now().await;
     }
 }
 
