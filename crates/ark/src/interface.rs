@@ -805,7 +805,9 @@ impl RMain {
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
 
-        // Process R's polled events regularly while waiting for console input
+        // Process R's polled events regularly while waiting for console input.
+        // We used to poll every 200ms but that lead to visible delays for the
+        // processing of plot events.
         let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
         let r_request_index = select.recv(&r_request_rx);
@@ -1881,7 +1883,11 @@ impl RMain {
         // https://github.com/rstudio/positron/issues/431
         unsafe { R_RunPendingFinalizers() };
 
-        // Check for Positron render requests
+        // Check for Positron render requests.
+        //
+        // TODO: This should move to a spawned task that'd be woken up by
+        // incoming messages on plot comms. This way we'll prevent the delays
+        // introduced by timeout-based event polling.
         graphics_device::on_process_idle_events();
     }
 
