@@ -49,7 +49,7 @@ pub extern "C-unwind" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
 ///
 /// Requires lldb setting:
 ///
-/// ```
+/// ```text
 /// settings set escape-non-printables false
 /// ```
 #[no_mangle]
@@ -67,7 +67,7 @@ pub extern "C-unwind" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
 ///
 /// Requires lldb setting:
 ///
-/// ```
+/// ```text
 /// settings set escape-non-printables false
 /// ```
 #[no_mangle]
