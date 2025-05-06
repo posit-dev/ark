@@ -364,13 +364,6 @@ impl RMain {
 
         let main = RMain::get_mut();
 
-        // Initialize the GD context on this thread
-        graphics_device::init_graphics_device(
-            main.get_comm_manager_tx().clone(),
-            main.get_iopub_tx().clone(),
-            graphics_device_rx,
-        );
-
         let mut r_args = r_args.clone();
 
         // Record if the user has requested that we don't load the site/user level R profiles
@@ -487,6 +480,18 @@ impl RMain {
             "R has started and ark handlers have been registered, completing initialization."
         );
         Self::complete_initialization(main.banner.take(), kernel_init_tx);
+
+        // Initialize the GD context on this thread.
+        // Note that we do it after init is complete to avoid deadlocking
+        // integration tests by spawning an async task. The deadlock is caused
+        // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
+        // We should be able to remove this escape hatch in `r_task()` by
+        // instantiating an `RMain` in unit tests as well.
+        graphics_device::init_graphics_device(
+            main.get_comm_manager_tx().clone(),
+            main.get_iopub_tx().clone(),
+            graphics_device_rx,
+        );
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
