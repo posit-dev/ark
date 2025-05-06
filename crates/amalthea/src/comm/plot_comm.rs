@@ -36,8 +36,8 @@ pub struct PlotResult {
 	/// The MIME type of the plot data
 	pub mime_type: String,
 
-	/// The policy used to render the plot
-	pub policy: Option<RenderPolicy>
+	/// The settings used to render the plot
+	pub settings: Option<PlotRenderSettings>
 }
 
 /// The size of a plot
@@ -50,22 +50,34 @@ pub struct PlotSize {
 	pub width: i64
 }
 
-/// The policy used to render the plot
+/// The settings used to render the plot
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct RenderPolicy {
-	/// Plot size of the render policy
+pub struct PlotRenderSettings {
+	/// Plot size to render the plot to
 	pub size: PlotSize,
 
 	/// The pixel ratio of the display device
 	pub pixel_ratio: f64,
 
-	/// Format of the render policy
-	pub format: RenderFormat
+	/// Format in which to render the plot
+	pub format: PlotRenderFormat
 }
 
-/// Possible values for RenderFormat
+/// Possible values for PlotUnit
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
-pub enum RenderFormat {
+pub enum PlotUnit {
+	#[serde(rename = "pixels")]
+	#[strum(to_string = "pixels")]
+	Pixels,
+
+	#[serde(rename = "inches")]
+	#[strum(to_string = "inches")]
+	Inches
+}
+
+/// Possible values for PlotRenderFormat
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+pub enum PlotRenderFormat {
 	#[serde(rename = "png")]
 	#[strum(to_string = "png")]
 	Png,
@@ -87,18 +99,6 @@ pub enum RenderFormat {
 	Tiff
 }
 
-/// Possible values for PlotUnit
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
-pub enum PlotUnit {
-	#[serde(rename = "pixels")]
-	#[strum(to_string = "pixels")]
-	Pixels,
-
-	#[serde(rename = "inches")]
-	#[strum(to_string = "inches")]
-	Inches
-}
-
 /// Parameters for the Render method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct RenderParams {
@@ -110,7 +110,7 @@ pub struct RenderParams {
 	pub pixel_ratio: f64,
 
 	/// The requested plot format
-	pub format: RenderFormat,
+	pub format: PlotRenderFormat,
 }
 
 /**
