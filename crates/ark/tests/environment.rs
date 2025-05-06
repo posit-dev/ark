@@ -1,7 +1,7 @@
 //
 // environment.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -277,5 +277,132 @@ fn test_environment_list() {
     };
 
     // Close the comm. Otherwise the thread panics
+    incoming_tx.send(CommMsg::Close).unwrap();
+}
+
+/**
+ * Test for the .Last.value feature with the option enabled.
+ *
+ * This test:
+ * 1. Sets the positron.show_last_value option to TRUE
+ * 2. Creates a new REnvironment
+ * 3. Ensures that the environment list includes .Last.value
+ * 4. Verifies that .Last.value appears even when creating other variables
+ *
+ */
+#[test]
+fn test_environment_last_value_enabled() {
+    // Set the positron.show_last_value option to TRUE
+    r_task(|| {
+        // Use the R options function to set the option
+        RFunction::new("base", "options")
+            .param("positron.show_last_value", true)
+            .call()
+            .unwrap();
+
+        // Verify the option is set
+        let options = RFunction::new("base", "getOption")
+            .param("", "positron.show_last_value")
+            .call()
+            .unwrap();
+
+        println!("Option value: {:?}", options);
+    });
+
+    // Create a new environment for the test
+    let test_env = r_task(|| unsafe {
+        let env = RFunction::new("base", "new.env")
+            .param("parent", R_EmptyEnv)
+            .call()
+            .unwrap();
+        RThreadSafe::new(env)
+    });
+
+    // Create a sender/receiver pair for the comm channel
+    let comm = CommSocket::new(
+        CommInitiator::FrontEnd,
+        String::from("test-last-value-enabled-comm-id"),
+        String::from("positron.environment"),
+    );
+
+    // Create a dummy comm manager channel
+    let (comm_manager_tx, _) = bounded::<CommManagerEvent>(0);
+
+    // Create a new environment handler
+    let incoming_tx = comm.incoming_tx.clone();
+    let outgoing_rx = comm.outgoing_rx.clone();
+    r_task(|| {
+        let test_env = test_env.get().clone();
+        RVariables::start(test_env, comm.clone(), comm_manager_tx.clone());
+    });
+
+    // Ensure we get a list of variables after initialization
+    let msg = outgoing_rx.recv().unwrap();
+    let data = match msg {
+        CommMsg::Data(data) => data,
+        _ => panic!("Expected data message"),
+    };
+
+    // Verify that .Last.value is included in the initial variable list
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesFrontendEvent::Refresh(params) => {
+            assert_eq!(params.variables.len(), 1);
+            assert_eq!(params.variables[0].display_name, ".Last.value");
+            assert_eq!(params.version, 1);
+        },
+        _ => panic!("Expected refresh event"),
+    }
+
+    // Create a variable in the R environment
+    r_task(|| unsafe {
+        let test_env = test_env.get().clone();
+        let sym = r_symbol!("test_var");
+        Rf_defineVar(sym, Rf_ScalarInteger(99), *test_env);
+    });
+
+    // Simulate a prompt signal
+    EVENTS.console_prompt.emit(());
+
+    // Wait for the update event
+    let msg = outgoing_rx.recv().unwrap();
+    let data = match msg {
+        CommMsg::Data(data) => data,
+        _ => panic!("Expected data message"),
+    };
+
+    // Verify that .Last.value is still included in the updated variable list
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesFrontendEvent::Update(params) => {
+            assert_eq!(params.assigned.len(), 2);
+
+            // Check that .Last.value is in the assigned list
+            let last_value = params
+                .assigned
+                .iter()
+                .find(|v| v.display_name == ".Last.value");
+            assert!(last_value.is_some());
+
+            // Check that test_var is also in the list
+            let test_var = params
+                .assigned
+                .iter()
+                .find(|v| v.display_name == "test_var");
+            assert!(test_var.is_some());
+        },
+        _ => panic!("Expected update event"),
+    }
+
+    // Reset the option for other tests
+    r_task(|| {
+        // Use the R options function to reset the option
+        RFunction::new("base", "options")
+            .param("positron.show_last_value", false)
+            .call()
+            .unwrap();
+    });
+
+    // Close the comm
     incoming_tx.send(CommMsg::Close).unwrap();
 }
