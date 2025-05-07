@@ -67,6 +67,9 @@ pub struct RVariables {
     /// thread. Tracked in https://github.com/posit-dev/positron/issues/1812
     current_bindings: RThreadSafe<Vec<Binding>>,
     version: u64,
+    /// Whether to always show the .Last.value in the Variables pane, regardless
+    /// of the value positron.show_last_value
+    show_last_value: bool,
 }
 
 impl RVariables {
@@ -77,6 +80,23 @@ impl RVariables {
      * - `comm`: A channel used to send messages to the frontend
      */
     pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
+        // Start with default settings
+        Self::start_with_config(env, comm, comm_manager_tx, false);
+    }
+
+    /**
+     * Creates a new RVariables instance with specific configuration.
+     *
+     * - `env`: An R environment to scan for variables, typically R_GlobalEnv
+     * - `comm`: A channel used to send messages to the frontend
+     * - `show_last_value`: Whether to include .Last.value in the variables list
+     */
+    pub fn start_with_config(
+        env: RObject,
+        comm: CommSocket,
+        comm_manager_tx: Sender<CommManagerEvent>,
+        show_last_value: bool,
+    ) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             log::warn!(
@@ -100,6 +120,7 @@ impl RVariables {
                 env,
                 current_bindings,
                 version: 0,
+                show_last_value,
             };
             environment.execution_thread();
         });
@@ -200,7 +221,7 @@ impl RVariables {
             // If the special .Last.value variable is enabled, add it to the
             // list. This is a special R value that doesn't have its own
             // binding.
-            if let Some(last_value) = Self::last_value() {
+            if let Some(last_value) = self.last_value() {
                 variables.push(last_value.var());
             }
 
@@ -366,33 +387,43 @@ impl RVariables {
     }
 
     /// Gets the value of the special variable '.Last.value' (the value of the
-    /// last expression evaluated at the top level), if the corresponding
-    /// setting is TRUE.
+    /// last expression evaluated at the top level), if show_last_value is true.
+    ///
+    /// For backward compatibility, also checks the global option "positron.show_last_value"
+    /// if it exists, but the instance variable takes precedence.
     ///
     /// Returns None in all other cases.
-    fn last_value() -> Option<PositronVariable> {
-        let use_last_value = get_option("positron.show_last_value");
-        match use_last_value.get_bool(0) {
-            Ok(Some(true)) => {
-                match harp::parse_eval_global(".Last.value") {
-                    Ok(last_robj) => Some(PositronVariable::from(
-                        String::from(".Last.value"),
-                        String::from(".Last.value"),
-                        last_robj.sexp,
-                    )),
-                    Err(err) => {
-                        // This isn't a critical error but would also be very
-                        // unexpected.
-                        log::debug!("Environment: Could not evaluate .Last.value ({err:?})");
-                        None
-                    },
-                }
-            },
-            _ => {
-                // The setting is not a logical value or is set to FALSE. Either
-                // way, don't return a last value.
-                None
-            },
+    fn last_value(&self) -> Option<PositronVariable> {
+        // First check our instance variable
+        let show_last_value = if self.show_last_value {
+            true
+        } else {
+            // If we aren't always showing the last value, update from the
+            // global option
+            let use_last_value = get_option("positron.show_last_value");
+            match use_last_value.get_bool(0) {
+                Ok(Some(true)) => true,
+                _ => false,
+            }
+        };
+
+        if show_last_value {
+            match harp::parse_eval_global(".Last.value") {
+                Ok(last_robj) => Some(PositronVariable::from(
+                    String::from(".Last.value"),
+                    String::from(".Last.value"),
+                    last_robj.sexp,
+                )),
+                Err(err) => {
+                    // This isn't a critical error but would also be very
+                    // unexpected.
+                    log::debug!("Environment: Could not evaluate .Last.value ({err:?})");
+                    None
+                },
+            }
+        } else {
+            // Last value display is disabled
+            None
         }
     }
 
@@ -412,7 +443,7 @@ impl RVariables {
 
             // Track the last value if the user has requested it. Treat this
             // value as assigned every time we update the Variables list.
-            if let Some(last_value) = Self::last_value() {
+            if let Some(last_value) = self.last_value() {
                 assigned.push(last_value.var());
             }
 
