@@ -12,6 +12,7 @@ use libr::Rf_ScalarLogical;
 use libr::SEXP;
 
 use crate::help::message::HelpEvent;
+use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
 use crate::interface::RMain;
 
@@ -29,7 +30,10 @@ fn is_help_url(url: &str) -> bool {
 
 fn handle_help_url(url: String) -> anyhow::Result<()> {
     RMain::with(|main| {
-        let event = HelpEvent::ShowHelpUrl(ShowHelpUrlParams { url });
+        let event = HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
+            url,
+            kind: ShowHelpUrlKind::HelpProxy,
+        });
         main.send_help_event(event)
     })
 }
