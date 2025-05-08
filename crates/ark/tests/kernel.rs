@@ -250,6 +250,59 @@ fn test_execute_request_browser_incomplete() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 
+// Test that a multiline input in the browser doesn't throw off our prompt info
+// detection logic https://github.com/posit-dev/positron/issues/5928
+#[test]
+fn test_execute_request_browser_multiline() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Wrap in a function to get a frame on the stack.
+    // We aren't totally sure why we need the `1`, but we need
+    // something between the `browser()` and the end of the function.
+    let code = "
+fn <- function() {
+  browser()
+  1
+}
+fn()
+";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("Called from: fn()\ndebug at #3: [1] 1\n");
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "1 +
+        1";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("[1] 2\n");
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
 #[test]
 fn test_execute_request_browser_stdin() {
     let frontend = DummyArkFrontend::lock();
