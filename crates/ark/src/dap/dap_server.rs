@@ -34,6 +34,7 @@ use stdext::spawn;
 
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_r_main::FrameInfo;
 use crate::dap::dap_r_main::FrameSource;
 use crate::dap::dap_variables::object_variables;
@@ -157,12 +158,12 @@ fn listen_dap_events<W: Write>(
                         })
                     },
 
-                    DapBackendEvent::Stopped => {
+                    DapBackendEvent::Stopped (DapStoppedEvent{ preserve_focus }) => {
                         Event::Stopped(StoppedEventBody {
                             reason: StoppedEventReason::Step,
                             description: None,
                             thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(false),
+                            preserve_focus_hint: Some(preserve_focus),
                             text: None,
                             all_threads_stopped: Some(true),
                             hit_breakpoint_ids: None,

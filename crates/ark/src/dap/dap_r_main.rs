@@ -97,10 +97,10 @@ impl RMainDap {
         self.debugging
     }
 
-    pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
+    pub fn start_debug(&mut self, stack: Vec<FrameInfo>, preserve_focus: bool) {
         self.debugging = true;
         let mut dap = self.dap.lock().unwrap();
-        dap.start_debug(stack)
+        dap.start_debug(stack, preserve_focus)
     }
 
     pub fn stop_debug(&mut self) {

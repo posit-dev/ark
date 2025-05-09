@@ -36,7 +36,12 @@ pub enum DapBackendEvent {
 
     /// Event sent when a browser prompt is emitted during an existing
     /// debugging session
-    Stopped,
+    Stopped(DapStoppedEvent),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct DapStoppedEvent {
+    pub preserve_focus: bool,
 }
 
 pub struct Dap {
@@ -120,14 +125,14 @@ impl Dap {
         shared
     }
 
-    pub fn start_debug(&mut self, mut stack: Vec<FrameInfo>) {
+    pub fn start_debug(&mut self, mut stack: Vec<FrameInfo>, preserve_focus: bool) {
         self.load_fallback_sources(&stack);
         self.load_variables_references(&mut stack);
         self.stack = Some(stack);
 
         if self.is_debugging {
             if let Some(tx) = &self.backend_events_tx {
-                log_error!(tx.send(DapBackendEvent::Stopped));
+                log_error!(tx.send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus })));
             }
         } else {
             if let Some(tx) = &self.comm_tx {

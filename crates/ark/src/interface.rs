@@ -243,6 +243,12 @@ pub struct RMain {
     /// `WriteConsole` output diverted from IOPub is stored here. This is only used
     /// to return R output to the debugger.
     pub(crate) captured_output: String,
+
+    /// Whether we should preserve focus when stopping in a debug session. We
+    /// should only preserve focus if we're explicitly stepping through code as
+    /// opposed to evaluating an expression in the debugger console.
+    /// See https://github.com/posit-dev/positron/issues/3151.
+    preserve_debug_focus: bool,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -575,6 +581,7 @@ impl RMain {
             banner: None,
             r_error_buffer: None,
             captured_output: String::new(),
+            preserve_debug_focus: false,
         }
     }
 
@@ -761,7 +768,7 @@ impl RMain {
         if info.browser {
             match self.dap.stack_info() {
                 Ok(stack) => {
-                    self.dap.start_debug(stack);
+                    self.dap.start_debug(stack, self.preserve_debug_focus);
                 },
                 Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
             };
@@ -1059,7 +1066,13 @@ impl RMain {
                 if self.dap.is_debugging() {
                     let continue_cmds = vec!["n", "f", "c", "cont"];
                     if continue_cmds.contains(&&code[..]) {
+                        // We're stepping so we want to focus the next location we stop at
+                        self.preserve_debug_focus = false;
                         self.dap.send_dap(DapBackendEvent::Continued);
+                    } else {
+                        // The user is evaluating some other expression so preserve current focus
+                        // https://github.com/posit-dev/positron/issues/3151
+                        self.preserve_debug_focus = true;
                     }
                 }
 
