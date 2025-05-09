@@ -92,6 +92,7 @@ use stdext::*;
 use uuid::Uuid;
 
 use crate::dap::dap::DapBackendEvent;
+use crate::dap::dap_r_main::FrameInfoId;
 use crate::dap::dap_r_main::RMainDap;
 use crate::dap::Dap;
 use crate::errors;
@@ -248,7 +249,11 @@ pub struct RMain {
     /// should only preserve focus if we're explicitly stepping through code as
     /// opposed to evaluating an expression in the debugger console.
     /// See https://github.com/posit-dev/positron/issues/3151.
-    preserve_debug_focus: bool,
+    debug_preserve_focus: bool,
+
+    /// The stack of frames we saw the last time we stopped. Used as a mostly
+    /// reliable indication of whether we moved since last time.
+    debug_last_stack: Vec<FrameInfoId>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -581,7 +586,8 @@ impl RMain {
             banner: None,
             r_error_buffer: None,
             captured_output: String::new(),
-            preserve_debug_focus: false,
+            debug_preserve_focus: false,
+            debug_last_stack: vec![],
         }
     }
 
@@ -768,13 +774,29 @@ impl RMain {
         if info.browser {
             match self.dap.stack_info() {
                 Ok(stack) => {
-                    self.dap.start_debug(stack, self.preserve_debug_focus);
+                    // Figure out whether we changed location since last time,
+                    // e.g. because the user evaluated an expression that hit
+                    // another breakpoint. In that case we do want to move
+                    // focus, even though the user didn't explicitly used a step
+                    // gesture. Our indication that we changed location is
+                    // whether the call stack looks the same as last time. This
+                    // is not 100% reliable as this heuristic might have false
+                    // negatives, e.g. if the control flow exited the current
+                    // context via condition catching and jumped back in the
+                    // debugged function.
+                    let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
+                    let same_stack = stack_id == self.debug_last_stack;
+
+                    self.debug_last_stack = stack_id;
+                    self.dap
+                        .start_debug(stack, same_stack && self.debug_preserve_focus);
                 },
                 Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
             };
         } else {
             if self.dap.is_debugging() {
                 // Terminate debugging session
+                self.debug_last_stack = vec![];
                 self.dap.stop_debug();
             }
         }
@@ -1067,12 +1089,12 @@ impl RMain {
                     let continue_cmds = vec!["n", "f", "c", "cont"];
                     if continue_cmds.contains(&&code[..]) {
                         // We're stepping so we want to focus the next location we stop at
-                        self.preserve_debug_focus = false;
+                        self.debug_preserve_focus = false;
                         self.dap.send_dap(DapBackendEvent::Continued);
                     } else {
                         // The user is evaluating some other expression so preserve current focus
                         // https://github.com/posit-dev/positron/issues/3151
-                        self.preserve_debug_focus = true;
+                        self.debug_preserve_focus = true;
                     }
                 }
 
