@@ -76,10 +76,33 @@ pub struct FrameInfo {
     pub end_column: i64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FrameSource {
     File(String),
     Text(String),
+}
+
+/// Version of `FrameInfo` that identifies the frame by value and doesn't keep a
+/// reference to the environment.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrameInfoId {
+    pub source: FrameSource,
+    pub start_line: i64,
+    pub start_column: i64,
+    pub end_line: i64,
+    pub end_column: i64,
+}
+
+impl From<&FrameInfo> for FrameInfoId {
+    fn from(info: &FrameInfo) -> Self {
+        FrameInfoId {
+            source: info.source.clone(),
+            start_line: info.start_line,
+            start_column: info.start_column,
+            end_line: info.end_line,
+            end_column: info.end_column,
+        }
+    }
 }
 
 impl RMainDap {
@@ -97,10 +120,10 @@ impl RMainDap {
         self.debugging
     }
 
-    pub fn start_debug(&mut self, stack: Vec<FrameInfo>) {
+    pub fn start_debug(&mut self, stack: Vec<FrameInfo>, preserve_focus: bool) {
         self.debugging = true;
         let mut dap = self.dap.lock().unwrap();
-        dap.start_debug(stack)
+        dap.start_debug(stack, preserve_focus)
     }
 
     pub fn stop_debug(&mut self) {
