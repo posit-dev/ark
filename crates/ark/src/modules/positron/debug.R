@@ -43,6 +43,7 @@ debugger_stack_info <- function(
     # also aligns the `calls` and `fns`/`environments` in a way that is useful to
     # us when constructing frame information (i.e. we end up wanting the function
     # and environment associated with the call you evaluate inside that function).
+    callers <- calls[-length(calls)]
     calls <- calls[-1L]
     fns <- fns[-length(fns)]
     environments <- environments[-length(environments)]
@@ -56,6 +57,11 @@ debugger_stack_info <- function(
         call_text <- lines_join(call_lines)
         call_text
     })
+    callers <- lapply(callers, function(call) {
+        call_lines <- call_deparse(call)
+        call_text <- lines_join(call_lines)
+        call_text
+    })
 
     out <- vector("list", n)
 
@@ -64,10 +70,11 @@ debugger_stack_info <- function(
         fn <- fns[[i]]
         environment <- environments[[i]]
         call_text <- call_texts[[i]]
+        frame_name <- callers[[i]]
 
         out[[i]] <- intermediate_frame_info(
             source_name = call_text,
-            frame_name = call_text,
+            frame_name = frame_name,
             srcref = srcref,
             fn = fn,
             environment = environment,
@@ -103,7 +110,7 @@ top_level_call_frame_info <- function(x) {
     # We just want to show it in the editor, and that's really it.
     new_frame_info(
         source_name = x,
-        frame_name = x,
+        frame_name = "<global>",
         file = NULL,
         contents = x,
         environment = NULL,
@@ -122,15 +129,15 @@ context_frame_info <- function(
     parent_call,
     last_start_line
 ) {
-    frame_name <- "<current>"
-
-    # Try to figure out the calling function's name and use that as our `source_name`
+    # Try to figure out the calling function's name and use that as our
+    # `source_name` and `frame_name`
     source_name <- call_name(parent_call)
     if (is.null(source_name)) {
         source_name <- frame_name
     } else {
         source_name <- paste0(source_name, "()")
     }
+    frame_name <- source_name
 
     frame_info(
         source_name,
