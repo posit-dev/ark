@@ -29,62 +29,42 @@ debugger_stack_info <- function(
 
     # Top level call never has source references.
     # It's what comes through the console input.
-    top_level_call <- calls[[1L]]
+    top_level_loc <- 1L
+    top_level_call <- calls[[top_level_loc]]
 
     # Last function and environment go with the context, and will be used as needed.
     # Last call is the call that dropped us into the `context_fn`, and can be used
     # to generate an informative frame name.
-    context_fn <- fns[[length(fns)]]
-    context_environment <- environments[[length(environments)]]
-    context_frame_call <- calls[[length(calls)]]
+    context_loc <- n
+    context_fn <- fns[[context_loc]]
+    context_environment <- environments[[context_loc]]
+    context_frame_call <- calls[[context_loc]]
 
-    # Remove top level call from `calls` and context function/environment from
-    # `fns` / `environments` / `frame_calls` as they are handled in their own
-    # paths. This actually also aligns the `calls` and `fns` / `environments` /
-    # `frame_calls` in a way that is useful to us when constructing frame
-    # information (i.e. we end up wanting the function, environment, and frame
-    # associated with the call you evaluate inside that function).
-    calls <- calls[-1L]
-    fns <- fns[-length(fns)]
-    environments <- environments[-length(environments)]
-    frame_calls <- calls[-length(calls)]
-    n <- n - 1L
+    # - Remove `top_level_loc` to make `intermediate_calls`, as top level call
+    #   is handled elsewhere.
+    # - Remove `context_loc` to make
+    #   `intermediate_fns/environments/frame_calls`, as context versions of
+    #   those are handled elsewhere.
+    # - This actually aligns the `intermediate_calls` with the
+    #   `intermediate_fns/environments/frame_calls` in a way that is useful to
+    #   us when constructing frame information (i.e. we end up wanting the
+    #   function, environment, and frame associated with the call you evaluate
+    #   inside that function).
+    intermediate_n <- n - 1L
+    intermediate_calls <- calls[-top_level_loc]
+    intermediate_fns <- fns[-context_loc]
+    intermediate_environments <- environments[-context_loc]
+    intermediate_frame_calls <- calls[-context_loc]
 
-    srcrefs <- lapply(calls, function(call) {
-        attr(call, "srcref", exact = TRUE)
-    })
-    call_texts <- lapply(calls, function(call) {
-        call_lines <- call_deparse(call)
-        call_text <- lines_join(call_lines)
-        call_text
-    })
-    frame_names <- lapply(frame_calls, function(call) {
-        call_lines <- call_deparse(call)
-        call_text <- lines_join(call_lines)
-        call_text
-    })
-
-    out <- vector("list", n)
-
-    for (i in seq_len(n)) {
-        srcref <- srcrefs[[i]]
-        fn <- fns[[i]]
-        environment <- environments[[i]]
-        call_text <- call_texts[[i]]
-        frame_name <- frame_names[[i]]
-
-        out[[i]] <- intermediate_frame_info(
-            source_name = call_text,
-            frame_name = frame_name,
-            srcref = srcref,
-            fn = fn,
-            environment = environment,
-            call_text = call_text
-        )
-    }
-
+    # Now compute all of the pieces and put them together
     first_frame_info <- top_level_call_frame_info(top_level_call)
-
+    intermediate_frame_infos <- intermediate_frame_infos(
+        intermediate_n,
+        intermediate_calls,
+        intermediate_fns,
+        intermediate_environments,
+        intermediate_frame_calls
+    )
     last_frame_info <- context_frame_info(
         context_srcref,
         context_fn,
@@ -96,7 +76,7 @@ debugger_stack_info <- function(
 
     out <- c(
         list(first_frame_info),
-        out,
+        intermediate_frame_infos,
         list(last_frame_info)
     )
 
@@ -151,27 +131,46 @@ context_frame_info <- function(
     )
 }
 
-intermediate_frame_info <- function(
-    source_name,
-    frame_name,
-    srcref,
-    fn,
-    environment,
-    call_text
-) {
+intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
+    srcrefs <- lapply(calls, function(call) {
+        attr(call, "srcref", exact = TRUE)
+    })
+    call_texts <- lapply(calls, function(call) {
+        call_lines <- call_deparse(call)
+        call_text <- lines_join(call_lines)
+        call_text
+    })
+    frame_names <- lapply(frame_calls, function(call) {
+        call_lines <- call_deparse(call)
+        call_text <- lines_join(call_lines)
+        call_text
+    })
+
     # Currently only tracked for the context frame, as that is where it is most useful,
     # since that is where the user is actively stepping.
     last_start_line <- NULL
 
-    frame_info(
-        source_name,
-        frame_name,
-        srcref,
-        fn,
-        environment,
-        call_text,
-        last_start_line
-    )
+    out <- vector("list", n)
+
+    for (i in seq_len(n)) {
+        srcref <- srcrefs[[i]]
+        fn <- fns[[i]]
+        environment <- environments[[i]]
+        call_text <- call_texts[[i]]
+        frame_name <- frame_names[[i]]
+
+        out[[i]] <- frame_info(
+            source_name = call_text,
+            frame_name = frame_name,
+            srcref = srcref,
+            fn = fn,
+            environment = environment,
+            call_text = call_text,
+            last_start_line = last_start_line
+        )
+    }
+
+    out
 }
 
 frame_info <- function(
