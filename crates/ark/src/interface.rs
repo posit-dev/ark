@@ -324,6 +324,8 @@ impl RMain {
         session_mode: SessionMode,
         default_repos: DefaultRepos,
     ) {
+        panic!("uh oh");
+
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
         // like running an `r_task()` (posit-dev/positron#4973).
