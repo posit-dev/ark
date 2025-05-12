@@ -33,20 +33,21 @@ debugger_stack_info <- function(
 
     # Last function and environment go with the context, and will be used as needed.
     # Last call is the call that dropped us into the `context_fn`, and can be used
-    # to generate an informative name.
+    # to generate an informative frame name.
     context_fn <- fns[[length(fns)]]
     context_environment <- environments[[length(environments)]]
-    context_parent_call <- calls[[length(calls)]]
+    context_frame_call <- calls[[length(calls)]]
 
     # Remove top level call from `calls` and context function/environment from
-    # `fns`/`environments` as they are handled in their own paths. This actually
-    # also aligns the `calls` and `fns`/`environments` in a way that is useful to
-    # us when constructing frame information (i.e. we end up wanting the function
-    # and environment associated with the call you evaluate inside that function).
-    callers <- calls[-length(calls)]
+    # `fns` / `environments` / `frame_calls` as they are handled in their own
+    # paths. This actually also aligns the `calls` and `fns` / `environments` /
+    # `frame_calls` in a way that is useful to us when constructing frame
+    # information (i.e. we end up wanting the function, environment, and frame
+    # associated with the call you evaluate inside that function).
     calls <- calls[-1L]
     fns <- fns[-length(fns)]
     environments <- environments[-length(environments)]
+    frame_calls <- calls[-length(calls)]
     n <- n - 1L
 
     srcrefs <- lapply(calls, function(call) {
@@ -57,7 +58,7 @@ debugger_stack_info <- function(
         call_text <- lines_join(call_lines)
         call_text
     })
-    callers <- lapply(callers, function(call) {
+    frame_names <- lapply(frame_calls, function(call) {
         call_lines <- call_deparse(call)
         call_text <- lines_join(call_lines)
         call_text
@@ -70,7 +71,7 @@ debugger_stack_info <- function(
         fn <- fns[[i]]
         environment <- environments[[i]]
         call_text <- call_texts[[i]]
-        frame_name <- callers[[i]]
+        frame_name <- frame_names[[i]]
 
         out[[i]] <- intermediate_frame_info(
             source_name = call_text,
@@ -89,7 +90,7 @@ debugger_stack_info <- function(
         context_fn,
         context_environment,
         context_call_text,
-        context_parent_call,
+        context_frame_call,
         context_last_start_line
     )
 
@@ -126,12 +127,12 @@ context_frame_info <- function(
     fn,
     environment,
     call_text,
-    parent_call,
+    frame_call,
     last_start_line
 ) {
     # Try to figure out the calling function's name and use that as our
     # `source_name` and `frame_name`
-    source_name <- call_name(parent_call)
+    source_name <- call_name(frame_call)
     if (is.null(source_name)) {
         source_name <- frame_name
     } else {
