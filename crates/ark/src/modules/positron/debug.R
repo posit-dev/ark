@@ -110,15 +110,18 @@ context_frame_info <- function(
     frame_call,
     last_start_line
 ) {
-    # Try to figure out the calling function's name and use that as our
-    # `source_name` and `frame_name`
-    source_name <- call_name(frame_call)
-    if (is.null(source_name)) {
+    frame_call_name <- call_name(frame_call)
+    if (!is.null(frame_call_name)) {
+        # Figure out the frame function's name and use that as a simpler
+        # `frame_name` and `source_name`
+        frame_name <- paste0(frame_call_name, "()")
         source_name <- frame_name
     } else {
-        source_name <- paste0(source_name, "()")
+        # Otherwise fall back to standard deparsing of `frame_call`
+        frame_lines <- call_deparse(frame_call)
+        frame_name <- lines_join(frame_lines)
+        source_name <- frame_name
     }
-    frame_name <- source_name
 
     frame_info(
         source_name,
