@@ -256,28 +256,26 @@ fn test_execute_request_browser_incomplete() {
 fn test_execute_request_browser_multiline() {
     let frontend = DummyArkFrontend::lock();
 
-    // Wrap in a function to get a frame on the stack.
-    // We aren't totally sure why we need the `1`, but we need
-    // something between the `browser()` and the end of the function.
+    // Wrap in a function to get a frame on the stack so we aren't at top level.
+    // Careful to not send any newlines after `fn()`, as that advances the debugger!
     let code = "
 fn <- function() {
   browser()
-  1
 }
-fn()
-";
+fn()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("Called from: fn()\ndebug at #3: [1] 1\n");
-
+    // We aren't at top level, so this comes as an iopub stream
+    frontend.recv_iopub_stream_stdout("Called from: fn()\n");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
+    // Execute a multiline statement while paused in the debugger
     let code = "1 +
         1";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
@@ -286,6 +284,7 @@ fn()
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
+    // Also received as iopub stream because we aren't at top level, we are in the debugger
     frontend.recv_iopub_stream_stdout("[1] 2\n");
     frontend.recv_iopub_idle();
 
