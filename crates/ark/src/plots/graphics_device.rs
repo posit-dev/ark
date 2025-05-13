@@ -91,9 +91,8 @@ async fn process_notifications(
                     // interrupt time. Other methods in this file should be
                     // written in accordance and avoid causing R interrupt
                     // checks while they themselves access the device.
-                    DEVICE_CONTEXT.with_borrow(|ctx| {
-                        ctx.current_render_settings.replace(plot_render_settings)
-                    });
+                    DEVICE_CONTEXT
+                        .with_borrow(|ctx| ctx.prerender_settings.replace(plot_render_settings));
                 },
             }
         }
@@ -168,7 +167,7 @@ struct DeviceContext {
     wrapped_callbacks: WrappedDeviceCallbacks,
 
     /// The settings used for pre-renderings of new plots.
-    current_render_settings: Cell<PlotRenderSettings>,
+    prerender_settings: Cell<PlotRenderSettings>,
 }
 
 impl DeviceContext {
@@ -183,7 +182,7 @@ impl DeviceContext {
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
-            current_render_settings: Cell::new(PlotRenderSettings {
+            prerender_settings: Cell::new(PlotRenderSettings {
                 size: PlotSize {
                     width: 640,
                     height: 400,
@@ -501,7 +500,7 @@ impl DeviceContext {
             POSITRON_PLOT_CHANNEL_ID.to_string(),
         );
 
-        let settings = self.current_render_settings.get();
+        let settings = self.prerender_settings.get();
 
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
         let data = match self.render_plot(id, &settings) {
