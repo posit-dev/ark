@@ -459,6 +459,21 @@ mod tests {
     }
 
     #[test]
+    fn test_line_indent_minimum_nested() {
+        // Nested R function test with multiple levels of nesting
+        let mut text =
+            String::from("{\n  {\n    lapply(1:5, function() {\n      1 + 1\n    }\n)\n  }\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 5).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(
+            text,
+            String::from("{\n  {\n    lapply(1:5, function() {\n      1 + 1\n    }\n    )\n  }\n}")
+        );
+    }
+
+    #[test]
     fn test_line_indent_function_opening_brace_own_line() {
         let text = String::from("object <- function()\n{\n  body\n}");
         let doc = test_doc(&text);
