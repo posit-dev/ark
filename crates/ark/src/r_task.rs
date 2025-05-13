@@ -305,8 +305,6 @@ where
         return;
     }
 
-    // Note that this blocks until the channels are initialized,
-    // even though these are async tasks!
     let tasks_tx = if only_idle {
         IDLE_TASKS.tx()
     } else {
