@@ -911,16 +911,16 @@ impl RMain {
         let browser =
             RE_DEBUG_PROMPT.is_match(&prompt) || (self.dap.is_debugging() && matches_continuation);
 
+        // If there are frames on the stack and we're not in a browser prompt,
+        // this means some user code is requesting input, e.g. via `readline()`
+        let user_request = !browser && n_frame > 0;
+
         // The request is incomplete if we see the continue prompt, except if
         // we're in a user request, e.g. `readline("+ ")`. To guard against
         // this, we check that we are at top-level (call stack is empty or we
         // have a debug prompt).
         let top_level = n_frame == 0 || browser;
         let incomplete = matches_continuation && top_level;
-
-        // If there are frames on the stack and we're not in a browser prompt,
-        // this means some user code is requesting input, e.g. via `readline()`
-        let user_request = !browser && n_frame > 0;
 
         return PromptInfo {
             input_prompt: prompt,
