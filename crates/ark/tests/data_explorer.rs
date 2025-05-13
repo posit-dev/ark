@@ -1686,6 +1686,168 @@ fn test_update_data_filters_reapplied() {
     ]);
 }
 
+fn create_set_membership_filter(
+    column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
+    values: Vec<String>,
+    inclusive: bool,
+    filter_id: &str,
+) -> RowFilter {
+    RowFilter {
+        column_schema,
+        filter_type: RowFilterType::SetMembership,
+        filter_id: filter_id.to_string(),
+        condition: RowFilterCondition::And,
+        is_valid: None,
+        params: Some(RowFilterParams::SetMembership(
+            amalthea::comm::data_explorer_comm::FilterSetMembership { values, inclusive },
+        )),
+        error_message: None,
+    }
+}
+
+/// Helper function to test set membership filters for both inclusive and exclusive modes
+fn test_set_membership_helper(
+    data_frame_name: &str,
+    filter_values: Vec<&str>,
+    expected_inclusive_count: usize,
+    expected_exclusive_count: usize,
+) {
+    let socket = open_data_explorer(String::from(data_frame_name));
+
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        column_indices: vec![0],
+    });
+
+    let schema_reply = socket_rpc(&socket, req);
+    let schema = match schema_reply {
+        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+        _ => panic!("Unexpected reply: {:?}", schema_reply),
+    };
+
+    let string_values: Vec<String> = filter_values.iter().map(|s| s.to_string()).collect();
+
+    let inclusive_filter = create_set_membership_filter(
+        schema.columns[0].clone(),
+        string_values.clone(),
+        true, // inclusive
+        "inclusive-filter-id",
+    );
+
+    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+        filters: vec![inclusive_filter],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+    DataExplorerBackendReply::SetRowFiltersReply(
+        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
+    ) => {
+        assert_eq!(num_rows as usize, expected_inclusive_count,
+                 "Inclusive filter for {} with values {:?} returned {} rows instead of expected {}",
+                 data_frame_name, filter_values, num_rows, expected_inclusive_count);
+    });
+
+    let exclusive_filter = create_set_membership_filter(
+        schema.columns[0].clone(),
+        string_values,
+        false, // exclusive
+        "exclusive-filter-id",
+    );
+
+    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+        filters: vec![exclusive_filter],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+    DataExplorerBackendReply::SetRowFiltersReply(
+        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
+    ) => {
+        assert_eq!(num_rows as usize, expected_exclusive_count,
+                 "Exclusive filter for {} with values {:?} returned {} rows instead of expected {}",
+                 data_frame_name, filter_values, num_rows, expected_exclusive_count);
+    });
+}
+
+#[test]
+fn test_set_membership_filter() {
+    let _lock = r_test_lock();
+
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"categories <- data.frame(
+                fruit = c(
+                    "apple",
+                    "banana",
+                    "orange",
+                    "grape",
+                    "kiwi",
+                    "pear",
+                    "strawberry"
+                )
+            )"#,
+        )
+        .unwrap();
+    });
+
+    test_set_membership_helper(
+        "categories",                    // data frame name
+        vec!["apple", "banana", "pear"], // filter values
+        3,                               // expected inclusive match count
+        4,                               // expected exclusive match count
+    );
+
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"numeric_data <- data.frame(
+                values = c(1, 2, 3, 4, 5, 6, 7)
+            )"#,
+        )
+        .unwrap();
+    });
+
+    test_set_membership_helper(
+        "numeric_data",      // data frame name
+        vec!["1", "2", "3"], // filter values (as strings, will be coerced)
+        3,                   // expected inclusive match count
+        4,                   // expected exclusive match count
+    );
+
+    // Test string data frame with NA values
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"categories_with_na <- data.frame(
+                fruits = c(
+                    "apple",
+                    "banana",
+                    NA_character_,
+                    "orange",
+                    "grape",
+                    NA_character_,
+                    "pear"
+                )
+            )"#,
+        )
+        .unwrap();
+    });
+
+    // Test with just regular values in the filter (NA values won't match)
+    test_set_membership_helper("categories_with_na", vec!["apple", "banana"], 2, 5);
+
+    // Test numeric data frame with NA values
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"numeric_with_na <- data.frame(
+                values = c(1, 2, NA_real_, 3, NA_real_, 4, 5)
+            )"#,
+        )
+        .unwrap();
+    });
+
+    // Tests with just regular values in the filter (NA values won't match)
+    test_set_membership_helper("numeric_with_na", vec!["1", "2"], 2, 5);
+    test_set_membership_helper("numeric_with_na", vec![], 0, 7);
+    test_set_membership_helper("numeric_with_na", vec!["3"], 1, 6);
+}
+
 #[test]
 fn test_get_data_values_by_indices() {
     let _lock = r_test_lock();

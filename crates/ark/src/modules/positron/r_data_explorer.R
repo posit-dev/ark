@@ -278,6 +278,26 @@ col_filter_indices <- function(col, idx = NULL) {
     !.ps.filter_col.between(col, params)
 }
 
+.ps.filter_col.set_membership <- function(col, params) {
+    # Check if the column values are in (or not in) the set of filter values
+    # If inclusive is TRUE, include values in the set
+    # If inclusive is FALSE, exclude values in the set
+
+    # Coerce values to numeric if the column is numeric
+    values <- if (is.numeric(col)) {
+        as.numeric(params$values)
+    } else {
+        params$values
+    }
+
+    # Return a logical vector indicating which elements match the filter
+    if (params$inclusive) {
+        col %in% values
+    } else {
+        !(col %in% values)
+    }
+}
+
 .ps.regex_escape <- function(x) {
     # Escape all regex magic characters in a string
     gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
