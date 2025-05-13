@@ -1810,6 +1810,42 @@ fn test_set_membership_filter() {
         3,                   // expected inclusive match count
         4,                   // expected exclusive match count
     );
+
+    // Test string data frame with NA values
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"categories_with_na <- data.frame(
+                fruits = c(
+                    "apple",
+                    "banana",
+                    NA_character_,
+                    "orange",
+                    "grape",
+                    NA_character_,
+                    "pear"
+                )
+            )"#,
+        )
+        .unwrap();
+    });
+
+    // Test with just regular values in the filter (NA values won't match)
+    test_set_membership_helper("categories_with_na", vec!["apple", "banana"], 2, 5);
+
+    // Test numeric data frame with NA values
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"numeric_with_na <- data.frame(
+                values = c(1, 2, NA_real_, 3, NA_real_, 4, 5)
+            )"#,
+        )
+        .unwrap();
+    });
+
+    // Tests with just regular values in the filter (NA values won't match)
+    test_set_membership_helper("numeric_with_na", vec!["1", "2"], 2, 5);
+    test_set_membership_helper("numeric_with_na", vec![], 0, 7);
+    test_set_membership_helper("numeric_with_na", vec!["3"], 1, 6);
 }
 
 #[test]
