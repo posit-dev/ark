@@ -36,6 +36,9 @@ jobs:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
 
+      - name: Install xquartz
+        run: brew install --cask xquartz
+
       - name: Install R Packages Required For Tests
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
