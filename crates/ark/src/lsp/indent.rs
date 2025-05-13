@@ -89,6 +89,8 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         (brace_parent_indent(parent), config.indent_size)
     };
 
+    let (old_indent, old_indent_byte) = line_indent(text, line, config);
+
     // Structured in two stages as in Emacs TS rules: first match, then
     // return anchor and indent size. We can add more rules here as needed.
     let (anchor, indent) = match bol_parent {
@@ -109,11 +111,42 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
 
             (node_line_indent(anchor), config.indent_size)
         },
-        _ => return Ok(None),
+        _ => {
+            // Find nearest containing braced expression or top-level node. We'll use
+            // that to prevent ever indenting past these in unhandled cases for which we
+            // don't have rules yet: https://github.com/posit-dev/positron/issues/1683
+
+            // First climb one level if cursor is in front of a `{` character.
+            // In that case `node` is the `{` token which is an immediate child
+            // of the containing `{` expression. We want to indent that braced
+            // expression relative to the next enclosing `{` expression.
+            let mut node = node;
+            if let Some(c) = text_at_indent().next() {
+                if c == '{' {
+                    if let Some(parent) = node.parent() {
+                        node = parent;
+                    }
+                }
+            }
+
+            // Find nearest enclosing brace. If there is none, just use current indentation.
+            let Some(enclosing_brace) = find_enclosing_brace(node) else {
+                return Ok(None);
+            };
+            let (anchor, indent) = brace_indent(enclosing_brace);
+
+            // Only correct if we're too far on the left, past the indentation
+            // implied by the enclosing brace
+            let min_indent = anchor + indent;
+            if old_indent >= min_indent {
+                return Ok(None);
+            }
+
+            (anchor, indent)
+        },
     };
 
     let new_indent = anchor + indent;
-    let (old_indent, old_indent_byte) = line_indent(text, line, config);
 
     if old_indent == new_indent {
         return Ok(None);
@@ -201,6 +234,15 @@ pub fn new_line_indent(config: &IndentationConfig, indent: usize) -> String {
             let n_spaces = indent % config.tab_width;
             String::from('\t').repeat(n_tabs) + &String::from(' ').repeat(n_spaces)
         },
+    }
+}
+
+/// Find the nearest node that is a braced expression
+pub fn find_enclosing_brace(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    if let Some(parent) = node.parent() {
+        parent.ancestors().find(|n| n.is_braced_expression())
+    } else {
+        None
     }
 }
 
@@ -404,6 +446,36 @@ mod tests {
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
         apply_text_edits(edit, &mut text).unwrap();
         assert_eq!(text, String::from("function(\n        ) {\n  \n}"));
+    }
+
+    #[test]
+    fn test_line_indent_minimum() {
+        // https://github.com/posit-dev/positron/issues/1683
+        let mut text = String::from("function() {\n  ({\n  }\n)\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 3).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("function() {\n  ({\n  }\n  )\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_minimum_nested() {
+        // Nested R function test with multiple levels of nesting
+        let mut text = String::from("{\n  {\n    ({\n    }\n  )\n  }\n}");
+        let doc = test_doc(&text);
+
+        let edit = indent_edit(&doc, 4).unwrap().unwrap();
+        apply_text_edits(edit, &mut text).unwrap();
+        assert_eq!(text, String::from("{\n  {\n    ({\n    }\n    )\n  }\n}"));
+    }
+
+    #[test]
+    fn test_line_indent_function_opening_brace_own_line() {
+        let text = String::from("object <- function()\n{\n  body\n}");
+        let doc = test_doc(&text);
+
+        assert_match!(indent_edit(&doc, 1).unwrap(), None);
     }
 
     #[test]
