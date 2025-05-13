@@ -52,9 +52,9 @@ impl TaskChannels {
         self.tx.clone()
     }
 
-    fn take_rx(&self) -> Option<Receiver<RTask>> {
+    fn take_rx(&self) -> Receiver<RTask> {
         let mut rx = self.rx.lock().unwrap();
-        rx.take()
+        rx.take().expect("`take_rx()` can only be called once")
     }
 }
 
@@ -62,10 +62,7 @@ impl TaskChannels {
 /// Initializes the task channels if they haven't been initialized yet.
 /// Can only be called once (intended for `RMain` during init).
 pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>) {
-    (
-        INTERRUPT_TASKS.take_rx().unwrap(),
-        IDLE_TASKS.take_rx().unwrap(),
-    )
+    (INTERRUPT_TASKS.take_rx(), IDLE_TASKS.take_rx())
 }
 
 pub enum RTask {
