@@ -896,10 +896,6 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // The request is incomplete if we see the continue prompt, except if
-        // we're in a user request, e.g. `readline("+ ")`. To guard against
-        // this, we check that we are at top-level (call stack is empty or we
-        // have a debug prompt).
         let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
         let matches_continuation = prompt == continuation_prompt;
 
@@ -915,6 +911,10 @@ impl RMain {
         let browser =
             RE_DEBUG_PROMPT.is_match(&prompt) || (self.dap.is_debugging() && matches_continuation);
 
+        // The request is incomplete if we see the continue prompt, except if
+        // we're in a user request, e.g. `readline("+ ")`. To guard against
+        // this, we check that we are at top-level (call stack is empty or we
+        // have a debug prompt).
         let top_level = n_frame == 0 || browser;
         let incomplete = matches_continuation && top_level;
 
