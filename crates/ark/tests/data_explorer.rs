@@ -1686,11 +1686,91 @@ fn test_update_data_filters_reapplied() {
     ]);
 }
 
+fn create_set_membership_filter(
+    column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
+    values: Vec<String>,
+    inclusive: bool,
+    filter_id: &str,
+) -> RowFilter {
+    RowFilter {
+        column_schema,
+        filter_type: RowFilterType::SetMembership,
+        filter_id: filter_id.to_string(),
+        condition: RowFilterCondition::And,
+        is_valid: None,
+        params: Some(RowFilterParams::SetMembership(
+            amalthea::comm::data_explorer_comm::FilterSetMembership { values, inclusive },
+        )),
+        error_message: None,
+    }
+}
+
+/// Helper function to test set membership filters for both inclusive and exclusive modes
+fn test_set_membership_helper(
+    data_frame_name: &str,
+    filter_values: Vec<&str>,
+    expected_inclusive_count: usize,
+    expected_exclusive_count: usize,
+) {
+    let socket = open_data_explorer(String::from(data_frame_name));
+
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        column_indices: vec![0],
+    });
+
+    let schema_reply = socket_rpc(&socket, req);
+    let schema = match schema_reply {
+        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+        _ => panic!("Unexpected reply: {:?}", schema_reply),
+    };
+
+    let string_values: Vec<String> = filter_values.iter().map(|s| s.to_string()).collect();
+
+    let inclusive_filter = create_set_membership_filter(
+        schema.columns[0].clone(),
+        string_values.clone(),
+        true, // inclusive
+        "inclusive-filter-id",
+    );
+
+    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+        filters: vec![inclusive_filter],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+    DataExplorerBackendReply::SetRowFiltersReply(
+        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
+    ) => {
+        assert_eq!(num_rows as usize, expected_inclusive_count,
+                 "Inclusive filter for {} with values {:?} returned {} rows instead of expected {}",
+                 data_frame_name, filter_values, num_rows, expected_inclusive_count);
+    });
+
+    let exclusive_filter = create_set_membership_filter(
+        schema.columns[0].clone(),
+        string_values,
+        false, // exclusive
+        "exclusive-filter-id",
+    );
+
+    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
+        filters: vec![exclusive_filter],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+    DataExplorerBackendReply::SetRowFiltersReply(
+        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
+    ) => {
+        assert_eq!(num_rows as usize, expected_exclusive_count,
+                 "Exclusive filter for {} with values {:?} returned {} rows instead of expected {}",
+                 data_frame_name, filter_values, num_rows, expected_exclusive_count);
+    });
+}
+
 #[test]
 fn test_set_membership_filter() {
     let _lock = r_test_lock();
 
-    // Create a data frame for testing set membership filters
     r_task(|| {
         harp::parse_eval_global(
             r#"categories <- data.frame(
@@ -1708,81 +1788,28 @@ fn test_set_membership_filter() {
         .unwrap();
     });
 
-    let socket = open_data_explorer(String::from("categories"));
+    test_set_membership_helper(
+        "categories",                    // data frame name
+        vec!["apple", "banana", "pear"], // filter values
+        3,                               // expected inclusive match count
+        4,                               // expected exclusive match count
+    );
 
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"numeric_data <- data.frame(
+                values = c(1, 2, 3, 4, 5, 6, 7)
+            )"#,
+        )
+        .unwrap();
     });
 
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
-
-    // Apply an inclusive set membership filter (include apple, banana, pear)
-    let inclusive_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::SetMembership,
-        filter_id: "3F984747-4667-40CB-9013-AA659AE37F1A".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: Some(RowFilterParams::SetMembership(
-            amalthea::comm::data_explorer_comm::FilterSetMembership {
-                values: vec![
-                    "apple".to_string(),
-                    "banana".to_string(),
-                    "pear".to_string(),
-                ],
-                inclusive: true,
-            },
-        )),
-        error_message: None,
-    };
-
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![inclusive_filter],
-    });
-
-    // We should get a SetRowFiltersReply back with 3 rows matching the filter
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
-    ) => {
-        assert_eq!(num_rows, 3);
-    });
-
-    // Apply an exclusive set membership filter (exclude apple, banana, pear)
-    let exclusive_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::SetMembership,
-        filter_id: "4F984747-4667-40CB-9013-AA659AE37F1B".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: Some(RowFilterParams::SetMembership(
-            amalthea::comm::data_explorer_comm::FilterSetMembership {
-                values: vec![
-                    "apple".to_string(),
-                    "banana".to_string(),
-                    "pear".to_string(),
-                ],
-                inclusive: false,
-            },
-        )),
-        error_message: None,
-    };
-
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![exclusive_filter],
-    });
-
-    // We should get a SetRowFiltersReply back with 4 rows matching the filter (everything except apple, banana, pear)
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
-    ) => {
-        assert_eq!(num_rows, 4);
-    });
+    test_set_membership_helper(
+        "numeric_data",      // data frame name
+        vec!["1", "2", "3"], // filter values (as strings, will be coerced)
+        3,                   // expected inclusive match count
+        4,                   // expected exclusive match count
+    );
 }
 
 #[test]

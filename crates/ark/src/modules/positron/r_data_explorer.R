@@ -283,13 +283,12 @@ col_filter_indices <- function(col, idx = NULL) {
     # If inclusive is TRUE, include values in the set
     # If inclusive is FALSE, exclude values in the set
 
-    # Convert to character for comparison if needed
-    if (!is.character(col)) {
-        col <- as.character(col)
+    # Coerce values to numeric if the column is numeric
+    values <- if (is.numeric(col)) {
+        as.numeric(params$values)
+    } else {
+        params$values
     }
-
-    # Convert filter values to character for consistency
-    values <- as.character(params$values)
 
     # Return a logical vector indicating which elements match the filter
     if (params$inclusive) {
