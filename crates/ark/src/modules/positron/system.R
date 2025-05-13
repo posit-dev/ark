@@ -1,10 +1,26 @@
-is_macos <- function() {
-    Sys.info()[["sysname"]] == "Darwin"
+#' One of:
+#' - "macos"
+#' - "windows"
+#' - "linux"
+#' - "other"
+system_os <- function() {
+    switch(
+        tolower(Sys.info()[["sysname"]]),
+        darwin = "macos",
+        windows = "windows",
+        linux = "linux",
+        # For example, possibly `sunos`, but very unlikely
+        "other"
+    )
 }
 
 has_aqua <- function() {
-    is_macos() && capabilities("aqua")
+    capabilities("aqua")
 }
+# Here be dragons! On MacOS, this will return `TRUE`, but you won't be able to
+# use `png(type = "cairo")` or `svg()` unless xquartz is also installed too,
+# i.e. with `brew install --cask xquartz`. So we can't use this as a reliable
+# indicator of Cairo graphics support on MacOS.
 has_cairo <- function() {
     capabilities("cairo")
 }
