@@ -89,6 +89,8 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
         (brace_parent_indent(parent), config.indent_size)
     };
 
+    let (old_indent, old_indent_byte) = line_indent(text, line, config);
+
     // Structured in two stages as in Emacs TS rules: first match, then
     // return anchor and indent size. We can add more rules here as needed.
     let (anchor, indent) = match bol_parent {
@@ -136,7 +138,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
             // Only correct if we're too far on the left, past the indentation
             // implied by the enclosing brace
             let min_indent = anchor + indent;
-            if node_line_indent(node) >= min_indent {
+            if old_indent >= min_indent {
                 return Ok(None);
             }
 
@@ -145,7 +147,6 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
     };
 
     let new_indent = anchor + indent;
-    let (old_indent, old_indent_byte) = line_indent(text, line, config);
 
     if old_indent == new_indent {
         return Ok(None);
@@ -461,16 +462,12 @@ mod tests {
     #[test]
     fn test_line_indent_minimum_nested() {
         // Nested R function test with multiple levels of nesting
-        let mut text =
-            String::from("{\n  {\n    lapply(1:5, function() {\n      1 + 1\n    }\n)\n  }\n}");
+        let mut text = String::from("{\n  {\n    ({\n    }\n  )\n  }\n}");
         let doc = test_doc(&text);
 
-        let edit = indent_edit(&doc, 5).unwrap().unwrap();
+        let edit = indent_edit(&doc, 4).unwrap().unwrap();
         apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(
-            text,
-            String::from("{\n  {\n    lapply(1:5, function() {\n      1 + 1\n    }\n    )\n  }\n}")
-        );
+        assert_eq!(text, String::from("{\n  {\n    ({\n    }\n    )\n  }\n}"));
     }
 
     #[test]
