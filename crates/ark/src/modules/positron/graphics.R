@@ -409,11 +409,22 @@ default_resolution_in_pixels_per_inch <- function() {
     }
 }
 
+#' We use Cairo as the preferred default device when ragg is not being used
+#'
+#' - Linux: It's already the default there.
+#' - Windows: The default there is very bad, so Cairo is a big improvement.
+#' - Mac: The default of Quartz is generally okay, but crashes R when using
+#'   some of the newer graphics features.
+#'
+#' Choosing Cairo as the default fallback also seems nice for a uniform experience
+#' across OSes.
+#'
+#' https://github.com/posit-dev/positron/issues/2919
 default_device_type <- function() {
-    if (has_aqua()) {
-        "quartz"
-    } else if (has_cairo()) {
+    if (has_cairo()) {
         "cairo"
+    } else if (has_aqua()) {
+        "quartz"
     } else if (has_x11()) {
         "Xlib"
     } else {
