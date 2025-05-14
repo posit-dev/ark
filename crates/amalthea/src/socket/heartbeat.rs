@@ -20,7 +20,9 @@ impl Heartbeat {
 
     /// Listen for heartbeats; does not return
     pub fn listen(&self) {
-        // Should we make it quiet by default in debug builds?
+        #[cfg(debug_assertions)]
+        let quiet = true;
+        #[cfg(not(debug_assertions))]
         let quiet = std::env::var("ARK_HEARTBEAT_QUIET").is_ok();
 
         loop {
