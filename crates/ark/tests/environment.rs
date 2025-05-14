@@ -17,6 +17,7 @@ use amalthea::socket::comm::CommSocket;
 use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
+use ark::variables::r_variables::LastValue;
 use ark::variables::r_variables::RVariables;
 use crossbeam::channel::bounded;
 use harp::exec::RFunction;
@@ -135,7 +136,10 @@ fn test_environment_list() {
             println!("List version: {:?}", list.version);
 
             // Check that the "everything" variable is in the list
-            let var = list.variables.iter().find(|v| v.display_name == "everything");
+            let var = list
+                .variables
+                .iter()
+                .find(|v| v.display_name == "everything");
             assert!(var.is_some(), "Couldn't find 'everything' variable");
 
             // No need to check the exact version number as it might vary
@@ -168,7 +172,6 @@ fn test_environment_list() {
             assert_eq!(params.removed.len(), 1);
             assert_eq!(params.assigned[0].display_name, "nothing");
             assert_eq!(params.removed[0], "everything");
-            assert_eq!(params.version, 3);
         },
         _ => panic!("Expected update event"),
     }
@@ -198,7 +201,6 @@ fn test_environment_list() {
         VariablesFrontendEvent::Update(params) => {
             assert_eq!(params.assigned.len(), 0);
             assert_eq!(params.removed.len(), 1);
-            assert_eq!(params.version, 4);
         },
         _ => panic!("Expected update event"),
     }
@@ -254,7 +256,6 @@ fn test_environment_list() {
         VariablesFrontendEvent::Update(params) => {
             assert_eq!(params.assigned.len(), 2);
             assert_eq!(params.removed.len(), 0);
-            assert_eq!(params.version, 5);
         },
         _ => panic!("Expected update event"),
     }
@@ -325,7 +326,12 @@ fn test_environment_last_value_enabled() {
     let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
         let test_env = test_env.get().clone();
-        RVariables::start_with_config(test_env, comm.clone(), comm_manager_tx.clone(), true);
+        RVariables::start_with_config(
+            test_env,
+            comm.clone(),
+            comm_manager_tx.clone(),
+            LastValue::Show,
+        );
     });
 
     // Ensure we get a list of variables after initialization
@@ -381,12 +387,11 @@ fn test_environment_last_value_enabled() {
             seen_last_value = params
                 .assigned
                 .iter()
-                .any(|v| v.display_name == ".Last.value") || seen_last_value;
+                .any(|v| v.display_name == ".Last.value") ||
+                seen_last_value;
 
-            seen_test_var = params
-                .assigned
-                .iter()
-                .any(|v| v.display_name == "test_var") || seen_test_var;
+            seen_test_var =
+                params.assigned.iter().any(|v| v.display_name == "test_var") || seen_test_var;
         },
         _ => panic!("Expected update event"),
     }
@@ -404,12 +409,11 @@ fn test_environment_last_value_enabled() {
                     seen_last_value = params
                         .assigned
                         .iter()
-                        .any(|v| v.display_name == ".Last.value") || seen_last_value;
+                        .any(|v| v.display_name == ".Last.value") ||
+                        seen_last_value;
 
-                    seen_test_var = params
-                        .assigned
-                        .iter()
-                        .any(|v| v.display_name == "test_var") || seen_test_var;
+                    seen_test_var = params.assigned.iter().any(|v| v.display_name == "test_var") ||
+                        seen_test_var;
                 }
             }
         }

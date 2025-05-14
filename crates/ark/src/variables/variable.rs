@@ -1071,8 +1071,8 @@ impl PositronVariable {
 
         // Check for the special access key `.Last.value`; we can only get the
         // value for this object by evaluating it in R
-        if *access_key == String::from(".Last.value") {
-            let last_robj = harp::parse_eval_global(".Last.value")?;
+        if access_key == ".Last.value" {
+            let last_robj = harp::environment::last_value()?;
             return Ok(EnvironmentVariableNode::Concrete { object: last_robj });
         }
 

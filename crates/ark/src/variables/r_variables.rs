@@ -43,6 +43,15 @@ use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::PositronVariable;
 
+/// Enumeration of treatments for the .Last.value variable
+pub enum LastValue {
+    /// Show the .Last.value variable in the Variables pane
+    Show,
+
+    /// Hide it
+    Hide,
+}
+
 /**
  * The R Variables handler provides the server side of Positron's Variables panel, and is
  * responsible for creating and updating the list of variables.
@@ -67,9 +76,10 @@ pub struct RVariables {
     /// thread. Tracked in https://github.com/posit-dev/positron/issues/1812
     current_bindings: RThreadSafe<Vec<Binding>>,
     version: u64,
+
     /// Whether to always show the .Last.value in the Variables pane, regardless
-    /// of the value positron.show_last_value
-    show_last_value: bool,
+    /// of the value of positron.show_last_value
+    show_last_value: LastValue,
 }
 
 impl RVariables {
@@ -81,7 +91,7 @@ impl RVariables {
      */
     pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
         // Start with default settings
-        Self::start_with_config(env, comm, comm_manager_tx, false);
+        Self::start_with_config(env, comm, comm_manager_tx, LastValue::Hide);
     }
 
     /**
@@ -95,7 +105,7 @@ impl RVariables {
         env: RObject,
         comm: CommSocket,
         comm_manager_tx: Sender<CommManagerEvent>,
-        show_last_value: bool,
+        show_last_value: LastValue,
     ) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
@@ -387,28 +397,26 @@ impl RVariables {
     }
 
     /// Gets the value of the special variable '.Last.value' (the value of the
-    /// last expression evaluated at the top level), if show_last_value is true.
-    ///
-    /// For backward compatibility, also checks the global option "positron.show_last_value"
-    /// if it exists, but the instance variable takes precedence.
+    /// last expression evaluated at the top level), if enabled.
     ///
     /// Returns None in all other cases.
     fn last_value(&self) -> Option<PositronVariable> {
-        // First check our instance variable
-        let show_last_value = if self.show_last_value {
-            true
-        } else {
-            // If we aren't always showing the last value, update from the
-            // global option
-            let use_last_value = get_option("positron.show_last_value");
-            match use_last_value.get_bool(0) {
-                Ok(Some(true)) => true,
-                _ => false,
-            }
+        // Check the cached value first
+        let show_last_value = match self.show_last_value {
+            LastValue::Show => true,
+            LastValue::Hide => {
+                // If we aren't always showing the last value, update from the
+                // global option
+                let use_last_value = get_option("positron.show_last_value");
+                match use_last_value.get_bool(0) {
+                    Ok(Some(true)) => true,
+                    _ => false,
+                }
+            },
         };
 
         if show_last_value {
-            match harp::parse_eval_global(".Last.value") {
+            match harp::environment::last_value() {
                 Ok(last_robj) => Some(PositronVariable::from(
                     String::from(".Last.value"),
                     String::from(".Last.value"),
