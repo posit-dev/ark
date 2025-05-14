@@ -433,7 +433,7 @@ impl RVariables {
                 Err(err) => {
                     // This isn't a critical error but would also be very
                     // unexpected.
-                    log::debug!("Environment: Could not evaluate .Last.value ({err:?})");
+                    log::error!("Environment: Could not evaluate .Last.value ({err:?})");
                     None
                 },
             }
