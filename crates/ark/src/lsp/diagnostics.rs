@@ -1461,12 +1461,26 @@ foo
 
         // Subset
         r_task(|| {
+            // Imagine this is `data.table()` (we don't necessarily have the package
+            // installed in the test)
+            // https://github.com/posit-dev/positron/issues/5271
             let code = "
-                # Imagine this is `data.table()` (we don't necessarily have the package
-                # installed in the test)
-                foo <- data.frame(x = 1)
-                foo[x]
-                foo[,x]
+                data <- data.frame(x = 1)
+                data[x]
+                data[,x]
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            // Imagine this is `data.table()` (we don't necessarily have the package
+            // installed in the test)
+            // https://github.com/posit-dev/positron/issues/3749
+            let code = "
+                data <- data.frame(x = 1)
+                data[, y := x + 1]
             ";
             let document = Document::new(code, None);
             assert_eq!(
