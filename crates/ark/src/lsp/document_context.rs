@@ -59,7 +59,7 @@ impl<'a> DocumentContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::traits::rope::RopeExt;
+    use crate::treesitter::node_text;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -71,26 +71,16 @@ mod tests {
         let document = Document::new("", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            context
-                .document
-                .contents
-                .node_slice(&context.node)
-                .unwrap()
-                .to_string(),
-            "".to_string()
+            node_text(&context.node, &context.document.contents).unwrap(),
+            ""
         );
 
         // Start of document with text
         let document = Document::new("1 + 1", None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            context
-                .document
-                .contents
-                .node_slice(&context.node)
-                .unwrap()
-                .to_string(),
-            "1".to_string()
+            node_text(&context.node, &context.document.contents).unwrap(),
+            "1"
         );
     }
 
@@ -102,12 +92,7 @@ mod tests {
 
         assert_eq!(context.node.node_type(), NodeType::Program);
         assert_eq!(
-            context
-                .document
-                .contents
-                .node_slice(&context.node)
-                .unwrap()
-                .to_string(),
+            node_text(&context.node, &context.document.contents).unwrap(),
             "toupper(letters)\n"
         );
 
@@ -116,12 +101,7 @@ mod tests {
             NodeType::Anonymous(String::from(")"))
         );
         assert_eq!(
-            context
-                .document
-                .contents
-                .node_slice(&context.closest_node)
-                .unwrap()
-                .to_string(),
+            node_text(&context.closest_node, &context.document.contents).unwrap(),
             ")"
         );
     }
