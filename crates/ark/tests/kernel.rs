@@ -250,6 +250,58 @@ fn test_execute_request_browser_incomplete() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 
+// Test that a multiline input in the browser doesn't throw off our prompt info
+// detection logic https://github.com/posit-dev/positron/issues/5928
+#[test]
+fn test_execute_request_browser_multiline() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Wrap in a function to get a frame on the stack so we aren't at top level.
+    // Careful to not send any newlines after `fn()`, as that advances the debugger!
+    let code = "
+fn <- function() {
+  browser()
+}
+fn()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // We aren't at top level, so this comes as an iopub stream
+    frontend.recv_iopub_stream_stdout("Called from: fn()\n");
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Execute a multiline statement while paused in the debugger
+    let code = "1 +
+        1";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Also received as iopub stream because we aren't at top level, we are in the debugger
+    frontend.recv_iopub_stream_stdout("[1] 2\n");
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
 #[test]
 fn test_execute_request_browser_stdin() {
     let frontend = DummyArkFrontend::lock();

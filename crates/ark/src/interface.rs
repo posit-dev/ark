@@ -707,7 +707,7 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        let info = Self::prompt_info(prompt);
+        let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
         // Upon entering read-console, finalize any debug call text that we were capturing.
@@ -918,12 +918,15 @@ impl RMain {
     // We prefer to panic if there is an error while trying to determine the
     // prompt type because any confusion here is prone to put the frontend in a
     // bad state (e.g. causing freezes)
-    fn prompt_info(prompt_c: *const c_char) -> PromptInfo {
+    fn prompt_info(&self, prompt_c: *const c_char) -> PromptInfo {
         let n_frame = harp::session::r_n_frame().unwrap();
         log::trace!("prompt_info(): n_frame = '{n_frame}'");
 
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
+
+        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
+        let matches_continuation = prompt == continuation_prompt;
 
         // Detect browser prompt by matching the prompt string
         // https://github.com/posit-dev/positron/issues/4742.
@@ -931,7 +934,11 @@ impl RMain {
         // `options(prompt =, continue = ` to something that looks like
         // a browser prompt, or doing the same with `readline()`. We have
         // chosen to not support these edge cases.
-        let browser = RE_DEBUG_PROMPT.is_match(&prompt);
+        // Additionally, we send code to R one line at a time, so even if we are debugging
+        // it can look like we are in a continuation state. To try and detect that, we
+        // detect if we matched the continuation prompt while the DAP is active.
+        let browser =
+            RE_DEBUG_PROMPT.is_match(&prompt) || (self.dap.is_debugging() && matches_continuation);
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
@@ -941,8 +948,6 @@ impl RMain {
         // we're in a user request, e.g. `readline("+ ")`. To guard against
         // this, we check that we are at top-level (call stack is empty or we
         // have a debug prompt).
-        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-        let matches_continuation = prompt == continuation_prompt;
         let top_level = n_frame == 0 || browser;
         let incomplete = matches_continuation && top_level;
 
