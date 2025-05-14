@@ -201,6 +201,20 @@ fn is_identifier_like(x: Node) -> bool {
         return true;
     }
 
+    // Consider when the user asks for completions with no existing
+    // text-to-complete, such as at the R prompt in the Console, in an empty R
+    // file, or on an empty line of a non-empty R file.
+    //
+    // Gesture-wise, a Positron user could do this with Ctrl + Space, which
+    // invokes the command editor.action.triggerSuggest.
+    //
+    // The nominal completion node in these cases is just the root or 'Program'
+    // node of the AST. In this case, we should just provide "all" completions,
+    // for some reasonable definition of "all".
+    if x.node_type() == NodeType::Program {
+        return true;
+    }
+
     return false;
 }
 
