@@ -409,14 +409,72 @@ default_resolution_in_pixels_per_inch <- function() {
     }
 }
 
+#' Determines the default device `type` for png, jpeg, and tiff
+#'
+#' Only applicable when ragg is not in use
 default_device_type <- function() {
+    switch(
+        system_os(),
+        macos = default_device_type_macos(),
+        windows = default_device_type_windows(),
+        linux = default_device_type_linux(),
+        # Treat `other` as linux
+        other = default_device_type_linux()
+    )
+}
+
+#' On MacOS, we prefer Quartz
+#'
+#' At one point we considered preferring Cairo, but `capabilities("cairo")`
+#' isn't a reliable signal of whether or not you have Cairo support, because
+#' surprisingly you also need xquartz installed as well, i.e. with `brew install
+#' --cask xquartz`. Confusingly you don't need that to use the `"quartz"` type.
+#' https://github.com/posit-dev/positron/issues/913
+#' https://github.com/posit-dev/positron/issues/2919
+#'
+#' From https://cran.r-project.org/doc/manuals/r-release/R-admin.html#Installing-R-under-macOS-1:
+#' "Various parts of the build require XQuartz to be installed...This is also
+#' needed for some builds of the cairographics-based devices...such as
+#' png(type = "cairo") and svg()..."
+#'
+#' To avoid this issue for Mac users, we don't even consider Cairo in our
+#' fallback path. It seems unlikely we'd ever get past `"quartz"` as the
+#' fallback anyways, it's probably installed on all Macs.
+default_device_type_macos <- function() {
     if (has_aqua()) {
         "quartz"
-    } else if (has_cairo()) {
+    } else if (has_x11()) {
+        "Xlib"
+    } else {
+        stop_no_plotting_capabilities()
+    }
+}
+
+#' On Windows, we prefer Cairo
+#'
+#' According to Thomas, this is much preferred over the default on Windows,
+#' which uses the Windows GDI. We don't even offer that as a fallback.
+default_device_type_windows <- function() {
+    if (has_cairo()) {
+        "cairo"
+    } else {
+        stop_no_plotting_capabilities()
+    }
+}
+
+#' On Linux, we prefer Cairo
+#'
+#' This is the default there, and we have no reason to move away from it.
+default_device_type_linux <- function() {
+    if (has_cairo()) {
         "cairo"
     } else if (has_x11()) {
         "Xlib"
     } else {
-        stop("This version of R wasn't built with plotting capabilities")
+        stop_no_plotting_capabilities()
     }
+}
+
+stop_no_plotting_capabilities <- function() {
+    stop("This version of R wasn't built with plotting capabilities")
 }
