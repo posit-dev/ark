@@ -68,7 +68,7 @@ fn hover_context(node: Node, context: &DocumentContext) -> Result<Option<HoverCo
 
 pub(crate) fn r_hover(context: &DocumentContext) -> anyhow::Result<Option<MarkupContent>> {
     // get the node
-    let node = &context.node;
+    let node = &context.closest_node;
 
     // check for identifier
     if !node.is_identifier_or_string() && !node.is_keyword() {
