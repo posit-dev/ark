@@ -1,7 +1,7 @@
 //
 // variable.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2025 by Posit Software, PBC
 //
 //
 
@@ -651,7 +651,7 @@ impl PositronVariable {
     /**
      * Create a new Variable from an R object
      */
-    fn from(access_key: String, display_name: String, x: SEXP) -> Self {
+    pub fn from(access_key: String, display_name: String, x: SEXP) -> Self {
         let WorkspaceVariableDisplayValue {
             display_value,
             is_truncated,
@@ -1068,6 +1068,13 @@ impl PositronVariable {
     ) -> harp::Result<EnvironmentVariableNode> {
         // Concrete nodes are objects that are treated as is. Accessing an element from them
         // might result in special node types.
+
+        // Check for the special access key `.Last.value`; we can only get the
+        // value for this object by evaluating it in R
+        if access_key == ".Last.value" {
+            let last_robj = harp::environment::last_value()?;
+            return Ok(EnvironmentVariableNode::Concrete { object: last_robj });
+        }
 
         // First try to get child using a generic method
         // When building the children list of nodes that use a custom `get_children` method, the access_key is

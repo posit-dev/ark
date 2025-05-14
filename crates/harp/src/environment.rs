@@ -131,6 +131,13 @@ impl Environment {
         }
     }
 
+    pub fn get(&self, name: impl Into<RSymbol>) -> harp::Result<RObject> {
+        let name = name.into();
+        let out = self.find(name)?;
+        let out = RObject::from(out);
+        Ok(out)
+    }
+
     pub fn is_empty(&self) -> bool {
         match self.filter {
             EnvironmentFilter::None => self.inner.length() == 0,
@@ -275,6 +282,12 @@ pub fn r_ns_env(name: &str) -> anyhow::Result<Environment> {
     let ns = registry.find(name)?;
 
     Ok(Environment::new(ns.into()))
+}
+
+/// Returns the value of the last evaluated expression in R
+/// (i.e. the value of `.Last.value`).
+pub fn last_value() -> harp::Result<RObject> {
+    Environment::view(R_ENVS.base).get(".Last.value")
 }
 
 #[cfg(test)]
