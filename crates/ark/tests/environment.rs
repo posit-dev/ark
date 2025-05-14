@@ -330,7 +330,7 @@ fn test_environment_last_value_enabled() {
             test_env,
             comm.clone(),
             comm_manager_tx.clone(),
-            LastValue::Show,
+            LastValue::Always,
         );
     });
 

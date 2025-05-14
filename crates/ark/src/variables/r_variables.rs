@@ -45,11 +45,13 @@ use crate::variables::variable::PositronVariable;
 
 /// Enumeration of treatments for the .Last.value variable
 pub enum LastValue {
-    /// Show the .Last.value variable in the Variables pane
-    Show,
+    /// Always show the .Last.value variable in the Variables pane. This is used
+    /// by tests to show the value without changing the global option.
+    Always,
 
-    /// Hide it
-    Hide,
+    /// Use the value of the global option `positron.show_last_value` to
+    /// determine whether to show the .Last.value variable
+    UseOption,
 }
 
 /**
@@ -80,6 +82,10 @@ pub struct RVariables {
     /// Whether to always show the .Last.value in the Variables pane, regardless
     /// of the value of positron.show_last_value
     show_last_value: LastValue,
+
+    /// Whether we are currently showing the .Last.value variable in the Variables
+    /// pane.
+    showing_last_value: bool,
 }
 
 impl RVariables {
@@ -91,7 +97,7 @@ impl RVariables {
      */
     pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
         // Start with default settings
-        Self::start_with_config(env, comm, comm_manager_tx, LastValue::Hide);
+        Self::start_with_config(env, comm, comm_manager_tx, LastValue::UseOption);
     }
 
     /**
@@ -131,6 +137,7 @@ impl RVariables {
                 current_bindings,
                 version: 0,
                 show_last_value,
+                showing_last_value: false,
             };
             environment.execution_thread();
         });
@@ -232,6 +239,7 @@ impl RVariables {
             // list. This is a special R value that doesn't have its own
             // binding.
             if let Some(last_value) = self.last_value() {
+                self.showing_last_value = true;
                 variables.push(last_value.var());
             }
 
@@ -403,8 +411,8 @@ impl RVariables {
     fn last_value(&self) -> Option<PositronVariable> {
         // Check the cached value first
         let show_last_value = match self.show_last_value {
-            LastValue::Show => true,
-            LastValue::Hide => {
+            LastValue::Always => true,
+            LastValue::UseOption => {
                 // If we aren't always showing the last value, update from the
                 // global option
                 let use_last_value = get_option("positron.show_last_value");
@@ -452,7 +460,13 @@ impl RVariables {
             // Track the last value if the user has requested it. Treat this
             // value as assigned every time we update the Variables list.
             if let Some(last_value) = self.last_value() {
+                self.showing_last_value = true;
                 assigned.push(last_value.var());
+            } else if self.showing_last_value {
+                // If we are no longer showing the last value, remove it from
+                // the list of assigned variables
+                self.showing_last_value = false;
+                removed.push(".Last.value".to_string());
             }
 
             loop {
