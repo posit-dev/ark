@@ -37,11 +37,13 @@ use harp::ParseResult;
 use log::*;
 use serde_json::json;
 use stdext::unwrap;
+use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
+use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -55,6 +57,7 @@ pub struct Shell {
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
+    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 }
 
 #[derive(Debug)]
@@ -64,12 +67,13 @@ pub enum REvent {
 
 impl Shell {
     /// Creates a new instance of the shell message handler.
-    pub fn new(
+    pub(crate) fn new(
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_tx: Sender<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
+        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     ) -> Self {
         Self {
             comm_manager_tx,
@@ -78,6 +82,7 @@ impl Shell {
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
+            graphics_device_tx,
         }
     }
 
@@ -216,7 +221,10 @@ impl ShellHandler for Shell {
         })
     }
 
-    /// Handles a request to open a new comm channel
+    /// Handle a request to open a new comm channel
+    ///
+    /// Note that there might be multiple requests during a single session if
+    /// the UI has been disconnected and reconnected.
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
             Comm::Variables => handle_comm_open_variables(comm, self.comm_manager_tx.clone()),
@@ -224,6 +232,7 @@ impl ShellHandler for Shell {
                 comm,
                 self.stdin_request_tx.clone(),
                 self.kernel_request_tx.clone(),
+                self.graphics_device_tx.clone(),
             ),
             Comm::Help => handle_comm_open_help(comm),
             _ => Ok(false),
@@ -246,10 +255,11 @@ fn handle_comm_open_ui(
     comm: CommSocket,
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
+    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 ) -> amalthea::Result<bool> {
     // Create a frontend to wrap the comm channel we were just given. This starts
     // a thread that proxies messages to the frontend.
-    let ui_comm_tx = UiComm::start(comm, stdin_request_tx);
+    let ui_comm_tx = UiComm::start(comm, stdin_request_tx, graphics_device_tx);
 
     // Send the frontend event channel to the execution thread so it can emit
     // events to the frontend.

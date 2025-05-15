@@ -52,7 +52,6 @@ use amalthea::Error;
 use anyhow::*;
 use bus::Bus;
 use crossbeam::channel::bounded;
-use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::command::r_command;
@@ -89,6 +88,7 @@ use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::*;
+use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
 use crate::dap::dap::DapBackendEvent;
@@ -107,6 +107,7 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
+use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
@@ -321,7 +322,7 @@ impl RMain {
     /// Sets up the main R thread, initializes the `R_MAIN` singleton,
     /// and starts R. Does not return!
     /// SAFETY: Must be called only once. Enforced with a panic.
-    pub fn start(
+    pub(crate) fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
         comm_manager_tx: Sender<CommManagerEvent>,
@@ -334,6 +335,7 @@ impl RMain {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
         default_repos: DefaultRepos,
+        graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
     ) {
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
@@ -345,9 +347,7 @@ impl RMain {
             };
         }
 
-        // Channels to send/receive tasks from auxiliary threads via `RTask`s
-        let (tasks_interrupt_tx, tasks_interrupt_rx) = unbounded::<RTask>();
-        let (tasks_idle_tx, tasks_idle_rx) = unbounded::<RTask>();
+        let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
 
         R_MAIN.set(UnsafeCell::new(RMain::new(
             tasks_interrupt_rx,
@@ -363,12 +363,6 @@ impl RMain {
         )));
 
         let main = RMain::get_mut();
-
-        // Initialize the GD context on this thread
-        graphics_device::init_graphics_device(
-            main.get_comm_manager_tx().clone(),
-            main.get_iopub_tx().clone(),
-        );
 
         let mut r_args = r_args.clone();
 
@@ -445,12 +439,6 @@ impl RMain {
                     .or_log_error(&format!("Failed to source startup file '{file}' due to"));
             }
 
-            // R and ark are now set up enough to allow interrupt-time and idle-time tasks
-            // to be sent through. Idle-time tasks will be run once we enter
-            // `read_console()` for the first time. Interrupt-time tasks could be run
-            // sooner if we hit a check-interrupt before then.
-            r_task::initialize(tasks_interrupt_tx, tasks_idle_tx);
-
             // Initialize support functions (after routine registration, after r_task initialization)
             match modules::initialize() {
                 Err(err) => {
@@ -492,6 +480,18 @@ impl RMain {
             "R has started and ark handlers have been registered, completing initialization."
         );
         Self::complete_initialization(main.banner.take(), kernel_init_tx);
+
+        // Initialize the GD context on this thread.
+        // Note that we do it after init is complete to avoid deadlocking
+        // integration tests by spawning an async task. The deadlock is caused
+        // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
+        // We should be able to remove this escape hatch in `r_task()` by
+        // instantiating an `RMain` in unit tests as well.
+        graphics_device::init_graphics_device(
+            main.get_comm_manager_tx().clone(),
+            main.get_iopub_tx().clone(),
+            graphics_device_rx,
+        );
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -810,10 +810,16 @@ impl RMain {
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
 
+        // Process R's polled events regularly while waiting for console input.
+        // We used to poll every 200ms but that lead to visible delays for the
+        // processing of plot events.
+        let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
+
         let r_request_index = select.recv(&r_request_rx);
         let stdin_reply_index = select.recv(&stdin_reply_rx);
         let kernel_request_index = select.recv(&kernel_request_rx);
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
+        let polled_events_index = select.recv(&polled_events_rx);
 
         // Don't process idle tasks in browser prompts. We currently don't want
         // idle tasks (e.g. for srcref generation) to run when the call stack is
@@ -859,18 +865,7 @@ impl RMain {
                 }
             }
 
-            let oper = select.select_timeout(Duration::from_millis(200));
-
-            let Ok(oper) = oper else {
-                // We hit a timeout. Process idle events because we need to
-                // pump the event loop while waiting for console input.
-                //
-                // Alternatively, we could try to figure out the file
-                // descriptors that R has open and select() on those for
-                // available data?
-                unsafe { Self::process_idle_events() };
-                continue;
-            };
+            let oper = select.select();
 
             match oper.index() {
                 // We've got an execute request from the frontend
@@ -908,6 +903,12 @@ impl RMain {
                 i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
                     self.handle_task(task);
+                },
+
+                // It's time to run R's polled events
+                i if i == polled_events_index => {
+                    let _ = oper.recv(&polled_events_rx).unwrap();
+                    Self::process_idle_events();
                 },
 
                 i => log::error!("Unexpected index in Select: {i}"),
@@ -1845,6 +1846,14 @@ impl RMain {
 
     /// Invoked by the R event loop
     fn polled_events(&mut self) {
+        // Don't process tasks until R is fully initialized
+        if !Self::is_initialized() {
+            if !self.tasks_interrupt_rx.is_empty() {
+                log::trace!("Delaying execution of interrupt task as R isn't initialized yet");
+            }
+            return;
+        }
+
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
@@ -1863,23 +1872,27 @@ impl RMain {
         }
     }
 
-    unsafe fn process_idle_events() {
+    fn process_idle_events() {
         // Process regular R events. We're normally running with polled
         // events disabled so that won't run here. We also run with
         // interrupts disabled, so on Windows those won't get run here
         // either (i.e. if `UserBreak` is set), but it will reset `UserBreak`
         // so we need to ensure we handle interrupts right before calling
         // this.
-        R_ProcessEvents();
+        unsafe { R_ProcessEvents() };
 
         crate::sys::interface::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.
         // https://github.com/rstudio/positron/issues/431
-        R_RunPendingFinalizers();
+        unsafe { R_RunPendingFinalizers() };
 
-        // Check for Positron render requests
+        // Check for Positron render requests.
+        //
+        // TODO: This should move to a spawned task that'd be woken up by
+        // incoming messages on plot comms. This way we'll prevent the delays
+        // introduced by timeout-based event polling.
         graphics_device::on_process_idle_events();
     }
 
