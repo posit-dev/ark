@@ -428,6 +428,27 @@ mod tests {
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Ambiguous
         );
+
+        // After `(`, and on own line
+        let (text, point) = point_from_cursor("fn(\n  @\n)");
+        let document = Document::new(&text, None);
+        let context = DocumentContext::new(&document, point, None);
+
+        // On `main`, this passes
+        // assert_eq!(
+        //     context.node.node_type(),
+        //     NodeType::Anonymous(String::from("("))
+        // );
+
+        // On this pr, `(`, doesn't contain the user's cursor, so instead it selects
+        // the surrounding `Arguments` node
+        assert_eq!(context.node.node_type(), NodeType::Arguments);
+
+        // On `main`, this passes, and this should also still pass on this PR, but currently does not
+        assert_eq!(
+            call_node_position_type(&context.node, context.point),
+            CallNodePositionType::Name
+        );
     }
 
     #[test]
