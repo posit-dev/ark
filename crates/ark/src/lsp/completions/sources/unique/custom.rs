@@ -302,16 +302,32 @@ mod tests {
             let (text, point) = point_from_cursor("Sys.getenv(@)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
+            // Inside the parentheses, multiline
+            let (text, point) = point_from_cursor("Sys.getenv(\n  @\n)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
             // Named argument
             let (text, point) = point_from_cursor("Sys.getenv(x = @)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
+            // Named argument, multiline
+            let (text, point) = point_from_cursor("Sys.getenv(\n  x = @\n)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
             // Typed some and then requested completions
             let (text, point) = point_from_cursor("Sys.getenv(ARK_@)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
+            // Typed some and then requested completions, multiline
+            let (text, point) = point_from_cursor("Sys.getenv(\n  ARK_@\n)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
             // After a named argument
             let (text, point) = point_from_cursor("Sys.getenv(unset = '1', @)");
+            assert_has_ark_test_envvar_completion(text.as_str(), point);
+
+            // After a named argument, multiline
+            let (text, point) = point_from_cursor("Sys.getenv(\n  unset = '1',\n  @\n)");
             assert_has_ark_test_envvar_completion(text.as_str(), point);
 
             // Should not have it here
