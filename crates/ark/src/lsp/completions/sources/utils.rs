@@ -267,9 +267,9 @@ fn completions_from_object_names_impl(
 #[cfg(test)]
 mod tests {
     use harp::eval::parse_eval_global;
-    use tree_sitter::Point;
 
     use crate::fixtures::package_is_installed;
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::utils::call_node_position_type;
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
@@ -282,8 +282,8 @@ mod tests {
     #[test]
     fn test_call_node_position_type() {
         // Before `(`, but on it
-        let point = Point { row: 0, column: 3 };
-        let document = Document::new("fn ()", None);
+        let (text, point) = point_from_cursor("fn @()");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context.node.node_type(),
@@ -295,8 +295,8 @@ mod tests {
         );
 
         // After `)`, but on it
-        let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn()", None);
+        let (text, point) = point_from_cursor("fn()@");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context.node.node_type(),
@@ -308,8 +308,8 @@ mod tests {
         );
 
         // After `(`, but on it
-        let point = Point { row: 0, column: 3 };
-        let document = Document::new("fn()", None);
+        let (text, point) = point_from_cursor("fn(@)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context.node.node_type(),
@@ -321,8 +321,8 @@ mod tests {
         );
 
         // After `x`
-        let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn(x)", None);
+        let (text, point) = point_from_cursor("fn(x@)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -330,8 +330,8 @@ mod tests {
         );
 
         // After `x`
-        let point = Point { row: 0, column: 7 };
-        let document = Document::new("fn(1, x)", None);
+        let (text, point) = point_from_cursor("fn(1, x@)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
@@ -339,8 +339,8 @@ mod tests {
         );
 
         // Directly after `,`
-        let point = Point { row: 0, column: 5 };
-        let document = Document::new("fn(x, )", None);
+        let (text, point) = point_from_cursor("fn(x,@ )");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.node_type(), NodeType::Comma);
         assert_eq!(
@@ -349,8 +349,8 @@ mod tests {
         );
 
         // After `,`, but on `)`
-        let point = Point { row: 0, column: 6 };
-        let document = Document::new("fn(x, )", None);
+        let (text, point) = point_from_cursor("fn(x, @)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context.node.node_type(),
@@ -362,8 +362,8 @@ mod tests {
         );
 
         // After `=`
-        let point = Point { row: 0, column: 6 };
-        let document = Document::new("fn(x =)", None);
+        let (text, point) = point_from_cursor("fn(x =@ )");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context.node.node_type(),
@@ -375,8 +375,8 @@ mod tests {
         );
 
         // In an expression
-        let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn(1 + 1)", None);
+        let (text, point) = point_from_cursor("fn(1@ + 1)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
@@ -384,8 +384,8 @@ mod tests {
             CallNodePositionType::Value
         );
 
-        let point = Point { row: 0, column: 8 };
-        let document = Document::new("fn(1 + 1)", None);
+        let (text, point) = point_from_cursor("fn(1 + 1@)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
@@ -395,8 +395,8 @@ mod tests {
 
         // Right before an expression
         // (special case where we still provide argument completions)
-        let point = Point { row: 0, column: 6 };
-        let document = Document::new("fn(1, 1 + 1)", None);
+        let (text, point) = point_from_cursor("fn(1, @1 + 1)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(context.node.node_type(), NodeType::Float);
         assert_eq!(
@@ -406,8 +406,8 @@ mod tests {
 
         // After an identifier, before the `)`, with whitespace between them,
         // but on the `)`
-        let point = Point { row: 0, column: 5 };
-        let document = Document::new("fn(x )", None);
+        let (text, point) = point_from_cursor("fn(x @)");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             context.node.node_type(),
@@ -420,8 +420,8 @@ mod tests {
 
         // After an identifier, before the `)`, with whitespace between them,
         // but on the identifier
-        let point = Point { row: 0, column: 4 };
-        let document = Document::new("fn(x )", None);
+        let (text, point) = point_from_cursor("fn(x@ )");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert!(context.node.is_identifier());
         assert_eq!(
