@@ -435,6 +435,7 @@ mod tests {
         let document = Document::new(&text, None);
         let context = DocumentContext::new(&document, point, None);
 
+        assert_eq!(context.node.node_type(), NodeType::Arguments);
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Name
