@@ -302,8 +302,8 @@ fn completions_from_workspace_arguments(
 #[cfg(test)]
 mod tests {
     use harp::eval::RParseEvalOptions;
-    use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::call::completions_from_call;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
@@ -313,8 +313,8 @@ mod tests {
     fn test_completions_after_user_types_part_of_an_argument_name() {
         r_task(|| {
             // Right after `tab`
-            let point = Point { row: 0, column: 9 };
-            let document = Document::new("match(tab)", None);
+            let (text, point) = point_from_cursor("match(tab@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
@@ -324,8 +324,8 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, "table = ");
 
             // Right after `tab`
-            let point = Point { row: 0, column: 12 };
-            let document = Document::new("match(1, tab)", None);
+            let (text, point) = point_from_cursor("match(1, tab@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
@@ -342,8 +342,8 @@ mod tests {
         // Can't find the function
         r_task(|| {
             // Place cursor between `()`
-            let point = Point { row: 0, column: 21 };
-            let document = Document::new("not_a_known_function()", None);
+            let (text, point) = point_from_cursor("not_a_known_function(@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap();
             assert!(completions.is_none());
@@ -360,8 +360,8 @@ mod tests {
             harp::parse_eval("my_fun <- function(y, x) x + y", options.clone()).unwrap();
 
             // Place cursor between `()`
-            let point = Point { row: 0, column: 7 };
-            let document = Document::new("my_fun()", None);
+            let (text, point) = point_from_cursor("my_fun(@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
 
@@ -375,15 +375,15 @@ mod tests {
             assert_eq!(completion.label, "x = ");
 
             // Place just before the `()`
-            let point = Point { row: 0, column: 6 };
-            let document = Document::new("my_fun()", None);
+            let (text, point) = point_from_cursor("my_fun@()");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap();
             assert!(completions.is_none());
 
             // Place just after the `()`
-            let point = Point { row: 0, column: 8 };
-            let document = Document::new("my_fun()", None);
+            let (text, point) = point_from_cursor("my_fun()@");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap();
             assert!(completions.is_none());
@@ -403,8 +403,8 @@ mod tests {
             harp::parse_eval("my_fun <- 1", options.clone()).unwrap();
 
             // Place cursor between `()`
-            let point = Point { row: 0, column: 7 };
-            let document = Document::new("my_fun()", None);
+            let (text, point) = point_from_cursor("my_fun(@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_call(&context, None).unwrap().unwrap();
             assert_eq!(completions.len(), 0);
