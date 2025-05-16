@@ -101,6 +101,7 @@ pub(super) enum CallNodePositionType {
 
 pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePositionType {
     match node.node_type() {
+        NodeType::Arguments => return CallNodePositionType::Name,
         NodeType::Anonymous(kind) if kind == "(" => {
             if point.is_before_or_equal(node.start_position()) {
                 // Before the `(`
@@ -434,17 +435,6 @@ mod tests {
         let document = Document::new(&text, None);
         let context = DocumentContext::new(&document, point, None);
 
-        // On `main`, this passes
-        // assert_eq!(
-        //     context.node.node_type(),
-        //     NodeType::Anonymous(String::from("("))
-        // );
-
-        // On this pr, `(`, doesn't contain the user's cursor, so instead it selects
-        // the surrounding `Arguments` node
-        assert_eq!(context.node.node_type(), NodeType::Arguments);
-
-        // On `main`, this passes, and this should also still pass on this PR, but currently does not
         assert_eq!(
             call_node_position_type(&context.node, context.point),
             CallNodePositionType::Name
