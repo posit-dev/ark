@@ -413,4 +413,39 @@ mod tests {
             harp::parse_eval("remove(my_fun)", options.clone()).unwrap();
         })
     }
+
+    #[test]
+    fn test_completions_multiline() {
+        r_task(|| {
+            // No arguments typed yet
+            let (text, point) = point_from_cursor("match(\n  @\n)");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+
+            // Partially typed argument
+            let (text, point) = point_from_cursor("match(\n  tab@\n)");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+
+            // Partially typed second argument
+            let (text, point) = point_from_cursor("match(\n  1,\n  tab@\n)");
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_call(&context, None).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+        })
+    }
 }
