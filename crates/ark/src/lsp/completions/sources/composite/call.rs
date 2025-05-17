@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[test]
-    fn test_completions_multiline() {
+    fn test_completions_multiline_call() {
         r_task(|| {
             // No arguments typed yet
             let (text, point) = point_from_cursor("match(\n  @\n)");
