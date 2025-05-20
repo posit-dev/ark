@@ -205,8 +205,6 @@ pub struct RMain {
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
-    tasks_lock_rx: Receiver<RTask>,
-
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
     /// Channel to communicate requests and events to the frontend
@@ -349,12 +347,11 @@ impl RMain {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx, tasks_lock_rx) = r_task::take_receivers();
+        let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
 
         R_MAIN.set(UnsafeCell::new(RMain::new(
             tasks_interrupt_rx,
             tasks_idle_rx,
-            tasks_lock_rx,
             comm_manager_tx,
             r_request_rx,
             stdin_request_tx,
@@ -552,7 +549,6 @@ impl RMain {
     pub fn new(
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
-        tasks_lock_rx: Receiver<RTask>,
         comm_manager_tx: Sender<CommManagerEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -583,7 +579,6 @@ impl RMain {
             dap: RMainDap::new(dap),
             tasks_interrupt_rx,
             tasks_idle_rx,
-            tasks_lock_rx,
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
@@ -813,7 +808,6 @@ impl RMain {
         let stdin_reply_rx = self.stdin_reply_rx.clone();
         let kernel_request_rx = self.kernel_request_rx.clone();
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
-        let tasks_lock_rx = self.tasks_lock_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
 
         // Process R's polled events regularly while waiting for console input.
@@ -825,7 +819,6 @@ impl RMain {
         let stdin_reply_index = select.recv(&stdin_reply_rx);
         let kernel_request_index = select.recv(&kernel_request_rx);
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
-        let tasks_lock_index = select.recv(&tasks_lock_rx);
         let polled_events_index = select.recv(&polled_events_rx);
 
         // Don't process idle tasks in browser prompts. We currently don't want
@@ -904,18 +897,6 @@ impl RMain {
                 i if i == tasks_interrupt_index => {
                     let task = oper.recv(&tasks_interrupt_rx).unwrap();
                     self.handle_task_interrupt(task);
-                },
-
-                // A lock task woke us up
-                i if i == tasks_lock_index => {
-                    let task = oper.recv(&tasks_lock_rx).unwrap();
-
-                    // An async task would defeat the purpose of a locking task
-                    if !matches!(task, RTask::Sync(_)) {
-                        panic!("Expected Sync task");
-                    }
-
-                    self.handle_task(task);
                 },
 
                 // An idle task woke us up
