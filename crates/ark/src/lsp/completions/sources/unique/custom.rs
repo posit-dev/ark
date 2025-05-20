@@ -30,6 +30,7 @@ use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::node_in_string;
+use crate::treesitter::node_text;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) struct CustomSource;
@@ -426,6 +427,36 @@ mod tests {
     }
 
     #[test]
+    fn test_completion_custom_sys_setenv_value_position() {
+        r_task(|| {
+            // Test that no completions are offered in the value position
+            let assert_no_completions = |text: &str, point: Point| {
+                let document = Document::new(text, None);
+                let context = DocumentContext::new(&document, point, None);
+
+                let completions = completions_from_custom_source(&context).unwrap();
+                assert!(completions.is_none());
+            };
+
+            // Single line, with space
+            let (text, point) = point_from_cursor("Sys.setenv(AAA = @)");
+            assert_no_completions(text.as_str(), point);
+
+            // Single line, no space
+            let (text, point) = point_from_cursor("Sys.setenv(AAA =@)");
+            assert_no_completions(text.as_str(), point);
+
+            // Multiline case, with space
+            let (text, point) = point_from_cursor("Sys.setenv(\n  AAA = @\n)");
+            assert_no_completions(text.as_str(), point);
+
+            // Multiline case, no space
+            let (text, point) = point_from_cursor("Sys.setenv(\n  AAA =@\n)");
+            assert_no_completions(text.as_str(), point);
+        })
+    }
+
+    #[test]
     fn test_completion_custom_get_option() {
         r_task(|| {
             let name = "ARK_TEST_OPTION";
@@ -509,6 +540,36 @@ mod tests {
             assert_has_ark_test_option_completion(text.as_str(), point);
 
             harp::parse_eval_base(format!("options({name} = NULL)").as_str()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_completion_custom_options_value_position() {
+        r_task(|| {
+            // Test that no completions are offered in the value position
+            let assert_no_completions = |text: &str, point: Point| {
+                let document = Document::new(text, None);
+                let context = DocumentContext::new(&document, point, None);
+
+                let completions = completions_from_custom_source(&context).unwrap();
+                assert!(completions.is_none());
+            };
+
+            // Single line, with space
+            let (text, point) = point_from_cursor("options(AAA = @)");
+            assert_no_completions(text.as_str(), point);
+
+            // Single line, no space
+            let (text, point) = point_from_cursor("options(AAA =@)");
+            assert_no_completions(text.as_str(), point);
+
+            // Multiline case, with space
+            let (text, point) = point_from_cursor("options(\n  AAA = @\n)");
+            assert_no_completions(text.as_str(), point);
+
+            // Multiline case, no space
+            let (text, point) = point_from_cursor("options(\n  AAA =@\n)");
+            assert_no_completions(text.as_str(), point);
         })
     }
 }
