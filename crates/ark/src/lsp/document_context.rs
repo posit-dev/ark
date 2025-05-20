@@ -10,6 +10,8 @@ use tree_sitter::Point;
 
 use crate::lsp::documents::Document;
 use crate::lsp::traits::node::NodeExt;
+use crate::treesitter::NodeType;
+use crate::treesitter::NodeTypeExt;
 
 #[derive(Debug)]
 pub struct DocumentContext<'a> {
@@ -45,7 +47,43 @@ impl<'a> DocumentContext<'a> {
             panic!("Failed to find closest node to point: {point} with contents '{contents}'");
         };
 
-        // build document context
+        // Fix up node selection in an edge case that arises from how cursor
+        // position interacts with node span semantics.
+        //
+        // Tree-sitter node coordinates refer to position BETWEEN characters.
+        // Node spans are inclusive on the left and exclusive on the right, in
+        // terms of whether a cursor is considered to be inside the node.
+        //
+        //       0  1  2  3  4  5  6  7  8
+        //       ┌──┬──┬──┬──┬──┬──┬──┬──┐
+        //   0   │ o│ p│ t│ i│ o│ n│ s│ (│
+        //       └──┴──┴──┴──┴──┴──┴──┴──┘
+        //
+        //       0  1  2  3  4  5  6    program [0, 0] - [3, 0]
+        //       ┌──┬──┬──┬──┬──┬──┐      call [0, 0] - [2, 1]
+        //   1   │  │  │ a│  │ =│  │        function: identifier [0, 0] - [0, 7]
+        //       └──┴──┴──┴──┴──┴──┘        arguments: arguments [0, 7] - [2, 1]
+        //                                    open: ( [0, 7] - [0, 8]
+        //       0  1                         argument: argument [1, 2] - [1, 5]
+        //       ┌──┐                           name: identifier [1, 2] - [1, 3]
+        //   2   │ )│                           = [1, 4] - [1, 5]
+        //       └──┘                         close: ) [2, 0] - [2, 1]
+        //
+        // Imagine the cursor is at [1, 6], i.e. the end of the second line.
+        // The smallest spanning node is, counterintuitively, the 'Arguments'
+        // node.
+        // It is more favorable for completions to start in (or in a child of)
+        // the 'Argument' node (with text "a = ").
+        // In this case, `closest_node` is the anonymous "=" node and is a
+        // better candidate for completions.
+        let node = if node.node_type() == NodeType::Arguments &&
+            closest_node.node_type() == NodeType::Anonymous(String::from("="))
+        {
+            closest_node
+        } else {
+            node
+        };
+
         DocumentContext {
             document,
             node,
