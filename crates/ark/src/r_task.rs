@@ -27,6 +27,9 @@ static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::
 /// Task channels for idle-time tasks
 static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
 
+/// Task channels for lock-time tasks
+static LOCK_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
@@ -58,11 +61,15 @@ impl TaskChannels {
     }
 }
 
-/// Returns receivers for both interrupt and idle tasks.
+/// Returns receivers for interrupt, idle, and lock tasks.
 /// Initializes the task channels if they haven't been initialized yet.
 /// Can only be called once (intended for `RMain` during init).
-pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>) {
-    (INTERRUPT_TASKS.take_rx(), IDLE_TASKS.take_rx())
+pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>, Receiver<RTask>) {
+    (
+        INTERRUPT_TASKS.take_rx(),
+        IDLE_TASKS.take_rx(),
+        LOCK_TASKS.take_rx(),
+    )
 }
 
 pub enum RTask {
@@ -272,6 +279,87 @@ where
     // Retrieve closure result from the synchronized shared option.
     // If we get here without panicking we know the result was assigned.
     return result.lock().unwrap().take().unwrap();
+}
+
+pub fn spawn_try_lock<'env, F, T>(f: F) -> Option<T>
+where
+    F: FnOnce() -> T,
+    F: 'env + Send,
+    T: 'env + Send,
+{
+    if stdext::IS_TESTING && !RMain::is_initialized() {
+        let _lock = harp::fixtures::R_TEST_LOCK.lock();
+        r_test_init();
+        return Some(f());
+    }
+
+    if RMain::on_main_thread() {
+        panic!("Can't call `spawn_try_lock()` on main thread");
+    }
+
+    let result = SharedOption::default();
+
+    {
+        let result = Arc::clone(&result);
+        let closure = move || {
+            *result.lock().unwrap() = Some(f());
+        };
+
+        let closure: Box<dyn FnOnce() + Send + 'env> = Box::new(closure);
+        let closure: Box<dyn FnOnce() + Send + 'static> = unsafe { std::mem::transmute(closure) };
+
+        // Channel to communicate status of the task/closure
+        let (status_tx, status_rx) = bounded::<RTaskStatus>(0);
+
+        // Send the task to the R thread
+        let task = RTask::Sync(RTaskSync {
+            fun: closure,
+            status_tx: Some(status_tx),
+            start_info: RTaskStartInfo::new(false),
+        });
+        if let Err(_) = LOCK_TASKS.tx().try_send(task) {
+            return None;
+        };
+
+        // Block until we get the signal that the task has started
+        let status = status_rx.recv().unwrap();
+
+        let RTaskStatus::Started = status else {
+            let trace = std::backtrace::Backtrace::force_capture();
+            panic!(
+                "Task `status` value must be `Started`: {status:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+            );
+        };
+
+        // Block until task was completed
+        let status = status_rx.recv().unwrap();
+
+        let RTaskStatus::Finished(status) = status else {
+            let trace = std::backtrace::Backtrace::force_capture();
+            panic!(
+                "Task `status` value must be `Finished`: {status:?}\n\
+                 Backtrace of calling thread:\n\n
+                 {trace}"
+            );
+        };
+
+        // If the task failed send a backtrace of the current thread to the
+        // main thread
+        if let Err(err) = status {
+            let trace = std::backtrace::Backtrace::force_capture();
+            panic!(
+                "While running task: {err:?}\n\
+                 Backtrace of calling thread:\n\n\
+                 {trace}"
+            );
+        }
+    }
+
+    // Retrieve closure result from the synchronized shared option.
+    // If we get here without panicking we know the result was assigned.
+    return Some(result.lock().unwrap().take().unwrap());
 }
 
 pub(crate) fn spawn_idle<F, Fut>(fun: F)
