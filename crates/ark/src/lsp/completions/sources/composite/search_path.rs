@@ -18,7 +18,6 @@ use libr::R_lsInternal;
 use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
 
-use crate::interface::RMain;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
@@ -63,9 +62,13 @@ fn completions_from_search_path(
 
         // If we're waiting for input in `read_console()` with a debugger
         // prompt, start from current environment
-        if let Some(debug_env) = &RMain::get().debug_env {
-            // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
-            env = debug_env.sexp;
+        #[cfg(not(test))] // Unit tests do not have an `RMain`
+        {
+            use crate::interface::RMain;
+            if let Some(debug_env) = &RMain::get().debug_env {
+                // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+                env = debug_env.sexp;
+            }
         }
 
         while env != R_EmptyEnv {
