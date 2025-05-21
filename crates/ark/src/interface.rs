@@ -255,6 +255,11 @@ pub struct RMain {
     /// The stack of frames we saw the last time we stopped. Used as a mostly
     /// reliable indication of whether we moved since last time.
     debug_last_stack: Vec<FrameInfoId>,
+
+    /// Current topmost environment on the stack while waiting for input in the
+    /// debugger. This is `Some()` only when R is idle and in a `browser()`
+    /// prompt.
+    pub(crate) debug_env: Option<RObject>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -588,6 +593,7 @@ impl RMain {
             captured_output: String::new(),
             debug_preserve_focus: false,
             debug_last_stack: vec![],
+            debug_env: None,
         }
     }
 
@@ -774,6 +780,13 @@ impl RMain {
         if info.browser {
             match self.dap.stack_info() {
                 Ok(stack) => {
+                    if let Some(frame) = stack.first() {
+                        if let Some(ref env) = frame.environment {
+                            // This is reset on exit in the cleanup phase, see `r_read_console()`
+                            self.debug_env = Some(env.get().clone());
+                        }
+                    }
+
                     // Figure out whether we changed location since last time,
                     // e.g. because the user evaluated an expression that hit
                     // another breakpoint. In that case we do want to move
@@ -959,6 +972,11 @@ impl RMain {
             incomplete,
             input_request: user_request,
         };
+    }
+
+    fn read_console_cleanup(&mut self) {
+        // The debug environment is only valid while R is idle
+        self.debug_env = None;
     }
 
     /// Returns:
@@ -2124,6 +2142,7 @@ pub extern "C-unwind" fn r_read_console(
 ) -> i32 {
     let main = RMain::get_mut();
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
+    main.read_console_cleanup();
 
     let result = unwrap!(result, Err(err) => {
         panic!("Unexpected longjump while reading console: {err:?}");
