@@ -16,6 +16,7 @@ use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::node_find_containing_call;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) struct PipeSource;
@@ -64,38 +65,14 @@ fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<Co
     )?))
 }
 
-/// Loop should be kept in sync with `completions_from_call()` so they find
-/// the same call to detect the pipe root of
 pub fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
     log::trace!("find_pipe_root()");
 
-    let mut node = context.node;
-    let mut has_call = false;
-
-    loop {
-        if node.is_call() {
-            // We look for pipe roots from here
-            has_call = true;
-            break;
-        }
-
-        // If we reach a brace list, bail
-        if node.is_braced_expression() {
-            break;
-        }
-
-        // Update the node
-        node = match node.parent() {
-            Some(node) => node,
-            None => break,
-        };
-    }
-
-    if !has_call {
+    let Some(call_node) = node_find_containing_call(context.node) else {
         return Ok(None);
-    }
+    };
 
-    let name = find_pipe_root_name(context, &node)?;
+    let name = find_pipe_root_name(context, &call_node)?;
 
     let object = match &name {
         Some(name) => eval_pipe_root(name),

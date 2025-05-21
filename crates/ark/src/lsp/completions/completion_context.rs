@@ -13,7 +13,7 @@ use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
-use crate::treesitter::NodeTypeExt;
+use crate::treesitter::node_find_containing_call;
 
 pub(crate) struct CompletionContext<'a> {
     pub(crate) document_context: &'a DocumentContext<'a>,
@@ -56,29 +56,7 @@ impl<'a> CompletionContext<'a> {
     }
 
     pub fn is_in_call(&self) -> &bool {
-        self.is_in_call_cell.get_or_init(|| {
-            let mut node = self.document_context.node;
-            let mut found_call = false;
-
-            loop {
-                if node.is_call() {
-                    found_call = true;
-                    break;
-                }
-
-                // If we reach a brace list, stop searching
-                if node.is_braced_expression() {
-                    break;
-                }
-
-                // Update the node
-                match node.parent() {
-                    Some(parent) => node = parent,
-                    None => break,
-                };
-            }
-
-            found_call
-        })
+        self.is_in_call_cell
+            .get_or_init(|| node_find_containing_call(self.document_context.node).is_some())
     }
 }
