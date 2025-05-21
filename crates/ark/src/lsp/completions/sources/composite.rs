@@ -71,9 +71,12 @@ pub(crate) fn get_completions(
     // subset completions (`[` or `[[`)
     push_completions(subset::SubsetSource, completion_context, &mut completions)?;
 
-    // For the rest of the general completions, we require an identifier to
-    // begin showing anything.
-    if is_identifier_like(completion_context.document_context.node) {
+    // To offer the rest of the general completions, we should be completing:
+    // * on an empty line, outside of any function or expression, or
+    // * something that looks like an identifier
+    if completion_context.document_context.node.is_program() ||
+        is_identifier_like(completion_context.document_context.node)
+    {
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
         push_completions(
@@ -198,20 +201,6 @@ fn is_identifier_like(x: Node) -> bool {
     // - completions of certain reserved words from the keyword source
     if matches!(x.node_type(), NodeType::Anonymous(kind) if matches!(kind.as_str(), "if" | "for" | "while"))
     {
-        return true;
-    }
-
-    // Consider when the user asks for completions with no existing
-    // text-to-complete, such as at the R prompt in the Console, in an empty R
-    // file, or on an empty line of a non-empty R file.
-    //
-    // Gesture-wise, a Positron user could do this with Ctrl + Space, which
-    // invokes the command editor.action.triggerSuggest.
-    //
-    // The nominal completion node in these cases is just the root or 'Program'
-    // node of the AST. In this case, we should just provide "all" completions,
-    // for some reasonable definition of "all".
-    if x.node_type() == NodeType::Program {
         return true;
     }
 
