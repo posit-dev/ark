@@ -29,9 +29,6 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::node_in_string;
-use crate::treesitter::node_text;
-use crate::treesitter::NodeTypeExt;
-
 pub(super) struct CustomSource;
 
 impl CompletionSource for CustomSource {
@@ -50,7 +47,7 @@ impl CompletionSource for CustomSource {
 fn completions_from_custom_source(
     context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    if !context.is_in_call() {
+    if context.containing_call_node().is_none() {
         // Didn't detect anything worth completing in this context,
         // let other sources add their own candidates instead
         return Ok(None);

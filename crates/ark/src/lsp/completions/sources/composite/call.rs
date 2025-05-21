@@ -23,7 +23,6 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::node_find_containing_call;
 
 pub(super) struct CallSource;
 
@@ -43,18 +42,13 @@ impl CompletionSource for CallSource {
 fn completions_from_call(
     context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    if !context.is_in_call() {
+    let Some(node) = context.containing_call_node() else {
         // Not in a call, let other sources add their own candidates
         return Ok(None);
-    }
+    };
 
     let document_context = context.document_context;
     let point = document_context.point;
-
-    // Find the call node
-    let Some(node) = node_find_containing_call(document_context.node) else {
-        return Ok(None); // This shouldn't happen since is_in_call() returned true
-    };
 
     // Now that we know we are in a call, detect if we are in a location where
     // we should provide argument completions, i.e. if we are in the `name`
