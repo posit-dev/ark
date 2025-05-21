@@ -60,13 +60,6 @@ fn completions_from_custom_source(
     let point = document_context.point;
     let node = document_context.node;
 
-    log::info!(
-        "completions_from_custom_source() - Completion node text: '{node_text}', Node type: '{node_type:?}'",
-        node_text = node_text(&node, &document_context.document.contents)
-            .unwrap_or_default(),
-        node_type = node.node_type()
-    );
-
     // Use the signature help tools to figure out the necessary pieces.
     let signatures = r_signature_help(document_context)?;
     let Some(signatures) = signatures else {
