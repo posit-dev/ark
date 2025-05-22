@@ -131,6 +131,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         _ => {},
     });
 
+    // Add per-environment session symbols
     for scope in state.console_scopes.iter() {
         for name in scope.iter() {
             if is_symbol_valid(name.as_str()) {
@@ -141,6 +142,10 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
             }
         }
     }
+
+    // Add `_` pipe placeholder as a "known" session symbol so we never flag it with
+    // "symbol not found" when it shows up as an `identifier` node
+    context.session_symbols.insert(String::from("_"));
 
     for pkg in state.installed_packages.iter() {
         context.installed_packages.insert(pkg.clone());
@@ -1420,6 +1425,45 @@ foo
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 1
+            );
+        })
+    }
+
+    #[test]
+    fn test_no_symbol_diagnostics_for_native_pipe_placeholder() {
+        r_task(|| {
+            // https://github.com/posit-dev/positron/issues/4102
+            let code = "
+                x <- list(a = 1)
+                x |> _$a[1]
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            // Imagine this is a data.table
+            // https://github.com/posit-dev/positron/issues/3749
+            let code = "
+                data <- data.frame(a = 1)
+                data |> _[1]
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            // We technically disable diagnostics for this symbol everywhere, even outside
+            // of pipe scope, which is probably fine
+            let code = "
+                _
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
             );
         })
     }
