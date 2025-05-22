@@ -117,19 +117,13 @@ fn skip_namespace_operator(node: Node) -> Node {
 mod tests {
     use tower_lsp::lsp_types::CompletionItem;
     use tower_lsp::lsp_types::InsertTextFormat;
-    use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::provide_completions;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
-
-    fn point_from_cursor(text: &str) -> (String, Point) {
-        let cursor_pos = text.find('@').unwrap();
-        let text = text.replace('@', "");
-        (text, Point::new(0, cursor_pos))
-    }
 
     fn find_completion(completions: &[CompletionItem], label: &str) -> CompletionItem {
         completions
