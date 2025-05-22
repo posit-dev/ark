@@ -1,3 +1,12 @@
+//! Code actions
+//!
+//! These are contextual light bulbs that appear when the user's cursor is at a particular
+//! position. They allow for small context specific quick fixes, refactors, documentation
+//! generation, and other small code adjustments.
+//!
+//! Modeled after rust-analyzer's blog post:
+//! https://rust-analyzer.github.io/blog/2020/09/28/how-to-make-a-light-bulb.html
+
 use std::collections::HashMap;
 
 use tower_lsp::lsp_types::CodeAction;
