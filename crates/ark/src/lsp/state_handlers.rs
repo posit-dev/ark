@@ -39,6 +39,7 @@ use tree_sitter::Parser;
 use url::Url;
 
 use crate::lsp;
+use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DocumentConfig;
 use crate::lsp::config::VscDiagnosticsConfig;
@@ -77,14 +78,7 @@ pub(crate) fn initialize(
     lsp_state: &mut LspState,
     state: &mut WorldState,
 ) -> anyhow::Result<InitializeResult> {
-    // Take note of supported capabilities so we can register them in the
-    // `Initialized` handler
-    if let Some(ws_caps) = params.capabilities.workspace {
-        if matches!(ws_caps.did_change_configuration, Some(caps) if matches!(caps.dynamic_registration, Some(true)))
-        {
-            lsp_state.needs_registration.did_change_configuration = true;
-        }
-    }
+    lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders
     let mut folders: Vec<String> = Vec::new();
@@ -144,6 +138,7 @@ pub(crate) fn initialize(
                 commands: vec![],
                 work_done_progress_options: Default::default(),
             }),
+            code_action_provider: lsp_state.capabilities.code_action_provider_capability(),
             workspace: Some(WorkspaceServerCapabilities {
                 workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                     supported: Some(true),

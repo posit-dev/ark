@@ -28,6 +28,7 @@ use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
+use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics;
 use crate::lsp::documents::Document;
 use crate::lsp::handlers;
@@ -136,14 +137,8 @@ pub(crate) struct LspState {
     /// The set of tree-sitter document parsers managed by the `GlobalState`.
     pub(crate) parsers: HashMap<Url, tree_sitter::Parser>,
 
-    /// List of capabilities for which we need to send a registration request
-    /// when we get the `Initialized` notification.
-    pub(crate) needs_registration: ClientCaps,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct ClientCaps {
-    pub(crate) did_change_configuration: bool,
+    /// Capabilities negotiated with the client
+    pub(crate) capabilities: Capabilities,
 }
 
 /// State for the auxiliary loop
@@ -323,6 +318,9 @@ impl GlobalState {
                         LspRequest::OnTypeFormatting(params) => {
                             state_handlers::did_change_formatting_options(&params.text_document_position.text_document.uri, &params.options, &mut self.world);
                             respond(tx, || handlers::handle_indent(params, &self.world), LspResponse::OnTypeFormatting)?;
+                        },
+                        LspRequest::CodeAction(params) => {
+                            respond(tx, || handlers::handle_code_action(params, &self.lsp_state, &self.world), LspResponse::CodeAction)?;
                         },
                         LspRequest::VirtualDocument(params) => {
                             respond(tx, || handlers::handle_virtual_document(params, &self.world), LspResponse::VirtualDocument)?;
