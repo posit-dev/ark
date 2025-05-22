@@ -97,16 +97,16 @@ impl<'a> DocumentContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::point_from_cursor;
     use crate::treesitter::node_text;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
     #[test]
     fn test_document_context_start_of_document() {
-        let point = Point { row: 0, column: 0 };
-
         // Empty document
-        let document = Document::new("", None);
+        let (text, point) = point_from_cursor("@");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             node_text(&context.node, &context.document.contents).unwrap(),
@@ -114,7 +114,8 @@ mod tests {
         );
 
         // Start of document with text
-        let document = Document::new("1 + 1", None);
+        let (text, point) = point_from_cursor("@1 + 1");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
             node_text(&context.node, &context.document.contents).unwrap(),
@@ -124,8 +125,9 @@ mod tests {
 
     #[test]
     fn test_document_context_cursor_on_empty_line() {
-        let document = Document::new("toupper(letters)\n", None);
-        let point = Point { row: 1, column: 0 }; // as if we're about to type on the second line
+        // as if we're about to type on the second line
+        let (text, point) = point_from_cursor("toupper(letters)\n@");
+        let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
 
         assert_eq!(context.node.node_type(), NodeType::Program);
