@@ -15,8 +15,7 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp::config::DocumentConfig;
-use crate::lsp::encoding::convert_position_to_point;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::encoding::convert_lsp_range_to_tree_sitter_range;
 
 fn compute_point(point: Point, text: &str) -> Point {
     // figure out where the newlines in this edit are
@@ -127,11 +126,12 @@ impl Document {
         // offsets can be computed correctly.
         let ast = &mut self.ast;
 
-        let start_point = convert_position_to_point(&self.contents, range.start);
-        let start_byte = self.contents.point_to_byte(start_point);
-
-        let old_end_point = convert_position_to_point(&self.contents, range.end);
-        let old_end_byte = self.contents.point_to_byte(old_end_point);
+        let tree_sitter::Range {
+            start_byte,
+            end_byte: old_end_byte,
+            start_point,
+            end_point: old_end_point,
+        } = convert_lsp_range_to_tree_sitter_range(&self.contents, range);
 
         let new_end_point = compute_point(start_point, &change.text);
         let new_end_byte = start_byte + change.text.as_bytes().len();

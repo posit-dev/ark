@@ -9,6 +9,8 @@ use ropey::Rope;
 use tower_lsp::lsp_types::Position;
 use tree_sitter::Point;
 
+use crate::lsp::traits::rope::RopeExt;
+
 /// `PositionEncodingKind` describes the encoding used for the `Position` `character`
 /// column offset field. The `Position` `line` field is encoding agnostic, but the
 /// `character` field specifies the number of characters offset from the beginning of
@@ -50,6 +52,24 @@ pub fn convert_tree_sitter_range_to_lsp_range(
     let start = convert_point_to_position(x, range.start_point);
     let end = convert_point_to_position(x, range.end_point);
     tower_lsp::lsp_types::Range::new(start, end)
+}
+
+pub fn convert_lsp_range_to_tree_sitter_range(
+    x: &Rope,
+    range: tower_lsp::lsp_types::Range,
+) -> tree_sitter::Range {
+    let start_point = convert_position_to_point(x, range.start);
+    let start_byte = x.point_to_byte(start_point);
+
+    let end_point = convert_position_to_point(x, range.end);
+    let end_byte = x.point_to_byte(end_point);
+
+    tree_sitter::Range {
+        start_byte,
+        end_byte,
+        start_point,
+        end_point,
+    }
 }
 
 pub fn convert_position_to_point(x: &Rope, position: Position) -> Point {
