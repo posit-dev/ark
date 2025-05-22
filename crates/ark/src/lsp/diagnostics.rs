@@ -58,8 +58,8 @@ pub struct DiagnosticContext<'a> {
     // Whether or not we're inside of a formula.
     pub in_formula: bool,
 
-    // Whether or not we're inside of a call's arguments
-    pub in_call: bool,
+    // Whether or not we're inside of a call-like node's arguments
+    pub in_call_like_arguments: bool,
 }
 
 impl Default for DiagnosticsConfig {
@@ -77,7 +77,7 @@ impl<'a> DiagnosticContext<'a> {
             workspace_symbols: HashSet::new(),
             installed_packages: HashSet::new(),
             in_formula: false,
-            in_call: false,
+            in_call_like_arguments: false,
         }
     }
 
@@ -212,7 +212,9 @@ fn recurse(
         NodeType::ParenthesizedExpression => {
             recurse_parenthesized_expression(node, context, diagnostics)
         },
-        NodeType::Subset | NodeType::Subset2 => recurse_subset(node, context, diagnostics),
+        NodeType::Subset | NodeType::Subset2 => {
+            recurse_subset_or_subset2(node, context, diagnostics)
+        },
         NodeType::Call => recurse_call(node, context, diagnostics),
         NodeType::UnaryOperator(op) => match op {
             UnaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
@@ -709,23 +711,6 @@ fn recurse_parenthesized_expression(
     ().ok()
 }
 
-fn check_call_next_sibling(
-    child: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<()> {
-    check_call_like_next_sibling(child, &NodeType::Call, context, diagnostics)
-}
-
-fn check_subset_next_sibling(
-    child: Node,
-    subset_type: &NodeType,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<()> {
-    check_call_like_next_sibling(child, &subset_type, context, diagnostics)
-}
-
 // TODO: This should be a syntax check, as the grammar should not allow
 // two `Argument` nodes side by side
 fn check_call_like_next_sibling(
@@ -781,8 +766,11 @@ fn check_call_like_next_sibling(
     ().ok()
 }
 
-// Default recursion for arguments of a function call
-fn recurse_call_arguments_default(
+/// Default recursion for arguments of a call-like node
+///
+/// This applies for function calls, subset, and subset2, all of which are guaranteed
+/// to have the same tree-sitter node structure (i.e., with an `arguments` child).
+fn recurse_call_like_arguments_default(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
@@ -803,31 +791,44 @@ fn recurse_call_arguments_default(
     // this is true depends on the function's implementation. For now we assume
     // every function behaves like `list()`, which is our default model of
     // strict evaluation.
+    with_in_call_like_arguments(context, |context| {
+        let call_type = node.node_type();
 
-    // Save `in_call` to restore it on exit. Necessary to handle nested calls
-    // and maintain the state to `true` until we've left the outermost call.
-    let in_call = context.in_call;
-    context.in_call = true;
+        let Some(arguments) = node.child_by_field_name("arguments") else {
+            return Ok(());
+        };
 
-    let result = (|| -> anyhow::Result<()> {
-        // Recurse into arguments.
-        if let Some(arguments) = node.child_by_field_name("arguments") {
-            let mut cursor = arguments.walk();
-            let children = arguments.children_by_field_name("argument", &mut cursor);
-            for child in children {
-                // Warn if the next sibling is neither a comma nor a closing delimiter.
-                check_call_next_sibling(child, context, diagnostics)?;
+        // Iterate over and recurse into `arguments`
+        let mut cursor = arguments.walk();
+        let children = arguments.children_by_field_name("argument", &mut cursor);
 
-                // Recurse into values.
-                if let Some(value) = child.child_by_field_name("value") {
-                    recurse(value, context, diagnostics)?;
-                }
+        for child in children {
+            // Warn if the next sibling is neither a comma nor the correct closing delimiter
+            check_call_like_next_sibling(child, &call_type, context, diagnostics)?;
+
+            // Recurse into `value`s
+            if let Some(value) = child.child_by_field_name("value") {
+                recurse(value, context, diagnostics)?;
             }
         }
-        Ok(())
-    })();
 
-    context.in_call = in_call;
+        Ok(())
+    })
+}
+
+fn with_in_call_like_arguments<F>(context: &mut DiagnosticContext, f: F) -> anyhow::Result<()>
+where
+    F: FnOnce(&mut DiagnosticContext) -> anyhow::Result<()>,
+{
+    // Save `in_call_like_arguments` to restore it on exit. Necessary to handle nested calls
+    // and maintain the state to `true` until we've left the outermost call.
+    let in_call_like_arguments = context.in_call_like_arguments;
+    context.in_call_like_arguments = true;
+
+    let result = f(context);
+
+    // Reset on exit
+    context.in_call_like_arguments = in_call_like_arguments;
     result
 }
 
@@ -839,8 +840,10 @@ fn recurse_call(
     // Run diagnostics on the call itself
     dispatch(node, context, diagnostics);
 
-    // Recurse into the callee.
-    let callee = node.child(0).into_result()?;
+    // Recurse into the callee
+    let Some(callee) = node.child_by_field_name("function") else {
+        return Ok(());
+    };
     recurse(callee, context, diagnostics)?;
 
     // dispatch based on the function
@@ -852,43 +855,27 @@ fn recurse_call(
 
     match fun {
         // default case: recurse into each argument
-        _ => recurse_call_arguments_default(node, context, diagnostics)?,
+        _ => recurse_call_like_arguments_default(node, context, diagnostics)?,
     };
 
     ().ok()
 }
 
-fn recurse_subset(
+fn recurse_subset_or_subset2(
     node: Node,
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    // Run diagnostics on the call.
+    // Run diagnostics on the call itself
     dispatch(node, context, diagnostics);
 
-    // Recurse into the callee.
-    if let Some(callee) = node.child(0) {
-        recurse(callee, context, diagnostics)?;
-    }
+    // Recurse into the callee
+    let Some(callee) = node.child_by_field_name("function") else {
+        return Ok(());
+    };
+    recurse(callee, context, diagnostics)?;
 
-    let subset_type = node.node_type();
-
-    // Recurse into arguments.
-    if let Some(arguments) = node.child_by_field_name("arguments") {
-        let mut cursor = arguments.walk();
-        let children = arguments.children_by_field_name("argument", &mut cursor);
-        for child in children {
-            // Warn if the next sibling is neither a comma nor a closing ].
-            check_subset_next_sibling(child, &subset_type, context, diagnostics)?;
-
-            // Recurse into values.
-            if let Some(value) = child.child_by_field_name("value") {
-                recurse(value, context, diagnostics)?;
-            }
-        }
-    }
-
-    ().ok()
+    recurse_call_like_arguments_default(node, context, diagnostics)
 }
 
 fn recurse_default(
@@ -1009,8 +996,8 @@ fn check_symbol_in_scope(
         return false.ok();
     }
 
-    // Skip if we're working on the arguments of a call
-    if context.in_call {
+    // Skip if we're working on the arguments of a call-like node
+    if context.in_call_like_arguments {
         return false.ok();
     }
 
@@ -1355,19 +1342,20 @@ foo
     }
 
     #[test]
-    fn test_assignment_within_call() {
+    fn test_assignment_within_call_like() {
         // https://github.com/posit-dev/positron/issues/3048
         // With our current approach we also incorrectly index symbols in calls
         // with local scopes such as `local()` or `test_that()`. We prefer to be
         // overly permissive than the opposite to avoid annoying false positive
         // diagnostics.
+
+        // Calls
         r_task(|| {
             let code = "
                 list(x <- 1)
                 x
             ";
             let document = Document::new(code, None);
-
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 0
@@ -1378,25 +1366,75 @@ foo
                 x
             ";
             let document = Document::new(code, None);
-
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 0
             );
-        })
+        });
+
+        // Subset
+        r_task(|| {
+            let code = "
+                foo <- list()
+                foo[x <- 1]
+                x
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            let code = "
+                foo <- list()
+                foo[{x <- 1}]
+                x
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+        });
+
+        // Subset2
+        r_task(|| {
+            let code = "
+                foo <- list()
+                foo[[x <- 1]]
+                x
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            let code = "
+                foo <- list()
+                foo[[{x <- 1}]]
+                x
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+        });
     }
 
     #[test]
-    fn test_no_symbol_diagnostics_in_calls() {
-        // For now we never check for missing symbols inside calls because we
+    fn test_no_symbol_diagnostics_in_call_like() {
+        // For now we never check for missing symbols inside call-like nodes because we
         // don't have a good way to deal with NSE in functions like `quote()` or
-        // `mutate()`.
+        // `mutate()` or data.table's `[`.
+
+        // Calls
         r_task(|| {
             let code = "
                 list(x)
             ";
             let document = Document::new(code, None);
-
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 0
@@ -1409,24 +1447,65 @@ foo
                 list(list(), x)
             ";
             let document = Document::new(code, None);
-
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 0
             );
 
-            // `in_call` state variable is reset
+            // `in_call_like_arguments` state variable is reset
             let code = "
                 list()
                 x
             ";
             let document = Document::new(code, None);
-
             assert_eq!(
                 generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
                 1
             );
-        })
+        });
+
+        // Subset
+        r_task(|| {
+            // Imagine this is `data.table()` (we don't necessarily have the package
+            // installed in the test)
+            // https://github.com/posit-dev/positron/issues/5271
+            let code = "
+                data <- data.frame(x = 1)
+                data[x]
+                data[,x]
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+
+            // Imagine this is `data.table()` (we don't necessarily have the package
+            // installed in the test)
+            // https://github.com/posit-dev/positron/issues/3749
+            let code = "
+                data <- data.frame(x = 1)
+                data[, y := x + 1]
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+        });
+
+        // Subset2
+        r_task(|| {
+            let code = "
+                foo <- list()
+                foo[[x]]
+            ";
+            let document = Document::new(code, None);
+            assert_eq!(
+                generate_diagnostics(document.clone(), DEFAULT_STATE.clone()).len(),
+                0
+            );
+        });
     }
 
     #[test]
