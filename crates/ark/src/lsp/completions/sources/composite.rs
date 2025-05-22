@@ -71,9 +71,12 @@ pub(crate) fn get_completions(
     // subset completions (`[` or `[[`)
     push_completions(subset::SubsetSource, completion_context, &mut completions)?;
 
-    // For the rest of the general completions, we require an identifier to
-    // begin showing anything.
-    if is_identifier_like(completion_context.document_context.node) {
+    // To offer the rest of the general completions, we should be completing:
+    // * on an empty line, outside of any function or expression, or
+    // * something that looks like an identifier
+    if completion_context.document_context.node.is_program() ||
+        is_identifier_like(completion_context.document_context.node)
+    {
         push_completions(keyword::KeywordSource, completion_context, &mut completions)?;
 
         push_completions(
@@ -206,11 +209,13 @@ fn is_identifier_like(x: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use tree_sitter::Point;
-
+    use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::completion_context::CompletionContext;
+    use crate::lsp::completions::sources::composite::get_completions;
     use crate::lsp::completions::sources::composite::is_identifier_like;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
@@ -222,9 +227,10 @@ mod tests {
             // anonymous nodes and keywords, so they need to look like
             // identifiers that we provide completions for
             for keyword in ["if", "for", "while"] {
-                let point = Point { row: 0, column: 0 };
-                let document = Document::new(keyword, None);
+                let (text, point) = point_from_cursor(&format!("{keyword}@"));
+                let document = Document::new(text.as_str(), None);
                 let context = DocumentContext::new(&document, point, None);
+
                 assert!(is_identifier_like(context.node));
                 assert_eq!(
                     context.node.node_type(),
@@ -232,5 +238,40 @@ mod tests {
                 );
             }
         })
+    }
+
+    #[test]
+    fn test_get_completions_on_empty_document() {
+        r_task(|| {
+            let (text, point) = point_from_cursor("@");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+
+            assert!(context.document_context.node.is_program());
+
+            let completions = get_completions(&context).unwrap();
+            assert!(completions.is_some());
+            assert!(!completions.unwrap().is_empty());
+        });
+    }
+
+    #[test]
+    fn test_get_completions_on_empty_line_in_non_empty_document() {
+        r_task(|| {
+            let code = "x <- 1:3\n@\nrnorm(3)";
+            let (text, point) = point_from_cursor(code);
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+
+            assert!(context.document_context.node.is_program());
+
+            let completions = get_completions(&context).unwrap();
+            assert!(completions.is_some());
+            assert!(!completions.unwrap().is_empty());
+        });
     }
 }
