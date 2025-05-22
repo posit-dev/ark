@@ -209,8 +209,7 @@ fn is_identifier_like(x: Node) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use tree_sitter::Point;
-
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::is_identifier_like;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
@@ -225,9 +224,10 @@ mod tests {
             // anonymous nodes and keywords, so they need to look like
             // identifiers that we provide completions for
             for keyword in ["if", "for", "while"] {
-                let point = Point { row: 0, column: 0 };
-                let document = Document::new(keyword, None);
+                let (text, point) = point_from_cursor(&format!("{keyword}@"));
+                let document = Document::new(text.as_str(), None);
                 let context = DocumentContext::new(&document, point, None);
+
                 assert!(is_identifier_like(context.node));
                 assert_eq!(
                     context.node.node_type(),
