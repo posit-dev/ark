@@ -27,11 +27,8 @@ use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
-use crate::lsp::document_context::DocumentContext;
 use crate::lsp::signature_help::r_signature_help;
 use crate::treesitter::node_in_string;
-use crate::treesitter::NodeTypeExt;
-
 pub(super) struct CustomSource;
 
 impl CompletionSource for CustomSource {
@@ -43,53 +40,25 @@ impl CompletionSource for CustomSource {
         &self,
         completion_context: &CompletionContext,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_custom_source(completion_context.document_context)
+        completions_from_custom_source(completion_context)
     }
 }
 
 fn completions_from_custom_source(
-    context: &DocumentContext,
+    context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    let mut node = context.node;
-
-    let mut has_call = false;
-
-    loop {
-        // Try custom call completions
-        if node.is_call() {
-            has_call = true;
-            break;
-        }
-
-        // If we reach a brace list, bail.
-        if node.is_braced_expression() {
-            break;
-        }
-
-        // Update the node.
-        node = match node.parent() {
-            Some(node) => node,
-            None => break,
-        };
-    }
-
-    if !has_call {
+    if context.containing_call_node().is_none() {
         // Didn't detect anything worth completing in this context,
         // let other sources add their own candidates instead
         return Ok(None);
     }
 
-    completions_from_custom_source_impl(context)
-}
-
-pub fn completions_from_custom_source_impl(
-    context: &DocumentContext,
-) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    let point = context.point;
-    let node = context.node;
+    let document_context = context.document_context;
+    let point = document_context.point;
+    let node = document_context.node;
 
     // Use the signature help tools to figure out the necessary pieces.
-    let signatures = r_signature_help(context)?;
+    let signatures = r_signature_help(document_context)?;
     let Some(signatures) = signatures else {
         return Ok(None);
     };
@@ -237,13 +206,43 @@ pub fn completions_from_custom_source_impl(
 
 #[cfg(test)]
 mod tests {
-    use tree_sitter::Point;
-
     use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::r_task;
+
+    // Helper functions for testing custom completions
+    fn assert_has_completion(code_with_cursor: &str, name: &str, expected_insert_text: &str) {
+        let (text, point) = point_from_cursor(code_with_cursor);
+        let state = WorldState::default();
+        let document = Document::new(text.as_str(), None);
+        let document_context = DocumentContext::new(&document, point, None);
+        let context = CompletionContext::new(&document_context, &state);
+
+        let completions = completions_from_custom_source(&context).unwrap().unwrap();
+        let completion = completions
+            .into_iter()
+            .find(|completion| completion.label == name);
+        assert!(completion.is_some());
+
+        let completion = completion.unwrap();
+        let expected_text = expected_insert_text.replace("{name}", name);
+        assert_eq!(completion.insert_text.unwrap(), expected_text);
+    }
+
+    fn assert_no_completions(code_with_cursor: &str) {
+        let (text, point) = point_from_cursor(code_with_cursor);
+        let state = WorldState::default();
+        let document = Document::new(text.as_str(), None);
+        let document_context = DocumentContext::new(&document, point, None);
+        let context = CompletionContext::new(&document_context, &state);
+
+        let completions = completions_from_custom_source(&context).unwrap();
+        assert!(completions.is_none());
+    }
 
     #[test]
     fn test_completion_custom_library() {
@@ -254,9 +253,11 @@ mod tests {
                 usize::try_from(n).unwrap()
             };
 
-            let point = Point { row: 0, column: 8 };
-            let document = Document::new("library()", None);
-            let context = DocumentContext::new(&document, point, None);
+            let (text, point) = point_from_cursor("library(@)");
+            let state = WorldState::default();
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let context = CompletionContext::new(&document_context, &state);
 
             let n_compls = completions_from_custom_source(&context)
                 .unwrap()
@@ -266,9 +267,11 @@ mod tests {
             // There should be as many matches as installed packages
             assert_eq!(n_compls, n_packages);
 
-            let point = Point { row: 0, column: 11 };
-            let document = Document::new("library(uti)", None);
-            let context = DocumentContext::new(&document, point, None);
+            let (text, point) = point_from_cursor("library(uti@)");
+            let state = WorldState::default();
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let context = CompletionContext::new(&document_context, &state);
 
             let compls = completions_from_custom_source(&context).unwrap().unwrap();
 
@@ -280,46 +283,34 @@ mod tests {
     fn test_completion_custom_sys_getenv() {
         r_task(|| {
             let name = "ARK_TEST_ENVVAR";
-
             harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
 
-            let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
-                let document = Document::new(text, None);
-                let context = DocumentContext::new(&document, point, None);
-
-                let completions = completions_from_custom_source(&context).unwrap().unwrap();
-                let completion = completions
-                    .into_iter()
-                    .find(|completion| completion.label == name);
-                assert!(completion.is_some());
-
-                // Insert text is quoted!
-                let completion = completion.unwrap();
-                assert_eq!(completion.insert_text.unwrap(), format!("\"{name}\""));
-            };
-
             // Inside the parentheses
-            let (text, point) = point_from_cursor("Sys.getenv(@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.getenv(@)", name, "\"{name}\"");
+
+            // Inside the parentheses, multiline
+            assert_has_completion("Sys.getenv(\n  @\n)", name, "\"{name}\"");
 
             // Named argument
-            let (text, point) = point_from_cursor("Sys.getenv(x = @)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.getenv(x = @)", name, "\"{name}\"");
+
+            // Named argument, multiline
+            assert_has_completion("Sys.getenv(\n  x = @\n)", name, "\"{name}\"");
 
             // Typed some and then requested completions
-            let (text, point) = point_from_cursor("Sys.getenv(ARK_@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.getenv(ARK_@)", name, "\"{name}\"");
+
+            // Typed some and then requested completions, multiline
+            assert_has_completion("Sys.getenv(\n  ARK_@\n)", name, "\"{name}\"");
 
             // After a named argument
-            let (text, point) = point_from_cursor("Sys.getenv(unset = '1', @)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.getenv(unset = '1', @)", name, "\"{name}\"");
+
+            // After a named argument, multiline
+            assert_has_completion("Sys.getenv(\n  unset = '1',\n  @\n)", name, "\"{name}\"");
 
             // Should not have it here
-            let (text, point) = point_from_cursor("Sys.getenv('foo', @)");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_custom_source(&context).unwrap();
-            assert!(completions.is_none());
+            assert_no_completions("Sys.getenv('foo', @)");
 
             harp::parse_eval_base(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
         })
@@ -329,43 +320,20 @@ mod tests {
     fn test_completion_custom_sys_unsetenv() {
         r_task(|| {
             let name = "ARK_TEST_ENVVAR";
-
             harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
 
-            let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
-                let document = Document::new(text, None);
-                let context = DocumentContext::new(&document, point, None);
-
-                let completions = completions_from_custom_source(&context).unwrap().unwrap();
-                let completion = completions
-                    .into_iter()
-                    .find(|completion| completion.label == name);
-                assert!(completion.is_some());
-
-                // Insert text is quoted!
-                let completion = completion.unwrap();
-                assert_eq!(completion.insert_text.unwrap(), format!("\"{name}\""));
-            };
-
             // Inside the parentheses
-            let (text, point) = point_from_cursor("Sys.unsetenv(@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.unsetenv(@)", name, "\"{name}\"");
 
             // Named argument
-            let (text, point) = point_from_cursor("Sys.unsetenv(x = @)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.unsetenv(x = @)", name, "\"{name}\"");
 
             // Typed some and then requested completions
-            let (text, point) = point_from_cursor("Sys.unsetenv(ARK_@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.unsetenv(ARK_@)", name, "\"{name}\"");
 
             // TODO: Technically `Sys.unsetenv()` takes a character vector, so we should probably provide
             // completions for this too, but it probably isn't that common in practice
-            let (text, point) = point_from_cursor("Sys.unsetenv(c(@))");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_custom_source(&context).unwrap();
-            assert!(completions.is_none());
+            assert_no_completions("Sys.unsetenv(c(@))");
 
             harp::parse_eval_base(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
         })
@@ -375,37 +343,35 @@ mod tests {
     fn test_completion_custom_sys_setenv() {
         r_task(|| {
             let name = "ARK_TEST_ENVVAR";
-
             harp::parse_eval_base(format!("Sys.setenv({name} = '1')").as_str()).unwrap();
 
-            let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
-                let document = Document::new(text, None);
-                let context = DocumentContext::new(&document, point, None);
-
-                let completions = completions_from_custom_source(&context).unwrap().unwrap();
-                let completion = completions
-                    .into_iter()
-                    .find(|completion| completion.label == name);
-                assert!(completion.is_some());
-
-                // Insert text is NOT quoted! And we get an ` = ` appended.
-                let completion = completion.unwrap();
-                assert_eq!(completion.insert_text.unwrap(), format!("{name} = "));
-            };
-
             // Inside the parentheses
-            let (text, point) = point_from_cursor("Sys.setenv(@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.setenv(@)", name, "{name} = ");
 
             // Typed some and then requested completions
-            let (text, point) = point_from_cursor("Sys.setenv(ARK_@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.setenv(ARK_@)", name, "{name} = ");
 
             // Should have it here too, this takes `...`
-            let (text, point) = point_from_cursor("Sys.setenv(foo = 'bar', @)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("Sys.setenv(foo = 'bar', @)", name, "{name} = ");
 
             harp::parse_eval_base(format!("Sys.unsetenv('{name}')").as_str()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_completion_custom_sys_setenv_value_position() {
+        r_task(|| {
+            // Single line, with space
+            assert_no_completions("Sys.setenv(AAA = @)");
+
+            // Single line, no space
+            assert_no_completions("Sys.setenv(AAA =@)");
+
+            // Multiline case, with space
+            assert_no_completions("Sys.setenv(\n  AAA = @\n)");
+
+            // Multiline case, no space
+            assert_no_completions("Sys.setenv(\n  AAA =@\n)");
         })
     }
 
@@ -413,46 +379,22 @@ mod tests {
     fn test_completion_custom_get_option() {
         r_task(|| {
             let name = "ARK_TEST_OPTION";
-
             harp::parse_eval_base(format!("options({name} = '1')").as_str()).unwrap();
 
-            let assert_has_ark_test_envvar_completion = |text: &str, point: Point| {
-                let document = Document::new(text, None);
-                let context = DocumentContext::new(&document, point, None);
-
-                let completions = completions_from_custom_source(&context).unwrap().unwrap();
-                let completion = completions
-                    .into_iter()
-                    .find(|completion| completion.label == name);
-                assert!(completion.is_some());
-
-                // Insert text is quoted!
-                let completion = completion.unwrap();
-                assert_eq!(completion.insert_text.unwrap(), format!("\"{name}\""));
-            };
-
             // Inside the parentheses
-            let (text, point) = point_from_cursor("getOption(@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("getOption(@)", name, "\"{name}\"");
 
             // Named argument
-            let (text, point) = point_from_cursor("getOption(x = @)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("getOption(x = @)", name, "\"{name}\"");
 
             // Typed some and then requested completions
-            let (text, point) = point_from_cursor("getOption(ARK_@)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("getOption(ARK_@)", name, "\"{name}\"");
 
             // After a named argument
-            let (text, point) = point_from_cursor("getOption(default = '1', @)");
-            assert_has_ark_test_envvar_completion(text.as_str(), point);
+            assert_has_completion("getOption(default = '1', @)", name, "\"{name}\"");
 
             // Should not have it here
-            let (text, point) = point_from_cursor("getOption('foo', @)");
-            let document = Document::new(text.as_str(), None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_custom_source(&context).unwrap();
-            assert!(completions.is_none());
+            assert_no_completions("getOption('foo', @)");
 
             harp::parse_eval_base(format!("options({name} = NULL)").as_str()).unwrap();
         })
@@ -462,37 +404,35 @@ mod tests {
     fn test_completion_custom_options() {
         r_task(|| {
             let name = "ARK_TEST_OPTION";
-
             harp::parse_eval_base(format!("options({name} = '1')").as_str()).unwrap();
 
-            let assert_has_ark_test_option_completion = |text: &str, point: Point| {
-                let document = Document::new(text, None);
-                let context = DocumentContext::new(&document, point, None);
-
-                let completions = completions_from_custom_source(&context).unwrap().unwrap();
-                let completion = completions
-                    .into_iter()
-                    .find(|completion| completion.label == name);
-                assert!(completion.is_some());
-
-                // Insert text is NOT quoted! And we get an ` = ` appended.
-                let completion = completion.unwrap();
-                assert_eq!(completion.insert_text.unwrap(), format!("{name} = "));
-            };
-
             // Inside the parentheses
-            let (text, point) = point_from_cursor("options(@)");
-            assert_has_ark_test_option_completion(text.as_str(), point);
+            assert_has_completion("options(@)", name, "{name} = ");
 
             // Typed some and then requested completions
-            let (text, point) = point_from_cursor("options(ARK_@)");
-            assert_has_ark_test_option_completion(text.as_str(), point);
+            assert_has_completion("options(ARK_@)", name, "{name} = ");
 
             // Should have it here too, this takes `...`
-            let (text, point) = point_from_cursor("options(foo = 'bar', @)");
-            assert_has_ark_test_option_completion(text.as_str(), point);
+            assert_has_completion("options(foo = 'bar', @)", name, "{name} = ");
 
             harp::parse_eval_base(format!("options({name} = NULL)").as_str()).unwrap();
+        })
+    }
+
+    #[test]
+    fn test_completion_custom_options_value_position() {
+        r_task(|| {
+            // Single line, with space
+            assert_no_completions("options(AAA = @)");
+
+            // Single line, no space
+            assert_no_completions("options(AAA =@)");
+
+            // Multiline case, with space
+            assert_no_completions("options(\n  AAA = @\n)");
+
+            // Multiline case, no space
+            assert_no_completions("options(\n  AAA =@\n)");
         })
     }
 }

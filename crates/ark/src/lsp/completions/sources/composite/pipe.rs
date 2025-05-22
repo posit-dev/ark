@@ -64,38 +64,17 @@ fn completions_from_pipe(root: Option<PipeRoot>) -> anyhow::Result<Option<Vec<Co
     )?))
 }
 
-/// Loop should be kept in sync with `completions_from_call()` so they find
-/// the same call to detect the pipe root of
-pub fn find_pipe_root(context: &DocumentContext) -> anyhow::Result<Option<PipeRoot>> {
+pub fn find_pipe_root(
+    context: &DocumentContext,
+    call_node: Option<Node>,
+) -> anyhow::Result<Option<PipeRoot>> {
     log::trace!("find_pipe_root()");
 
-    let mut node = context.node;
-    let mut has_call = false;
-
-    loop {
-        if node.is_call() {
-            // We look for pipe roots from here
-            has_call = true;
-            break;
-        }
-
-        // If we reach a brace list, bail
-        if node.is_braced_expression() {
-            break;
-        }
-
-        // Update the node
-        node = match node.parent() {
-            Some(node) => node,
-            None => break,
-        };
-    }
-
-    if !has_call {
+    let Some(call_node) = call_node else {
         return Ok(None);
-    }
+    };
 
-    let name = find_pipe_root_name(context, &node)?;
+    let name = find_pipe_root_name(context, &call_node)?;
 
     let object = match &name {
         Some(name) => eval_pipe_root(name),
@@ -184,22 +163,24 @@ fn find_pipe_root_node<'a>(
 #[cfg(test)]
 mod tests {
     use harp::eval::RParseEvalOptions;
-    use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::r_task;
+    use crate::treesitter::node_find_containing_call;
 
     #[test]
     fn test_find_pipe_root_works_with_native_and_magrittr() {
         r_task(|| {
             // Place cursor between `()` of `bar()`
-            let point = Point { row: 0, column: 19 };
-            let document = Document::new("x |> foo() %>% bar()", None);
+            let (text, point) = point_from_cursor("x |> foo() %>% bar(@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
+            let call_node = node_find_containing_call(context.node);
 
-            let root = find_pipe_root(&context).unwrap().unwrap();
+            let root = find_pipe_root(&context, call_node).unwrap().unwrap();
             assert_eq!(root.name, "x".to_string());
             assert!(root.object.is_none());
         });
@@ -207,11 +188,12 @@ mod tests {
         r_task(|| {
             // `%||%` is not a pipe!
             // Place cursor between `()` of `bar()`
-            let point = Point { row: 0, column: 20 };
-            let document = Document::new("x |> foo() %||% bar()", None);
+            let (text, point) = point_from_cursor("x |> foo() %||% bar(@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
+            let call_node = node_find_containing_call(context.node);
 
-            let root = find_pipe_root(&context).unwrap();
+            let root = find_pipe_root(&context, call_node).unwrap();
             assert!(root.is_none());
         });
     }
@@ -225,18 +207,19 @@ mod tests {
             };
 
             // Place cursor between `()`
-            let point = Point { row: 0, column: 10 };
-            let document = Document::new("x %>% foo()", None);
+            let (text, point) = point_from_cursor("x %>% foo(@)");
+            let document = Document::new(text.as_str(), None);
             let context = DocumentContext::new(&document, point, None);
+            let call_node = node_find_containing_call(context.node);
 
-            let root = find_pipe_root(&context).unwrap().unwrap();
+            let root = find_pipe_root(&context, call_node).unwrap().unwrap();
             assert_eq!(root.name, "x".to_string());
             assert!(root.object.is_none());
 
             // Set up a real `x` and try again
             harp::parse_eval("x <- data.frame(a = 1)", options.clone()).unwrap();
 
-            let root = find_pipe_root(&context).unwrap().unwrap();
+            let root = find_pipe_root(&context, call_node).unwrap().unwrap();
             assert_eq!(root.name, "x".to_string());
             assert!(root.object.is_some());
 

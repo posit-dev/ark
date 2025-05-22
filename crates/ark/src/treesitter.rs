@@ -536,3 +536,33 @@ pub(crate) fn args_find_call_args<'tree>(
     let call = args_find_call(args, name, contents)?;
     call.child_by_field_name("arguments")
 }
+
+/// Walks up the tree from the given [Node] to find the call node it's contained
+/// within, if there is such a [Node].
+/// Stops at the first call node or, otherwise, when encountering a braced
+/// expression or the root.
+/// If there is no containing call node, returns `None`.
+///
+/// Shared logic for call, custom, and pipe completions.
+pub(crate) fn node_find_containing_call<'tree>(node: Node<'tree>) -> Option<Node<'tree>> {
+    let mut current = node;
+
+    loop {
+        if current.is_call() {
+            return Some(current);
+        }
+
+        // If we reach a brace list, stop searching
+        if current.is_braced_expression() {
+            break;
+        }
+
+        // Move up the tree
+        current = match current.parent() {
+            Some(parent) => parent,
+            None => break,
+        };
+    }
+
+    None
+}

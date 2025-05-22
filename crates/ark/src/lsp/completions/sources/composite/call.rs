@@ -14,7 +14,6 @@ use harp::utils::r_is_function;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
-use super::pipe::PipeRoot;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::sources::utils::call_node_position_type;
@@ -24,7 +23,6 @@ use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
 use crate::lsp::traits::rope::RopeExt;
-use crate::treesitter::NodeTypeExt;
 
 pub(super) struct CallSource;
 
@@ -37,45 +35,20 @@ impl CompletionSource for CallSource {
         &self,
         completion_context: &CompletionContext,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_call(
-            completion_context.document_context,
-            completion_context.pipe_root(),
-        )
+        completions_from_call(completion_context)
     }
 }
 
 fn completions_from_call(
-    context: &DocumentContext,
-    root: Option<PipeRoot>,
+    context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-    let mut node = context.node;
-    let mut has_call = false;
-
-    loop {
-        // If we landed on a 'call', then we should provide parameter completions
-        // for the associated callee if possible.
-        if node.is_call() {
-            has_call = true;
-            break;
-        }
-
-        // If we reach a brace list, bail.
-        if node.is_braced_expression() {
-            break;
-        }
-
-        // Update the node.
-        node = match node.parent() {
-            Some(node) => node,
-            None => break,
-        };
-    }
-
-    if !has_call {
-        // Didn't detect anything worth completing in this context,
-        // let other sources add their own candidates instead
+    let Some(node) = context.containing_call_node() else {
+        // Not in a call, let other sources add their own candidates
         return Ok(None);
-    }
+    };
+
+    let document_context = context.document_context;
+    let point = document_context.point;
 
     // Now that we know we are in a call, detect if we are in a location where
     // we should provide argument completions, i.e. if we are in the `name`
@@ -84,7 +57,7 @@ fn completions_from_call(
     // fn(name = value)
     //    ~~~~
     //
-    match call_node_position_type(&context.node, context.point) {
+    match call_node_position_type(&document_context.node, point) {
         // We should provide argument completions. Ambiguous states like
         // `fn(arg<tab>)` or `fn(x, arg<tab>)` should still get argument
         // completions.
@@ -102,23 +75,28 @@ fn completions_from_call(
         return Ok(None);
     };
 
-    let callee = context.document.contents.node_slice(&callee)?.to_string();
+    let callee = document_context
+        .document
+        .contents
+        .node_slice(&callee)?
+        .to_string();
 
     // - Prefer `root` as the first argument if it exists
     // - Then fall back to looking it up, if possible
     // - Otherwise use `NULL` to signal that we can't figure it out
+    let root = context.pipe_root();
     let object = match root {
         Some(root) => match root.object {
             Some(object) => object,
             None => RObject::null(),
         },
-        None => match get_first_argument(context, &node)? {
+        None => match get_first_argument(document_context, &node)? {
             Some(object) => object,
             None => RObject::null(),
         },
     };
 
-    completions_from_arguments(context, &callee, object)
+    completions_from_arguments(document_context, &callee, object)
 }
 
 fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {
@@ -302,21 +280,25 @@ fn completions_from_workspace_arguments(
 #[cfg(test)]
 mod tests {
     use harp::eval::RParseEvalOptions;
-    use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::composite::call::completions_from_call;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::r_task;
 
     #[test]
     fn test_completions_after_user_types_part_of_an_argument_name() {
         r_task(|| {
             // Right after `tab`
-            let point = Point { row: 0, column: 9 };
-            let document = Document::new("match(tab)", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap().unwrap();
+            let (text, point) = point_from_cursor("match(tab@)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
 
             // We detect this as a `name` position and return all possible completions
             assert_eq!(completions.len(), 4);
@@ -324,10 +306,12 @@ mod tests {
             assert_eq!(completions.get(1).unwrap().label, "table = ");
 
             // Right after `tab`
-            let point = Point { row: 0, column: 12 };
-            let document = Document::new("match(1, tab)", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap().unwrap();
+            let (text, point) = point_from_cursor("match(1, tab@)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
 
             // We detect this as a `name` position and return all possible completions
             // (TODO: Should not return `x` as a possible completion)
@@ -342,10 +326,12 @@ mod tests {
         // Can't find the function
         r_task(|| {
             // Place cursor between `()`
-            let point = Point { row: 0, column: 21 };
-            let document = Document::new("not_a_known_function()", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap();
+            let (text, point) = point_from_cursor("not_a_known_function(@)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap();
             assert!(completions.is_none());
         });
 
@@ -360,10 +346,12 @@ mod tests {
             harp::parse_eval("my_fun <- function(y, x) x + y", options.clone()).unwrap();
 
             // Place cursor between `()`
-            let point = Point { row: 0, column: 7 };
-            let document = Document::new("my_fun()", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap().unwrap();
+            let (text, point) = point_from_cursor("my_fun(@)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
 
             assert_eq!(completions.len(), 2);
 
@@ -375,17 +363,21 @@ mod tests {
             assert_eq!(completion.label, "x = ");
 
             // Place just before the `()`
-            let point = Point { row: 0, column: 6 };
-            let document = Document::new("my_fun()", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap();
+            let (text, point) = point_from_cursor("my_fun@()");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap();
             assert!(completions.is_none());
 
             // Place just after the `()`
-            let point = Point { row: 0, column: 8 };
-            let document = Document::new("my_fun()", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap();
+            let (text, point) = point_from_cursor("my_fun()@");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap();
             assert!(completions.is_none());
 
             // Clean up
@@ -403,14 +395,86 @@ mod tests {
             harp::parse_eval("my_fun <- 1", options.clone()).unwrap();
 
             // Place cursor between `()`
-            let point = Point { row: 0, column: 7 };
-            let document = Document::new("my_fun()", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_call(&context, None).unwrap().unwrap();
+            let (text, point) = point_from_cursor("my_fun(@)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 0);
 
             // Clean up
             harp::parse_eval("remove(my_fun)", options.clone()).unwrap();
         })
+    }
+
+    #[test]
+    fn test_completions_multiline_call() {
+        r_task(|| {
+            // No arguments typed yet
+            let (text, point) = point_from_cursor("match(\n  @\n)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+
+            // Partially typed argument
+            let (text, point) = point_from_cursor("match(\n  tab@\n)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+
+            // Partially typed second argument
+            let (text, point) = point_from_cursor("match(\n  1,\n  tab@\n)");
+            let document = Document::new(text.as_str(), None);
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_call(&context).unwrap().unwrap();
+
+            assert_eq!(completions.len(), 4);
+            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.get(1).unwrap().label, "table = ");
+        })
+    }
+
+    #[test]
+    fn test_completions_in_value_position() {
+        r_task(|| {
+            fn assert_no_call_completions(code_with_cursor: &str) {
+                let (text, point) = point_from_cursor(code_with_cursor);
+                let document = Document::new(text.as_str(), None);
+                let document_context = DocumentContext::new(&document, point, None);
+                let state = WorldState::default();
+                let context = CompletionContext::new(&document_context, &state);
+                let completions = completions_from_call(&context).unwrap();
+
+                // We shouldn't get completions in value position
+                assert!(completions.is_none());
+            }
+
+            // Single line, with space
+            assert_no_call_completions("match(x = @)");
+
+            // Single line, no space
+            assert_no_call_completions("match(x =@)");
+
+            // Multiline case, with space
+            assert_no_call_completions("match(\n  x = @\n)");
+
+            // Multiline case, no space
+            assert_no_call_completions("match(\n  x =@\n)");
+        });
     }
 }
