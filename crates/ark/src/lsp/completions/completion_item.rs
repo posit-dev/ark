@@ -37,7 +37,9 @@ use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::TextEdit;
 use tree_sitter::Node;
 
-use crate::lsp::completions::parameter_hints::ParameterHints;
+use crate::lsp::completions::function_context::ArgumentsStatus;
+use crate::lsp::completions::function_context::FunctionContext;
+use crate::lsp::completions::function_context::FunctionUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
@@ -119,6 +121,8 @@ pub(super) fn completion_item_from_assignment(
     item.documentation = Some(Documentation::MarkupContent(markup));
     item.kind = Some(CompletionItemKind::VARIABLE);
 
+    // TODO: This ad hoc completion item construction for a function does not
+    // benefit from the logic in completion_item_from_function() :(
     if rhs.node_type() == NodeType::FunctionDefinition {
         if let Some(parameters) = rhs.child_by_field_name("parameters") {
             let parameters = context
@@ -167,9 +171,9 @@ pub(super) unsafe fn completion_item_from_package(
 pub(super) fn completion_item_from_function(
     name: &str,
     package: Option<&str>,
-    parameter_hints: &ParameterHints,
+    function_context: &FunctionContext,
 ) -> anyhow::Result<CompletionItem> {
-    let label = format!("{}", name);
+    let label = name.to_string();
     let mut item = completion_item(label, CompletionData::Function {
         name: name.to_string(),
         package: package.map(|s| s.to_string()),
@@ -177,25 +181,106 @@ pub(super) fn completion_item_from_function(
 
     item.kind = Some(CompletionItemKind::FUNCTION);
 
+    let insert_text = sym_quote_invalid(name);
+
     let label_details = item_details(package);
     item.label_details = Some(label_details);
 
-    let insert_text = sym_quote_invalid(name);
+    // Are we forming a completion item that's an exact match for the existing
+    // function identifier?
+    let item_name_is_match = name == function_context.name;
 
-    if parameter_hints.is_enabled() {
+    if item_name_is_match {
+        item.sort_text = Some(format!("0-{name}"));
+        item.preselect = Some(true);
+    }
+
+    if function_context.usage == FunctionUsage::Call &&
+        function_context.arguments_status == ArgumentsStatus::Absent
+    {
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
         item.insert_text = Some(format!("{insert_text}($0)"));
 
-        // provide parameter completions after completing function
         item.command = Some(Command {
             title: "Trigger Parameter Hints".to_string(),
             command: "editor.action.triggerParameterHints".to_string(),
             ..Default::default()
         });
-    } else {
-        item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
-        item.insert_text = Some(insert_text);
+
+        return Ok(item);
     }
+
+    if function_context.usage == FunctionUsage::Reference {
+        // Create a text edit that replaces the existing function name
+        // This prevents duplication when the completion is accepted in the
+        // case of adding `pkg::` after the fact
+
+        if item_name_is_match {
+            item.insert_text = None;
+            let text_edit = TextEdit {
+                range: function_context.range,
+                new_text: insert_text,
+            };
+            // TODO: Review the two text edit types involved here
+            item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
+        } else {
+            item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
+            item.insert_text = Some(insert_text);
+        }
+
+        return Ok(item);
+    }
+
+    // from here on out, we use a text edit for all cases
+    item.insert_text = None;
+
+    if function_context.usage == FunctionUsage::Call &&
+        function_context.arguments_status == ArgumentsStatus::Empty
+    {
+        // Tweak the range to cover the opening parenthesis "("
+        // Include the opening parenthesis in the new text
+        // The effect is to move the cursor inside the parentheses
+        let text_edit = TextEdit {
+            range: {
+                let mut range = function_context.range;
+                range.end.character += 1;
+                range
+            },
+            new_text: format!("{}(", insert_text),
+        };
+        item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
+
+        item.command = Some(Command {
+            title: "Trigger Parameter Hints".to_string(),
+            command: "editor.action.triggerParameterHints".to_string(),
+            ..Default::default()
+        });
+
+        return Ok(item);
+    }
+
+    if function_context.usage == FunctionUsage::Call &&
+        function_context.arguments_status == ArgumentsStatus::Nonempty
+    {
+        let text_edit = TextEdit {
+            range: function_context.range,
+            new_text: insert_text,
+        };
+
+        item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
+
+        return Ok(item);
+    }
+
+    // Fallback case which should really never happen, but let's be safe
+    log::trace!(
+        "completion_item_from_function() - Unexpected case: usage={:?}, arguments_status={:?}",
+        function_context.usage,
+        function_context.arguments_status
+    );
+
+    item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
+    item.insert_text = Some(insert_text);
 
     Ok(item)
 }
@@ -250,7 +335,7 @@ pub(super) unsafe fn completion_item_from_object(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    parameter_hints: &ParameterHints,
+    function_context: &FunctionContext,
 ) -> anyhow::Result<CompletionItem> {
     if r_typeof(object) == PROMSXP {
         return completion_item_from_promise(
@@ -259,7 +344,7 @@ pub(super) unsafe fn completion_item_from_object(
             envir,
             package,
             promise_strategy,
-            parameter_hints,
+            function_context,
         );
     }
 
@@ -269,7 +354,7 @@ pub(super) unsafe fn completion_item_from_object(
     // In other words, when creating a completion item for these functions,
     // we should also figure out where we can receive the help from.
     if Rf_isFunction(object) != 0 {
-        return completion_item_from_function(name, package, parameter_hints);
+        return completion_item_from_function(name, package, function_context);
     }
 
     let mut item = completion_item(name, CompletionData::Object {
@@ -300,7 +385,7 @@ pub(super) unsafe fn completion_item_from_promise(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    parameter_hints: &ParameterHints,
+    function_context: &FunctionContext,
 ) -> anyhow::Result<CompletionItem> {
     if r_promise_is_forced(object) {
         // Promise has already been evaluated before.
@@ -312,7 +397,7 @@ pub(super) unsafe fn completion_item_from_promise(
             envir,
             package,
             promise_strategy,
-            parameter_hints,
+            function_context,
         );
     }
 
@@ -329,7 +414,7 @@ pub(super) unsafe fn completion_item_from_promise(
             envir,
             package,
             promise_strategy,
-            parameter_hints,
+            function_context,
         );
     }
 
@@ -370,7 +455,7 @@ pub(super) unsafe fn completion_item_from_namespace(
     name: &str,
     namespace: SEXP,
     package: &str,
-    parameter_hints: &ParameterHints,
+    function_context: &FunctionContext,
 ) -> anyhow::Result<CompletionItem> {
     // We perform two passes to locate the object. It is normal for the first pass to
     // error when the `namespace` doesn't have a binding for `name` because the associated
@@ -385,7 +470,7 @@ pub(super) unsafe fn completion_item_from_namespace(
         namespace,
         Some(package),
         PromiseStrategy::Force,
-        parameter_hints,
+        function_context,
     ) {
         Ok(item) => return Ok(item),
         Err(error) => error,
@@ -398,7 +483,7 @@ pub(super) unsafe fn completion_item_from_namespace(
         imports,
         Some(package),
         PromiseStrategy::Force,
-        parameter_hints,
+        function_context,
     ) {
         Ok(item) => return Ok(item),
         Err(error) => error,
@@ -423,10 +508,20 @@ pub(super) unsafe fn completion_item_from_lazydata(
     let promise_strategy = PromiseStrategy::Simple;
 
     // Lazydata objects are never functions, so this doesn't really matter
-    let parameter_hints = ParameterHints::Disabled;
+    let dummy_function_context = FunctionContext {
+        name: String::new(),
+        range: Default::default(),
+        usage: FunctionUsage::Call,
+        arguments_status: ArgumentsStatus::Absent,
+    };
 
-    match completion_item_from_symbol(name, env, Some(package), promise_strategy, &parameter_hints)
-    {
+    match completion_item_from_symbol(
+        name,
+        env,
+        Some(package),
+        promise_strategy,
+        &dummy_function_context,
+    ) {
         Ok(item) => Ok(item),
         Err(err) => {
             // Should be impossible, but we'll be extra safe
@@ -440,7 +535,7 @@ pub(super) unsafe fn completion_item_from_symbol(
     envir: SEXP,
     package: Option<&str>,
     promise_strategy: PromiseStrategy,
-    parameter_hints: &ParameterHints,
+    function_context: &FunctionContext,
 ) -> anyhow::Result<CompletionItem> {
     let symbol = r_symbol!(name);
 
@@ -477,7 +572,7 @@ pub(super) unsafe fn completion_item_from_symbol(
         envir,
         package,
         promise_strategy,
-        parameter_hints,
+        function_context,
     )
 }
 
