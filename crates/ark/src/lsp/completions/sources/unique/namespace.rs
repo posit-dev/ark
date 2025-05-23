@@ -21,10 +21,8 @@ use tree_sitter::Point;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
-use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::CompletionSource;
-use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NamespaceOperatorType;
 use crate::treesitter::NodeType;
@@ -41,19 +39,16 @@ impl CompletionSource for NamespaceSource {
         &self,
         completion_context: &CompletionContext,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_namespace(
-            completion_context.document_context,
-            completion_context.parameter_hints(),
-        )
+        completions_from_namespace(completion_context)
     }
 }
 
 // Handle the case with 'package::prefix', where the user has now
 // started typing the prefix of the symbol they would like completions for.
 fn completions_from_namespace(
-    context: &DocumentContext,
-    parameter_hints: &ParameterHints,
+    completion_context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    let context = completion_context.document_context;
     let node = context.node;
 
     // We expect `DocumentContext` to have drilled down into the CST to the anonymous node,
@@ -101,11 +96,17 @@ fn completions_from_namespace(
     let strings = unsafe { symbols.to::<Vec<String>>()? };
 
     for string in strings.iter() {
-        let item =
-            unsafe { completion_item_from_namespace(string, *namespace, package, parameter_hints) };
+        let item = unsafe {
+            completion_item_from_namespace(
+                string,
+                *namespace,
+                package,
+                completion_context.function_context(),
+            )
+        };
         match item {
             Ok(item) => completions.push(item),
-            Err(error) => log::error!("{:?}", error),
+            Err(error) => log::error!("{error:?}"),
         }
     }
 
@@ -161,7 +162,7 @@ fn namespace_node_from_identifier(node: Node) -> NamespaceNodeKind {
         return NamespaceNodeKind::None;
     };
 
-    if !matches!(parent.node_type(), NodeType::NamespaceOperator(_)) {
+    if !parent.is_namespace_operator() {
         // Simple identifier with a parent that isn't a namespace node.
         // Totally possible. Want other completions to have a chance to run.
         return NamespaceNodeKind::None;
@@ -240,10 +241,11 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
 mod tests {
     use tree_sitter::Point;
 
-    use crate::lsp::completions::parameter_hints::ParameterHints;
+    use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
+    use crate::lsp::state::WorldState;
     use crate::r_task;
 
     #[test]
@@ -252,10 +254,10 @@ mod tests {
             // Just colons, no RHS text yet
             let point = Point { row: 0, column: 7 };
             let document = Document::new("utils::", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
 
             let completion = completions.iter().find(|item| item.label == "adist");
             assert!(completion.is_some());
@@ -269,10 +271,10 @@ mod tests {
             // Internal functions with `:::`
             let point = Point { row: 0, column: 8 };
             let document = Document::new("utils:::", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
             let completion = completions
                 .iter()
                 .find(|item| item.label == "as.bibentry.bibentry");
@@ -282,10 +284,10 @@ mod tests {
             // Filtering applied on frontend side.
             let point = Point { row: 0, column: 11 };
             let document = Document::new("utils::blah", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
             let completion = completions.iter().find(|item| item.label == "adist");
             assert!(completion.is_some());
         })
@@ -296,9 +298,10 @@ mod tests {
         r_task(|| {
             let point = Point { row: 0, column: 7 };
             let document = Document::new("base::+", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions =
-                completions_from_namespace(&context, &ParameterHints::Enabled).unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap();
             assert!(completions.is_none());
         })
     }
@@ -308,10 +311,10 @@ mod tests {
         r_task(|| {
             let point = Point { row: 0, column: 2 };
             let document = Document::new("base::ab", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
             assert!(completions.is_empty());
         })
     }
@@ -321,26 +324,26 @@ mod tests {
         r_task(|| {
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base::ab", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
             assert!(completions.is_empty());
 
             let point = Point { row: 0, column: 5 };
             let document = Document::new("base:::ab", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
             assert!(completions.is_empty());
 
             let point = Point { row: 0, column: 6 };
             let document = Document::new("base:::ab", None);
-            let context = DocumentContext::new(&document, point, None);
-            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
-                .unwrap()
-                .unwrap();
+            let document_context = DocumentContext::new(&document, point, None);
+            let state = WorldState::default();
+            let context = CompletionContext::new(&document_context, &state);
+            let completions = completions_from_namespace(&context).unwrap().unwrap();
             assert!(completions.is_empty());
         })
     }

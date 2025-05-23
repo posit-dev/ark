@@ -7,7 +7,7 @@
 
 mod completion_context;
 mod completion_item;
-mod parameter_hints;
+mod function_context;
 mod provide;
 mod resolve;
 mod sources;
@@ -15,3 +15,6 @@ mod types;
 
 pub(crate) use provide::provide_completions;
 pub(crate) use resolve::resolve_completion;
+
+#[cfg(test)]
+mod tests;
