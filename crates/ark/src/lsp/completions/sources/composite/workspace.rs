@@ -15,12 +15,9 @@ use tower_lsp::lsp_types::MarkupKind;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_function;
 use crate::lsp::completions::completion_item::completion_item_from_variable;
-use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::CompletionSource;
-use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
-use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
 use crate::treesitter::node_in_string;
@@ -37,19 +34,15 @@ impl CompletionSource for WorkspaceSource {
         &self,
         completion_context: &CompletionContext,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_workspace(
-            completion_context.document_context,
-            completion_context.state,
-            completion_context.parameter_hints(),
-        )
+        completions_from_workspace(completion_context)
     }
 }
 
 fn completions_from_workspace(
-    context: &DocumentContext,
-    state: &WorldState,
-    parameter_hints: &ParameterHints,
+    completion_context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+    let context = completion_context.document_context;
+    let state = completion_context.state;
     let node = context.node;
 
     if node.is_namespace_operator() {
@@ -85,7 +78,11 @@ fn completions_from_workspace(
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
-                let mut completion = unwrap!(completion_item_from_function(name, None, parameter_hints), Err(error) => {
+                let mut completion = unwrap!(completion_item_from_function(
+                    name,
+                    None,
+                    completion_context.function_context(),
+                ), Err(error) => {
                     error!("{:?}", error);
                     return;
                 });

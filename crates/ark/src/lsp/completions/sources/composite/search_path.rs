@@ -21,12 +21,10 @@ use tower_lsp::lsp_types::CompletionItem;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
-use crate::lsp::completions::parameter_hints::ParameterHints;
 use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::PromiseStrategy;
-use crate::lsp::document_context::DocumentContext;
 
 pub(super) struct SearchPathSource;
 
@@ -39,16 +37,12 @@ impl CompletionSource for SearchPathSource {
         &self,
         completion_context: &CompletionContext,
     ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
-        completions_from_search_path(
-            completion_context.document_context,
-            completion_context.parameter_hints(),
-        )
+        completions_from_search_path(completion_context)
     }
 }
 
 fn completions_from_search_path(
-    context: &DocumentContext,
-    parameter_hints: &ParameterHints,
+    context: &CompletionContext,
 ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let mut completions = vec![];
 
@@ -116,8 +110,8 @@ fn completions_from_search_path(
                     symbol,
                     env,
                     name,
-                    promise_strategy,
-                    parameter_hints,
+                    promise_strategy.clone(),
+                    context.function_context(),
                 ) {
                     Ok(item) => completions.push(item),
                     Err(err) => {
@@ -145,7 +139,7 @@ fn completions_from_search_path(
         }
     }
 
-    filter_out_dot_prefixes(context, &mut completions);
+    filter_out_dot_prefixes(context.document_context, &mut completions);
 
     // Push search path completions starting with non-word characters to the
     // bottom of the sort list (like those starting with `.`, or `%>%`)
