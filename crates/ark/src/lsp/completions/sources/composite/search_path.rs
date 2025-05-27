@@ -65,7 +65,7 @@ fn completions_from_search_path(
         #[cfg(not(test))] // Unit tests do not have an `RMain`
         {
             use crate::interface::RMain;
-            if let Some(debug_env) = &RMain::get().debug_env {
+            if let Some(debug_env) = &RMain::get().debug_env() {
                 // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
                 env = debug_env.sexp;
             }

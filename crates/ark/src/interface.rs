@@ -259,7 +259,7 @@ pub struct RMain {
     /// Current topmost environment on the stack while waiting for input in the
     /// debugger. This is `Some()` only when R is idle and in a `browser()`
     /// prompt.
-    pub(crate) debug_env: Option<RObject>,
+    debug_env: Option<RObject>,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -2071,6 +2071,11 @@ impl RMain {
             // `harp::register`) will trigger an interrupt jump right away.
             StdInRpcReply::Interrupt => Ok(RObject::null()),
         }
+    }
+
+    #[cfg(not(test))] // Avoid warnings in unit test
+    pub(crate) fn debug_env(&self) -> Option<RObject> {
+        self.debug_env.clone()
     }
 }
 
