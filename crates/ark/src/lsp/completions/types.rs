@@ -54,7 +54,7 @@ pub(super) enum CompletionData {
     Unknown,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum PromiseStrategy {
     Simple,
     Force,

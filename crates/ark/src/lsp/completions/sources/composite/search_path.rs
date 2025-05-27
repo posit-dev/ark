@@ -58,14 +58,25 @@ fn completions_from_search_path(
 
     unsafe {
         // Iterate through environments starting from the global environment.
-        let mut envir = R_GlobalEnv;
+        let mut env = R_GlobalEnv;
 
-        while envir != R_EmptyEnv {
-            let is_pkg_env = r_env_is_pkg_env(envir);
+        // If we're waiting for input in `read_console()` with a debugger
+        // prompt, start from current environment
+        #[cfg(not(test))] // Unit tests do not have an `RMain`
+        {
+            use crate::interface::RMain;
+            if let Some(debug_env) = &RMain::get().debug_env() {
+                // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+                env = debug_env.sexp;
+            }
+        }
+
+        while env != R_EmptyEnv {
+            let is_pkg_env = r_env_is_pkg_env(env);
 
             // Get package environment name, if there is one
             let name = if is_pkg_env {
-                let name = RObject::from(r_pkg_env_name(envir));
+                let name = RObject::from(r_pkg_env_name(env));
                 let name = String::try_from(name)?;
                 Some(name)
             } else {
@@ -84,7 +95,7 @@ fn completions_from_search_path(
             };
 
             // List symbols in the environment.
-            let symbols = R_lsInternal(envir, 1);
+            let symbols = R_lsInternal(env, 1);
 
             // Create completion items for each.
             let vector = CharacterVector::new(symbols)?;
@@ -103,9 +114,9 @@ fn completions_from_search_path(
                 // Add the completion item.
                 match completion_item_from_symbol(
                     symbol,
-                    envir,
+                    env,
                     name,
-                    promise_strategy.clone(),
+                    promise_strategy,
                     parameter_hints,
                 ) {
                     Ok(item) => completions.push(item),
@@ -118,7 +129,7 @@ fn completions_from_search_path(
             }
 
             // Get the next environment.
-            envir = ENCLOS(envir);
+            env = ENCLOS(env);
         }
 
         // Include installed packages as well.
