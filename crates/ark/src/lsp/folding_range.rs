@@ -5,14 +5,14 @@
 //
 //
 
-use regex::Regex;
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
+use regex::Regex;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
-use crate::documents::Document;
+use crate::lsp::documents::Document;
 
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
@@ -23,7 +23,7 @@ pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
         .set_language(&tree_sitter_r::LANGUAGE.into())
         .unwrap();
 
-    let ast = parser.parse(&document.contents, None).unwrap();
+    let ast = parser.parse(&document.contents.to_string(), None).unwrap();
 
     if ast.root_node().has_error() {
         tracing::error!("Folding range service: Parse error");
@@ -80,7 +80,7 @@ fn parse_ts_node(
                 count_leading_whitespaces(document, end.row),
             );
             folding_ranges.push(folding_range);
-        }
+        },
         "comment" => {
             // Only process standalone comment
             if count_leading_whitespaces(document, start.row) != start.column {
@@ -99,7 +99,7 @@ fn parse_ts_node(
             );
             region_processor(folding_ranges, region_marker, start.row, &comment_line);
             cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
-        }
+        },
         _ => (),
     }
 
@@ -156,17 +156,17 @@ fn bracket_range(
         Some(0) => {
             end_line -= 1;
             end_char = None;
-        }
+        },
         Some(_) => {
             if let Some(ref mut value) = end_char {
                 *value -= 1;
             }
-        }
+        },
         None => {
             tracing::error!(
                 "Folding Range (bracket_range): adjusted_end_char should not be None here"
             );
-        }
+        },
     }
 
     FoldingRange {
@@ -198,7 +198,7 @@ fn get_line_text(
 ) -> String {
     let text = &document.contents;
     // Split the text into lines
-    let lines: Vec<&str> = text.lines().collect();
+    let lines: Vec<&str> = text.lines().filter_map(|line| line.as_str()).collect();
 
     // Ensure the start_line is within bounds
     if line_num >= lines.len() {
@@ -217,7 +217,7 @@ fn get_line_text(
     let end_idx = end_idx.min(line.len());
 
     // Extract the substring and return it
-    line[start_idx..end_idx].to_string() // TODO
+    line[start_idx..end_idx].to_string()
 }
 
 fn find_last_non_empty_line(document: &Document, start_line: usize, end_line: usize) -> usize {
@@ -282,7 +282,7 @@ fn nested_processor(
             Ordering::Less => {
                 comment_stack.last_mut().unwrap().push((level, line_num));
                 break;
-            }
+            },
             Ordering::Equal => {
                 let start_line = comment_stack.last().unwrap().last().unwrap().1;
                 folding_ranges.push(comment_range(
@@ -292,7 +292,7 @@ fn nested_processor(
                 comment_stack.last_mut().unwrap().pop();
                 comment_stack.last_mut().unwrap().push((level, line_num));
                 break;
-            }
+            },
             Ordering::Greater => {
                 let start_line = comment_stack.last().unwrap().last().unwrap().1;
                 folding_ranges.push(comment_range(
@@ -300,7 +300,7 @@ fn nested_processor(
                     find_last_non_empty_line(document, start_line, line_num - 1),
                 ));
                 comment_stack.last_mut().unwrap().pop(); // Safe: the loop exits early if the stack becomes empty
-            }
+            },
         }
     }
 }
@@ -317,15 +317,15 @@ fn region_processor(
     match region_type.as_str() {
         "start" => {
             region_marker.replace(line_idx);
-        }
+        },
         "end" => {
             if let Some(region_start) = region_marker {
                 let folding_range = comment_range(*region_start, line_idx);
                 folding_ranges.push(folding_range);
                 *region_marker = None;
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -409,7 +409,11 @@ fn end_node_handler(
 }
 
 fn append_indent_folding_ranges(document: &Document, folding_ranges: &mut Vec<FoldingRange>) {
-    let lines: Vec<&str> = document.contents.lines().collect();
+    let lines: Vec<&str> = document
+        .contents
+        .lines()
+        .filter_map(|line| line.as_str())
+        .collect();
     // usize::MAX is used as a placeholder for start lines which should not be included in the folding range
     let mut indent_stack: Vec<(usize, usize)> = vec![(usize::MAX, 0)]; // (start_line, indent_level)
     let mut last_line_is_empty = true; // folding ranges should not start with empty lines
@@ -442,7 +446,7 @@ fn append_indent_folding_ranges(document: &Document, folding_ranges: &mut Vec<Fo
                     }
                     indent_stack.push((line_idx - 1, indent));
                     break;
-                }
+                },
                 Ordering::Equal => break,
                 Ordering::Greater => {
                     if start_line != usize::MAX {
@@ -456,7 +460,7 @@ fn append_indent_folding_ranges(document: &Document, folding_ranges: &mut Vec<Fo
                         });
                     }
                     indent_stack.pop();
-                }
+                },
             }
         }
         last_line_is_empty = trimmed.is_empty();
