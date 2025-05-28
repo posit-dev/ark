@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
+use tower_lsp::lsp_types::FoldingRangeProviderCapability;
 use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
 use tower_lsp::lsp_types::ImplementationProviderCapability;
@@ -139,6 +140,7 @@ pub(crate) fn initialize(
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             references_provider: Some(OneOf::Left(true)),
             document_symbol_provider: Some(OneOf::Left(true)),
+            folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
             workspace_symbol_provider: Some(OneOf::Left(true)),
             execute_command_provider: Some(ExecuteCommandOptions {
                 commands: vec![],
