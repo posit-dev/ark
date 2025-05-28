@@ -131,6 +131,7 @@ pub(crate) enum LspRequest {
     Initialize(InitializeParams),
     WorkspaceSymbol(WorkspaceSymbolParams),
     DocumentSymbol(DocumentSymbolParams),
+    FoldingRange(FoldingRangeParams),
     ExecuteCommand(ExecuteCommandParams),
     Completion(CompletionParams),
     CompletionResolve(CompletionItem),
@@ -152,6 +153,7 @@ pub(crate) enum LspResponse {
     Initialize(InitializeResult),
     WorkspaceSymbol(Option<Vec<SymbolInformation>>),
     DocumentSymbol(Option<DocumentSymbolResponse>),
+    FoldingRange(Option<Vec<FoldingRange>>),
     ExecuteCommand(Option<Value>),
     Completion(Option<CompletionResponse>),
     CompletionResolve(CompletionItem),
@@ -258,6 +260,14 @@ impl LanguageServer for Backend {
             self,
             self.request(LspRequest::DocumentSymbol(params)).await,
             LspResponse::DocumentSymbol
+        )
+    }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::FoldingRange(params)).await,
+            LspResponse::FoldingRange
         )
     }
 
