@@ -24,6 +24,7 @@ use tower_lsp::jsonrpc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::request::GotoImplementationParams;
 use tower_lsp::lsp_types::request::GotoImplementationResponse;
+use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::SelectionRange;
 use tower_lsp::lsp_types::*;
 use tower_lsp::Client;
