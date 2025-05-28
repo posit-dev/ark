@@ -8,6 +8,7 @@
 use anyhow::anyhow;
 use serde_json::Value;
 use stdext::unwrap;
+use stdext::unwrap::IntoResult;
 use struct_field_names_as_array::FieldNamesAsArray;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionParams;
@@ -15,6 +16,8 @@ use tower_lsp::lsp_types::CompletionResponse;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingParams;
 use tower_lsp::lsp_types::DocumentSymbolParams;
 use tower_lsp::lsp_types::DocumentSymbolResponse;
+use tower_lsp::lsp_types::FoldingRange;
+use tower_lsp::lsp_types::FoldingRangeParams;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::Hover;
@@ -45,6 +48,7 @@ use crate::lsp::config::VscDocumentConfig;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::folding_range::folding_range;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
@@ -150,6 +154,22 @@ pub(crate) fn handle_document_symbol(
             lsp::log_error!("{err:?}");
             Ok(None)
         })
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_folding_range(
+    params: FoldingRangeParams,
+    state: &WorldState,
+) -> anyhow::Result<Option<Vec<FoldingRange>>> {
+    let uri = params.text_document.uri;
+    let document = state.documents.get(&uri).into_result()?;
+    match folding_range(document) {
+        Ok(foldings) => Ok(Some(foldings)),
+        Err(err) => {
+            lsp::log_error!("{err:?}");
+            Ok(None)
+        },
+    }
 }
 
 pub(crate) async fn handle_execute_command(client: &Client) -> anyhow::Result<Option<Value>> {
