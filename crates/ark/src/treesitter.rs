@@ -296,6 +296,7 @@ pub trait NodeTypeExt: Sized {
     fn is_namespace_internal_operator(&self) -> bool;
     fn is_unary_operator(&self) -> bool;
     fn is_binary_operator(&self) -> bool;
+    fn is_binary_operator_of_kind(&self, kind: BinaryOperatorType) -> bool;
     fn is_native_pipe_operator(&self) -> bool;
     fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
     fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
@@ -388,6 +389,10 @@ impl NodeTypeExt for Node<'_> {
 
     fn is_binary_operator(&self) -> bool {
         matches!(self.node_type(), NodeType::BinaryOperator(_))
+    }
+
+    fn is_binary_operator_of_kind(&self, kind: BinaryOperatorType) -> bool {
+        matches!(self.node_type(), NodeType::BinaryOperator(node_kind) if node_kind == kind)
     }
 
     fn is_native_pipe_operator(&self) -> bool {

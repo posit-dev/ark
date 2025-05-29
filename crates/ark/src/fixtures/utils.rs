@@ -37,11 +37,18 @@ pub(crate) fn r_test_init() {
 }
 
 pub fn point_from_cursor(x: &str) -> (String, Point) {
+    let (text, point, _offset) = point_and_offset_from_cursor(x);
+    (text, point)
+}
+
+pub fn point_and_offset_from_cursor(x: &str) -> (String, Point, usize) {
     let lines = x.split("\n").collect::<Vec<&str>>();
 
     // i.e. looking for `@` in something like `fn(x = @1, y = 2)`, and it treats the
     // `@` as the cursor position
     let cursor = b'@';
+
+    let mut offset = 0;
 
     for (line_row, line) in lines.into_iter().enumerate() {
         for (char_column, char) in line.as_bytes().into_iter().enumerate() {
@@ -51,9 +58,12 @@ pub fn point_from_cursor(x: &str) -> (String, Point) {
                     row: line_row,
                     column: char_column,
                 };
-                return (x, point);
+                offset += char_column;
+                return (x, point, offset);
             }
         }
+        // `+ 1` for the removed `\n` at the end of this line
+        offset += line.as_bytes().len() + 1;
     }
 
     panic!("`x` must include a `@` character!");
@@ -107,14 +117,15 @@ pub fn package_is_installed(package: &str) -> bool {
 mod tests {
     use tree_sitter::Point;
 
-    use crate::fixtures::point_from_cursor;
+    use crate::fixtures::point_and_offset_from_cursor;
 
     #[test]
     #[rustfmt::skip]
-    fn test_point_from_cursor() {
-        let (text, point) = point_from_cursor("1@ + 2");
+    fn test_point_and_offset_from_cursor() {
+        let (text, point, offset) = point_and_offset_from_cursor("1@ + 2");
         assert_eq!(text, "1 + 2".to_string());
         assert_eq!(point, Point::new(0, 1));
+        assert_eq!(offset, 1);
 
         let text =
 "fn(
@@ -124,8 +135,9 @@ mod tests {
 "fn(
   arg = 3
 )";
-        let (text, point) = point_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text);
         assert_eq!(text, expect);
         assert_eq!(point, Point::new(1, 7));
+        assert_eq!(offset, 11);
     }
 }

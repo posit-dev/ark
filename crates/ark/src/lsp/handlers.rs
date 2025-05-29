@@ -9,6 +9,8 @@ use anyhow::anyhow;
 use serde_json::Value;
 use stdext::unwrap;
 use struct_field_names_as_array::FieldNamesAsArray;
+use tower_lsp::lsp_types::CodeActionParams;
+use tower_lsp::lsp_types::CodeActionResponse;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionParams;
 use tower_lsp::lsp_types::CompletionResponse;
@@ -38,12 +40,14 @@ use tree_sitter::Point;
 
 use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
+use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
 use crate::lsp::config::VscDiagnosticsConfig;
 use crate::lsp::config::VscDocumentConfig;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::encoding::convert_lsp_range_to_tree_sitter_range;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
@@ -87,7 +91,10 @@ pub(crate) async fn handle_initialized(
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
 
-    if lsp_state.needs_registration.did_change_configuration {
+    if lsp_state
+        .capabilities
+        .dynamic_registration_for_did_change_configuration()
+    {
         // The `didChangeConfiguration` request instructs the client to send
         // a notification when the tracked settings have changed.
         //
@@ -380,6 +387,25 @@ pub(crate) fn handle_indent(
     Result::map(res, |opt| {
         Option::map(opt, |edits| edits.into_lsp_offset(&doc.contents))
     })
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_code_action(
+    params: CodeActionParams,
+    lsp_state: &LspState,
+    state: &WorldState,
+) -> anyhow::Result<Option<CodeActionResponse>> {
+    let uri = params.text_document.uri;
+    let doc = state.get_document(&uri)?;
+    let range = convert_lsp_range_to_tree_sitter_range(&doc.contents, params.range);
+
+    let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
+
+    if code_actions.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(code_actions))
+    }
 }
 
 pub(crate) fn handle_virtual_document(

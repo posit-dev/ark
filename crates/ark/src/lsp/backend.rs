@@ -143,6 +143,7 @@ pub(crate) enum LspRequest {
     StatementRange(StatementRangeParams),
     HelpTopic(HelpTopicParams),
     OnTypeFormatting(DocumentOnTypeFormattingParams),
+    CodeAction(CodeActionParams),
     VirtualDocument(VirtualDocumentParams),
     InputBoundaries(InputBoundariesParams),
 }
@@ -164,6 +165,7 @@ pub(crate) enum LspResponse {
     StatementRange(Option<StatementRangeResponse>),
     HelpTopic(Option<HelpTopicResponse>),
     OnTypeFormatting(Option<Vec<TextEdit>>),
+    CodeAction(Option<CodeActionResponse>),
     VirtualDocument(VirtualDocumentResponse),
     InputBoundaries(InputBoundariesResponse),
 }
@@ -369,6 +371,14 @@ impl LanguageServer for Backend {
             self,
             self.request(LspRequest::OnTypeFormatting(params)).await,
             LspResponse::OnTypeFormatting
+        )
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::CodeAction(params)).await,
+            LspResponse::CodeAction
         )
     }
 }

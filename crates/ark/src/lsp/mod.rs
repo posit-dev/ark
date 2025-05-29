@@ -6,6 +6,8 @@
 //
 
 pub mod backend;
+pub mod capabilities;
+pub mod code_action;
 pub mod comm;
 pub mod completions;
 mod config;

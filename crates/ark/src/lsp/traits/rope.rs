@@ -16,6 +16,9 @@ pub trait RopeExt<'a> {
 }
 
 impl<'a> RopeExt<'a> for Rope {
+    /// Converts a tree-sitter [Point] into a byte offset
+    ///
+    /// Useful when constructing [tree_sitter::Range] or [tree_sitter::InputEdit]
     fn point_to_byte(&self, point: Point) -> usize {
         self.line_to_byte(point.row) + point.column
     }

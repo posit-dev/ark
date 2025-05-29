@@ -1,0 +1,13 @@
+---
+source: crates/ark/src/lsp/code_action/roxygen.rs
+expression: text_edit.new_text
+---
+#' Title
+#'
+#' @param a
+#' @param b
+#'
+#' @returns
+#'
+#' @export
+#' @examples
