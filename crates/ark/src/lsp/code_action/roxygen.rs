@@ -165,7 +165,7 @@ mod tests {
     use tree_sitter::Range;
     use url::Url;
 
-    use crate::fixtures::point_and_byte_from_cursor;
+    use crate::fixtures::point_and_offset_from_cursor;
     use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::roxygen::roxygen_documentation;
     use crate::lsp::code_action::CodeActions;
@@ -189,14 +189,14 @@ mod tests {
             .with_code_action_literal_support(true)
             .with_workspace_edit_document_changes(true);
 
-        let (text, point, byte) = point_and_byte_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
             &mut actions,
             &uri,
             &document,
-            point_range(point, byte),
+            point_range(point, offset),
             &capabilities,
         );
 
@@ -294,14 +294,14 @@ mod tests {
 f@n <- function(a, b) {}
         ";
 
-        let (text, point, byte) = point_and_byte_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
             &mut actions,
             &uri,
             &document,
-            point_range(point, byte),
+            point_range(point, offset),
             &capabilities,
         );
         let actions = actions.into_response();
@@ -323,14 +323,14 @@ f@n <- function(a, b) {}
 fn@ <- function(a, b) {}
         ";
 
-        let (text, point, byte) = point_and_byte_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
             &mut actions,
             &uri,
             &document,
-            point_range(point, byte),
+            point_range(point, offset),
             &capabilities,
         );
         let actions = actions.into_response();
@@ -352,14 +352,14 @@ fn@ <- function(a, b) {}
 f@n <- function(a, b) {}
         ";
 
-        let (text, point, byte) = point_and_byte_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
             &mut actions,
             &uri,
             &document,
-            point_range(point, byte),
+            point_range(point, offset),
             &capabilities,
         );
         let actions = actions.into_response();
@@ -381,14 +381,14 @@ f@n <- function(a, b) {}
 f@n <- function(a, b) {}
         ";
 
-        let (text, point, byte) = point_and_byte_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
             &mut actions,
             &uri,
             &document,
-            point_range(point, byte),
+            point_range(point, offset),
             &capabilities,
         );
 
