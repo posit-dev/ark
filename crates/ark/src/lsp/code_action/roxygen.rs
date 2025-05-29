@@ -1,5 +1,4 @@
-use tower_lsp::lsp_types::CodeActionKind;
-use tower_lsp::lsp_types::TextEdit;
+use tower_lsp::lsp_types;
 use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
@@ -108,13 +107,13 @@ pub(crate) fn roxygen_documentation(
     // handling trivial (we just add a new line to every documentation line).
     let position = convert_point_to_position(&document.contents, position);
     let range = tower_lsp::lsp_types::Range::new(position, position);
-    let edit = TextEdit::new(range, documentation);
+    let edit = lsp_types::TextEdit::new(range, documentation);
     let edit =
         code_action_workspace_text_edit(uri.clone(), document.version, vec![edit], capabilities);
 
     actions.add_action(code_action(
         "Generate a roxygen template".to_string(),
-        CodeActionKind::EMPTY,
+        lsp_types::CodeActionKind::EMPTY,
         edit,
     ))
 }
