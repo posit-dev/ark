@@ -9,16 +9,7 @@
 
 use std::collections::HashMap;
 
-use tower_lsp::lsp_types::CodeAction;
-use tower_lsp::lsp_types::CodeActionKind;
-use tower_lsp::lsp_types::CodeActionOrCommand;
-use tower_lsp::lsp_types::CodeActionResponse;
-use tower_lsp::lsp_types::DocumentChanges;
-use tower_lsp::lsp_types::OneOf;
-use tower_lsp::lsp_types::OptionalVersionedTextDocumentIdentifier;
-use tower_lsp::lsp_types::TextDocumentEdit;
-use tower_lsp::lsp_types::TextEdit;
-use tower_lsp::lsp_types::WorkspaceEdit;
+use tower_lsp::lsp_types;
 use tree_sitter::Range;
 use url::Url;
 
@@ -30,7 +21,7 @@ mod roxygen;
 
 /// A small wrapper around [CodeActionResponse] that make a few things more ergonomic
 pub(crate) struct CodeActions {
-    response: CodeActionResponse,
+    response: lsp_types::CodeActionResponse,
 }
 
 pub(crate) fn code_actions(
@@ -38,7 +29,7 @@ pub(crate) fn code_actions(
     document: &Document,
     range: Range,
     capabilities: &Capabilities,
-) -> CodeActionResponse {
+) -> lsp_types::CodeActionResponse {
     let mut actions = CodeActions::new();
 
     roxygen_documentation(&mut actions, uri, document, range, capabilities);
@@ -46,8 +37,12 @@ pub(crate) fn code_actions(
     actions.into_response()
 }
 
-pub(crate) fn code_action(title: String, kind: CodeActionKind, edit: WorkspaceEdit) -> CodeAction {
-    CodeAction {
+pub(crate) fn code_action(
+    title: String,
+    kind: lsp_types::CodeActionKind,
+    edit: lsp_types::WorkspaceEdit,
+) -> lsp_types::CodeAction {
+    lsp_types::CodeAction {
         title,
         kind: Some(kind),
         edit: Some(edit),
@@ -64,19 +59,22 @@ pub(crate) fn code_action(title: String, kind: CodeActionKind, edit: WorkspaceEd
 pub(crate) fn code_action_workspace_text_edit(
     uri: Url,
     version: Option<i32>,
-    edits: Vec<TextEdit>,
+    edits: Vec<lsp_types::TextEdit>,
     capabilities: &Capabilities,
-) -> WorkspaceEdit {
+) -> lsp_types::WorkspaceEdit {
     if capabilities.workspace_edit_document_changes() {
         // Prefer the versioned `DocumentChanges` feature
-        let edit = TextDocumentEdit {
-            text_document: OptionalVersionedTextDocumentIdentifier { uri, version },
-            edits: edits.into_iter().map(|edit| OneOf::Left(edit)).collect(),
+        let edit = lsp_types::TextDocumentEdit {
+            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier { uri, version },
+            edits: edits
+                .into_iter()
+                .map(|edit| lsp_types::OneOf::Left(edit))
+                .collect(),
         };
 
-        let document_changes = DocumentChanges::Edits(vec![edit]);
+        let document_changes = lsp_types::DocumentChanges::Edits(vec![edit]);
 
-        WorkspaceEdit {
+        lsp_types::WorkspaceEdit {
             changes: None,
             document_changes: Some(document_changes),
             change_annotations: None,
@@ -86,7 +84,7 @@ pub(crate) fn code_action_workspace_text_edit(
         let mut changes = HashMap::new();
         changes.insert(uri, edits);
 
-        WorkspaceEdit {
+        lsp_types::WorkspaceEdit {
             changes: Some(changes),
             document_changes: None,
             change_annotations: None,
@@ -97,16 +95,17 @@ pub(crate) fn code_action_workspace_text_edit(
 impl CodeActions {
     pub(crate) fn new() -> Self {
         Self {
-            response: CodeActionResponse::new(),
+            response: lsp_types::CodeActionResponse::new(),
         }
     }
 
-    pub(crate) fn add_action(&mut self, x: CodeAction) -> Option<()> {
-        self.response.push(CodeActionOrCommand::CodeAction(x));
+    pub(crate) fn add_action(&mut self, x: lsp_types::CodeAction) -> Option<()> {
+        self.response
+            .push(lsp_types::CodeActionOrCommand::CodeAction(x));
         Some(())
     }
 
-    pub(crate) fn into_response(self) -> CodeActionResponse {
+    pub(crate) fn into_response(self) -> lsp_types::CodeActionResponse {
         self.response
     }
 }
