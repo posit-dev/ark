@@ -39,18 +39,25 @@ pub(crate) fn roxygen_documentation(
     }
 
     // Parent must be a `<-` or `=` assignment node
-    let parent = node.parent()?;
+    let assignment = node.parent()?;
 
-    if !parent.is_binary_operator_of_kind(BinaryOperatorType::LeftAssignment) &&
-        !parent.is_binary_operator_of_kind(BinaryOperatorType::EqualsAssignment)
+    if !assignment.is_binary_operator_of_kind(BinaryOperatorType::LeftAssignment) &&
+        !assignment.is_binary_operator_of_kind(BinaryOperatorType::EqualsAssignment)
     {
         return None;
     }
 
     // And the rhs must be a function definition
-    let function = parent.child_by_field_name("rhs")?;
+    let function = assignment.child_by_field_name("rhs")?;
 
     if !function.is_function_definition() {
+        return None;
+    }
+
+    // The assignment node must be a direct descendent of the program node (i.e. we don't
+    // provide the code action for local functions defined within another function, or
+    // within some arbitrary braced expression)
+    if !assignment.parent()?.is_program() {
         return None;
     }
 
@@ -277,6 +284,36 @@ mod tests {
             character: 0,
         });
         insta::assert_snapshot!(new_text);
+    }
+
+    #[test]
+    fn test_no_action_when_on_local_function() {
+        let mut actions = CodeActions::new();
+
+        let uri = Url::parse("file:///test.R").unwrap();
+
+        let capabilities = Capabilities::default()
+            .with_code_action_literal_support(true)
+            .with_workspace_edit_document_changes(true);
+
+        let text = "
+outer <- function(a, b = 2) {
+  in@ner <- function(a, b, c) {}
+}
+        ";
+
+        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let document = Document::new(&text, None);
+
+        roxygen_documentation(
+            &mut actions,
+            &uri,
+            &document,
+            point_range(point, offset),
+            &capabilities,
+        );
+        let actions = actions.into_response();
+        assert!(actions.is_empty());
     }
 
     #[test]
