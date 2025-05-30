@@ -291,6 +291,13 @@ fn nested_processor(
     }
 }
 
+/// Enum representing the type of region marker
+#[derive(Debug, PartialEq, Eq)]
+enum RegionType {
+    Start,
+    End,
+}
+
 fn region_processor(
     folding_ranges: &mut Vec<FoldingRange>,
     region_marker: &mut Option<usize>,
@@ -300,33 +307,28 @@ fn region_processor(
     let Some(region_type) = parse_region_type(line_text) else {
         return; // return if the line is not a region section
     };
-    match region_type.as_str() {
-        "start" => {
+    match region_type {
+        RegionType::Start => {
             region_marker.replace(line_idx);
         },
-        "end" => {
+        RegionType::End => {
             if let Some(region_start) = region_marker {
                 let folding_range = comment_range(*region_start, line_idx);
                 folding_ranges.push(folding_range);
                 *region_marker = None;
             }
         },
-        _ => {},
     }
 }
 
-fn parse_region_type(line_text: &str) -> Option<String> {
-    // return the region type
-    // "start": "^\\s*#\\s*region\\b"
-    // "end": "^\\s*#\\s*endregion\\b"
-    // None: otherwise
+fn parse_region_type(line_text: &str) -> Option<RegionType> {
     let region_start = Regex::new(r"^\s*#\s*region\b").unwrap();
     let region_end = Regex::new(r"^\s*#\s*endregion\b").unwrap();
 
     if region_start.is_match(line_text) {
-        Some("start".to_string())
+        Some(RegionType::Start)
     } else if region_end.is_match(line_text) {
-        Some("end".to_string())
+        Some(RegionType::End)
     } else {
         None
     }
