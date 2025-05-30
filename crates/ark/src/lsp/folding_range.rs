@@ -482,3 +482,268 @@ fn end_indent_handler(
     }
     indent_stack.push((usize::MAX, 0)); // Add the placeholder back to the stack
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lsp::documents::Document;
+
+    fn test_folding_range(code: &str) -> Vec<FoldingRange> {
+        let doc = Document::new(code, None);
+        // Sort ranges for more consistent testing
+        sorted_ranges(folding_range(&doc).unwrap())
+    }
+
+    fn sorted_ranges(mut ranges: Vec<FoldingRange>) -> Vec<FoldingRange> {
+        ranges.sort_by(|a, b| {
+            a.start_line
+                .cmp(&b.start_line)
+                .then(a.end_line.cmp(&b.end_line))
+        });
+        ranges
+    }
+
+    #[test]
+    fn test_parse_region_type() {
+        // Not regions
+        assert_eq!(parse_region_type("# # region"), None);
+        assert_eq!(parse_region_type("# # endregion"), None);
+        assert_eq!(parse_region_type("# # not a region"), None);
+        assert_eq!(parse_region_type("# #regionsomething"), None);
+        assert_eq!(parse_region_type("# #endregionsomething"), None);
+
+        // Valid regions
+        assert_eq!(parse_region_type("# #region"), Some(RegionType::Start));
+        assert_eq!(parse_region_type("## #region  "), Some(RegionType::Start));
+        assert_eq!(
+            parse_region_type("# #region my special area"),
+            Some(RegionType::Start)
+        );
+
+        assert_eq!(parse_region_type("# #endregion"), Some(RegionType::End));
+        assert_eq!(parse_region_type("## #endregion  "), Some(RegionType::End));
+        assert_eq!(
+            parse_region_type("# #endregion end of my special area"),
+            Some(RegionType::End)
+        );
+    }
+
+    #[test]
+    fn test_folding_section_comments_basic() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# First section ----
+a
+b
+
+# Second section ----
+c
+d"
+        ));
+    }
+
+    #[test]
+    fn test_folding_nested_section_comments() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Level 1 ----
+a
+
+## Level 2 ----
+b
+
+### Level 3 ----
+c
+
+## Another Level 2 ----
+d
+
+# Back to Level 1 ----
+e"
+        ));
+    }
+
+    #[test]
+    fn test_folding_empty_sections() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Empty section ----
+
+# Another empty section ----
+
+# Section with content ----
+a"
+        ));
+    }
+
+    // Test for VS Code region markers
+    #[test]
+    fn test_folding_regions() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# #region Important code
+a
+b
+c
+# #endregion
+
+# #region Another section
+d
+# #endregion"
+        ));
+    }
+
+    // Test for cells (like Jupyter notebook cells)
+    #[test]
+    fn test_folding_cells() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# %% First cell
+a
+b
+
+# %% Second cell
+c
+
+# %% Third cell
+d"
+        ));
+    }
+
+    // Test for bracket-based folding
+    #[test]
+    fn test_folding_brackets() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+function() {
+  if (condition) {
+    a
+  } else {
+    b
+  }
+}
+
+list <- list(
+  a = 1,
+  b = 2,
+  c = 3
+)"
+        ));
+    }
+
+    // Test for mixed folding strategies
+    #[test]
+    fn test_folding_mixed() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# First section ----
+function() {
+  # #region nested region
+  a
+  # #endregion
+}
+
+## Subsection ----
+# %% Cell in subsection
+b
+
+# Another section ----
+c"
+        ));
+    }
+
+    // Test for edge case with single-line braces
+    #[test]
+    fn test_folding_single_line_braces() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+function() { a }
+
+function() {
+  b
+}"
+        ));
+    }
+
+    // Test for nested, complex code structures
+    #[test]
+    fn test_folding_complex_nested() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Complex example ----
+function(a, b, c) {
+  # #region inner calculations
+  x <- a + b
+  y <- b + c
+
+  if (x > y) {
+    # %% cell inside function
+    result <- x * y
+  } else {
+    result <- x / y
+  }
+  # #endregion
+
+  result
+}
+
+## Subsection ----
+# This is a regular comment, not a section or region"
+        ));
+    }
+
+    // Test for unterminated structures
+    #[test]
+    fn test_folding_unterminated() {
+        // Add try_unwrap to handle the expected error from the parser
+        let doc = Document::new(
+            "
+# #region without end
+
+# %% cell without another cell
+
+function() {
+  # Unclosed function
+",
+            None,
+        );
+
+        // Handle the expected parse error
+        match folding_range(&doc) {
+            Ok(ranges) => insta::assert_debug_snapshot!(sorted_ranges(ranges)),
+            Err(e) => insta::assert_debug_snapshot!(format!("Expected error: {}", e)),
+        }
+    }
+
+    // Test for correct last non-empty line detection
+    #[test]
+    fn test_find_last_non_empty_line() {
+        let doc = Document::new("\nline1\nline2\n\nline3\n", None);
+
+        assert_eq!(find_last_non_empty_line(&doc, 1, 5), 4);
+        assert_eq!(find_last_non_empty_line(&doc, 1, 2), 2);
+        assert_eq!(find_last_non_empty_line(&doc, 3, 5), 4);
+        assert_eq!(find_last_non_empty_line(&doc, 5, 5), 5);
+
+        // Test with empty document
+        let empty_doc = Document::new("\n\n", None);
+        assert_eq!(find_last_non_empty_line(&empty_doc, 1, 2), 1);
+    }
+
+    // Test for whitespace counting
+    #[test]
+    fn test_count_leading_whitespaces() {
+        let doc = Document::new(
+            "no spaces
+  two spaces
+    four spaces
+\ttab char",
+            None,
+        );
+
+        assert_eq!(count_leading_whitespaces(&doc, 0), 0);
+        assert_eq!(count_leading_whitespaces(&doc, 1), 2);
+        assert_eq!(count_leading_whitespaces(&doc, 2), 4);
+        assert_eq!(count_leading_whitespaces(&doc, 3), 1); // Tab counts as 1 char
+    }
+}

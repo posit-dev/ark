@@ -1,0 +1,78 @@
+---
+source: crates/ark/src/lsp/folding_range.rs
+expression: "test_folding_range(\"\n# First section ----\nfunction() {\n  # #region nested region\n  a\n  # #endregion\n}\n\n## Subsection ----\n# %% Cell in subsection\nb\n\n# Another section ----\nc\")"
+---
+[
+    FoldingRange {
+        start_line: 1,
+        start_character: None,
+        end_line: 10,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 2,
+        start_character: Some(
+            11,
+        ),
+        end_line: 5,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 2,
+        start_character: None,
+        end_line: 5,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 3,
+        start_character: None,
+        end_line: 5,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 8,
+        start_character: None,
+        end_line: 10,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 9,
+        start_character: None,
+        end_line: 12,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 12,
+        start_character: None,
+        end_line: 12,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+]
