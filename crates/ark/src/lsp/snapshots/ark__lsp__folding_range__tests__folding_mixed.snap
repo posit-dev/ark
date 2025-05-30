@@ -26,16 +26,6 @@ expression: "test_folding_range(\"\n# First section ----\nfunction() {\n  # #reg
         collapsed_text: None,
     },
     FoldingRange {
-        start_line: 2,
-        start_character: None,
-        end_line: 5,
-        end_character: None,
-        kind: Some(
-            Region,
-        ),
-        collapsed_text: None,
-    },
-    FoldingRange {
         start_line: 3,
         start_character: None,
         end_line: 5,
