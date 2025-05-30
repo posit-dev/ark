@@ -390,7 +390,8 @@ fn end_node_handler(
 
     // End cell Handling
     if let Some(cell_start) = cell_marker {
-        let folding_range = comment_range(*cell_start, line_idx - 1);
+        // For the last cell, include the current line in the folding range
+        let folding_range = comment_range(*cell_start, find_last_non_empty_line(document, *cell_start, line_idx));
         folding_ranges.push(folding_range);
         *cell_marker = None;
     }
