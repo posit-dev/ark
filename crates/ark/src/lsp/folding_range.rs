@@ -12,6 +12,7 @@ use regex::Regex;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
+use super::symbols::parse_comment_as_section;
 use crate::lsp::documents::Document;
 
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
@@ -236,21 +237,6 @@ fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
 
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
-
-fn parse_comment_as_section(comment: &str) -> Option<(usize, String)> {
-    // Match lines starting with one or more '#' followed by some non-empty content and must end with 4 or more '-', '#', or `=`
-    // Ensure that there's actual content between the start and the trailing symbols.
-    if let Some(caps) = RE_COMMENT_SECTION.captures(comment) {
-        let hashes = caps.get(1)?.as_str().len(); // Count the number of '#'
-        let title = caps.get(2)?.as_str().trim().to_string(); // Extract the title text without trailing punctuations
-        if title.is_empty() {
-            return None; // Return None for lines with only hashtags
-        }
-        return Some((hashes, title)); // Return the level based on the number of '#' and the title
-    }
-
-    None
-}
 
 fn nested_processor(
     document: &Document,
