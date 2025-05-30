@@ -322,8 +322,8 @@ fn region_processor(
 }
 
 fn parse_region_type(line_text: &str) -> Option<RegionType> {
-    let region_start = Regex::new(r"^\s*#\s*region\b").unwrap();
-    let region_end = Regex::new(r"^\s*#\s*endregion\b").unwrap();
+    let region_start = Regex::new(r"^\s*#+ #region\b").unwrap();
+    let region_end = Regex::new(r"^\s*#+ #endregion\b").unwrap();
 
     if region_start.is_match(line_text) {
         Some(RegionType::Start)
