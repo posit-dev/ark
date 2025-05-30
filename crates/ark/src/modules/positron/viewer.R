@@ -1,7 +1,7 @@
 #
 # viewer.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -12,7 +12,7 @@ options("viewer" = function(url, height = NULL, ...) {
 
     # Normalize paths for comparison. This is necessary because on e.g. macOS,
     # the `tempdir()` may contain `//` or other non-standard path separators.
-    normalizedPath <- normalizePath(url, mustWork = FALSE)
+    normalizedPath <- normalize_path(url)
     normalizedTempdir <- normalizePath(tempdir(), mustWork = FALSE)
 
     # Validate the height argument.
