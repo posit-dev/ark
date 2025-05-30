@@ -280,6 +280,9 @@ impl GlobalState {
                         LspRequest::DocumentSymbol(params) => {
                             respond(tx, || handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?;
                         },
+                        LspRequest::FoldingRange(params) => {
+                            respond(tx, || handlers::handle_folding_range(params, &self.world), LspResponse::FoldingRange)?;
+                        },
                         LspRequest::ExecuteCommand(_params) => {
                             let response = handlers::handle_execute_command(&self.client).await;
                             respond(tx, || response, LspResponse::ExecuteCommand)?;

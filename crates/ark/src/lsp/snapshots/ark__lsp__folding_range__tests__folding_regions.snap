@@ -1,0 +1,26 @@
+---
+source: crates/ark/src/lsp/folding_range.rs
+expression: "test_folding_range(\"\n# #region Important code\na\nb\nc\n# #endregion\n\n# #region Another section\nd\n# #endregion\")"
+---
+[
+    FoldingRange {
+        start_line: 1,
+        start_character: None,
+        end_line: 5,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 7,
+        start_character: None,
+        end_line: 9,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+]
