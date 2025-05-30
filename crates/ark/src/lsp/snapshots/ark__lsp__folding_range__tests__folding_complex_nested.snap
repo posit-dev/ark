@@ -16,7 +16,7 @@ expression: "test_folding_range(\"\n# Complex example ----\nfunction(a, b, c) {\
     FoldingRange {
         start_line: 2,
         start_character: Some(
-            18,
+            19,
         ),
         end_line: 15,
         end_character: None,
@@ -38,7 +38,7 @@ expression: "test_folding_range(\"\n# Complex example ----\nfunction(a, b, c) {\
     FoldingRange {
         start_line: 7,
         start_character: Some(
-            13,
+            14,
         ),
         end_line: 9,
         end_character: None,
@@ -50,7 +50,7 @@ expression: "test_folding_range(\"\n# Complex example ----\nfunction(a, b, c) {\
     FoldingRange {
         start_line: 10,
         start_character: Some(
-            9,
+            10,
         ),
         end_line: 11,
         end_character: None,

@@ -67,13 +67,13 @@ fn parse_ts_node(
 
     match node_type {
         "parameters" | "arguments" | "braced_expression" => {
-            // ignore same line folding
+            // Ignore same line folding
             if start.row == end.row {
                 return;
             }
             let folding_range = bracket_range(
                 start.row,
-                start.column,
+                start.column + 1, // Start after the opening delimiter
                 end.row,
                 end.column - 1,
                 count_leading_whitespaces(document, end.row),

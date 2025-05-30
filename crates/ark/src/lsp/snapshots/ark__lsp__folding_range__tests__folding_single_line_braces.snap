@@ -6,7 +6,7 @@ expression: "test_folding_range(\"\nfunction() { a }\n\nfunction() {\n  b\n}\")"
     FoldingRange {
         start_line: 3,
         start_character: Some(
-            11,
+            12,
         ),
         end_line: 4,
         end_character: None,

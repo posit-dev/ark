@@ -16,7 +16,7 @@ expression: "test_folding_range(\"\n# First section ----\nfunction() {\n  # #reg
     FoldingRange {
         start_line: 2,
         start_character: Some(
-            11,
+            12,
         ),
         end_line: 5,
         end_character: None,
