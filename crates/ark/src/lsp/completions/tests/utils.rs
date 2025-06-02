@@ -5,6 +5,7 @@
 //
 
 use tower_lsp::lsp_types::CompletionItem;
+use tower_lsp::lsp_types::CompletionTextEdit;
 
 use crate::fixtures::utils::point_from_cursor;
 use crate::lsp::completions::provide_completions;
@@ -39,7 +40,7 @@ pub fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expected_te
     assert!(item.insert_text.is_none());
 
     match item.text_edit.as_ref().unwrap() {
-        tower_lsp::lsp_types::CompletionTextEdit::Edit(edit) => {
+        CompletionTextEdit::Edit(edit) => {
             assert_eq!(
                 edit.new_text, expected_text,
                 "Text edit should replace with {expected_text}"

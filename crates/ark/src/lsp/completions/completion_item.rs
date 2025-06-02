@@ -221,7 +221,6 @@ pub(super) fn completion_item_from_function(
                 range: function_context.range,
                 new_text: insert_text,
             };
-            // TODO: Review the two text edit types involved here
             item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
         } else {
             item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
@@ -266,7 +265,6 @@ pub(super) fn completion_item_from_function(
             range: function_context.range,
             new_text: insert_text,
         };
-
         item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
 
         return Ok(item);
@@ -648,12 +646,11 @@ fn completion_item_from_dot_dot_dot(
         start: position,
         end: position,
     };
-    let textedit = TextEdit {
+    let text_edit = TextEdit {
         range,
         new_text: "".to_string(),
     };
-    let textedit = CompletionTextEdit::Edit(textedit);
-    item.text_edit = Some(textedit);
+    item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
 
     Ok(item)
 }
