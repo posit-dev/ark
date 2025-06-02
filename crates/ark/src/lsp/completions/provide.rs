@@ -12,6 +12,8 @@ use crate::lsp::completions::sources::composite;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
+use crate::treesitter::node_text;
+use crate::treesitter::NodeTypeExt;
 
 // Entry point for completions.
 // Must be within an `r_task()`.
@@ -19,6 +21,13 @@ pub(crate) fn provide_completions(
     document_context: &DocumentContext,
     state: &WorldState,
 ) -> anyhow::Result<Vec<CompletionItem>> {
+    log::info!(
+        "provide_completions() - Completion node text: '{node_text}', Node type: '{node_type:?}'",
+        node_text = node_text(&document_context.node, &document_context.document.contents)
+            .unwrap_or_default(),
+        node_type = document_context.node.node_type()
+    );
+
     let completion_context = CompletionContext::new(document_context, state);
 
     // Try unique sources first
