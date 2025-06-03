@@ -1,7 +1,7 @@
 #
 # utils.R
 #
-# Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2022-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -140,4 +140,8 @@ node_poke_cdr <- function(node, cdr) {
 
 is_string <- function(x) {
     is.character(x) && length(x) == 1 && !is.na(x)
+}
+
+is_http_url <- function(x) {
+    is_string(x) && grepl("^https?://", x)
 }
