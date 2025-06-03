@@ -142,19 +142,6 @@ is_string <- function(x) {
     is.character(x) && length(x) == 1 && !is.na(x)
 }
 
-# Normalize a path to a canonical form. Does nothing to HTTP URL-like paths or
-# empty strings.
-normalize_path <- function(path) {
-    if (is_string(path)) {
-        # If the path is empty, or is an HTTP(S) URL, return it unchanged
-        if (!nzchar(path) || grepl("^https?://", path)) {
-            return(path)
-        }
-
-        # Otherwise, normalize the file path
-        return(normalizePath(path, mustWork = FALSE))
-    } else {
-        # If not a string, return it unchanged
-        return(path)
-    }
+is_http_url <- function(x) {
+    is_string(x) && grepl("^https?://", x)
 }

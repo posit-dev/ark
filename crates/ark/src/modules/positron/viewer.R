@@ -7,16 +7,24 @@
 
 options("viewer" = function(url, height = NULL, ...) {
     # Validate the URL argument.
-    if (!is.character(url) || (length(url) != 1))
-        stop("url must be a single element character vector.")
-
-    # Normalize paths for comparison. This is necessary because on e.g. macOS,
-    # the `tempdir()` may contain `//` or other non-standard path separators.
-    normalizedPath <- normalize_path(url)
-    normalizedTempdir <- normalizePath(tempdir(), mustWork = FALSE)
+    if (!is_string(url)) {
+        stop("`url` must be a string.")
+    }
 
     # Validate the height argument.
     height <- .ps.validate.viewer.height(height)
+
+    # Open `http(s)://` urls in the browser immediately, avoid normalizing their
+    # paths since they aren't files (posit-dev/positron#4843)
+    if (is_http_url(url)) {
+        return(utils::browseURL(url, ...))
+    }
+
+    # Normalize file paths for comparison against the `tempdir()`. This is
+    # necessary because on e.g. macOS, the `tempdir()` may contain `//` or other
+    # non-standard path separators.
+    normalizedPath <- normalizePath(url, mustWork = FALSE)
+    normalizedTempdir <- normalizePath(tempdir(), mustWork = FALSE)
 
     # Is the URL a temporary file?
     if (startsWith(normalizedPath, normalizedTempdir)) {
@@ -26,7 +34,7 @@ options("viewer" = function(url, height = NULL, ...) {
         # If so, open it in the HTML viewer.
         .ps.Call("ps_html_viewer", normalizedPath, title, height, FALSE)
     } else {
-        # If not, open it in the system browser.
+        # If not, fall back to opening it in the system browser.
         utils::browseURL(normalizedPath, ...)
     }
 })
