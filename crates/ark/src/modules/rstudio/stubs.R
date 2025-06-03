@@ -57,7 +57,10 @@
         stop("url must be a single element character vector.")
     height <- .ps.validate.viewer.height(height)
 
-    url <- normalize_path(url)
+    if (!is_http_url(url)) {
+        # Only normalize file path urls (posit-dev/positron#4843)
+        url <- normalizePath(url, mustWork = FALSE)
+    }
 
     # Derive a title for the viewer from the path.
     title <- .ps.viewer.title(url)
