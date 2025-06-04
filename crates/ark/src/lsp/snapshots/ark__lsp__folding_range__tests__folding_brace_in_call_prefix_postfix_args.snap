@@ -1,0 +1,32 @@
+---
+source: crates/ark/src/lsp/folding_range.rs
+expression: "test_folding_range(\"\ncall(foo, {\n  1\n},\nbar)\n\")"
+---
+[
+    FoldingRange {
+        start_line: 1,
+        start_character: Some(
+            11,
+        ),
+        end_line: 2,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 1,
+        start_character: Some(
+            5,
+        ),
+        end_line: 4,
+        end_character: Some(
+            2,
+        ),
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+]

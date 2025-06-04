@@ -607,6 +607,58 @@ function() {
         ));
     }
 
+    // Braces in function call
+    //
+    // FIXME: Ideally folding should look like:
+    // ```
+    // call({ ...
+    // })
+    // ```
+    //
+    // Currently it looks like:
+    // ```
+    // call({ ...
+    // ```
+    //
+    // That's because the frontend selects the largest range, which in this case
+    // is the range for `(`. Our adjustment logic to shift the end of the range
+    // one line up when the closing delimiter is on its own line doesn't work
+    // for `)` because `}` is in the way. As a consequence `end_character` is
+    // `Some` in these snapshots and `end_line` is one line too high.
+    #[test]
+    fn test_folding_brace_in_call() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+call({
+  1
+})
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_brace_in_call_prefix_arg() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+call(foo, {
+  1
+})
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_brace_in_call_prefix_postfix_args() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+call(foo, {
+  1
+},
+bar)
+"
+        ));
+    }
+
     // Test for nested, complex code structures
     #[test]
     fn test_folding_complex_nested() {
