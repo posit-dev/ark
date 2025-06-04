@@ -159,11 +159,7 @@ fn bracket_range(
             end_line -= 1;
             end_char = None;
         },
-        Some(_) => {
-            if let Some(ref mut value) = end_char {
-                *value -= 1;
-            }
-        },
+        Some(_) => {},
         None => {
             tracing::error!(
                 "Folding Range (bracket_range): adjusted_end_char should not be None here"

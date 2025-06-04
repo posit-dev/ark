@@ -22,7 +22,7 @@ expression: "test_folding_range(\"\ncall(foo, {\n  1\n})\n\")"
         ),
         end_line: 3,
         end_character: Some(
-            0,
+            1,
         ),
         kind: Some(
             Region,
