@@ -1,0 +1,72 @@
+---
+source: crates/ark/src/lsp/folding_range.rs
+expression: "test_folding_range(\"\n# Complex example ----\nfunction(a, b, c) {\n  # #region inner calculations\n  x <- a + b\n  y <- b + c\n\n  if (x > y) {\n    # %% cell inside function\n    result <- x * y\n  } else {\n    result <- x / y\n  }\n  # #endregion\n\n  result\n}\n\n## Subsection ----\n# This is a regular comment, not a section or region\")"
+---
+[
+    FoldingRange {
+        start_line: 1,
+        start_character: None,
+        end_line: 18,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 2,
+        start_character: Some(
+            19,
+        ),
+        end_line: 15,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 3,
+        start_character: None,
+        end_line: 13,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 7,
+        start_character: Some(
+            14,
+        ),
+        end_line: 9,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 10,
+        start_character: Some(
+            10,
+        ),
+        end_line: 11,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 18,
+        start_character: None,
+        end_line: 18,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+]
