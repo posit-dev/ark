@@ -5,26 +5,14 @@
 //
 
 #[cfg(test)]
-use tower_lsp::lsp_types::CompletionItemKind;
-#[cfg(test)]
-use tower_lsp::lsp_types::InsertTextFormat;
-
-#[cfg(test)]
-use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
-#[cfg(test)]
-use crate::lsp::completions::tests::utils::assert_no_command;
-#[cfg(test)]
-use crate::lsp::completions::tests::utils::assert_text_edit;
-#[cfg(test)]
-use crate::lsp::completions::tests::utils::find_completion_by_label;
-#[cfg(test)]
-use crate::lsp::completions::tests::utils::get_completions_at_cursor;
-#[cfg(test)]
-use crate::r_task;
-
-#[cfg(test)]
 mod function_call_tests {
-    use super::*;
+    use tower_lsp::lsp_types::CompletionItemKind;
+    use tower_lsp::lsp_types::InsertTextFormat;
+
+    use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
+    use crate::lsp::completions::tests::utils::find_completion_by_label;
+    use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::r_task;
 
     #[test]
     fn test_basic_call() {
@@ -68,7 +56,14 @@ mod function_call_tests {
 
 #[cfg(test)]
 mod function_reference_tests {
-    use super::*;
+    use tower_lsp::lsp_types::CompletionItemKind;
+    use tower_lsp::lsp_types::InsertTextFormat;
+
+    use crate::lsp::completions::tests::utils::assert_no_command;
+    use crate::lsp::completions::tests::utils::assert_text_edit;
+    use crate::lsp::completions::tests::utils::find_completion_by_label;
+    use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::r_task;
 
     #[test]
     fn test_basic_reference() {
@@ -124,7 +119,15 @@ mod function_reference_tests {
 /// Tests where namespace is added retroactively
 #[cfg(test)]
 mod namespace_post_hoc_tests {
-    use super::*;
+    use tower_lsp::lsp_types::CompletionItemKind;
+    use tower_lsp::lsp_types::InsertTextFormat;
+
+    use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
+    use crate::lsp::completions::tests::utils::assert_text_edit;
+    use crate::lsp::completions::tests::utils::find_completion_by_label;
+    use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::r_task;
+
     #[test]
     fn test_function_call_with_post_hoc_namespace() {
         r_task(|| {
@@ -179,7 +182,13 @@ mod namespace_post_hoc_tests {
 
 #[cfg(test)]
 mod empty_args_tests {
-    use super::*;
+    use tower_lsp::lsp_types::CompletionItemKind;
+
+    use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
+    use crate::lsp::completions::tests::utils::assert_text_edit;
+    use crate::lsp::completions::tests::utils::find_completion_by_label;
+    use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::r_task;
 
     #[test]
     fn test_empty_parentheses_no_function() {
@@ -215,7 +224,13 @@ mod empty_args_tests {
 
 #[cfg(test)]
 mod nonempty_args_tests {
-    use super::*;
+    use tower_lsp::lsp_types::CompletionItemKind;
+
+    use crate::lsp::completions::tests::utils::assert_no_command;
+    use crate::lsp::completions::tests::utils::assert_text_edit;
+    use crate::lsp::completions::tests::utils::find_completion_by_label;
+    use crate::lsp::completions::tests::utils::get_completions_at_cursor;
+    use crate::r_task;
 
     #[test]
     fn test_function_name_with_nonempty_parentheses() {

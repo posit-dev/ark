@@ -1,5 +1,5 @@
 //
-// tests/mod.rs - Tests for completions functionality
+// tests.rs
 //
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //

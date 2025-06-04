@@ -13,8 +13,8 @@ mod resolve;
 mod sources;
 mod types;
 
-pub(crate) use provide::provide_completions;
-pub(crate) use resolve::resolve_completion;
-
 #[cfg(test)]
 mod tests;
+
+pub(crate) use provide::provide_completions;
+pub(crate) use resolve::resolve_completion;
