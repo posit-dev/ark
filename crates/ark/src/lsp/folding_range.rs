@@ -259,7 +259,6 @@ fn nested_processor(
         }
 
         let Some((last_level, _)) = comment_stack.last_or_error()?.last() else {
-            tracing::error!("Folding Range: comment_stacks should not be empty here");
             return Err(anyhow::anyhow!("Empty comment stack"));
         };
 
@@ -284,10 +283,7 @@ fn nested_processor(
                     start_line,
                     find_last_non_empty_line(document, start_line, line_num - 1),
                 ));
-                comment_stack
-                    .last_mut()
-                    .ok_or_else(|| anyhow::anyhow!("Empty comment stack"))?
-                    .pop(); // Safe: the loop exits early if the stack becomes empty
+                comment_stack.last_mut_or_error()?.pop(); // Safe: the loop exits early if the stack becomes empty
             },
         }
     }
