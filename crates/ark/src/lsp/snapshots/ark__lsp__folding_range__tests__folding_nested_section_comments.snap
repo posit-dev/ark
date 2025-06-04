@@ -1,6 +1,6 @@
 ---
 source: crates/ark/src/lsp/folding_range.rs
-expression: "test_folding_range(\"\n# Level 1 ----\ncode at level 1\n\n## Level 2 ----\ncode at level 2\n\n### Level 3 ----\ncode at level 3\n\n## Another Level 2 ----\nback to level 2\n\n# Back to Level 1 ----\nback to level 1\")"
+expression: "test_folding_range(\"\n# Level 1 ----\na\n\n## Level 2 ----\nb\n\n### Level 3 ----\nc\n\n## Another Level 2 ----\nd\n\n# Back to Level 1 ----\ne\n\n# %% Chunk at Level 1\nf\n\n## %% Another chunk at Level 1\ng\")"
 ---
 [
     FoldingRange {
@@ -46,7 +46,27 @@ expression: "test_folding_range(\"\n# Level 1 ----\ncode at level 1\n\n## Level 
     FoldingRange {
         start_line: 13,
         start_character: None,
-        end_line: 13,
+        end_line: 19,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 16,
+        start_character: None,
+        end_line: 18,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 19,
+        start_character: None,
+        end_line: 20,
         end_character: None,
         kind: Some(
             Region,

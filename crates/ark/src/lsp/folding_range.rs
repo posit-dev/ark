@@ -362,7 +362,7 @@ fn cell_processor(
     line_idx: usize,
     line_text: &str,
 ) {
-    let cell_pattern: Regex = Regex::new(r"^#\s*(%%|\+)(.*)").unwrap();
+    let cell_pattern: Regex = Regex::new(r"^#+( %%|\+) (.*)").unwrap();
 
     if !cell_pattern.is_match(line_text) {
     } else {
@@ -468,6 +468,7 @@ mod tests {
 
     #[test]
     fn test_folding_section_comments_basic() {
+        // Note the chunks are nested in comment sections
         insta::assert_debug_snapshot!(test_folding_range(
             "
 # First section ----
@@ -476,7 +477,16 @@ b
 
 # Second section ----
 c
-d"
+d
+
+# %% Chunk section (jupyter-style)
+e
+f
+
+#+ Chunk section (knitr-style)
+g
+# + This is not a chunk
+h"
         ));
     }
 
@@ -497,7 +507,13 @@ c
 d
 
 # Back to Level 1 ----
-e"
+e
+
+# %% Chunk at Level 1
+f
+
+## %% Another chunk at Level 1
+g"
         ));
     }
 
