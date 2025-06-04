@@ -1,0 +1,36 @@
+---
+source: crates/ark/src/lsp/folding_range.rs
+expression: "test_folding_range(\"\n#+ Cell\na\n\n# Section ----\nb\n\n#+ Other cell\nc\n\")"
+---
+[
+    FoldingRange {
+        start_line: 1,
+        start_character: None,
+        end_line: 6,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 4,
+        start_character: None,
+        end_line: 8,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+    FoldingRange {
+        start_line: 7,
+        start_character: None,
+        end_line: 8,
+        end_character: None,
+        kind: Some(
+            Region,
+        ),
+        collapsed_text: None,
+    },
+]

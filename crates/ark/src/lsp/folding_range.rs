@@ -467,6 +467,24 @@ mod tests {
     }
 
     #[test]
+    fn test_folding_section_chunks_with_section_in_middle() {
+        // FIXME: First chunk overlaps section, and section overlaps second
+        // chunk. Causes section folding to not appear in Positron.
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+#+ Cell
+a
+
+# Section ----
+b
+
+#+ Other cell
+c
+"
+        ));
+    }
+
+    #[test]
     fn test_folding_section_comments_basic() {
         // Note the chunks are nested in comment sections
         insta::assert_debug_snapshot!(test_folding_range(
