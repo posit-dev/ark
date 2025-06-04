@@ -90,13 +90,9 @@ fn parse_ts_node(
             // Nested comment section handling
             let comment_line = get_line_text(document, start.row, None, None);
 
-            if let Err(err) = nested_processor(
-                document,
-                comment_stack,
-                folding_ranges,
-                start.row,
-                &comment_line,
-            ) {
+            if let Err(err) =
+                nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
+            {
                 lsp::log_error!("Can't process comment: {err:?}");
             };
             region_processor(folding_ranges, region_marker, start.row, &comment_line);
@@ -236,7 +232,6 @@ pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
 fn nested_processor(
-    document: &Document,
     comment_stack: &mut Vec<Vec<(usize, usize)>>,
     folding_ranges: &mut Vec<FoldingRange>,
     line_num: usize,
@@ -269,20 +264,14 @@ fn nested_processor(
             },
             Ordering::Equal => {
                 let start_line = comment_stack.last_or_error()?.last_or_error()?.1;
-                folding_ranges.push(comment_range(
-                    start_line,
-                    find_last_non_empty_line(document, start_line, line_num - 1),
-                ));
+                folding_ranges.push(comment_range(start_line, line_num - 1));
                 comment_stack.last_mut_or_error()?.pop();
                 comment_stack.last_mut_or_error()?.push((level, line_num));
                 break;
             },
             Ordering::Greater => {
                 let start_line = comment_stack.last_or_error()?.last_or_error()?.1;
-                folding_ranges.push(comment_range(
-                    start_line,
-                    find_last_non_empty_line(document, start_line, line_num - 1),
-                ));
+                folding_ranges.push(comment_range(start_line, line_num - 1));
                 comment_stack.last_mut_or_error()?.pop(); // Safe: the loop exits early if the stack becomes empty
             },
         }
@@ -496,7 +485,6 @@ h"
 
     #[test]
     fn test_folding_section_comments() {
-        // FIXME: First section doesn't span whole section
         insta::assert_debug_snapshot!(test_folding_range(
             "
 # Section ----

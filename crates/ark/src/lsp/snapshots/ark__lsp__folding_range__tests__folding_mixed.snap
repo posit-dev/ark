@@ -6,7 +6,7 @@ expression: "test_folding_range(\"\n# First section ----\nfunction() {\n  # #reg
     FoldingRange {
         start_line: 1,
         start_character: None,
-        end_line: 10,
+        end_line: 11,
         end_character: None,
         kind: Some(
             Region,
@@ -38,7 +38,7 @@ expression: "test_folding_range(\"\n# First section ----\nfunction() {\n  # #reg
     FoldingRange {
         start_line: 8,
         start_character: None,
-        end_line: 10,
+        end_line: 11,
         end_character: None,
         kind: Some(
             Region,

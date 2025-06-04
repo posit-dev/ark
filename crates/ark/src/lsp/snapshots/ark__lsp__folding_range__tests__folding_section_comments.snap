@@ -6,7 +6,7 @@ expression: "test_folding_range(\"\n# Section ----\na\n\nb\nc\n\n# Section ----\
     FoldingRange {
         start_line: 1,
         start_character: None,
-        end_line: 5,
+        end_line: 6,
         end_character: None,
         kind: Some(
             Region,
