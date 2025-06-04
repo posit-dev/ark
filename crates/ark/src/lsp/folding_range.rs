@@ -362,10 +362,18 @@ fn cell_processor(
     line_idx: usize,
     line_text: &str,
 ) {
-    let cell_pattern: Regex = Regex::new(r"^#+( %%|\+) (.*)").unwrap();
+    // Check if the line is a comment section
+    if RE_COMMENT_SECTION.is_match(line_text) {
+        if let Some(start_line) = cell_marker.take() {
+            let folding_range = comment_range(start_line, line_idx - 1);
+            folding_ranges.push(folding_range);
+        }
+        return; // Stop processing as this is a comment section
+    }
 
-    if !cell_pattern.is_match(line_text) {
-    } else {
+    // Check if the line is a chunk delimiter
+    let cell_pattern: Regex = Regex::new(r"^#+( %%|\+) (.*)").unwrap();
+    if cell_pattern.is_match(line_text) {
         let Some(start_line) = cell_marker else {
             cell_marker.replace(line_idx);
             return;
@@ -467,24 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn test_folding_section_chunks_with_section_in_middle() {
-        // FIXME: First chunk overlaps section, and section overlaps second
-        // chunk. Causes section folding to not appear in Positron.
-        insta::assert_debug_snapshot!(test_folding_range(
-            "
-#+ Cell
-a
-
-# Section ----
-b
-
-#+ Other cell
-c
-"
-        ));
-    }
-
-    #[test]
     fn test_folding_section_comments_basic() {
         // Note the chunks are nested in comment sections
         insta::assert_debug_snapshot!(test_folding_range(
@@ -545,6 +535,23 @@ g"
 
 # Section with content ----
 a"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_chunks_with_section_in_middle() {
+        // Chunks should be nested in sections
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+#+ Cell
+a
+
+# Section ----
+b
+
+#+ Other cell
+c
+"
         ));
     }
 
