@@ -146,8 +146,8 @@ fn bracket_range(
     end_char: usize,
     white_space_count: usize,
 ) -> FoldingRange {
-    let mut end_line: u32 = end_line.try_into().unwrap();
-    let mut end_char: Option<u32> = Some(end_char.try_into().unwrap());
+    let mut end_line: u32 = end_line as u32;
+    let mut end_char: Option<u32> = Some(end_char as u32);
 
     let adjusted_end_char = end_char.and_then(|val| val.checked_sub(white_space_count as u32));
 
@@ -169,7 +169,7 @@ fn bracket_range(
     }
 
     FoldingRange {
-        start_line: start_line.try_into().unwrap(),
+        start_line: start_line as u32,
         start_character: Some(start_char as u32),
         end_line,
         end_character: end_char,
@@ -180,9 +180,9 @@ fn bracket_range(
 
 fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
     FoldingRange {
-        start_line: start_line.try_into().unwrap(),
+        start_line: start_line as u32,
         start_character: None,
-        end_line: end_line.try_into().unwrap(),
+        end_line: end_line as u32,
         end_character: None,
         kind: Some(FoldingRangeKind::Region),
         collapsed_text: None,
