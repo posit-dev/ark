@@ -13,6 +13,7 @@ use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
+use crate::lsp;
 use crate::lsp::documents::Document;
 
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
@@ -89,13 +90,15 @@ fn parse_ts_node(
             // Nested comment section handling
             let comment_line = get_line_text(document, start.row, None, None);
 
-            nested_processor(
+            if let Err(err) = nested_processor(
                 document,
                 comment_stack,
                 folding_ranges,
                 start.row,
                 &comment_line,
-            );
+            ) {
+                lsp::log_error!("Can't process comment: {err:?}");
+            };
             region_processor(folding_ranges, region_marker, start.row, &comment_line);
             cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
         },
@@ -242,50 +245,74 @@ fn nested_processor(
     folding_ranges: &mut Vec<FoldingRange>,
     line_num: usize,
     comment_line: &str,
-) {
+) -> anyhow::Result<()> {
     let Some((level, _title)) = parse_comment_as_section(comment_line) else {
-        return; // return if the line is not a comment section
+        return Ok(()); // return if the line is not a comment section
     };
+
     if comment_stack.is_empty() {
-        tracing::error!(
-            "Folding Range: comment_stack should always contain at least one element here"
-        );
-        return;
+        return Err(anyhow::anyhow!(
+            "Folding Range: comment_stack should always contain at least one element"
+        ));
     }
+
     loop {
-        if comment_stack.last().unwrap().is_empty() {
-            comment_stack.last_mut().unwrap().push((level, line_num));
-            return; // return if the stack is empty
+        if comment_stack.last_or_error()?.is_empty() {
+            comment_stack.last_mut_or_error()?.push((level, line_num));
+            return Ok(()); // return if the stack is empty
         }
 
-        let Some((last_level, _)) = comment_stack.last().unwrap().last() else {
+        let Some((last_level, _)) = comment_stack.last_or_error()?.last() else {
             tracing::error!("Folding Range: comment_stacks should not be empty here");
-            return;
+            return Err(anyhow::anyhow!("Empty comment stack"));
         };
+
         match last_level.cmp(&level) {
             Ordering::Less => {
-                comment_stack.last_mut().unwrap().push((level, line_num));
+                comment_stack.last_mut_or_error()?.push((level, line_num));
                 break;
             },
             Ordering::Equal => {
-                let start_line = comment_stack.last().unwrap().last().unwrap().1;
+                let start_line = comment_stack.last_or_error()?.last_or_error()?.1;
                 folding_ranges.push(comment_range(
                     start_line,
                     find_last_non_empty_line(document, start_line, line_num - 1),
                 ));
-                comment_stack.last_mut().unwrap().pop();
-                comment_stack.last_mut().unwrap().push((level, line_num));
+                comment_stack.last_mut_or_error()?.pop();
+                comment_stack.last_mut_or_error()?.push((level, line_num));
                 break;
             },
             Ordering::Greater => {
-                let start_line = comment_stack.last().unwrap().last().unwrap().1;
+                let start_line = comment_stack.last_or_error()?.last_or_error()?.1;
                 folding_ranges.push(comment_range(
                     start_line,
                     find_last_non_empty_line(document, start_line, line_num - 1),
                 ));
-                comment_stack.last_mut().unwrap().pop(); // Safe: the loop exits early if the stack becomes empty
+                comment_stack
+                    .last_mut()
+                    .ok_or_else(|| anyhow::anyhow!("Empty comment stack"))?
+                    .pop(); // Safe: the loop exits early if the stack becomes empty
             },
         }
+    }
+    Ok(())
+}
+
+// Mostly a hack until we switch to a stackless an iterative approach
+trait VecResultExt<T> {
+    fn last_or_error(&self) -> anyhow::Result<&T>;
+    fn last_mut_or_error(&mut self) -> anyhow::Result<&mut T>;
+}
+
+impl<T> VecResultExt<T> for Vec<T> {
+    fn last_or_error(&self) -> anyhow::Result<&T> {
+        self.last()
+            .ok_or_else(|| anyhow::anyhow!("Empty comment stack"))
+    }
+
+    fn last_mut_or_error(&mut self) -> anyhow::Result<&mut T> {
+        self.last_mut()
+            .ok_or_else(|| anyhow::anyhow!("Empty comment stack"))
     }
 }
 
