@@ -499,6 +499,23 @@ h"
     }
 
     #[test]
+    fn test_folding_section_comments() {
+        // FIXME: First section doesn't span whole section
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Section ----
+a
+
+b
+c
+
+# Section ----
+d
+"
+        ));
+    }
+
+    #[test]
     fn test_folding_nested_section_comments() {
         insta::assert_debug_snapshot!(test_folding_range(
             "
@@ -551,6 +568,27 @@ b
 
 #+ Other cell
 c
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_chunks_with_sections() {
+        // Chunks should be nested in sections
+        // FIXME: First section doesn't span whole cell
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Section ----
+a
+
+#+ Cell
+b
+
+# Section ----
+c
+
+#+ Other cell
+d
 "
         ));
     }
