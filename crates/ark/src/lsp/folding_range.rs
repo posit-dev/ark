@@ -5,6 +5,7 @@
 //
 //
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
@@ -19,14 +20,7 @@ use crate::lsp::documents::Document;
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
 
-    // Activate the parser
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-
-    let ast = parser.parse(&document.contents.to_string(), None).unwrap();
-
+    let ast = &document.ast;
     if ast.root_node().has_error() {
         tracing::error!("Folding range service: Parse error");
         return Err(anyhow::anyhow!("Parse error"));
@@ -88,15 +82,18 @@ fn parse_ts_node(
             }
 
             // Nested comment section handling
-            let comment_line = get_line_text(document, start.row, None, None);
+            if let Some(comment_line) = document.contents.get_line(start.row) {
+                // O(n) if comment overlaps rope chunks, O(1) otherwise
+                let comment_line: Cow<'_, str> = comment_line.into();
 
-            if let Err(err) =
-                nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
-            {
-                lsp::log_error!("Can't process comment: {err:?}");
+                if let Err(err) =
+                    nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
+                {
+                    lsp::log_error!("Can't process comment: {err:?}");
+                };
+                region_processor(folding_ranges, region_marker, start.row, &comment_line);
+                cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
             };
-            region_processor(folding_ranges, region_marker, start.row, &comment_line);
-            cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
         },
         _ => (),
     }
@@ -145,28 +142,20 @@ fn bracket_range(
     white_space_count: usize,
 ) -> FoldingRange {
     let mut end_line: u32 = end_line as u32;
-    let mut end_char: Option<u32> = Some(end_char as u32);
+    let mut end_character = Some(end_char as u32);
 
-    let adjusted_end_char = end_char.and_then(|val| val.checked_sub(white_space_count as u32));
-
-    match adjusted_end_char {
-        Some(0) => {
+    if let Some(val) = end_char.checked_sub(white_space_count) {
+        if val == 0 {
             end_line -= 1;
-            end_char = None;
-        },
-        Some(_) => {},
-        None => {
-            tracing::error!(
-                "Folding Range (bracket_range): adjusted_end_char should not be None here"
-            );
-        },
+            end_character = None;
+        }
     }
 
     FoldingRange {
         start_line: start_line as u32,
         start_character: Some(start_char as u32),
         end_line,
-        end_character: end_char,
+        end_character,
         kind: Some(FoldingRangeKind::Region),
         collapsed_text: None,
     }
@@ -183,39 +172,14 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
     }
 }
 
-fn get_line_text(
-    document: &Document,
-    line_num: usize,
-    start_char: Option<usize>,
-    end_char: Option<usize>,
-) -> String {
-    let text = &document.contents;
-    // Split the text into lines
-    let lines: Vec<&str> = text.lines().filter_map(|line| line.as_str()).collect();
-
-    // Ensure the start_line is within bounds
-    if line_num >= lines.len() {
-        return String::new(); // Return an empty string if out of bounds
-    }
-
-    // Get the line corresponding to start_line
-    let line = lines[line_num];
-
-    // Determine the start and end character indices
-    let start_idx = start_char.unwrap_or(0); // Default to 0 if None
-    let end_idx = end_char.unwrap_or(line.len()); // Default to the line's length if None
-
-    // Ensure indices are within bounds for the line
-    let start_idx = start_idx.min(line.len());
-    let end_idx = end_idx.min(line.len());
-
-    // Extract the substring and return it
-    line[start_idx..end_idx].to_string()
-}
-
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
-    let line_text = get_line_text(document, line_num, None, None);
-    line_text.chars().take_while(|c| c.is_whitespace()).count()
+    let Some(line) = document.contents.get_line(line_num) else {
+        return 0;
+    };
+
+    line.bytes()
+        .take_while(|&b| b == b' ' || b == b'\t')
+        .count()
 }
 
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
