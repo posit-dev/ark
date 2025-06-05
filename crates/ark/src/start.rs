@@ -22,6 +22,7 @@ use crate::control::Control;
 use crate::dap;
 use crate::interface::SessionMode;
 use crate::lsp;
+use crate::parent_monitor;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::repos::DefaultRepos;
 use crate::request::KernelRequest;
@@ -116,6 +117,13 @@ pub fn start_kernel(
     );
     if let Err(err) = res {
         panic!("Couldn't connect to frontend: {err:?}");
+    }
+
+    // Start parent process monitoring for graceful shutdown. Linux only since
+    // it uses `prctl()`.
+    #[cfg(target_os = "linux")]
+    if let Err(err) = parent_monitor::start_parent_monitoring(r_request_tx.clone()) {
+        log::error!("Failed to start parent process monitoring: {err}");
     }
 
     // Start R
