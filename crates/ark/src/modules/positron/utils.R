@@ -63,8 +63,7 @@
 }
 
 # Extracts a character label from a syntactically valid quoted R expression
-#' @export
-.ps.as_label <- function(expr) {
+as_label <- function(expr) {
     paste(deparse(expr, backtick = TRUE), collapse = "")
 }
 

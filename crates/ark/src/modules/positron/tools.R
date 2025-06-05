@@ -127,10 +127,6 @@ push_rds <- function(x, path = NULL, context = "") {
     xs
 }
 
-is_string <- function(x) {
-    is.character(x) && length(x) == 1 && !is.na(x)
-}
-
 local_options <- function(..., .frame = parent.frame()) {
     options <- list(...)
     old <- options(options)
