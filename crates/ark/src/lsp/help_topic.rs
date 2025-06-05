@@ -89,6 +89,7 @@ fn locate_help_node(tree: &Tree, point: Point) -> Option<Node> {
     // Even if they are at `p<>kg::fun`, we assume they really want docs for `fun`.
     let node = match node.parent() {
         Some(parent) if matches!(parent.node_type(), NodeType::NamespaceOperator(_)) => parent,
+        Some(parent) if matches!(parent.node_type(), NodeType::ExtractOperator(_)) => parent,
         Some(_) => node,
         None => node,
     };
@@ -138,5 +139,12 @@ mod tests {
         let node = locate_help_node(&tree, point).unwrap();
         let text = node.utf8_text(text.as_bytes()).unwrap();
         assert_eq!(text, "dplyr:::across");
+
+        // R6 methods, or reticulate accessors
+        let (text, point) = point_from_cursor("tf$a@bs(x)");
+        let tree = parser.parse(text.as_str(), None).unwrap();
+        let node = locate_help_node(&tree, point).unwrap();
+        let text = node.utf8_text(text.as_bytes()).unwrap();
+        assert_eq!(text, "tf$abs");
     }
 }

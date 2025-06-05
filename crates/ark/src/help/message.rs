@@ -16,9 +16,16 @@ pub enum HelpEvent {
 }
 
 #[derive(Debug)]
+pub enum ShowHelpUrlKind {
+    HelpProxy,
+    External,
+}
+
+#[derive(Debug)]
 pub struct ShowHelpUrlParams {
     /// Url to attempt to show.
     pub url: String,
+    pub kind: ShowHelpUrlKind,
 }
 
 impl std::fmt::Display for HelpEvent {
