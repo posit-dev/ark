@@ -5,6 +5,7 @@
 //
 //
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
@@ -81,15 +82,18 @@ fn parse_ts_node(
             }
 
             // Nested comment section handling
-            let comment_line = get_line_text(document, start.row, None, None);
+            if let Some(comment_line) = document.contents.get_line(start.row) {
+                // O(n) if comment overlaps rope chunks, O(1) otherwise
+                let comment_line: Cow<'_, str> = comment_line.into();
 
-            if let Err(err) =
-                nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
-            {
-                lsp::log_error!("Can't process comment: {err:?}");
+                if let Err(err) =
+                    nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
+                {
+                    lsp::log_error!("Can't process comment: {err:?}");
+                };
+                region_processor(folding_ranges, region_marker, start.row, &comment_line);
+                cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
             };
-            region_processor(folding_ranges, region_marker, start.row, &comment_line);
-            cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
         },
         _ => (),
     }
@@ -168,42 +172,13 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
     }
 }
 
-fn get_line_text(
-    document: &Document,
-    line_num: usize,
-    start_char: Option<usize>,
-    end_char: Option<usize>,
-) -> String {
-    let text = &document.contents;
-    // Split the text into lines
-    let lines: Vec<&str> = text.lines().filter_map(|line| line.as_str()).collect();
-
-    // Ensure the start_line is within bounds
-    if line_num >= lines.len() {
-        return String::new(); // Return an empty string if out of bounds
-    }
-
-    // Get the line corresponding to start_line
-    let line = lines[line_num];
-
-    // Determine the start and end character indices
-    let start_idx = start_char.unwrap_or(0); // Default to 0 if None
-    let end_idx = end_char.unwrap_or(line.len()); // Default to the line's length if None
-
-    // Ensure indices are within bounds for the line
-    let start_idx = start_idx.min(line.len());
-    let end_idx = end_idx.min(line.len());
-
-    // Extract the substring and return it
-    line[start_idx..end_idx].to_string()
-}
-
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
-    let line_text = get_line_text(document, line_num, None, None);
-    line_text
-        .as_bytes()
-        .iter()
-        .take_while(|&&b| b == b' ' || b == b'\t')
+    let Some(line) = document.contents.get_line(line_num) else {
+        return 0;
+    };
+
+    line.bytes()
+        .take_while(|&b| b == b' ' || b == b'\t')
         .count()
 }
 
