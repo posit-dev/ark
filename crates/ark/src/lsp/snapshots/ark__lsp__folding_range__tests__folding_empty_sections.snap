@@ -26,7 +26,7 @@ expression: "test_folding_range(\"\n# Empty section ----\n\n# Another empty sect
     FoldingRange {
         start_line: 5,
         start_character: None,
-        end_line: 5,
+        end_line: 6,
         end_character: None,
         kind: Some(
             Region,

@@ -127,7 +127,7 @@ fn parse_ts_node(
         end_node_handler(
             document,
             folding_ranges,
-            end.row,
+            end.row + 1,
             &mut child_comment_stack,
             &mut child_region_marker,
             &mut child_cell_marker,
@@ -479,7 +479,18 @@ f
 #+ Chunk section (knitr-style)
 g
 # + This is not a chunk
-h"
+h
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_comments_no_trailing_empty_line() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# First section ----
+a
+b"
         ));
     }
 

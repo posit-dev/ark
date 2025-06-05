@@ -46,7 +46,7 @@ expression: "test_folding_range(\"\n# Level 1 ----\na\n\n## Level 2 ----\nb\n\n#
     FoldingRange {
         start_line: 13,
         start_character: None,
-        end_line: 19,
+        end_line: 20,
         end_character: None,
         kind: Some(
             Region,
