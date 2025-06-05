@@ -6,7 +6,7 @@ expression: "test_folding_range(\"\n# Complex example ----\nfunction(a, b, c) {\
     FoldingRange {
         start_line: 1,
         start_character: None,
-        end_line: 18,
+        end_line: 19,
         end_character: None,
         kind: Some(
             Region,
@@ -62,7 +62,7 @@ expression: "test_folding_range(\"\n# Complex example ----\nfunction(a, b, c) {\
     FoldingRange {
         start_line: 18,
         start_character: None,
-        end_line: 18,
+        end_line: 19,
         end_character: None,
         kind: Some(
             Region,

@@ -1,12 +1,12 @@
 ---
 source: crates/ark/src/lsp/folding_range.rs
-expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second section ----\nc\nd\n\n# %% Chunk section (jupyter-style)\ne\nf\n\n#+ Chunk section (knitr-style)\ng\n# + This is not a chunk\nh\n\")"
+expression: "test_folding_range(\"\n#+ Cell\na\n\n# Section ----\nb\n\n#+ Other cell\nc\n\")"
 ---
 [
     FoldingRange {
         start_line: 1,
         start_character: None,
-        end_line: 4,
+        end_line: 3,
         end_character: None,
         kind: Some(
             Region,
@@ -14,9 +14,9 @@ expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second secti
         collapsed_text: None,
     },
     FoldingRange {
-        start_line: 5,
+        start_line: 4,
         start_character: None,
-        end_line: 17,
+        end_line: 9,
         end_character: None,
         kind: Some(
             Region,
@@ -24,19 +24,9 @@ expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second secti
         collapsed_text: None,
     },
     FoldingRange {
-        start_line: 9,
+        start_line: 7,
         start_character: None,
-        end_line: 12,
-        end_character: None,
-        kind: Some(
-            Region,
-        ),
-        collapsed_text: None,
-    },
-    FoldingRange {
-        start_line: 13,
-        start_character: None,
-        end_line: 17,
+        end_line: 9,
         end_character: None,
         kind: Some(
             Region,

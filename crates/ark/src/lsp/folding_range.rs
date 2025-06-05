@@ -13,6 +13,7 @@ use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
+use crate::lsp;
 use crate::lsp::documents::Document;
 
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
@@ -89,13 +90,11 @@ fn parse_ts_node(
             // Nested comment section handling
             let comment_line = get_line_text(document, start.row, None, None);
 
-            nested_processor(
-                document,
-                comment_stack,
-                folding_ranges,
-                start.row,
-                &comment_line,
-            );
+            if let Err(err) =
+                nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
+            {
+                lsp::log_error!("Can't process comment: {err:?}");
+            };
             region_processor(folding_ranges, region_marker, start.row, &comment_line);
             cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
         },
@@ -126,9 +125,8 @@ fn parse_ts_node(
         }
         // End of node handling
         end_node_handler(
-            document,
             folding_ranges,
-            end.row,
+            end.row + 1,
             &mut child_comment_stack,
             &mut child_region_marker,
             &mut child_cell_marker,
@@ -146,8 +144,8 @@ fn bracket_range(
     end_char: usize,
     white_space_count: usize,
 ) -> FoldingRange {
-    let mut end_line: u32 = end_line.try_into().unwrap();
-    let mut end_char: Option<u32> = Some(end_char.try_into().unwrap());
+    let mut end_line: u32 = end_line as u32;
+    let mut end_char: Option<u32> = Some(end_char as u32);
 
     let adjusted_end_char = end_char.and_then(|val| val.checked_sub(white_space_count as u32));
 
@@ -156,11 +154,7 @@ fn bracket_range(
             end_line -= 1;
             end_char = None;
         },
-        Some(_) => {
-            if let Some(ref mut value) = end_char {
-                *value -= 1;
-            }
-        },
+        Some(_) => {},
         None => {
             tracing::error!(
                 "Folding Range (bracket_range): adjusted_end_char should not be None here"
@@ -169,7 +163,7 @@ fn bracket_range(
     }
 
     FoldingRange {
-        start_line: start_line.try_into().unwrap(),
+        start_line: start_line as u32,
         start_character: Some(start_char as u32),
         end_line,
         end_character: end_char,
@@ -180,9 +174,9 @@ fn bracket_range(
 
 fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
     FoldingRange {
-        start_line: start_line.try_into().unwrap(),
+        start_line: start_line as u32,
         start_character: None,
-        end_line: end_line.try_into().unwrap(),
+        end_line: end_line as u32,
         end_character: None,
         kind: Some(FoldingRangeKind::Region),
         collapsed_text: None,
@@ -219,15 +213,6 @@ fn get_line_text(
     line[start_idx..end_idx].to_string()
 }
 
-fn find_last_non_empty_line(document: &Document, start_line: usize, end_line: usize) -> usize {
-    for idx in (start_line..=end_line).rev() {
-        if !get_line_text(document, idx, None, None).trim().is_empty() {
-            return idx;
-        }
-    }
-    start_line
-}
-
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
     let line_text = get_line_text(document, line_num, None, None);
     line_text.chars().take_while(|c| c.is_whitespace()).count()
@@ -237,55 +222,68 @@ pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
 fn nested_processor(
-    document: &Document,
     comment_stack: &mut Vec<Vec<(usize, usize)>>,
     folding_ranges: &mut Vec<FoldingRange>,
     line_num: usize,
     comment_line: &str,
-) {
+) -> anyhow::Result<()> {
     let Some((level, _title)) = parse_comment_as_section(comment_line) else {
-        return; // return if the line is not a comment section
+        return Ok(()); // return if the line is not a comment section
     };
+
     if comment_stack.is_empty() {
-        tracing::error!(
-            "Folding Range: comment_stack should always contain at least one element here"
-        );
-        return;
+        return Err(anyhow::anyhow!(
+            "Folding Range: comment_stack should always contain at least one element"
+        ));
     }
+
     loop {
-        if comment_stack.last().unwrap().is_empty() {
-            comment_stack.last_mut().unwrap().push((level, line_num));
-            return; // return if the stack is empty
+        if comment_stack.last_or_error()?.is_empty() {
+            comment_stack.last_mut_or_error()?.push((level, line_num));
+            return Ok(()); // return if the stack is empty
         }
 
-        let Some((last_level, _)) = comment_stack.last().unwrap().last() else {
-            tracing::error!("Folding Range: comment_stacks should not be empty here");
-            return;
+        let Some((last_level, _)) = comment_stack.last_or_error()?.last() else {
+            return Err(anyhow::anyhow!("Empty comment stack"));
         };
+
         match last_level.cmp(&level) {
             Ordering::Less => {
-                comment_stack.last_mut().unwrap().push((level, line_num));
+                comment_stack.last_mut_or_error()?.push((level, line_num));
                 break;
             },
             Ordering::Equal => {
-                let start_line = comment_stack.last().unwrap().last().unwrap().1;
-                folding_ranges.push(comment_range(
-                    start_line,
-                    find_last_non_empty_line(document, start_line, line_num - 1),
-                ));
-                comment_stack.last_mut().unwrap().pop();
-                comment_stack.last_mut().unwrap().push((level, line_num));
+                let start_line = comment_stack.last_or_error()?.last_or_error()?.1;
+                folding_ranges.push(comment_range(start_line, line_num - 1));
+                comment_stack.last_mut_or_error()?.pop();
+                comment_stack.last_mut_or_error()?.push((level, line_num));
                 break;
             },
             Ordering::Greater => {
-                let start_line = comment_stack.last().unwrap().last().unwrap().1;
-                folding_ranges.push(comment_range(
-                    start_line,
-                    find_last_non_empty_line(document, start_line, line_num - 1),
-                ));
-                comment_stack.last_mut().unwrap().pop(); // Safe: the loop exits early if the stack becomes empty
+                let start_line = comment_stack.last_or_error()?.last_or_error()?.1;
+                folding_ranges.push(comment_range(start_line, line_num - 1));
+                comment_stack.last_mut_or_error()?.pop(); // Safe: the loop exits early if the stack becomes empty
             },
         }
+    }
+    Ok(())
+}
+
+// Mostly a hack until we switch to a stackless an iterative approach
+trait VecResultExt<T> {
+    fn last_or_error(&self) -> anyhow::Result<&T>;
+    fn last_mut_or_error(&mut self) -> anyhow::Result<&mut T>;
+}
+
+impl<T> VecResultExt<T> for Vec<T> {
+    fn last_or_error(&self) -> anyhow::Result<&T> {
+        self.last()
+            .ok_or_else(|| anyhow::anyhow!("Empty comment stack"))
+    }
+
+    fn last_mut_or_error(&mut self) -> anyhow::Result<&mut T> {
+        self.last_mut()
+            .ok_or_else(|| anyhow::anyhow!("Empty comment stack"))
     }
 }
 
@@ -339,10 +337,18 @@ fn cell_processor(
     line_idx: usize,
     line_text: &str,
 ) {
-    let cell_pattern: Regex = Regex::new(r"^#\s*(%%|\+)(.*)").unwrap();
+    // Check if the line is a comment section
+    if RE_COMMENT_SECTION.is_match(line_text) {
+        if let Some(start_line) = cell_marker.take() {
+            let folding_range = comment_range(start_line, line_idx - 1);
+            folding_ranges.push(folding_range);
+        }
+        return; // Stop processing as this is a comment section
+    }
 
-    if !cell_pattern.is_match(line_text) {
-    } else {
+    // Check if the line is a chunk delimiter
+    let cell_pattern: Regex = Regex::new(r"^#+( %%|\+) (.*)").unwrap();
+    if cell_pattern.is_match(line_text) {
         let Some(start_line) = cell_marker else {
             cell_marker.replace(line_idx);
             return;
@@ -355,7 +361,6 @@ fn cell_processor(
 }
 
 fn end_node_handler(
-    document: &Document,
     folding_ranges: &mut Vec<FoldingRange>,
     line_idx: usize,
     comment_stack: &mut Vec<Vec<(usize, usize)>>,
@@ -368,10 +373,7 @@ fn end_node_handler(
         // Iterate over each (start level, start line) in the last section
         for &(_level, start_line) in last_section.iter() {
             // Add a new folding range for each range in the last section
-            let folding_range = comment_range(
-                start_line,
-                find_last_non_empty_line(document, start_line, line_idx - 1),
-            );
+            let folding_range = comment_range(start_line, line_idx - 1);
 
             folding_ranges.push(folding_range);
         }
@@ -389,10 +391,7 @@ fn end_node_handler(
     // End cell Handling
     if let Some(cell_start) = cell_marker {
         // For the last cell, include the current line in the folding range
-        let folding_range = comment_range(
-            *cell_start,
-            find_last_non_empty_line(document, *cell_start, line_idx),
-        );
+        let folding_range = comment_range(*cell_start, line_idx - 1);
         folding_ranges.push(folding_range);
         *cell_marker = None;
     }
@@ -445,6 +444,7 @@ mod tests {
 
     #[test]
     fn test_folding_section_comments_basic() {
+        // Note the chunks are nested in comment sections
         insta::assert_debug_snapshot!(test_folding_range(
             "
 # First section ----
@@ -453,7 +453,43 @@ b
 
 # Second section ----
 c
-d"
+d
+
+# %% Chunk section (jupyter-style)
+e
+f
+
+#+ Chunk section (knitr-style)
+g
+# + This is not a chunk
+h
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_comments_no_trailing_empty_line() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# First section ----
+a
+b"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_comments() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Section ----
+a
+
+b
+c
+
+# Section ----
+d
+"
         ));
     }
 
@@ -474,7 +510,13 @@ c
 d
 
 # Back to Level 1 ----
-e"
+e
+
+# %% Chunk at Level 1
+f
+
+## %% Another chunk at Level 1
+g"
         ));
     }
 
@@ -488,6 +530,44 @@ e"
 
 # Section with content ----
 a"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_chunks_with_section_in_middle() {
+        // Chunks should be nested in sections
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+#+ Cell
+a
+
+# Section ----
+b
+
+#+ Other cell
+c
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_section_chunks_with_sections() {
+        // Chunks should be nested in sections
+        // FIXME: First section doesn't span whole cell
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+# Section ----
+a
+
+#+ Cell
+b
+
+# Section ----
+c
+
+#+ Other cell
+d
+"
         ));
     }
 
@@ -580,6 +660,58 @@ function() {
         ));
     }
 
+    // Braces in function call
+    //
+    // FIXME: Ideally folding should look like:
+    // ```
+    // call({ ...
+    // })
+    // ```
+    //
+    // Currently it looks like:
+    // ```
+    // call({ ...
+    // ```
+    //
+    // That's because the frontend selects the largest range, which in this case
+    // is the range for `(`. Our adjustment logic to shift the end of the range
+    // one line up when the closing delimiter is on its own line doesn't work
+    // for `)` because `}` is in the way. As a consequence `end_character` is
+    // `Some` in these snapshots and `end_line` is one line too high.
+    #[test]
+    fn test_folding_brace_in_call() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+call({
+  1
+})
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_brace_in_call_prefix_arg() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+call(foo, {
+  1
+})
+"
+        ));
+    }
+
+    #[test]
+    fn test_folding_brace_in_call_prefix_postfix_args() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+call(foo, {
+  1
+},
+bar)
+"
+        ));
+    }
+
     // Test for nested, complex code structures
     #[test]
     fn test_folding_complex_nested() {
@@ -628,21 +760,6 @@ function() {
             Ok(ranges) => insta::assert_debug_snapshot!(sorted_ranges(ranges)),
             Err(e) => insta::assert_debug_snapshot!(format!("Expected error: {}", e)),
         }
-    }
-
-    // Test for correct last non-empty line detection
-    #[test]
-    fn test_find_last_non_empty_line() {
-        let doc = Document::new("\nline1\nline2\n\nline3\n", None);
-
-        assert_eq!(find_last_non_empty_line(&doc, 1, 5), 4);
-        assert_eq!(find_last_non_empty_line(&doc, 1, 2), 2);
-        assert_eq!(find_last_non_empty_line(&doc, 3, 5), 4);
-        assert_eq!(find_last_non_empty_line(&doc, 5, 5), 5);
-
-        // Test with empty document
-        let empty_doc = Document::new("\n\n", None);
-        assert_eq!(find_last_non_empty_line(&empty_doc, 1, 2), 1);
     }
 
     // Test for whitespace counting

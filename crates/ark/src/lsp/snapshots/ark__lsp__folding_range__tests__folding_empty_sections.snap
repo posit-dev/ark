@@ -1,12 +1,12 @@
 ---
 source: crates/ark/src/lsp/folding_range.rs
-expression: "test_folding_range(\"\n# Empty section ----\n\n# Another empty section ----\n\n# Section with content ----\nThis one has content\")"
+expression: "test_folding_range(\"\n# Empty section ----\n\n# Another empty section ----\n\n# Section with content ----\na\")"
 ---
 [
     FoldingRange {
         start_line: 1,
         start_character: None,
-        end_line: 1,
+        end_line: 2,
         end_character: None,
         kind: Some(
             Region,
@@ -16,7 +16,7 @@ expression: "test_folding_range(\"\n# Empty section ----\n\n# Another empty sect
     FoldingRange {
         start_line: 3,
         start_character: None,
-        end_line: 3,
+        end_line: 4,
         end_character: None,
         kind: Some(
             Region,
@@ -26,7 +26,7 @@ expression: "test_folding_range(\"\n# Empty section ----\n\n# Another empty sect
     FoldingRange {
         start_line: 5,
         start_character: None,
-        end_line: 5,
+        end_line: 6,
         end_character: None,
         kind: Some(
             Region,
