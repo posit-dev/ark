@@ -145,28 +145,20 @@ fn bracket_range(
     white_space_count: usize,
 ) -> FoldingRange {
     let mut end_line: u32 = end_line as u32;
-    let mut end_char: Option<u32> = Some(end_char as u32);
+    let mut end_character = Some(end_char as u32);
 
-    let adjusted_end_char = end_char.and_then(|val| val.checked_sub(white_space_count as u32));
-
-    match adjusted_end_char {
-        Some(0) => {
+    if let Some(val) = end_char.checked_sub(white_space_count) {
+        if val == 0 {
             end_line -= 1;
-            end_char = None;
-        },
-        Some(_) => {},
-        None => {
-            tracing::error!(
-                "Folding Range (bracket_range): adjusted_end_char should not be None here"
-            );
-        },
+            end_character = None;
+        }
     }
 
     FoldingRange {
         start_line: start_line as u32,
         start_character: Some(start_char as u32),
         end_line,
-        end_character: end_char,
+        end_character,
         kind: Some(FoldingRangeKind::Region),
         collapsed_text: None,
     }
@@ -215,7 +207,10 @@ fn get_line_text(
 
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
     let line_text = get_line_text(document, line_num, None, None);
-    line_text.chars().take_while(|c| c.is_whitespace()).count()
+    line_text
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .count()
 }
 
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
