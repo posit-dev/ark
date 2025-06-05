@@ -36,7 +36,7 @@ expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second secti
     FoldingRange {
         start_line: 13,
         start_character: None,
-        end_line: 16,
+        end_line: 17,
         end_character: None,
         kind: Some(
             Region,

@@ -125,7 +125,6 @@ fn parse_ts_node(
         }
         // End of node handling
         end_node_handler(
-            document,
             folding_ranges,
             end.row + 1,
             &mut child_comment_stack,
@@ -212,15 +211,6 @@ fn get_line_text(
 
     // Extract the substring and return it
     line[start_idx..end_idx].to_string()
-}
-
-fn find_last_non_empty_line(document: &Document, start_line: usize, end_line: usize) -> usize {
-    for idx in (start_line..=end_line).rev() {
-        if !get_line_text(document, idx, None, None).trim().is_empty() {
-            return idx;
-        }
-    }
-    start_line
 }
 
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
@@ -371,7 +361,6 @@ fn cell_processor(
 }
 
 fn end_node_handler(
-    document: &Document,
     folding_ranges: &mut Vec<FoldingRange>,
     line_idx: usize,
     comment_stack: &mut Vec<Vec<(usize, usize)>>,
@@ -402,10 +391,7 @@ fn end_node_handler(
     // End cell Handling
     if let Some(cell_start) = cell_marker {
         // For the last cell, include the current line in the folding range
-        let folding_range = comment_range(
-            *cell_start,
-            find_last_non_empty_line(document, *cell_start, line_idx),
-        );
+        let folding_range = comment_range(*cell_start, line_idx - 1);
         folding_ranges.push(folding_range);
         *cell_marker = None;
     }
@@ -774,21 +760,6 @@ function() {
             Ok(ranges) => insta::assert_debug_snapshot!(sorted_ranges(ranges)),
             Err(e) => insta::assert_debug_snapshot!(format!("Expected error: {}", e)),
         }
-    }
-
-    // Test for correct last non-empty line detection
-    #[test]
-    fn test_find_last_non_empty_line() {
-        let doc = Document::new("\nline1\nline2\n\nline3\n", None);
-
-        assert_eq!(find_last_non_empty_line(&doc, 1, 5), 4);
-        assert_eq!(find_last_non_empty_line(&doc, 1, 2), 2);
-        assert_eq!(find_last_non_empty_line(&doc, 3, 5), 4);
-        assert_eq!(find_last_non_empty_line(&doc, 5, 5), 5);
-
-        // Test with empty document
-        let empty_doc = Document::new("\n\n", None);
-        assert_eq!(find_last_non_empty_line(&empty_doc, 1, 2), 1);
     }
 
     // Test for whitespace counting
