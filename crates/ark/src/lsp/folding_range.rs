@@ -19,14 +19,7 @@ use crate::lsp::documents::Document;
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
 
-    // Activate the parser
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_r::LANGUAGE.into())
-        .unwrap();
-
-    let ast = parser.parse(&document.contents.to_string(), None).unwrap();
-
+    let ast = &document.ast;
     if ast.root_node().has_error() {
         tracing::error!("Folding range service: Parse error");
         return Err(anyhow::anyhow!("Parse error"));
