@@ -384,10 +384,7 @@ fn end_node_handler(
         // Iterate over each (start level, start line) in the last section
         for &(_level, start_line) in last_section.iter() {
             // Add a new folding range for each range in the last section
-            let folding_range = comment_range(
-                start_line,
-                find_last_non_empty_line(document, start_line, line_idx - 1),
-            );
+            let folding_range = comment_range(start_line, line_idx - 1);
 
             folding_ranges.push(folding_range);
         }

@@ -26,7 +26,7 @@ expression: "test_folding_range(\"\n# Section ----\na\n\n#+ Cell\nb\n\n# Section
     FoldingRange {
         start_line: 7,
         start_character: None,
-        end_line: 11,
+        end_line: 12,
         end_character: None,
         kind: Some(
             Region,

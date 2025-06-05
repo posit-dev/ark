@@ -1,6 +1,6 @@
 ---
 source: crates/ark/src/lsp/folding_range.rs
-expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second section ----\nc\nd\n\n# %% Chunk section (jupyter-style)\ne\nf\n\n#+ Chunk section (knitr-style)\ng\n# + This is not a chunk\nh\")"
+expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second section ----\nc\nd\n\n# %% Chunk section (jupyter-style)\ne\nf\n\n#+ Chunk section (knitr-style)\ng\n# + This is not a chunk\nh\n\")"
 ---
 [
     FoldingRange {
@@ -16,7 +16,7 @@ expression: "test_folding_range(\"\n# First section ----\na\nb\n\n# Second secti
     FoldingRange {
         start_line: 5,
         start_character: None,
-        end_line: 16,
+        end_line: 17,
         end_character: None,
         kind: Some(
             Region,
