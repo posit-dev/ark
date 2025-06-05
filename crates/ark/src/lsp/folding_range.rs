@@ -201,8 +201,9 @@ fn get_line_text(
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
     let line_text = get_line_text(document, line_num, None, None);
     line_text
-        .chars()
-        .take_while(|c| *c == ' ' || *c == '\t')
+        .as_bytes()
+        .iter()
+        .take_while(|&&b| b == b' ' || b == b'\t')
         .count()
 }
 
