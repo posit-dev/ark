@@ -22,6 +22,7 @@ use crate::control::Control;
 use crate::dap;
 use crate::interface::SessionMode;
 use crate::lsp;
+#[cfg(target_os = "linux")]
 use crate::parent_monitor;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::repos::DefaultRepos;
