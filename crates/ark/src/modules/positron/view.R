@@ -33,8 +33,30 @@ view <- function(x, title) {
         return(view_data_frame(x, title, var, env))
     }
 
+    if (is.function(x)) {
+        return(view_function(x, title, var, env))
+    }
+
     stop(sprintf(
         "Can't `View()` an object of class `%s`",
         paste(class(x), collapse = "/")
     ))
+}
+
+view_function <- function(x, title, var, env) {
+    stopifnot(is.function(x))
+
+    info <- srcref_info(attr(x, "srcref"))
+
+    if (!is.null(info) && is_string(info$file) && file.exists(info$file)) {
+        # Request frontend to display file
+        .ps.ui.navigateToFile(
+            info$file,
+            info$range$start_line,
+            info$range$start_column
+        )
+        return(invisible())
+    }
+
+    print(x)
 }

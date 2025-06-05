@@ -35,10 +35,22 @@
 #' @export
 .ps.ui.navigateToFile <- function(
     file = character(0),
-    line = -1L,
-    column = -1L
+    line = 0L,
+    column = 0L
 ) {
-    file <- normalizePath(file)
+    # Don't normalize if there's a scheme, e.g. an `ark:` URI
+    if (!grepl("^[a-zA-Z][a-zA-Z0-9+.-]*:", file)) {
+        file <- normalizePath(file)
+    }
+
+    # Convert `-1L` for compatibility with RStudioAPI
+    if (line < 0L) {
+        line <- 0L
+    }
+    if (column < 0L) {
+        column <- 0L
+    }
+
     .ps.Call("ps_ui_navigate_to_file", file, line, column)
 }
 

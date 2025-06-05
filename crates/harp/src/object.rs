@@ -837,6 +837,14 @@ impl TryFrom<RObject> for Option<i32> {
     }
 }
 
+impl TryFrom<RObject> for Option<i64> {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        let value: Option<i32> = value.try_into()?;
+        Ok(value.map(|x| x as i64))
+    }
+}
+
 impl TryFrom<RObject> for Option<f64> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
@@ -906,6 +914,16 @@ impl TryFrom<RObject> for i32 {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
         match Option::<i32>::try_from(value)? {
+            Some(x) => Ok(x),
+            None => Err(Error::MissingValueError),
+        }
+    }
+}
+
+impl TryFrom<RObject> for i64 {
+    type Error = crate::error::Error;
+    fn try_from(value: RObject) -> Result<Self, Self::Error> {
+        match Option::<i64>::try_from(value)? {
             Some(x) => Ok(x),
             None => Err(Error::MissingValueError),
         }
