@@ -12,6 +12,9 @@
             "osx": {
                 "program": "ark"
             },
+            "linux": {
+                "program": "ark"
+            },
             "windows": {
                 "program": "ark.exe"
             },

@@ -118,6 +118,12 @@ pub fn start_kernel(
         panic!("Couldn't connect to frontend: {err:?}");
     }
 
+    // Start parent process monitoring for graceful shutdown if applicable. Currently we
+    // only do this for Linux since it uses `prctl()`.
+    if let Err(err) = crate::sys::parent_monitor::start_parent_monitoring(r_request_tx.clone()) {
+        log::error!("Failed to start parent process monitoring: {err}");
+    }
+
     // Start R
     crate::interface::RMain::start(
         r_args,
