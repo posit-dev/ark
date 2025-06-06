@@ -15,6 +15,9 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam::channel::Sender;
+use nix::sys::signal::SigHandler;
+use nix::sys::signal::Signal;
+use nix::sys::signal::{self};
 use stdext::spawn;
 
 use crate::request::RRequest;
@@ -54,9 +57,8 @@ pub fn start_parent_monitoring(r_request_tx: Sender<RRequest>) -> anyhow::Result
     }
 
     // Spawn a thread to monitor for the signal and handle shutdown
-    let r_request_tx_clone = r_request_tx.clone();
     spawn!("parent-monitor", move || {
-        monitor_parent_death_signal(r_request_tx_clone);
+        monitor_parent_death_signal(r_request_tx);
     });
 
     log::info!("Parent process monitoring started successfully");
@@ -64,13 +66,6 @@ pub fn start_parent_monitoring(r_request_tx: Sender<RRequest>) -> anyhow::Result
 }
 
 fn monitor_parent_death_signal(r_request_tx: Sender<RRequest>) {
-    use std::sync::atomic::AtomicBool;
-    use std::sync::atomic::Ordering;
-
-    use nix::sys::signal::SigHandler;
-    use nix::sys::signal::Signal;
-    use nix::sys::signal::{self};
-
     // Use a static flag to signal when SIGUSR1 is received
     static SIGUSR1_RECEIVED: AtomicBool = AtomicBool::new(false);
 
