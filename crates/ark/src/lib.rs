@@ -25,8 +25,6 @@ pub mod lsp;
 pub mod methods;
 pub mod modules;
 pub mod modules_utils;
-#[cfg(target_os = "linux")]
-pub mod parent_monitor;
 pub mod plots;
 pub mod r_task;
 pub mod repos;
