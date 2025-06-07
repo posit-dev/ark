@@ -9,20 +9,18 @@ use std::cell::OnceCell;
 
 use tree_sitter::Node;
 
-use crate::lsp::completions::parameter_hints::ParameterHints;
-use crate::lsp::completions::parameter_hints::{self};
+use crate::lsp::completions::function_context::FunctionContext;
 use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
 use crate::lsp::completions::sources::composite::pipe::PipeRoot;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 use crate::treesitter::node_find_containing_call;
-
 pub(crate) struct CompletionContext<'a> {
     pub(crate) document_context: &'a DocumentContext<'a>,
     pub(crate) state: &'a WorldState,
-    parameter_hints_cell: OnceCell<ParameterHints>,
     pipe_root_cell: OnceCell<Option<PipeRoot>>,
     containing_call_cell: OnceCell<Option<Node<'a>>>,
+    function_context_cell: OnceCell<FunctionContext>,
 }
 
 impl<'a> CompletionContext<'a> {
@@ -30,19 +28,10 @@ impl<'a> CompletionContext<'a> {
         Self {
             document_context,
             state,
-            parameter_hints_cell: OnceCell::new(),
             pipe_root_cell: OnceCell::new(),
             containing_call_cell: OnceCell::new(),
+            function_context_cell: OnceCell::new(),
         }
-    }
-
-    pub fn parameter_hints(&self) -> &ParameterHints {
-        self.parameter_hints_cell.get_or_init(|| {
-            parameter_hints::parameter_hints(
-                self.document_context.node,
-                &self.document_context.document.contents,
-            )
-        })
     }
 
     pub fn pipe_root(&self) -> Option<PipeRoot> {
@@ -52,7 +41,7 @@ impl<'a> CompletionContext<'a> {
             .get_or_init(|| match find_pipe_root(self.document_context, call_node) {
                 Ok(root) => root,
                 Err(e) => {
-                    log::error!("Error trying to find pipe root: {e}");
+                    log::trace!("Error trying to find pipe root: {e}");
                     None
                 },
             })
@@ -63,5 +52,10 @@ impl<'a> CompletionContext<'a> {
         *self
             .containing_call_cell
             .get_or_init(|| node_find_containing_call(self.document_context.node))
+    }
+
+    pub fn function_context(&self) -> &FunctionContext {
+        self.function_context_cell
+            .get_or_init(|| FunctionContext::new(&self.document_context))
     }
 }
