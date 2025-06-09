@@ -690,25 +690,11 @@ fn recurse_parenthesized_expression(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    let mut n = 0;
-    let mut cursor = node.walk();
-
-    for child in node.children_by_field_name("body", &mut cursor) {
-        recurse(child, context, diagnostics)?;
-        n = n + 1;
-    }
-
-    if n > 1 {
-        // The tree-sitter grammar allows multiple `body` statements, but we warn
-        // the user about this as it is not allowed by the R parser.
-        let range = node.range();
-        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = format!("Expected at most 1 statement within parentheses, found {n}.");
-        let diagnostic = Diagnostic::new_simple(range, message);
-        diagnostics.push(diagnostic);
-    }
-
-    ().ok()
+    let Some(body) = node.child_by_field_name("body") else {
+        // Would be unexpected, grammar requires exactly 1 `body`
+        return Ok(());
+    };
+    recurse(body, context, diagnostics)
 }
 
 /// Default recursion for arguments of a call-like node

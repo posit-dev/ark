@@ -73,37 +73,15 @@ fn recurse_children(
 }
 
 fn syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<Diagnostic> {
-    if let Some(diagnostic) = syntax_diagnostic_missing_open(node, context)? {
-        return Ok(diagnostic);
-    }
+    // We used to try and analyze the `ERROR` structure of the tree to provide "precise"
+    // error messages, but this is extremely prone to false positives due to the fact that
+    // tree-sitter reports a "generic" error range, and it's up to us to try and infer the
+    // problem based on the surrounding nodes, which tree-sitter often "recovers"
+    // incorrectly. It's better to wait for us to have a custom R pratt parser, which
+    // would be able to report precise error locations/messages, because it "knows" why a
+    // parse error occurred.
 
     Ok(syntax_diagnostic_default(node, context))
-}
-
-// Use a heuristic that if we see a syntax error and it just contains a `)`, `}`, or `]`,
-// then it is probably a case of missing a matching open token.
-fn syntax_diagnostic_missing_open(
-    node: Node,
-    context: &DiagnosticContext,
-) -> anyhow::Result<Option<Diagnostic>> {
-    let text = context.contents.node_slice(&node)?;
-
-    let open_token = if text == ")" {
-        "("
-    } else if text == "}" {
-        "{"
-    } else if text == "]" {
-        "["
-    } else {
-        // Not an unmatched closing token
-        return Ok(None);
-    };
-
-    let range = node.range();
-
-    Ok(Some(new_missing_open_diagnostic(
-        open_token, range, context,
-    )))
 }
 
 fn syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
@@ -309,15 +287,6 @@ fn diagnose_missing_close(
     Ok(())
 }
 
-fn new_missing_open_diagnostic(
-    open_token: &str,
-    range: Range,
-    context: &DiagnosticContext,
-) -> Diagnostic {
-    let message = format!("Unmatched closing delimiter. Missing an opening '{open_token}'.");
-    new_syntax_diagnostic(message, range, context)
-}
-
 fn new_missing_close_diagnostic(
     close_token: &str,
     range: Range,
@@ -436,8 +405,17 @@ identity(1)
         let diagnostic = diagnostics.get(0).unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
+        // tree-sitter grammar knows R doesn't allow empty `()` without a body
         let diagnostics = text_diagnostics("()");
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+
+        // tree-sitter grammar knows R doesn't allow >1 expressions in `()`
+        let diagnostics = text_diagnostics("(1+2\n1+2)");
+        assert_eq!(diagnostics.len(), 1);
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("( 1 + 2 )");
         assert!(diagnostics.is_empty());
