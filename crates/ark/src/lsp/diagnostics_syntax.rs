@@ -533,4 +533,15 @@ function(x {
         let diagnostics = text_diagnostics(text);
         assert!(diagnostics.is_empty());
     }
+
+    #[test]
+    fn test_no_syntax_diagnostic_on_raw_strings() {
+        // https://github.com/r-lib/tree-sitter-r/issues/162
+        let text = r#"
+r"-()-)-"
+r"--()-")--"
+        "#;
+        let diagnostics = text_diagnostics(text);
+        assert!(diagnostics.is_empty());
+    }
 }
