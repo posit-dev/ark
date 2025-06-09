@@ -526,4 +526,18 @@ function(x {
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
     }
+
+    #[test]
+    fn test_repeated_call_arguments_without_delimiter() {
+        let text = "match(1, 2 3)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `2`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 9));
+        assert_eq!(diagnostic.range.end, Position::new(0, 10));
+    }
 }
