@@ -335,21 +335,21 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 5));
-        assert_eq!(diagnostic.range.end, Position::new(0, 6));
+        assert_eq!(diagnostic.range.end, Position::new(0, 10));
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[a, b");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
-        assert_eq!(diagnostic.range.end, Position::new(0, 4));
+        assert_eq!(diagnostic.range.end, Position::new(0, 8));
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[[a, b");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
-        assert_eq!(diagnostic.range.end, Position::new(0, 5));
+        assert_eq!(diagnostic.range.end, Position::new(0, 9));
         insta::assert_snapshot!(diagnostic.message);
     }
 
@@ -517,5 +517,20 @@ function(x {
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 9));
         assert_eq!(diagnostic.range.end, Position::new(0, 10));
+    }
+
+    #[test]
+    fn test_no_syntax_diagnostic_on_dots_and_dot_dot_i() {
+        let text = "x$...";
+        let diagnostics = text_diagnostics(text);
+        assert!(diagnostics.is_empty());
+
+        let text = "x$..1";
+        let diagnostics = text_diagnostics(text);
+        assert!(diagnostics.is_empty());
+
+        let text = "x::...";
+        let diagnostics = text_diagnostics(text);
+        assert!(diagnostics.is_empty());
     }
 }
