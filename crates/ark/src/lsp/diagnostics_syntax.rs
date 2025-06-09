@@ -335,21 +335,21 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 5));
-        assert_eq!(diagnostic.range.end, Position::new(0, 10));
+        assert_eq!(diagnostic.range.end, Position::new(0, 6));
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[a, b");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
-        assert_eq!(diagnostic.range.end, Position::new(0, 8));
+        assert_eq!(diagnostic.range.end, Position::new(0, 4));
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[[a, b");
         assert_eq!(diagnostics.len(), 1);
         let diagnostic = diagnostics.get(0).unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
-        assert_eq!(diagnostic.range.end, Position::new(0, 9));
+        assert_eq!(diagnostic.range.end, Position::new(0, 5));
         insta::assert_snapshot!(diagnostic.message);
     }
 

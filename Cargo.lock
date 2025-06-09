@@ -3247,8 +3247,8 @@ checksum = "2545046bd1473dac6c626659cc2567c6c0ff302fc8b84a56c4243378276f7f57"
 
 [[package]]
 name = "tree-sitter-r"
-version = "1.1.0"
-source = "git+https://github.com/r-lib/tree-sitter-r?rev=bc8b4771bc4ac6c012f79877dbf44ba7cf87634f#bc8b4771bc4ac6c012f79877dbf44ba7cf87634f"
+version = "1.2.0"
+source = "git+https://github.com/r-lib/tree-sitter-r?rev=95aff097aa927a66bb357f715b58cde821be8867#95aff097aa927a66bb357f715b58cde821be8867"
 dependencies = [
  "cc",
  "tree-sitter-language",
