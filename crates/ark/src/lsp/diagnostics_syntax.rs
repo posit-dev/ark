@@ -544,4 +544,17 @@ r"--()-")--"
         let diagnostics = text_diagnostics(text);
         assert!(diagnostics.is_empty());
     }
+
+    #[test]
+    fn test_no_syntax_diagnostic_on_null_argument_name() {
+        // https://github.com/r-lib/tree-sitter-r/issues/164
+        let text = r#"
+switch(
+  typeof(x),
+  NULL = ,
+)
+        "#;
+        let diagnostics = text_diagnostics(text);
+        assert!(diagnostics.is_empty());
+    }
 }
