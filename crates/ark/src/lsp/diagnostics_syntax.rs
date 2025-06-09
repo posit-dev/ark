@@ -557,4 +557,14 @@ switch(
         let diagnostics = text_diagnostics(text);
         assert!(diagnostics.is_empty());
     }
+
+    #[test]
+    fn test_no_syntax_diagnostic_on_binary_exponent() {
+        // https://github.com/r-lib/tree-sitter-r/issues/159
+        let text = r#"
+0x0p-123
+        "#;
+        let diagnostics = text_diagnostics(text);
+        assert!(diagnostics.is_empty());
+    }
 }
