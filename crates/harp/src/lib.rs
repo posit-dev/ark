@@ -41,6 +41,7 @@ pub mod traits;
 pub mod utils;
 pub mod vec_format;
 pub mod vector;
+pub mod weak_ref;
 
 // Reexport API
 pub use column_names::*;
@@ -70,6 +71,7 @@ pub use harp::object::list_poke;
 pub use harp::object::RObject;
 pub use harp::symbol::RSymbol;
 pub use harp::utils::get_option;
+pub use harp::weak_ref::RWeakRef;
 pub use harp_macros::register;
 
 // Allow `crate::` references within the crate
