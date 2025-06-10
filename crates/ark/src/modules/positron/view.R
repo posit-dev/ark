@@ -47,16 +47,40 @@ view_function <- function(x, title, var, env) {
     stopifnot(is.function(x))
 
     info <- srcref_info(attr(x, "srcref"))
+    if (!is.null(info)) {
+        if (is.null(info$file)) {
+            contents <- paste_line(info$lines)
+            .ps.ui.newDocument(contents, "r")
+            return(invisible())
+        }
 
-    if (!is.null(info) && is_string(info$file) && file.exists(info$file)) {
-        # Request frontend to display file
-        .ps.ui.navigateToFile(
-            info$file,
-            info$range$start_line,
-            info$range$start_column
-        )
-        return(invisible())
+        if (file.exists(info$file)) {
+            # Request frontend to display file
+            .ps.ui.navigateToFile(
+                info$file,
+                info$range$start_line,
+                info$range$start_column
+            )
+            return(invisible())
+        }
+
+        # fallthrough
     }
 
-    print(x)
+    # TODO: Currently this opens the file in an untitled editor. This is not
+    # ideal as the user will be asked to save the file on close. In the future,
+    # the contents should be sent to positron-r as a document to open via a
+    # TextContent provider to give the editor a "virtual document" flair.
+    #
+    # Note that we don't provide the document from the backend side because that
+    # would require us to manage its lifetime in some way. Better do all that on
+    # the backend side that introduce more communication about editor lifetimes.
+    contents <- paste_line(deparse(x))
+    .ps.ui.newDocument(contents, "r")
+
+    return(invisible())
+}
+
+paste_line <- function(x) {
+    paste(x, collapse = "\n")
 }
