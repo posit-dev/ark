@@ -55,7 +55,8 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
 
     let ns = r_ns_env(&ns_name)?;
 
-    let uri_path = format!("namespace:{ns_name}.R");
+    let id = std::process::id();
+    let uri_path = format!("ark-{id}/namespace/{ns_name}.R");
     let uri = format!("ark:{uri_path}");
 
     let mut vdoc: Vec<String> = vec![
