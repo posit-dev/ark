@@ -825,7 +825,8 @@ impl RMain {
 
         // Process R's polled events regularly while waiting for console input.
         // We used to poll every 200ms but that lead to visible delays for the
-        // processing of plot events.
+        // processing of plot events, it also slowed down callbacks from the later
+        // package. 50ms seems to be more in line with RStudio (posit-dev/positron#7235).
         let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
         let r_request_index = select.recv(&r_request_rx);
