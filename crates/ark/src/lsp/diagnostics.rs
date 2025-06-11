@@ -690,80 +690,11 @@ fn recurse_parenthesized_expression(
     context: &mut DiagnosticContext,
     diagnostics: &mut Vec<Diagnostic>,
 ) -> Result<()> {
-    let mut n = 0;
-    let mut cursor = node.walk();
-
-    for child in node.children_by_field_name("body", &mut cursor) {
-        recurse(child, context, diagnostics)?;
-        n = n + 1;
-    }
-
-    if n > 1 {
-        // The tree-sitter grammar allows multiple `body` statements, but we warn
-        // the user about this as it is not allowed by the R parser.
-        let range = node.range();
-        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-        let message = format!("Expected at most 1 statement within parentheses, found {n}.");
-        let diagnostic = Diagnostic::new_simple(range, message);
-        diagnostics.push(diagnostic);
-    }
-
-    ().ok()
-}
-
-// TODO: This should be a syntax check, as the grammar should not allow
-// two `Argument` nodes side by side
-fn check_call_like_next_sibling(
-    child: Node,
-    parent_type: &NodeType,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> Result<()> {
-    let Some(next) = child.next_sibling() else {
-        return ().ok();
+    let Some(body) = node.child_by_field_name("body") else {
+        // Would be unexpected, grammar requires exactly 1 `body`
+        return Ok(());
     };
-
-    let close = match parent_type {
-        NodeType::Call => ")",
-        NodeType::Subset => "]",
-        NodeType::Subset2 => "]]",
-        _ => bail!("Parent must be a call, subset, or subset2 node."),
-    };
-
-    let ok = match next.node_type() {
-        NodeType::Comma => true,
-        NodeType::Anonymous(kind) if kind.as_str() == close => true,
-        NodeType::Comment => true,
-        // Should be handled elsewhere
-        NodeType::Error => true,
-        _ => false,
-    };
-
-    if ok {
-        return ().ok();
-    }
-
-    // Children can be arbitrarily large, so report the issue between the end of `child`
-    // and the start of `next` (it's not really the child's fault anyways,
-    // it's the fault of the thing right after it).
-    let start_byte = child.end_byte();
-    let start_point = child.end_position();
-    let end_byte = next.start_byte();
-    let end_point = next.start_position();
-
-    let range = Range {
-        start_byte,
-        start_point,
-        end_byte,
-        end_point,
-    };
-
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let message = "Expected ',' between expressions.";
-    let diagnostic = Diagnostic::new_simple(range, message.into());
-    diagnostics.push(diagnostic);
-
-    ().ok()
+    recurse(body, context, diagnostics)
 }
 
 /// Default recursion for arguments of a call-like node
@@ -792,8 +723,6 @@ fn recurse_call_like_arguments_default(
     // every function behaves like `list()`, which is our default model of
     // strict evaluation.
     with_in_call_like_arguments(context, |context| {
-        let call_type = node.node_type();
-
         let Some(arguments) = node.child_by_field_name("arguments") else {
             return Ok(());
         };
@@ -803,9 +732,6 @@ fn recurse_call_like_arguments_default(
         let children = arguments.children_by_field_name("argument", &mut cursor);
 
         for child in children {
-            // Warn if the next sibling is neither a comma nor the correct closing delimiter
-            check_call_like_next_sibling(child, &call_type, context, diagnostics)?;
-
             // Recurse into `value`s
             if let Some(value) = child.child_by_field_name("value") {
                 recurse(value, context, diagnostics)?;
@@ -1108,23 +1034,6 @@ foo
             assert_eq!(diagnostics.len(), 1);
             let diagnostic = diagnostics.get(0).unwrap();
             insta::assert_snapshot!(diagnostic.message);
-        })
-    }
-
-    #[test]
-    fn test_expression_after_call_argument() {
-        r_task(|| {
-            let text = "match(1, 2 3)";
-            let document = Document::new(text, None);
-
-            let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
-            assert_eq!(diagnostics.len(), 1);
-
-            // Diagnostic highlights between the `2` and `3`
-            let diagnostic = diagnostics.get(0).unwrap();
-            insta::assert_snapshot!(diagnostic.message);
-            assert_eq!(diagnostic.range.start, Position::new(0, 10));
-            assert_eq!(diagnostic.range.end, Position::new(0, 11));
         })
     }
 
