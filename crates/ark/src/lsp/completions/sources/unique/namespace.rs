@@ -84,10 +84,12 @@ fn completions_from_namespace(
     let package = context.document.contents.node_slice(&package)?.to_string();
     let package = package.as_str();
 
-    // Get the package namespace.
+    // Get the package namespace
     let Ok(namespace) = RFunction::new("base", "getNamespace").add(package).call() else {
-        // There is no package of this name or it could not be loaded
-        return Ok(None);
+        // There is no package of this name or it could not be loaded, but it did look
+        // like the user wanted namespace completions, so disallow anything else from
+        // running
+        return Ok(Some(completions));
     };
 
     let symbols = if package == "base" {
@@ -240,6 +242,7 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
 mod tests {
     use tree_sitter::Point;
 
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::parameter_hints::ParameterHints;
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::document_context::DocumentContext;
@@ -337,6 +340,20 @@ mod tests {
 
             let point = Point { row: 0, column: 6 };
             let document = Document::new("base:::ab", None);
+            let context = DocumentContext::new(&document, point, None);
+            let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
+                .unwrap()
+                .unwrap();
+            assert!(completions.is_empty());
+        })
+    }
+
+    #[test]
+    fn test_empty_set_of_completions_when_using_unknown_package() {
+        // https://github.com/posit-dev/ark/issues/833
+        r_task(|| {
+            let (text, point) = point_from_cursor("foo::bar@");
+            let document = Document::new(&text, None);
             let context = DocumentContext::new(&document, point, None);
             let completions = completions_from_namespace(&context, &ParameterHints::Enabled)
                 .unwrap()
