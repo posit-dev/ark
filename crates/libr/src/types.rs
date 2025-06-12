@@ -83,6 +83,7 @@ pub const ParseStatus_PARSE_EOF: ParseStatus = 4;
 
 pub type DL_FUNC = Option<unsafe extern "C-unwind" fn() -> *mut std::ffi::c_void>;
 pub type R_NativePrimitiveArgType = std::ffi::c_uint;
+pub type R_CFinalizer_t = Option<unsafe extern "C-unwind" fn(SEXP)>;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

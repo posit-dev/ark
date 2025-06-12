@@ -60,6 +60,14 @@ functions::generate! {
 
     pub fn R_MakeExternalPtr(p: *mut std::ffi::c_void, tag: SEXP, prot: SEXP) -> SEXP;
 
+    pub fn R_MakeWeakRefC(key: SEXP, val: SEXP, fin: R_CFinalizer_t, onexit: Rboolean) -> SEXP;
+
+    pub fn R_WeakRefKey(w: SEXP) -> SEXP;
+
+    pub fn R_WeakRefValue(w: SEXP) -> SEXP;
+
+    pub fn R_RunWeakRefFinalizer(w: SEXP);
+
     pub fn R_IsNA(arg1: f64) -> std::ffi::c_int;
 
     pub fn R_IsNaN(arg1: f64) -> std::ffi::c_int;
