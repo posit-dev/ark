@@ -723,6 +723,10 @@ macro_rules! with_device {
             let $ge_name = $ge_value as *mut libr::GEDevDescVersion16;
             let $name = (*$ge_name).dev;
             $block;
+        } else if version == 17 {
+            let $ge_name = $ge_value as *mut libr::GEDevDescVersion17;
+            let $name = (*$ge_name).dev;
+            $block;
         } else {
             panic!(
                 "R graphics engine version {} is not supported by this version of Positron.",
