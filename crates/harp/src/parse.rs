@@ -28,7 +28,7 @@ pub struct RParseOptions {
 pub enum ParseResult {
     Complete(RObject),
     Incomplete,
-    SyntaxError { message: String, line: i32 },
+    SyntaxError { message: String, line: Option<i32> },
 }
 
 pub enum ParseInput<'a> {
@@ -109,25 +109,44 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
             ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.clone()),
         };
 
-        let result: RObject =
-            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into())?;
+        let result: harp::Result<RObject> =
+            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into());
 
-        match status {
-            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
-            libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
-            libr::ParseStatus_PARSE_ERROR => Ok(ParseResult::SyntaxError {
-                message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
-                    .to_string_lossy()
-                    .to_string(),
-                line: libr::get(libr::R_ParseError) as i32,
-            }),
-            _ => {
-                // Should not get here
-                Err(crate::Error::ParseError {
-                    code: parse_input_as_string(input)
-                        .unwrap_or(String::from("String conversion error")),
-                    message: String::from("Unknown parse error"),
-                })
+        match result {
+            Ok(result) => match status {
+                libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
+                libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
+                libr::ParseStatus_PARSE_ERROR => Ok(ParseResult::SyntaxError {
+                    message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
+                        .to_string_lossy()
+                        .to_string(),
+                    line: Some(libr::get(libr::R_ParseError) as i32),
+                }),
+                _ => {
+                    // Should not get here
+                    Err(crate::Error::ParseError {
+                        code: parse_input_as_string(input)
+                            .unwrap_or(String::from("String conversion error")),
+                        message: String::from("Unknown parse error"),
+                    })
+                },
+            },
+            Err(error) => match error {
+                // R's `raiseLexError()` or `raiseParseError()` throw classed R errors not
+                // captured by the `PARSE_ERROR` variant of `ParseStatus` above. We promote
+                // them to `ParseResult::SyntaxError` to simplify things for the caller.
+                // https://github.com/r-devel/r-svn/blob/78a15b0be74c14161edfa1da65137b0a74a36df6/src/main/gram.c#L6748
+                crate::Error::TryCatchError { message, class, .. }
+                    if class
+                        .as_ref()
+                        .is_some_and(|class| class.iter().any(|class| class == "parseError")) =>
+                {
+                    Ok(ParseResult::SyntaxError {
+                        message,
+                        line: None,
+                    })
+                },
+                error => Err(error),
             },
         }
     }
@@ -205,17 +224,37 @@ mod tests {
             );
 
             // Error
-            assert_match!(
-                parse_status(&ParseInput::Text("42 + _")),
-                Err(_) => {}
-            );
+            // TODO: Can we turn this into a parse error? It seems to happen because
+            // the parser calls `Rf_install()` to turn the name into a symbol, which
+            // throws its own R error that doesn't get classed as a "parseError". It
+            // currently shows a full backtrace because it looks like an unhandled error.
+            // https://github.com/posit-dev/ark/issues/598
+            assert_match!(parse_status(&ParseInput::Text("``")), Err(_));
 
             // "normal" syntax error
             assert_match!(
                 parse_status(&ParseInput::Text("1+1\n*42")),
                 Ok(ParseResult::SyntaxError {message, line}) => {
                     assert!(message.contains("unexpected"));
-                    assert_eq!(line, 2);
+                    assert_eq!(line, Some(2));
+                }
+            );
+
+            // `raiseParseError()` syntax error - pipe placeholder
+            assert_match!(
+                parse_status(&ParseInput::Text("42 + _")),
+                Ok(ParseResult::SyntaxError {message, line}) => {
+                    assert!(message.contains("pipe placeholder"));
+                    assert_eq!(line, None);
+                }
+            );
+
+            // `raiseParseError()` syntax error - unrecognized escape
+            assert_match!(
+                parse_status(&ParseInput::Text(r"'\s'")),
+                Ok(ParseResult::SyntaxError {message, line}) => {
+                    assert!(message.contains("unrecognized escape"));
+                    assert_eq!(line, None);
                 }
             );
 
