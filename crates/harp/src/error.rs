@@ -46,7 +46,7 @@ pub enum Error {
     InvalidUtf8(Utf8Error),
     ParseSyntaxError {
         message: String,
-        line: i32,
+        line: Option<i32>,
     },
     MissingValueError,
     MissingColumnError {
@@ -200,8 +200,9 @@ impl fmt::Display for Error {
                 write!(f, "Invalid UTF-8 in string: {}", error)
             },
 
-            Error::ParseSyntaxError { message, line } => {
-                write!(f, "Syntax error on line {} when parsing: {}", line, message)
+            Error::ParseSyntaxError { message, line } => match line {
+                Some(line) => write!(f, "Syntax error on line {} when parsing: {}", line, message),
+                None => write!(f, "Syntax error when parsing: {}", message),
             },
 
             Error::MissingValueError => {
