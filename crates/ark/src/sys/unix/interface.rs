@@ -108,6 +108,10 @@ pub fn run_activity_handlers() {
         //
         // We run this in a loop just to make sure the R help server can
         // be as responsive as possible when rendering help pages.
+        //
+        // Note that the later package also adds an input handler to `R_InputHandlers`
+        // which runs the later event loop, so it's also important that we are fairly
+        // responsive for that as well (posit-dev/positron#7235).
         let mut fdset = R_checkActivity(0, 1);
 
         while fdset != std::ptr::null_mut() {
