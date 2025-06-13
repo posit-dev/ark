@@ -22,6 +22,7 @@ use tree_sitter::Point;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::rope::RopeExt;
+use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -96,6 +97,12 @@ fn find_roxygen_comment_at_point<'tree>(
     contents: &Rope,
     point: Point,
 ) -> Option<(Node<'tree>, Option<String>)> {
+    // Refuse to look for roxygen comments in the face of parse errors
+    // (posit-dev/positron#5023)
+    if node_has_error_or_missing(root) {
+        return None;
+    }
+
     let mut cursor = root.walk();
 
     // Move cursor to first node that is at or extends past the `point`
@@ -230,6 +237,14 @@ fn expand_range_across_semicolons(mut node: Node) -> tree_sitter::Range {
 }
 
 fn find_statement_range_node<'tree>(root: &'tree Node, row: usize) -> Option<Node<'tree>> {
+    // Refuse to provide a statement range in the face of parse errors, we are
+    // unlikely to be able to provide anything useful, and are more likely to provide
+    // something confusing. Instead, return `None` so that the frontend sends code to
+    // the console one line at a time (posit-dev/positron#5023).
+    if node_has_error_or_missing(root) {
+        return None;
+    }
+
     let mut cursor = root.walk();
 
     let children = root.children(&mut cursor);
@@ -1403,18 +1418,6 @@ test_that('stuff', {
     }
 
     #[test]
-    fn test_unmatched_opening_braces_send_the_full_partial_statement() {
-        statement_range_test(
-            "
-@
-<<{
-    1 + 1
-
->>",
-        );
-    }
-
-    #[test]
     fn test_binary_op_with_braces_respects_that_you_can_put_the_cursor_inside_the_braces() {
         statement_range_test(
             "
@@ -1557,15 +1560,19 @@ list({
     }
 
     #[test]
-    fn test_unmatched_opening_braces_partial_statement() {
-        statement_range_test(
-            "
-@
-<<{
+    fn test_returns_none_with_parse_errors() {
+        let row = 2;
+        let contents = "
+{
     1 + 1
-
->>",
-        );
+";
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_r::LANGUAGE.into())
+            .expect("Failed to create parser");
+        let ast = parser.parse(contents, None).unwrap();
+        let root = ast.root_node();
+        assert_eq!(find_statement_range_node(&root, row), None);
     }
 
     #[test]
@@ -1680,5 +1687,23 @@ list({
         let (node, code) = find_roxygen_comment_at_point(&root, contents, point).unwrap();
         assert_eq!(get_text(&node, &contents), String::from("###' @returns"));
         assert!(code.is_none());
+
+        let text = "
+#' Hi
+#' @param x foo
+#' @examples
+#' 1 + 1
+#' 2 + 2
+#' @returns
+1 +
+";
+
+        let document = Document::new(text, None);
+        let root = document.ast.root_node();
+        let contents = &document.contents;
+
+        // With parse errors in the file, return `None`
+        let point = Point { row: 4, column: 1 };
+        assert_eq!(find_roxygen_comment_at_point(&root, contents, point), None);
     }
 }
