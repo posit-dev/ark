@@ -36,7 +36,6 @@ use crate::r_char;
 use crate::r_lang;
 use crate::r_null;
 use crate::r_symbol;
-use crate::string::r_is_string;
 use crate::symbol::RSymbol;
 use crate::vector::CharacterVector;
 use crate::vector::IntegerVector;
@@ -152,6 +151,10 @@ pub fn r_is_simple_vector(value: SEXP) -> bool {
             _ => false,
         }
     }
+}
+
+pub fn r_is_string(x: SEXP) -> bool {
+    r_typeof(x) == STRSXP && r_length(x) == 1 && x != r_str_na()
 }
 
 /// Is `object` a matrix?

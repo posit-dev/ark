@@ -33,7 +33,6 @@ pub mod routines;
 pub mod session;
 pub mod size;
 pub mod source;
-pub mod string;
 pub mod symbol;
 pub mod sys;
 pub mod table;
