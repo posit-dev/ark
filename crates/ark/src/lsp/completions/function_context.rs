@@ -9,7 +9,7 @@ use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::convert_node_to_range;
+use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::node_text;
 use crate::treesitter::BinaryOperatorType;
@@ -83,9 +83,9 @@ impl FunctionContext {
 
         Self {
             name,
-            range: convert_node_to_range(
+            range: convert_tree_sitter_range_to_lsp_range(
                 &document_context.document.contents,
-                &function_identifier_node,
+                function_identifier_node.range(),
             ),
             usage,
             arguments_status,

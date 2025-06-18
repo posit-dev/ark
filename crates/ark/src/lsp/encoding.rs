@@ -176,15 +176,3 @@ fn convert_character_from_utf8_to_utf16(x: &str, character: usize) -> usize {
         },
     }
 }
-
-/// Converts a tree-sitter Node to an LSP Range.
-/// This is useful when we need to perform text edits on specific nodes.
-pub fn convert_node_to_range(x: &Rope, node: &tree_sitter::Node) -> tower_lsp::lsp_types::Range {
-    let start_point = node.start_position();
-    let end_point = node.end_position();
-
-    let start = convert_point_to_position(x, start_point);
-    let end = convert_point_to_position(x, end_point);
-
-    tower_lsp::lsp_types::Range::new(start, end)
-}
