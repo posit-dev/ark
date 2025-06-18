@@ -1,5 +1,5 @@
 //
-// completions/tests/function_completions.rs
+// function_completions.rs
 //
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
