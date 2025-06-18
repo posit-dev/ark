@@ -9,11 +9,12 @@ use tower_lsp::lsp_types::CompletionTextEdit;
 
 use crate::fixtures::utils::point_from_cursor;
 use crate::lsp::completions::provide_completions;
+use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::documents::Document;
 use crate::lsp::state::WorldState;
 
-pub fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {
+pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {
     let (text, point) = point_from_cursor(cursor_text);
     let document = Document::new(&text, None);
     let document_context = DocumentContext::new(&document, point, None);
@@ -25,7 +26,7 @@ pub fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<Comple
     }
 }
 
-pub fn find_completion_by_label<'a>(
+pub(crate) fn find_completion_by_label<'a>(
     completions: &'a [tower_lsp::lsp_types::CompletionItem],
     label: &str,
 ) -> &'a tower_lsp::lsp_types::CompletionItem {
@@ -35,7 +36,7 @@ pub fn find_completion_by_label<'a>(
         .unwrap_or_else(|| panic!("Completion item with label '{label}' not found"))
 }
 
-pub fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expected_text: &str) {
+pub(crate) fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expected_text: &str) {
     assert!(item.text_edit.is_some());
     assert!(item.insert_text.is_none());
 
@@ -43,29 +44,29 @@ pub fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expected_te
         CompletionTextEdit::Edit(edit) => {
             assert_eq!(
                 edit.new_text, expected_text,
-                "Text edit should replace with {expected_text}"
+                "Text edit should replace with '{expected_text}'"
             );
         },
         _ => panic!("Unexpected TextEdit variant"),
     }
 }
 
-pub fn assert_has_parameter_hints(item: &tower_lsp::lsp_types::CompletionItem) {
-    let msg = "editor.action.triggerParameterHints";
-    assert!(item.command.is_some(), "{msg}");
-
-    if let Some(command) = &item.command {
-        assert_eq!(
-            command.command, "editor.action.triggerParameterHints",
-            "{msg}"
-        );
+pub(crate) fn assert_has_parameter_hints(item: &tower_lsp::lsp_types::CompletionItem) {
+    match &item.command {
+        Some(command) => assert_eq!(command.command, "editor.action.triggerParameterHints"),
+        None => panic!("CompletionItem is missing parameter hints command"),
     }
 }
 
-/// Helper to assert that a completion item has no command
-pub fn assert_no_command(item: &tower_lsp::lsp_types::CompletionItem) {
+pub(crate) fn assert_no_command(item: &tower_lsp::lsp_types::CompletionItem) {
     assert!(
         item.command.is_none(),
         "CompletionItem should not have an associated command"
     );
+}
+
+pub(crate) fn assert_sort_text_has_priority_prefix(item: &tower_lsp::lsp_types::CompletionItem) {
+    assert!(item.sort_text.is_some());
+    let sort_text = item.sort_text.as_ref().unwrap();
+    assert!(has_priority_prefix(sort_text));
 }
