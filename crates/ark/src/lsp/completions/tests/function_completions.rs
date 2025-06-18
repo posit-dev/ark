@@ -135,10 +135,21 @@ mod namespace_post_hoc_tests {
             // `utils::` here, given that utils is generally available. But I
             // want to use a base package and this still tests the mechanics.
             let completions = get_completions_at_cursor("utils::@adist").unwrap();
-            let item = find_completion_by_label(&completions, "adist");
 
+            // check the matching item
+            let item = find_completion_by_label(&completions, "adist");
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
-            assert_eq!(item.insert_text, Some("adist($0)".to_string()));
+            assert_text_edit(&item, "adist");
+            assert!(item
+                .sort_text
+                .as_ref()
+                .is_some_and(|text| text.starts_with("0-")));
+            assert_eq!(item.preselect, Some(true));
+
+            // check a nonmatching item
+            let item = find_completion_by_label(&completions, "aspell");
+            assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
+            assert_eq!(item.insert_text, Some("aspell($0)".to_string()));
             assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
             assert_has_parameter_hints(item);
         });

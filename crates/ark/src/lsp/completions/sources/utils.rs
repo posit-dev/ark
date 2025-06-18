@@ -57,11 +57,20 @@ pub(super) fn set_sort_text_by_words_first(completions: &mut Vec<CompletionItem>
     // - `\W_` for "non word characters plus `_`"
     // Result is "starts with any word character except `_`"
     let pattern = Regex::new(r"^[^\W_]").unwrap();
+    // Pattern to detect if text already has a priority prefix (digit + dash)
+    let priority_pattern = Regex::new(r"^\d+\-").unwrap();
 
     for item in completions {
         // Start with existing `sort_text` if one exists
         let text = match &item.sort_text {
-            Some(sort_text) => sort_text,
+            Some(sort_text) => {
+                // If it looks like the `sort_text` already has a prefix meant
+                // to bring this item to the top, don't prepend another prefix.
+                if priority_pattern.is_match(sort_text) {
+                    continue;
+                }
+                sort_text
+            },
             None => &item.label,
         };
 
