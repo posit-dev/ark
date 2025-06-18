@@ -198,14 +198,29 @@ pub(super) fn completion_item_from_function(
     if function_context.usage == FunctionUsage::Call &&
         function_context.arguments_status == ArgumentsStatus::Absent
     {
-        item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-        item.insert_text = Some(format!("{insert_text}($0)"));
-
-        item.command = Some(Command {
-            title: "Trigger Parameter Hints".to_string(),
-            command: "editor.action.triggerParameterHints".to_string(),
-            ..Default::default()
-        });
+        if item_name_is_match {
+            // If we've gotten here, it's a case like `dplyr::@across`.
+            // We believe the usage to be a call, but that's because that's our
+            // default assumption. However, there aren't any parentheses *yet*.
+            // We need to consume the existing function identifier (e.g.
+            // `across`) and move the cursor to its end.
+            // We don't add parentheses, both because it feels presumptuous and
+            // because we don't have a practical way of doing so, in any case.
+            item.insert_text = None;
+            let text_edit = TextEdit {
+                range: function_context.range,
+                new_text: insert_text,
+            };
+            item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
+        } else {
+            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+            item.insert_text = Some(format!("{insert_text}($0)"));
+            item.command = Some(Command {
+                title: "Trigger Parameter Hints".to_string(),
+                command: "editor.action.triggerParameterHints".to_string(),
+                ..Default::default()
+            });
+        }
 
         return Ok(item);
     }
