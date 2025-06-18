@@ -1,5 +1,5 @@
 //
-// completions/tests/utils.rs
+// utils.rs
 //
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
