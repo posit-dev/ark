@@ -110,7 +110,7 @@ fn completions_from_search_path(
                     symbol,
                     env,
                     name,
-                    promise_strategy.clone(),
+                    promise_strategy,
                     context.function_context(),
                 ) {
                     Ok(item) => completions.push(item),
