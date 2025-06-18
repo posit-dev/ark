@@ -60,6 +60,7 @@ mod function_reference_tests {
     use tower_lsp::lsp_types::InsertTextFormat;
 
     use crate::lsp::completions::tests::utils::assert_no_command;
+    use crate::lsp::completions::tests::utils::assert_sort_text_has_priority_prefix;
     use crate::lsp::completions::tests::utils::assert_text_edit;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
@@ -112,6 +113,7 @@ mod function_reference_tests {
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(&item, "any");
+            assert_sort_text_has_priority_prefix(item);
         });
     }
 }
@@ -123,6 +125,7 @@ mod namespace_post_hoc_tests {
     use tower_lsp::lsp_types::InsertTextFormat;
 
     use crate::lsp::completions::tests::utils::assert_has_parameter_hints;
+    use crate::lsp::completions::tests::utils::assert_sort_text_has_priority_prefix;
     use crate::lsp::completions::tests::utils::assert_text_edit;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
@@ -140,10 +143,7 @@ mod namespace_post_hoc_tests {
             let item = find_completion_by_label(&completions, "adist");
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(&item, "adist");
-            assert!(item
-                .sort_text
-                .as_ref()
-                .is_some_and(|text| text.starts_with("0-")));
+            assert_sort_text_has_priority_prefix(item);
             assert_eq!(item.preselect, Some(true));
 
             // check a nonmatching item

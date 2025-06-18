@@ -22,6 +22,7 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::collect_completions;
+use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -161,7 +162,13 @@ fn sort_completions(completions: &mut Vec<CompletionItem>) {
         // Start with existing `sort_text` if one exists
         let sort_text = item.sort_text.take();
         let sort_text = match sort_text {
-            Some(sort_text) => sort_text,
+            Some(sort_text) => {
+                if has_priority_prefix(&sort_text) {
+                    item.sort_text = Some(sort_text);
+                    continue;
+                }
+                sort_text
+            },
             None => item.label.clone(),
         };
 
