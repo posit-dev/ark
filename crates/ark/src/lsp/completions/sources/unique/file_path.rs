@@ -8,11 +8,9 @@
 use std::env::current_dir;
 use std::path::PathBuf;
 
-use harp::object::RObject;
-use harp::string::r_string_decode;
+use harp::utils::r_is_string;
 use harp::utils::r_normalize_path;
 use stdext::unwrap;
-use stdext::IntoResult;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
@@ -33,13 +31,24 @@ pub(super) fn completions_from_string_file_path(
     //
     // NOTE: This includes the quotation characters on the string, and so
     // also includes any internal escapes! We need to decode the R string
-    // before searching the path entries.
+    // by parsing it before searching the path entries.
     let token = context.document.contents.node_slice(&node)?.to_string();
-    let contents = unsafe { r_string_decode(token.as_str()).into_result()? };
-    log::trace!("String value (decoded): {}", contents);
+
+    // It's entirely possible that we can fail to parse the string, `R_ParseVector()`
+    // can fail in various ways. We silently swallow these because they are unlikely
+    // to report to real file paths and just bail (posit-dev/positron#6584).
+    let Ok(contents) = harp::parse_expr(&token) else {
+        return Ok(completions);
+    };
+
+    // Double check that parsing gave a string. It should, because `node` points to
+    // a tree-sitter string node.
+    if !r_is_string(contents.sexp) {
+        return Ok(completions);
+    }
 
     // Use R to normalize the path.
-    let path = r_normalize_path(RObject::from(contents))?;
+    let path = r_normalize_path(contents)?;
 
     // parse the file path and get the directory component
     let mut path = PathBuf::from(path.as_str());
@@ -81,4 +90,29 @@ pub(super) fn completions_from_string_file_path(
     set_sort_text_by_words_first(&mut completions);
 
     Ok(completions)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::fixtures::point_from_cursor;
+    use crate::lsp::completions::sources::unique::file_path::completions_from_string_file_path;
+    use crate::lsp::document_context::DocumentContext;
+    use crate::lsp::documents::Document;
+    use crate::r_task;
+    use crate::treesitter::node_find_string;
+
+    #[test]
+    fn test_unparseable_string() {
+        // https://github.com/posit-dev/positron/issues/6584
+        r_task(|| {
+            // "\R" is an unrecognized escape character and `R_ParseVector()` errors on it
+            let (text, point) = point_from_cursor(r#" ".\R\utils.R@" "#);
+            let document = Document::new(text.as_str(), None);
+            let context = DocumentContext::new(&document, point, None);
+            let node = node_find_string(&context.node).unwrap();
+
+            let completions = completions_from_string_file_path(&node, &context).unwrap();
+            assert_eq!(completions.len(), 0);
+        })
+    }
 }
