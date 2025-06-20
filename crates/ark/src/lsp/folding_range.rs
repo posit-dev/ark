@@ -123,7 +123,7 @@ fn parse_ts_node(
         // End of node handling
         end_node_handler(
             folding_ranges,
-            end.row + 1,
+            if _depth == 0 { end.row + 1 } else { end.row },
             &mut child_comment_stack,
             &mut child_region_marker,
             &mut child_cell_marker,
