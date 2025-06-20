@@ -122,13 +122,13 @@ fn is_inside_special_function(node: &Node, contents: &ropey::Rope) -> bool {
         return false;
     };
 
-    let Some(caller_node) = call_node.child_by_field_name("function") else {
+    let Some(call_name_node) = call_node.child_by_field_name("function") else {
         return false;
     };
 
-    let caller_name = node_text(&caller_node, contents).unwrap_or_default();
+    let call_name = node_text(&call_name_node, contents).unwrap_or_default();
 
-    FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE.contains(&caller_name.as_str())
+    FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE.contains(&call_name.as_str())
 }
 
 /// Checks if the node is inside a help operator context like `?foo` or `method?foo`
