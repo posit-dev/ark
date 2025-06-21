@@ -53,47 +53,64 @@ pub(crate) enum ArgumentsStatus {
 impl FunctionContext {
     pub(crate) fn new(document_context: &DocumentContext) -> Self {
         let completion_node = document_context.node;
-        let function_container_node = skip_namespace_operator(completion_node);
-
-        let function_identifier_node = if function_container_node.is_namespace_operator() {
-            match function_container_node.child_by_field_name("rhs") {
-                Some(node) => node,
-                None => completion_node, // should be impossible
-            }
-        } else {
-            completion_node
-        };
+        let effective_function_node = get_effective_function_node(completion_node);
 
         let usage = determine_function_usage(
-            &function_container_node,
+            &effective_function_node,
             &document_context.document.contents,
         );
 
-        let name = node_text(
-            &function_identifier_node,
-            &document_context.document.contents,
-        )
-        .unwrap_or_default();
+        let function_name_node = if effective_function_node.is_namespace_operator() {
+            // Note: this could be 'None', in the case of, e.g., `dplyr::@`
+            effective_function_node.child_by_field_name("rhs")
+        } else {
+            Some(effective_function_node)
+        };
+
+        let name = match function_name_node {
+            Some(node) => node_text(&node, &document_context.document.contents).unwrap_or_default(),
+            None => String::new(),
+        };
 
         let arguments_status = if usage == FunctionUsage::Reference {
             ArgumentsStatus::Absent
         } else {
-            determine_arguments_status(&function_container_node)
+            determine_arguments_status(&effective_function_node)
         };
+
+        log::info!(
+            "FunctionContext created with name: '{name}', usage: {usage:?}, arguments: {arguments_status:?}"
+        );
 
         Self {
             name,
-            range: convert_tree_sitter_range_to_lsp_range(
-                &document_context.document.contents,
-                function_identifier_node.range(),
-            ),
+            range: match function_name_node {
+                Some(node) => convert_tree_sitter_range_to_lsp_range(
+                    &document_context.document.contents,
+                    node.range(),
+                ),
+                None => {
+                    // Create a zero-width range at the end of the effective_function_node
+                    let node_range = effective_function_node.range();
+                    let end_position = convert_tree_sitter_range_to_lsp_range(
+                        &document_context.document.contents,
+                        node_range,
+                    )
+                    .end;
+                    tower_lsp::lsp_types::Range::new(end_position, end_position)
+                },
+            },
             usage,
             arguments_status,
         }
     }
 }
 
-pub(crate) fn skip_namespace_operator(node: Node) -> Node {
+/// The practical definition of the effective function node is "Which node
+/// should I take the parent of, if I want the parent of a function call or
+/// reference?"
+/// This is about accomodating `fnc` and `pkg::fcn`.
+fn get_effective_function_node(node: Node) -> Node {
     let Some(parent) = node.parent() else {
         return node;
     };
@@ -156,19 +173,16 @@ fn determine_arguments_status(function_container_node: &Node) -> ArgumentsStatus
         return ArgumentsStatus::Absent;
     }
 
-    let arguments_node = match parent.child_by_field_name("arguments") {
-        Some(node) => node,
-        None => return ArgumentsStatus::Absent,
+    let Some(arguments_node) = parent.child_by_field_name("arguments") else {
+        return ArgumentsStatus::Absent;
     };
 
-    let open_paren = match arguments_node.child_by_field_name("open") {
-        Some(node) => node,
-        None => return ArgumentsStatus::Absent,
+    let Some(open_paren) = arguments_node.child_by_field_name("open") else {
+        return ArgumentsStatus::Absent;
     };
 
-    let close_paren = match arguments_node.child_by_field_name("close") {
-        Some(node) => node,
-        None => return ArgumentsStatus::Absent,
+    let Some(close_paren) = arguments_node.child_by_field_name("close") else {
+        return ArgumentsStatus::Absent;
     };
 
     // Check if "(" is followed immediately by ")"
