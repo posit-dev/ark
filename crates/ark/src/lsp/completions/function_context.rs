@@ -53,7 +53,24 @@ pub(crate) enum ArgumentsStatus {
 impl FunctionContext {
     pub(crate) fn new(document_context: &DocumentContext) -> Self {
         let completion_node = document_context.node;
-        let effective_function_node = get_effective_function_node(completion_node);
+
+        let Some(effective_function_node) = get_effective_function_node(completion_node) else {
+            // We shouldn't ever attempt to instantiate a FunctionContext or
+            // function-flavored CompletionItem in this degenerate case, but we
+            // return a dummy FunctionContext just to be safe.
+            let end_position = convert_tree_sitter_range_to_lsp_range(
+                &document_context.document.contents,
+                completion_node.range(),
+            )
+            .end;
+
+            return Self {
+                name: String::new(),
+                range: tower_lsp::lsp_types::Range::new(end_position, end_position),
+                usage: FunctionUsage::Call,
+                arguments_status: ArgumentsStatus::Absent,
+            };
+        };
 
         let usage = determine_function_usage(
             &effective_function_node,
@@ -109,16 +126,23 @@ impl FunctionContext {
 /// The practical definition of the effective function node is "Which node
 /// should I take the parent of, if I want the parent of a function call or
 /// reference?"
-/// This is about accomodating `fnc` and `pkg::fcn`.
-fn get_effective_function_node(node: Node) -> Node {
+///
+/// This handles both simple identifiers (`fnc`) and namespace-qualified
+/// identifiers (`pkg::fcn`).
+///
+/// The alleged function node has to either be an identifier or a
+/// namespace operator. Otherwise, we return `None`.
+fn get_effective_function_node(node: Node) -> Option<Node> {
     let Some(parent) = node.parent() else {
-        return node;
+        return None;
     };
 
     if parent.is_namespace_operator() {
-        parent
+        Some(parent)
+    } else if node.is_identifier() || node.is_namespace_operator() {
+        Some(node)
     } else {
-        node
+        None
     }
 }
 
