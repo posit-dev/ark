@@ -1,8 +1,23 @@
-# For debugging from R
+# Populate source references right there and then instead of at idle time. Used
+# for `View()` when called from top-level. Also useful for debugging from R. Be
+# careful with this one because it produces session-wide side effects that
+# mutate source references for all functions in the given namespace. This could
+# invalidate reasonable assumptions made by currently running code.
 ns_populate_srcref <- function(ns_name) {
     loadNamespace(ns_name)
     .ps.Call("ps_ns_populate_srcref", ns_name)
 }
+
+fn_populate_srcref <- function(fn) {
+    fn_env <- topenv(environment(fn))
+    if (!isNamespace(fn_env)) {
+        return()
+    }
+
+    pkg <- getNamespaceName(fn_env)
+    ns_populate_srcref(pkg)
+}
+
 
 # Called from Rust
 reparse_with_srcref <- function(x, name, uri, line) {

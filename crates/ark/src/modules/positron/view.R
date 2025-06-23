@@ -34,7 +34,8 @@ view <- function(x, title) {
     }
 
     if (is.function(x)) {
-        return(view_function(x, title, var, env))
+        top_level <- sys.nframe() == 1
+        return(view_function(x, title, var, env, top_level = top_level))
     }
 
     stop(sprintf(
@@ -43,9 +44,17 @@ view <- function(x, title) {
     ))
 }
 
-view_function <- function(x, title, var, env) {
+view_function <- function(x, title, var, env, top_level = FALSE) {
     stopifnot(is.function(x))
 
+    # Only resource the namespace if we're at top-level. Doing it while
+    # arbitrary code is running is unsafe as the source references are mutated
+    # globally. The mutation could invalidate assumptions made by running code.
+    if (top_level) {
+        fn_populate_srcref(x)
+    }
+
+    # Get srcref _after_ potentially resourcing from a virtual namespace file
     info <- srcref_info(attr(x, "srcref"))
     if (!is.null(info)) {
         if (is.null(info$file)) {
