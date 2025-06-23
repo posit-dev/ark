@@ -123,7 +123,7 @@ fn parse_ts_node(
         // End of node handling
         end_node_handler(
             folding_ranges,
-            end.row + 1,
+            if _depth == 0 { end.row + 1 } else { end.row },
             &mut child_comment_stack,
             &mut child_region_marker,
             &mut child_cell_marker,
@@ -741,5 +741,19 @@ function() {
         assert_eq!(count_leading_whitespaces(&doc, 1), 2);
         assert_eq!(count_leading_whitespaces(&doc, 2), 4);
         assert_eq!(count_leading_whitespaces(&doc, 3), 1); // Tab counts as 1 char
+    }
+
+    #[test]
+    fn test_nested_sibling_levels() {
+        insta::assert_debug_snapshot!(test_folding_range(
+            "
+{
+    # level 1 ####
+    1
+    # another level 1 ####
+    2
+}
+"
+        ));
     }
 }
