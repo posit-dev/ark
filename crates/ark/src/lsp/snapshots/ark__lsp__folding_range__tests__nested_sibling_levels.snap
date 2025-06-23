@@ -28,7 +28,7 @@ expression: "test_folding_range(\"\n{\n    # level 1 ####\n    1\n    # another 
     FoldingRange {
         start_line: 4,
         start_character: None,
-        end_line: 6,
+        end_line: 5,
         end_character: None,
         kind: Some(
             Region,
