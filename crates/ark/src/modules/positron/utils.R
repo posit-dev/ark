@@ -144,3 +144,11 @@ is_string <- function(x) {
 is_http_url <- function(x) {
     is_string(x) && grepl("^https?://", x)
 }
+
+obj_address <- function(x) {
+    .ps.Call("ps_obj_address", x)
+}
+
+paste_line <- function(x) {
+    paste(x, collapse = "\n")
+}

@@ -44,7 +44,7 @@ view <- function(x, title) {
     ))
 }
 
-view_function <- function(x, title, var, env, top_level = FALSE) {
+view_function <- function(x, title, var = "", env = NULL, top_level = FALSE) {
     stopifnot(is.function(x))
 
     # Only resource the namespace if we're at top-level. Doing it while
@@ -56,44 +56,61 @@ view_function <- function(x, title, var, env, top_level = FALSE) {
 
     # Get srcref _after_ potentially resourcing from a virtual namespace file
     info <- srcref_info(attr(x, "srcref"))
-    if (!is.null(info)) {
-        if (is.null(info$file)) {
-            contents <- paste_line(info$lines)
-            .ps.ui.newDocument(contents, "r")
-            return(invisible())
-        }
-
-        if (is_virtual_file(info$file) || file.exists(info$file)) {
-            # Request frontend to display file
-            .ps.ui.navigateToFile(
-                info$file,
-                info$range$start_line,
-                info$range$start_column
-            )
-            return(invisible())
-        }
-
-        # fallthrough
+    if (
+        !is.null(info) &&
+            !is.null(info$file) &&
+            (is_ark_uri(info$file) || file.exists(info$file))
+    ) {
+        # Request frontend to display file
+        .ps.ui.navigateToFile(
+            info$file,
+            info$range$start_line,
+            info$range$start_column
+        )
+        return(invisible())
     }
 
-    # TODO: Currently this opens the file in an untitled editor. This is not
-    # ideal as the user will be asked to save the file on close. In the future,
-    # the contents should be sent to positron-r as a document to open via a
-    # TextContent provider to give the editor a "virtual document" flair.
-    #
-    # Note that we don't provide the document from the backend side because that
-    # would require us to manage its lifetime in some way. Better do all that on
-    # the backend side that introduce more communication about editor lifetimes.
-    contents <- paste_line(deparse(x))
-    .ps.ui.newDocument(contents, "r")
+    # We don't have a valid source reference to point to so we'll create a new
+    # virtual document and open that instead
+    if (!is.null(info$lines)) {
+        # The srcref might not point to a valid file but might contain a full
+        # source. That's the case when calling `parse()` manually. This source
+        # is more accurate than deparsing so we use that.
+        contents <- paste_line(info$lines)
+    } else {
+        # Deparse as fallback
+        contents <- paste_line(deparse(x))
+    }
 
-    return(invisible())
+    if (is.null(env)) {
+        env_name <- "unknown"
+    } else {
+        env_name <- .ps.env_name(env) %||% obj_address(env)
+    }
+
+    if (!nzchar(var)) {
+        var <- "unknown"
+    }
+
+    # NOTE: We currently open a new virtual document that never gets cleaned up.
+    # Getting notified of editor close by the frontend would be complex to set
+    # up correctly. Instead this could be fixed by sending the document to the
+    # frontend and let it manage the lifetime of the virtual docs.
+    uri <- ark_uri(sprintf("%s/%s.R", env_name, var))
+    insert_virtual_document(uri, contents)
+
+    .ps.ui.navigateToFile(uri)
+    invisible()
 }
 
-is_virtual_file <- function(path) {
+insert_virtual_document <- function(uri, contents) {
+    .ps.Call("ps_insert_virtual_document", uri, contents)
+}
+
+ark_uri <- function(path) {
+    .ps.Call("ps_ark_uri", path)
+}
+
+is_ark_uri <- function(path) {
     startsWith(path, "ark:")
-}
-
-paste_line <- function(x) {
-    paste(x, collapse = "\n")
 }

@@ -368,6 +368,11 @@ impl RObject {
         r_typeof(self.sexp)
     }
 
+    /// Address in hexadecimal format
+    pub fn address(&self) -> String {
+        format!("{:p}", self.sexp as *const _)
+    }
+
     /// String accessor; get a string value from a vector of strings.
     ///
     /// - `idx` - The index of the string to return.
@@ -1176,6 +1181,12 @@ where
     } else {
         Ok(Some(x.try_into()?))
     }
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_obj_address(x: SEXP) -> anyhow::Result<SEXP> {
+    let address: RObject = RObject::view(x).address().into();
+    Ok(address.sexp)
 }
 
 #[cfg(test)]

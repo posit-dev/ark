@@ -2004,7 +2004,10 @@ impl RMain {
         }
     }
 
-    pub fn did_open_virtual_document(&mut self, uri: String, contents: String) {
+    pub fn insert_virtual_document(&mut self, uri: String, contents: String) {
+        // Strip scheme if any. We're only storing the path.
+        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+
         // Save our own copy of the virtual document. If the LSP is currently closed
         // or restarts, we can notify it of all virtual documents it should know about
         // in the LSP channel setup step. It is common for the kernel to create the
@@ -2309,4 +2312,18 @@ fn is_auto_printing() -> bool {
         };
         car == show_fun.sexp
     }
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_insert_virtual_document(
+    uri: SEXP,
+    contents: SEXP,
+) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let contents: String = RObject::view(contents).try_into()?;
+
+    let main = RMain::get_mut();
+    main.insert_virtual_document(uri, contents);
+
+    Ok(RObject::null().sexp)
 }

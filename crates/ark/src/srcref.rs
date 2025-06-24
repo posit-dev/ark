@@ -54,10 +54,7 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     let mut tick = std::time::Instant::now();
 
     let ns = r_ns_env(&ns_name)?;
-
-    let id = std::process::id();
-    let uri_path = format!("ark-{id}/namespace/{ns_name}.R");
-    let uri = format!("ark:{uri_path}");
+    let uri = ark_uri(format!("namespace/{ns_name}.R"));
 
     let mut vdoc: Vec<String> = vec![
         format!("# Virtual namespace of package {ns_name}."),
@@ -110,10 +107,8 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
 
     let contents = vdoc.join("\n");
 
-    // Notify LSP of the opened virtual document so the LSP can function as a
-    // text document content provider of the virtual document contents, which is
-    // used by the debugger.
-    RMain::with_mut(|main| main.did_open_virtual_document(uri_path, contents));
+    // Register the virtual document for the namespace
+    RMain::with_mut(|main| main.insert_virtual_document(uri, contents));
 
     Ok(())
 }
@@ -192,6 +187,32 @@ fn generate_source(
 
     let text: Vec<String> = RObject::view(text).try_into()?;
     Ok(Some(text))
+}
+
+/// Creates a URI with scheme `ark:`. These URIs are routed from the frontend by
+/// a text content provider to our LSP via a custom request.
+pub(crate) fn ark_uri(path: String) -> String {
+    // The URI includes the process ID to disambiguate in case multiple sessions
+    // are open on the frontend side. We're not worried about pid reuse issues
+    // for our modest use cases with virtual documents.
+    //
+    // Currently if the wrong session is active when a vdoc is opened you just
+    // get an error but we could route them to the correct kernel via a Jupyter
+    // comm (Control socket for async RPC) in the future. Unlike the LSP, the
+    // Jupyter comm persists session changes. Note that we currently don't have
+    // important use cases that require opening a vdoc for a background session.
+    // It's possible that a user could call `View()` after running a long
+    // computation, but it'd be peculiar to view a function that way, we mostly
+    // expect interactive gestures.
+    let id = std::process::id();
+    format!("ark:ark-{id}/{path}")
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ps_ark_uri(path: SEXP) -> anyhow::Result<SEXP> {
+    let path = RObject::view(path).try_into()?;
+    let uri: RObject = ark_uri(path).into();
+    Ok(uri.sexp)
 }
 
 #[harp::register]
