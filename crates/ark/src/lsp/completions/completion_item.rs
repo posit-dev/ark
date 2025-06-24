@@ -186,8 +186,8 @@ pub(super) fn completion_item_from_function(
     let label_details = item_details(package);
     item.label_details = Some(label_details);
 
-    // Are we forming a completion item that's an exact match for the existing
-    // function name? And is the function name already present?
+    // Are we forming a completion item that's an exact match for an existing
+    // function name that is already in the document?
     // This identifies scenarios where we need to edit text, not just insert it.
     let item_is_an_edit = name == function_context.name && !function_context.cursor_is_at_end;
 
