@@ -29,11 +29,8 @@ pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec
 pub(crate) fn find_completion_by_label<'a>(
     completions: &'a [tower_lsp::lsp_types::CompletionItem],
     label: &str,
-) -> &'a tower_lsp::lsp_types::CompletionItem {
-    completions
-        .iter()
-        .find(|c| c.label == label)
-        .unwrap_or_else(|| panic!("Completion item with label '{label}' not found"))
+) -> Option<&'a tower_lsp::lsp_types::CompletionItem> {
+    completions.iter().find(|c| c.label == label)
 }
 
 pub(crate) fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expected_text: &str) {

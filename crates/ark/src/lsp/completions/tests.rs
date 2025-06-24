@@ -5,4 +5,4 @@
 //
 
 mod function_completions;
-mod utils;
+pub(crate) mod utils;

@@ -20,6 +20,9 @@ mod function_call_tests {
             let completions = get_completions_at_cursor("a@").unwrap();
             let item = find_completion_by_label(&completions, "abbreviate");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("abbreviate($0)".to_string()));
             assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
@@ -32,6 +35,9 @@ mod function_call_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("utils::a@").unwrap();
             let item = find_completion_by_label(&completions, "adist");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("adist($0)".to_string()));
@@ -46,6 +52,9 @@ mod function_call_tests {
             let completions = get_completions_at_cursor("rev(tou@").unwrap();
             let item = find_completion_by_label(&completions, "toupper");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("toupper($0)".to_string()));
             assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
@@ -58,6 +67,9 @@ mod function_call_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("dir@").unwrap();
             let item = find_completion_by_label(&completions, "dir");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("dir($0)".to_string()));
@@ -83,6 +95,9 @@ mod function_reference_tests {
             let completions = get_completions_at_cursor("debug(a@)").unwrap();
             let item = find_completion_by_label(&completions, "any");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("any".to_string()));
             assert_eq!(item.insert_text_format, Some(InsertTextFormat::PLAIN_TEXT));
@@ -95,6 +110,9 @@ mod function_reference_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("?a@").unwrap();
             let item = find_completion_by_label(&completions, "any");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("any".to_string()));
@@ -109,6 +127,9 @@ mod function_reference_tests {
             let completions = get_completions_at_cursor("debug(utils::a@)").unwrap();
             let item = find_completion_by_label(&completions, "adist");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("adist".to_string()));
             assert_eq!(item.insert_text_format, Some(InsertTextFormat::PLAIN_TEXT));
@@ -121,6 +142,9 @@ mod function_reference_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("debug(any@)").unwrap();
             let item = find_completion_by_label(&completions, "any");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("any".to_string()));
@@ -153,13 +177,19 @@ mod namespace_post_hoc_tests {
 
             // check the matching item
             let item = find_completion_by_label(&completions, "adist");
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
-            assert_text_edit(&item, "adist");
+            assert_text_edit(item, "adist");
             assert_sort_text_has_priority_prefix(item);
             assert_eq!(item.preselect, Some(true));
 
             // check a nonmatching item
             let item = find_completion_by_label(&completions, "aspell");
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_eq!(item.insert_text, Some("aspell($0)".to_string()));
             assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
@@ -173,6 +203,9 @@ mod namespace_post_hoc_tests {
             let completions = get_completions_at_cursor("utils::@adist()").unwrap();
             let item = find_completion_by_label(&completions, "adist");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "adist(");
             assert_has_parameter_hints(item);
@@ -185,6 +218,9 @@ mod namespace_post_hoc_tests {
             let completions = get_completions_at_cursor("utils::@adist()").unwrap();
             let item = find_completion_by_label(&completions, "adist");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "adist(");
             assert_has_parameter_hints(item);
@@ -196,6 +232,9 @@ mod namespace_post_hoc_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("debug(utils::@adist)").unwrap();
             let item = find_completion_by_label(&completions, "adist");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "adist");
@@ -227,6 +266,9 @@ mod empty_args_tests {
             let completions = get_completions_at_cursor("a@()").unwrap();
             let item = find_completion_by_label(&completions, "abbreviate");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "abbreviate(");
             assert_has_parameter_hints(item);
@@ -238,6 +280,9 @@ mod empty_args_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("utils::@adist()").unwrap();
             let item = find_completion_by_label(&completions, "adist");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "adist(");
@@ -261,6 +306,9 @@ mod nonempty_args_tests {
             let completions = get_completions_at_cursor("a@(\"hello\", width=10)").unwrap();
             let item = find_completion_by_label(&completions, "abbreviate");
 
+            assert!(item.is_some());
+            let item = item.unwrap();
+
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "abbreviate(");
 
@@ -273,6 +321,9 @@ mod nonempty_args_tests {
         r_task(|| {
             let completions = get_completions_at_cursor("utils::a@(\"hi\", \"bye\")").unwrap();
             let item = find_completion_by_label(&completions, "adist");
+
+            assert!(item.is_some());
+            let item = item.unwrap();
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
             assert_text_edit(item, "adist(");
