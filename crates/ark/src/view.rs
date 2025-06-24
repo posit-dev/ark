@@ -76,7 +76,11 @@ mod tests {
                 .replace_all(&doc, "ark:ark-*pid*")
                 .to_string();
 
-            assert!(doc.contains("ark:ark-*pid*/namespace/base.R"));
+            assert!(
+                doc.contains("ark:ark-*pid*/namespace/base.R"),
+                "doc did not contain expected URI. doc was:\n{}",
+                doc
+            );
         });
     }
 
