@@ -35,60 +35,27 @@ pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
     resource_namespaces(loaded)
 }
 
-#[harp::register]
-unsafe extern "C-unwind" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
-    let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
-    resource_namespaces(pkgs)?;
-    Ok(harp::r_null())
-}
-
-#[harp::register]
-unsafe extern "C-unwind" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
-    let ns_name: String = RObject::view(ns_name).try_into()?;
-    futures::executor::block_on(ns_populate_srcref(ns_name))?;
-    Ok(harp::r_null())
-}
-
-#[harp::register]
-unsafe extern "C-unwind" fn ps_ns_populate_srcref_without_vdoc_insertion(
-    ns_name: SEXP,
-) -> anyhow::Result<SEXP> {
-    let ns_name: String = RObject::view(ns_name).try_into()?;
-
-    // Don't redo the work if we already did it. We don't expect a namespace to change.
-    if RMain::with(|main| main.has_virtual_document(&ark_ns_uri(&ns_name))) {
-        return Ok(RObject::null().sexp);
-    }
-
-    let (uri, contents) =
-        futures::executor::block_on(ns_populate_srcref_without_vdoc_insertion(ns_name))?;
-
-    // Would ideally be a named list but currently inconvenient to create
-    let uri: RObject = uri.try_into()?;
-    let contents: RObject = contents.try_into()?;
-    let out: RObject = vec![uri, contents].try_into()?;
-
-    Ok(out.sexp)
-}
-
 pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
-    // Don't redo the work if we already did it. We don't expect a namespace to change.
-    if RMain::with(|main| main.has_virtual_document(&ark_ns_uri(&ns_name))) {
-        return Ok(());
-    }
-
-    let (uri, contents) = ns_populate_srcref_without_vdoc_insertion(ns_name).await?;
-
-    // Register the virtual document for the namespace
-    RMain::with_mut(|main| main.insert_virtual_document(uri, contents));
+    if let Some((uri, contents)) = ns_populate_srcref_without_vdoc_insertion(ns_name).await? {
+        // Register the virtual document for the namespace
+        RMain::with_mut(|main| main.insert_virtual_document(uri, contents));
+    };
 
     Ok(())
 }
 
+/// Returns `None` if namespace vdoc was already generated. Otherwise returns
+/// `(uri, contents)`.
 async fn ns_populate_srcref_without_vdoc_insertion(
     ns_name: String,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<Option<(String, String)>> {
     let span = tracing::trace_span!("ns_populate_srcref", ns = ns_name);
+
+    // Don't redo the work if we already did it. We don't expect a namespace to change.
+    if RMain::with(|main| main.has_virtual_document(&ark_ns_uri(&ns_name))) {
+        return Ok(None);
+    }
+
     let mut tick = std::time::Instant::now();
 
     let ns = r_ns_env(&ns_name)?;
@@ -144,7 +111,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
     );
 
     let contents = vdoc.join("\n");
-    Ok((uri, contents))
+    Ok(Some((uri, contents)))
 }
 
 fn ark_ns_uri(ns_name: &str) -> String {
@@ -247,6 +214,11 @@ pub(crate) fn ark_uri(path: &str) -> String {
 }
 
 #[harp::register]
+pub extern "C-unwind" fn ark_zap_srcref(x: SEXP) -> anyhow::Result<SEXP> {
+    Ok(harp::attrib::zap_srcref(x).sexp)
+}
+
+#[harp::register]
 pub extern "C-unwind" fn ps_ark_uri(path: SEXP) -> anyhow::Result<SEXP> {
     let path: String = RObject::view(path).try_into()?;
     let uri: RObject = ark_uri(&path).into();
@@ -261,6 +233,35 @@ pub extern "C-unwind" fn ps_ark_ns_uri(path: SEXP) -> anyhow::Result<SEXP> {
 }
 
 #[harp::register]
-pub extern "C-unwind" fn ark_zap_srcref(x: SEXP) -> anyhow::Result<SEXP> {
-    Ok(harp::attrib::zap_srcref(x).sexp)
+unsafe extern "C-unwind" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
+    let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
+    resource_namespaces(pkgs)?;
+    Ok(harp::r_null())
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
+    let ns_name: String = RObject::view(ns_name).try_into()?;
+    futures::executor::block_on(ns_populate_srcref(ns_name))?;
+    Ok(harp::r_null())
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_ns_populate_srcref_without_vdoc_insertion(
+    ns_name: SEXP,
+) -> anyhow::Result<SEXP> {
+    let ns_name: String = RObject::view(ns_name).try_into()?;
+
+    let Some((uri, contents)) =
+        futures::executor::block_on(ns_populate_srcref_without_vdoc_insertion(ns_name))?
+    else {
+        return Ok(RObject::null().sexp);
+    };
+
+    // Would ideally be a named list but currently inconvenient to create
+    let uri: RObject = uri.try_into()?;
+    let contents: RObject = contents.try_into()?;
+    let out: RObject = vec![uri, contents].try_into()?;
+
+    Ok(out.sexp)
 }
