@@ -8,7 +8,7 @@
 mod common;
 pub(crate) mod composite;
 pub(crate) mod unique;
-mod utils;
+pub(crate) mod utils;
 
 use tower_lsp::lsp_types::CompletionItem;
 

@@ -1,7 +1,7 @@
 //
 // utils.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -24,6 +24,14 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
+pub(crate) fn has_priority_prefix(sort_text: &str) -> bool {
+    // If we want to force a completion item to the top of the list,
+    // we pre-emptively set its `sort_text` to begin with "0-".
+    // We usually don't want to mess with such `sort_text` downstream.
+    // Not sure it will remain as simple as "0-", hence this helper.
+    sort_text.starts_with("0-")
+}
+
 pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<CompletionItem>) {
     let size = completions.len();
 
@@ -43,7 +51,12 @@ pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<Completion
             Some(sort_text) => sort_text,
             None => &item.label,
         };
-        // Append an integer left padded with `0`s
+        // Append an integer left padded with `0`s.
+        //
+        // We don't check if pre-existing `sort_text` has any specific form,
+        // because there's no known overlap between the use cases for sorting by
+        // first appearance and wanting to hoist a specific completion item to
+        // the top of the list.
         let prefix = format!("{:0width$}", i, width = width);
         let sort_text = format!("{prefix}-{text}");
         item.sort_text = Some(sort_text);
@@ -61,7 +74,14 @@ pub(super) fn set_sort_text_by_words_first(completions: &mut Vec<CompletionItem>
     for item in completions {
         // Start with existing `sort_text` if one exists
         let text = match &item.sort_text {
-            Some(sort_text) => sort_text,
+            Some(sort_text) => {
+                // If it looks like the `sort_text` already has a prefix meant
+                // to bring this item to the top, don't prepend another prefix.
+                if has_priority_prefix(sort_text) {
+                    continue;
+                }
+                sort_text
+            },
             None => &item.label,
         };
 
