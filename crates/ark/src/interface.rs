@@ -2004,10 +2004,6 @@ impl RMain {
         }
     }
 
-    pub fn has_virtual_document(&self, uri: &String) -> bool {
-        self.lsp_virtual_documents.contains_key(uri)
-    }
-
     pub fn insert_virtual_document(&mut self, uri: String, contents: String) {
         log::trace!("Inserting vdoc for `{uri}`");
 
@@ -2024,6 +2020,11 @@ impl RMain {
         self.send_lsp_notification(KernelNotification::DidOpenVirtualDocument(
             DidOpenVirtualDocumentParams { uri, contents },
         ))
+    }
+
+    pub fn has_virtual_document(&self, uri: &String) -> bool {
+        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+        self.lsp_virtual_documents.contains_key(&uri)
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
