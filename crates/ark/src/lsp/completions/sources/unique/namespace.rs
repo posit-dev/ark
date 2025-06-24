@@ -241,127 +241,107 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
 
 #[cfg(test)]
 mod tests {
-    use tree_sitter::Point;
+    use tower_lsp::lsp_types::CompletionItem;
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
+    use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::document_context::DocumentContext;
     use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
+    pub(crate) fn get_namespace_completions_at_cursor(
+        cursor_text: &str,
+    ) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+        let (text, point) = point_from_cursor(cursor_text);
+        let document = Document::new(&text, None);
+        let document_context = DocumentContext::new(&document, point, None);
+        let state = WorldState::default();
+        let context = CompletionContext::new(&document_context, &state);
+
+        completions_from_namespace(&context)
+    }
+
     #[test]
     fn test_completions_after_colons() {
         r_task(|| {
             // Just colons, no RHS text yet
-            let point = Point { row: 0, column: 7 };
-            let document = Document::new("utils::", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = get_namespace_completions_at_cursor("utils::@")
+                .unwrap()
+                .unwrap();
 
-            let completion = completions.iter().find(|item| item.label == "adist");
-            assert!(completion.is_some());
+            let item = find_completion_by_label(&completions, "adist");
+            assert!(item.is_some());
 
             // Should not find internal function
-            let completion = completions
-                .iter()
-                .find(|item| item.label == "as.bibentry.bibentry");
-            assert!(completion.is_none());
+            let item = find_completion_by_label(&completions, "as.bibentry.bibentry");
+            assert!(item.is_none());
 
             // Internal functions with `:::`
-            let point = Point { row: 0, column: 8 };
-            let document = Document::new("utils:::", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
-            let completion = completions
-                .iter()
-                .find(|item| item.label == "as.bibentry.bibentry");
-            assert!(completion.is_some());
+            let completions = get_namespace_completions_at_cursor("utils:::@")
+                .unwrap()
+                .unwrap();
+            let item = find_completion_by_label(&completions, "as.bibentry.bibentry");
+            assert!(item.is_some());
 
             // With RHS text, which is ignored when generating completions.
             // Filtering applied on frontend side.
-            let point = Point { row: 0, column: 11 };
-            let document = Document::new("utils::blah", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
-            let completion = completions.iter().find(|item| item.label == "adist");
-            assert!(completion.is_some());
-        })
+            let completions = get_namespace_completions_at_cursor("utils::bl@ah")
+                .unwrap()
+                .unwrap();
+            let item = find_completion_by_label(&completions, "adist");
+            assert!(item.is_some());
+        });
     }
 
     #[test]
     fn test_expression_after_colon_colon_doesnt_result_in_completions() {
         r_task(|| {
-            let point = Point { row: 0, column: 7 };
-            let document = Document::new("base::+", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap();
+            let completions = get_namespace_completions_at_cursor("base::+@").unwrap();
             assert!(completions.is_none());
-        })
+        });
     }
 
     #[test]
     fn test_empty_set_of_completions_when_on_package_name() {
         r_task(|| {
-            let point = Point { row: 0, column: 2 };
-            let document = Document::new("base::ab", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = get_namespace_completions_at_cursor("ba@se::ab")
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
-        })
+        });
     }
 
     #[test]
     fn test_empty_set_of_completions_when_not_at_end_of_colons() {
         r_task(|| {
-            let point = Point { row: 0, column: 5 };
-            let document = Document::new("base::ab", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = get_namespace_completions_at_cursor("base:@:ab")
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
 
-            let point = Point { row: 0, column: 5 };
-            let document = Document::new("base:::ab", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = get_namespace_completions_at_cursor("base:@::ab")
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
 
-            let point = Point { row: 0, column: 6 };
-            let document = Document::new("base:::ab", None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = get_namespace_completions_at_cursor("base::@:ab")
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
-        })
+        });
     }
 
     #[test]
     fn test_empty_set_of_completions_when_using_unknown_package() {
         // https://github.com/posit-dev/ark/issues/833
         r_task(|| {
-            let (text, point) = point_from_cursor("foo::bar@");
-            let document = Document::new(&text, None);
-            let document_context = DocumentContext::new(&document, point, None);
-            let state = WorldState::default();
-            let context = CompletionContext::new(&document_context, &state);
-            let completions = completions_from_namespace(&context).unwrap().unwrap();
+            let completions = get_namespace_completions_at_cursor("foo::bar@")
+                .unwrap()
+                .unwrap();
             assert!(completions.is_empty());
-        })
+        });
     }
 }
