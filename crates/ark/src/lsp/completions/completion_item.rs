@@ -39,7 +39,7 @@ use tree_sitter::Node;
 
 use crate::lsp::completions::function_context::ArgumentsStatus;
 use crate::lsp::completions::function_context::FunctionContext;
-use crate::lsp::completions::function_context::FunctionUsage;
+use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
@@ -187,34 +187,83 @@ pub(super) fn completion_item_from_function(
     item.label_details = Some(label_details);
 
     // Are we forming a completion item that's an exact match for the existing
-    // function identifier?
-    let item_name_is_match = name == function_context.name;
+    // function name? And is the function name already present?
+    // This identifies scenarios where we need to edit text, not just insert it.
+    let item_is_an_edit = name == function_context.name && !function_context.cursor_is_at_end;
 
-    if item_name_is_match {
+    // These settings are part of the trick we use to make it easy to accept
+    // this matching completion item, which will feel like we're just moving
+    // the cursor past existing text.
+    if item_is_an_edit {
         item.sort_text = Some(format!("0-{name}"));
         item.preselect = Some(true);
     }
 
-    if function_context.usage == FunctionUsage::Call &&
-        function_context.arguments_status == ArgumentsStatus::Absent
-    {
-        if item_name_is_match {
-            // If we've gotten here, it's a case like `dplyr::@across`.
-            // We believe the usage to be a call, but that's because that's our
-            // default assumption. However, there aren't any parentheses *yet*.
-            // We need to consume the existing function identifier (e.g.
-            // `across`) and move the cursor to its end.
-            // We don't add parentheses, both because it feels presumptuous and
-            // because we don't have a practical way of doing so, in any case.
-            item.insert_text = None;
+    if function_context.arguments_status == ArgumentsStatus::Absent {
+        if item_is_an_edit {
+            // This is a case like `dplyr::@across` or
+            // `debug(dplyr::@across`), i.e. adding the `dplyr::`
+            // namespace qualification after-the-fact.
+            // We need to consume the existing function name (e.g. `across`) and
+            // move the cursor to its end. We don't add parentheses, both
+            // because it feels presumptuous and because we don't have a
+            // practical way of doing so, in any case. We leave the arguments
+            // just as we found them: absent.
             let text_edit = TextEdit {
                 range: function_context.range,
                 new_text: insert_text,
             };
             item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
-        } else {
-            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-            item.insert_text = Some(format!("{insert_text}($0)"));
+
+            return Ok(item);
+        }
+
+        // These are the two most common, plain vanilla function completion
+        // scenarios: typing out a known call or reference for the first time.
+        match function_context.usage {
+            FunctionRefUsage::Call => {
+                item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+                item.insert_text = Some(format!("{insert_text}($0)"));
+                item.command = Some(Command {
+                    title: "Trigger Parameter Hints".to_string(),
+                    command: "editor.action.triggerParameterHints".to_string(),
+                    ..Default::default()
+                });
+            },
+            FunctionRefUsage::Value => {
+                item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
+                item.insert_text = Some(insert_text);
+            },
+        }
+
+        return Ok(item);
+    }
+
+    // Addresses a sequence that starts like this:
+    // some_thing()
+    // User realizes they want a different function and backspaces.
+    // some_@()
+    // User accepts one of the offered completions.
+    // some_other_thing(@)
+    // User is back on the Happy Path.
+    // Also handles the case of editing `some_thing(foo = "bar")`, i.e. where
+    // something already exists inside the parentheses.
+    // Also handles the case of adding `pkg::` after the fact to an existing
+    // call like `pkg::@fcn()` or `pkg::@fcn(foo = "bar)`.
+    if function_context.usage == FunctionRefUsage::Call {
+        // Tweak the range to cover the opening parenthesis "(" and
+        // include the opening parenthesis in the new text.
+        // The effect is to move the cursor inside the parentheses.
+        let text_edit = TextEdit {
+            range: {
+                let mut range = function_context.range;
+                range.end.character += 1;
+                range
+            },
+            new_text: format!("{}(", insert_text),
+        };
+        item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
+        if function_context.arguments_status == ArgumentsStatus::Empty {
             item.command = Some(Command {
                 title: "Trigger Parameter Hints".to_string(),
                 command: "editor.action.triggerParameterHints".to_string(),
@@ -225,71 +274,17 @@ pub(super) fn completion_item_from_function(
         return Ok(item);
     }
 
-    if function_context.usage == FunctionUsage::Reference {
-        // Create a text edit that replaces the existing function name
-        // This prevents duplication when the completion is accepted in the
-        // case of adding `pkg::` after the fact
-
-        if item_name_is_match {
-            item.insert_text = None;
-            let text_edit = TextEdit {
-                range: function_context.range,
-                new_text: insert_text,
-            };
-            item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
-        } else {
-            item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
-            item.insert_text = Some(insert_text);
-        }
-
-        return Ok(item);
-    }
-
-    // from here on out, we use a text edit for all cases
-    item.insert_text = None;
-
-    if function_context.usage == FunctionUsage::Call &&
-        function_context.arguments_status == ArgumentsStatus::Empty
-    {
-        // Tweak the range to cover the opening parenthesis "("
-        // Include the opening parenthesis in the new text
-        // The effect is to move the cursor inside the parentheses
-        let text_edit = TextEdit {
-            range: {
-                let mut range = function_context.range;
-                range.end.character += 1;
-                range
-            },
-            new_text: format!("{}(", insert_text),
-        };
-        item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
-
-        item.command = Some(Command {
-            title: "Trigger Parameter Hints".to_string(),
-            command: "editor.action.triggerParameterHints".to_string(),
-            ..Default::default()
-        });
-
-        return Ok(item);
-    }
-
-    if function_context.usage == FunctionUsage::Call &&
-        function_context.arguments_status == ArgumentsStatus::Nonempty
-    {
-        let text_edit = TextEdit {
-            range: function_context.range,
-            new_text: insert_text,
-        };
-        item.text_edit = Some(CompletionTextEdit::Edit(text_edit));
-
-        return Ok(item);
-    }
-
     // Fallback case which should really never happen, but let's be safe
     log::trace!(
-        "completion_item_from_function() - Unexpected case: usage={:?}, arguments_status={:?}",
-        function_context.usage,
-        function_context.arguments_status
+        "completion_item_from_function() - Unexpected case:
+         usage={usage:?},
+         arguments_status={arguments_status:?},
+         name='{name}',
+         package={package:?},
+         cursor_at_end={cursor_is_at_end}",
+        usage = function_context.usage,
+        arguments_status = function_context.arguments_status,
+        cursor_is_at_end = function_context.cursor_is_at_end
     );
 
     item.insert_text_format = Some(InsertTextFormat::PLAIN_TEXT);
@@ -524,8 +519,9 @@ pub(super) unsafe fn completion_item_from_lazydata(
     let dummy_function_context = FunctionContext {
         name: String::new(),
         range: Default::default(),
-        usage: FunctionUsage::Call,
+        usage: FunctionRefUsage::Call,
         arguments_status: ArgumentsStatus::Absent,
+        cursor_is_at_end: true,
     };
 
     match completion_item_from_symbol(

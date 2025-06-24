@@ -9,6 +9,7 @@ use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
+use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::node_text;
@@ -19,23 +20,25 @@ use crate::treesitter::UnaryOperatorType;
 
 /// Represents how a function is being used in an expression
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum FunctionUsage {
+pub(crate) enum FunctionRefUsage {
     /// Function is being called, e.g., `foo()`
     Call,
-    /// Function is being referenced without calling, e.g., `foo` in `debug(foo)`
-    Reference,
+    /// Function is being referenced as a value without calling, e.g., `foo` in `debug(foo)`
+    Value,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct FunctionContext {
     /// The name of the function (could be, and often is, a fragment)
     pub name: String,
-    /// The LSP range of the function identifier
+    /// The LSP range of the function name
     pub range: Range,
     /// How the function is being used (call vs reference)
-    pub usage: FunctionUsage,
+    pub usage: FunctionRefUsage,
     /// The status of the function's arguments
     pub arguments_status: ArgumentsStatus,
+    /// Whether the cursor is at the end of the effective function node
+    pub cursor_is_at_end: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -58,17 +61,17 @@ impl FunctionContext {
             // We shouldn't ever attempt to instantiate a FunctionContext or
             // function-flavored CompletionItem in this degenerate case, but we
             // return a dummy FunctionContext just to be safe.
-            let end_position = convert_tree_sitter_range_to_lsp_range(
+            let node_end = convert_point_to_position(
                 &document_context.document.contents,
-                completion_node.range(),
-            )
-            .end;
+                completion_node.range().end_point,
+            );
 
             return Self {
                 name: String::new(),
-                range: tower_lsp::lsp_types::Range::new(end_position, end_position),
-                usage: FunctionUsage::Call,
+                range: tower_lsp::lsp_types::Range::new(node_end, node_end),
+                usage: FunctionRefUsage::Call,
                 arguments_status: ArgumentsStatus::Absent,
+                cursor_is_at_end: true,
             };
         };
 
@@ -84,19 +87,24 @@ impl FunctionContext {
             Some(effective_function_node)
         };
 
+        let cursor = document_context.point;
+        let node_range = effective_function_node.range();
+        let is_cursor_at_end =
+            cursor.row == node_range.end_point.row && cursor.column == node_range.end_point.column;
+
         let name = match function_name_node {
             Some(node) => node_text(&node, &document_context.document.contents).unwrap_or_default(),
             None => String::new(),
         };
 
-        let arguments_status = if usage == FunctionUsage::Reference {
+        let arguments_status = if usage == FunctionRefUsage::Value {
             ArgumentsStatus::Absent
         } else {
             determine_arguments_status(&effective_function_node)
         };
 
         log::info!(
-            "FunctionContext created with name: '{name}', usage: {usage:?}, arguments: {arguments_status:?}"
+            "FunctionContext created with name: '{name}', usage: {usage:?}, arguments: {arguments_status:?}, cursor at end: {is_cursor_at_end}"
         );
 
         Self {
@@ -108,17 +116,16 @@ impl FunctionContext {
                 ),
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
-                    let node_range = effective_function_node.range();
-                    let end_position = convert_tree_sitter_range_to_lsp_range(
+                    let node_end = convert_point_to_position(
                         &document_context.document.contents,
-                        node_range,
-                    )
-                    .end;
-                    tower_lsp::lsp_types::Range::new(end_position, end_position)
+                        effective_function_node.range().end_point,
+                    );
+                    tower_lsp::lsp_types::Range::new(node_end, node_end)
                 },
             },
             usage,
             arguments_status,
+            cursor_is_at_end: is_cursor_at_end,
         }
     }
 }
@@ -127,7 +134,7 @@ impl FunctionContext {
 /// should I take the parent of, if I want the parent of a function call or
 /// reference?"
 ///
-/// This handles both simple identifiers (`fnc`) and namespace-qualified
+/// This handles both simple identifiers (`fcn`) and namespace-qualified
 /// identifiers (`pkg::fcn`).
 ///
 /// The alleged function node has to either be an identifier or a
@@ -219,10 +226,10 @@ fn determine_arguments_status(function_container_node: &Node) -> ArgumentsStatus
     }
 }
 
-fn determine_function_usage(node: &Node, contents: &ropey::Rope) -> FunctionUsage {
+fn determine_function_usage(node: &Node, contents: &ropey::Rope) -> FunctionRefUsage {
     if is_inside_special_function(node, contents) || is_inside_help_operator(node) {
-        FunctionUsage::Reference
+        FunctionRefUsage::Value
     } else {
-        FunctionUsage::Call
+        FunctionRefUsage::Call
     }
 }

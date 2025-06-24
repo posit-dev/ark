@@ -52,6 +52,19 @@ mod function_call_tests {
             assert_has_parameter_hints(item);
         });
     }
+
+    #[test]
+    fn test_call_exact_match() {
+        r_task(|| {
+            let completions = get_completions_at_cursor("dir@").unwrap();
+            let item = find_completion_by_label(&completions, "dir");
+
+            assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
+            assert_eq!(item.insert_text, Some("dir($0)".to_string()));
+            assert_eq!(item.insert_text_format, Some(InsertTextFormat::SNIPPET));
+            assert_has_parameter_hints(item);
+        });
+    }
 }
 
 #[cfg(test)]
@@ -60,8 +73,6 @@ mod function_reference_tests {
     use tower_lsp::lsp_types::InsertTextFormat;
 
     use crate::lsp::completions::tests::utils::assert_no_command;
-    use crate::lsp::completions::tests::utils::assert_sort_text_has_priority_prefix;
-    use crate::lsp::completions::tests::utils::assert_text_edit;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::completions::tests::utils::get_completions_at_cursor;
     use crate::r_task;
@@ -112,8 +123,9 @@ mod function_reference_tests {
             let item = find_completion_by_label(&completions, "any");
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
-            assert_text_edit(&item, "any");
-            assert_sort_text_has_priority_prefix(item);
+            assert_eq!(item.insert_text, Some("any".to_string()));
+            assert_eq!(item.insert_text_format, Some(InsertTextFormat::PLAIN_TEXT));
+            assert_no_command(item);
         });
     }
 }
@@ -250,7 +262,7 @@ mod nonempty_args_tests {
             let item = find_completion_by_label(&completions, "abbreviate");
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
-            assert_text_edit(item, "abbreviate");
+            assert_text_edit(item, "abbreviate(");
 
             assert_no_command(item);
         });
@@ -263,7 +275,7 @@ mod nonempty_args_tests {
             let item = find_completion_by_label(&completions, "adist");
 
             assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
-            assert_text_edit(item, "adist");
+            assert_text_edit(item, "adist(");
 
             assert_no_command(item);
         });
