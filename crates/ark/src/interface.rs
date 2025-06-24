@@ -2004,7 +2004,13 @@ impl RMain {
         }
     }
 
+    pub fn has_virtual_document(&self, uri: &String) -> bool {
+        self.lsp_virtual_documents.contains_key(uri)
+    }
+
     pub fn insert_virtual_document(&mut self, uri: String, contents: String) {
+        log::trace!("Inserting vdoc for `{uri}`");
+
         // Strip scheme if any. We're only storing the path.
         let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
 

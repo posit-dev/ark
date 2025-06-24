@@ -8,14 +8,19 @@ ns_populate_srcref <- function(ns_name) {
     .ps.Call("ps_ns_populate_srcref", ns_name)
 }
 
-fn_populate_srcref <- function(fn) {
+ns_populate_srcref_without_vdoc_insertion <- function(ns_name) {
+    loadNamespace(ns_name)
+    .ps.Call("ps_ns_populate_srcref_without_vdoc_insertion", ns_name)
+}
+
+fn_populate_srcref_without_vdoc_insertion <- function(fn) {
     fn_env <- topenv(environment(fn))
     if (!isNamespace(fn_env)) {
-        return()
+        return(NULL)
     }
 
     pkg <- getNamespaceName(fn_env)
-    ns_populate_srcref(pkg)
+    ns_populate_srcref_without_vdoc_insertion(pkg)
 }
 
 

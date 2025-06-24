@@ -1,0 +1,5 @@
+---
+source: crates/ark/src/view.rs
+expression: doc
+---
+URI: ark:ark-*pid*/namespace/base.R
