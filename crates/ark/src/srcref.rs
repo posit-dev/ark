@@ -52,6 +52,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
     let span = tracing::trace_span!("ns_populate_srcref", ns = ns_name);
 
     // Don't redo the work if we already did it. We don't expect a namespace to change.
+    #[cfg(not(test))]
     if RMain::with(|main| main.has_virtual_document(&ark_ns_uri(&ns_name))) {
         return Ok(None);
     }

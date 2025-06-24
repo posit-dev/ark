@@ -62,12 +62,21 @@ mod tests {
     #[test]
     fn test_view_function_namespace() {
         crate::r_task(|| {
-            eval_and_snapshot!(
+            let doc = harp::parse_eval_global(
                 "
-                {
-                    .ps.internal(view_function_test(identity, 'identity', globalenv()))
-                }"
-            );
+            {
+                .ps.internal(view_function_test(identity, 'identity', globalenv()))
+            }",
+            )
+            .unwrap();
+            let doc: String = doc.try_into().unwrap();
+
+            let doc = regex::Regex::new(r"ark:ark-\d+")
+                .unwrap()
+                .replace_all(&doc, "ark:ark-*pid*")
+                .to_string();
+
+            assert!(doc.contains("ark:ark-*pid*/namespace/base.R"));
         });
     }
 
