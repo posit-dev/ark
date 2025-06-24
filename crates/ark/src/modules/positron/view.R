@@ -63,7 +63,7 @@ view_function <- function(x, title, var, env, top_level = FALSE) {
             return(invisible())
         }
 
-        if (file.exists(info$file)) {
+        if (is_virtual_file(info$file) || file.exists(info$file)) {
             # Request frontend to display file
             .ps.ui.navigateToFile(
                 info$file,
@@ -88,6 +88,10 @@ view_function <- function(x, title, var, env, top_level = FALSE) {
     .ps.ui.newDocument(contents, "r")
 
     return(invisible())
+}
+
+is_virtual_file <- function(path) {
+    startsWith(path, "ark:")
 }
 
 paste_line <- function(x) {
