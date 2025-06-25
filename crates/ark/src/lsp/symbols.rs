@@ -135,6 +135,61 @@ pub(crate) fn document_symbols(
     }
 }
 
+fn fix_section_ranges(symbols: &mut Vec<DocumentSymbol>, contents: &Rope) {
+    fix_section_ranges_recursive(symbols, contents, None);
+}
+
+
+fn fix_section_ranges_recursive(
+    symbols: &mut Vec<DocumentSymbol>,
+    contents: &Rope,
+    parent_end: Option<tower_lsp::lsp_types::Position>,
+) {
+    for i in 0..symbols.len() {
+        // Extract the values we need before creating mutable borrows
+        let symbol_kind = symbols[i].kind;
+
+        // Only fix ranges for section symbols (STRING kind)
+        if symbol_kind != SymbolKind::STRING {
+            // Still need to recurse into children for non-section symbols
+            if let Some(ref mut children) = symbols[i].children {
+                fix_section_ranges_recursive(children, contents, parent_end);
+            }
+            continue;
+        }
+
+        // Default end position
+        let mut end_pos = parent_end.unwrap_or_else(|| {
+            let last_line_idx = contents.len_lines().saturating_sub(1);
+            let last_line_len = contents.line(last_line_idx).len_chars();
+            tower_lsp::lsp_types::Position {
+                line: last_line_idx as u32,
+                character: last_line_len as u32,
+            }
+        });
+
+        // Look for the next sibling section
+        for j in (i + 1)..symbols.len() {
+            if symbols[j].kind == SymbolKind::STRING {
+                // This section ends just before the next sibling section
+                end_pos = tower_lsp::lsp_types::Position {
+                    line: symbols[j].range.start.line.saturating_sub(1),
+                    character: 0,
+                };
+                break;
+            }
+        }
+
+        // Update the range
+        symbols[i].range.end = end_pos;
+
+        // Now recursively fix children with the calculated end position
+        if let Some(ref mut children) = symbols[i].children {
+            fix_section_ranges_recursive(children, contents, Some(end_pos));
+        }
+    }
+}
+
 fn index_node(
     node: &Node,
     store: Vec<DocumentSymbol>,
@@ -192,7 +247,9 @@ fn index_expression_list(
     // Pop all sections from the stack, assigning their childrens and their
     // parents along the way
     while store_stack.len() > 0 {
-        if let Some(store) = store_stack_pop(&mut store_stack)? {
+        if let Some(mut store) = store_stack_pop(&mut store_stack)? {
+            // Fix section ranges to extend until the next section of same or higher level
+            fix_section_ranges(&mut store, contents);
             return Ok(store);
         }
     }
@@ -510,5 +567,33 @@ foo <- function() {
         let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
 
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
+    }
+
+    #[test]
+    fn test_extended_section_ranges() {
+        let symbols = test_symbol(
+            "# h1 ----
+library(tidyverse)
+
+## h2  ----
+my_func <- function(x) {
+  x + 1
+}
+
+# Another h1 ----
+x <- 1"
+        );
+
+        // The first h1 section should extend to just before "# Another h1 ----"
+        // The h2 section should extend to just before "# Another h1 ----"
+        // The second h1 section should extend to end of file
+
+        assert_eq!(symbols.len(), 2); // Two h1 sections
+        assert_eq!(symbols[0].name, "h1");
+        assert_eq!(symbols[0].children.as_ref().unwrap()[0].name, "h2");
+        assert_eq!(symbols[0].children.as_ref().unwrap()[0].children.as_ref().unwrap()[0].name, "my_func");
+        assert_eq!(symbols[1].name, "Another h1");
+        assert!(symbols[0].range.end.line == 7);
+        assert!(symbols[1].range.end.line == 9);
     }
 }

@@ -1,5 +1,6 @@
 ---
 source: crates/ark/src/lsp/symbols.rs
+assertion_line: 542
 expression: "test_symbol(\"\n## title0 ----\nfoo <- function() {\n  # title1 ----\n  ### title2 ----\n  ## title3 ----\n  # title4 ----\n}\n# title5 ----\")"
 ---
 [
@@ -15,8 +16,8 @@ expression: "test_symbol(\"\n## title0 ----\nfoo <- function() {\n  # title1 ---
                 character: 0,
             },
             end: Position {
-                line: 1,
-                character: 14,
+                line: 7,
+                character: 0,
             },
         },
         selection_range: Range {
@@ -73,8 +74,8 @@ expression: "test_symbol(\"\n## title0 ----\nfoo <- function() {\n  # title1 ---
                                         character: 2,
                                     },
                                     end: Position {
-                                        line: 3,
-                                        character: 15,
+                                        line: 5,
+                                        character: 0,
                                     },
                                 },
                                 selection_range: Range {
@@ -102,7 +103,7 @@ expression: "test_symbol(\"\n## title0 ----\nfoo <- function() {\n  # title1 ---
                                                 },
                                                 end: Position {
                                                     line: 4,
-                                                    character: 17,
+                                                    character: 0,
                                                 },
                                             },
                                             selection_range: Range {
@@ -132,7 +133,7 @@ expression: "test_symbol(\"\n## title0 ----\nfoo <- function() {\n  # title1 ---
                                                 },
                                                 end: Position {
                                                     line: 5,
-                                                    character: 16,
+                                                    character: 0,
                                                 },
                                             },
                                             selection_range: Range {
@@ -164,8 +165,8 @@ expression: "test_symbol(\"\n## title0 ----\nfoo <- function() {\n  # title1 ---
                                         character: 2,
                                     },
                                     end: Position {
-                                        line: 6,
-                                        character: 15,
+                                        line: 7,
+                                        character: 0,
                                     },
                                 },
                                 selection_range: Range {
