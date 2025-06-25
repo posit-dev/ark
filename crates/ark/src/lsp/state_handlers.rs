@@ -49,6 +49,7 @@ use crate::lsp::diagnostics::DiagnosticsConfig;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::indexer;
+use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::state::workspace_uris;
@@ -398,6 +399,15 @@ pub(crate) fn did_open_virtual_document(
 ) -> anyhow::Result<()> {
     // Insert new document, replacing any old one
     state.virtual_documents.insert(params.uri, params.contents);
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_close_virtual_document(
+    params: DidCloseVirtualDocumentParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    state.virtual_documents.remove(&params.uri);
     Ok(())
 }
 

@@ -99,6 +99,7 @@ use crate::errors;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
+use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
@@ -1236,6 +1237,22 @@ impl RMain {
         sources
     }
 
+    pub fn clear_fallback_sources(&mut self) {
+        // Find and close URIs associated with debug sessions. We go in two
+        // steps here because we can't remove stuff from
+        // `self.lsp_virtual_documents` while borrowing it to loop over it.
+        let mut debug_uris = Vec::new();
+        for (uri, _) in &self.lsp_virtual_documents {
+            if Self::is_ark_debug_path(uri) {
+                debug_uris.push(uri.clone());
+            }
+        }
+
+        for uri in debug_uris {
+            self.remove_virtual_document(uri);
+        }
+    }
+
     fn ark_debug_uri(debug_session_index: u32, source_name: &str, source: &str) -> String {
         // Hash the source to generate a unique identifier used in
         // the URI. This is needed to disambiguate frames that have
@@ -1254,9 +1271,11 @@ impl RMain {
         ))
     }
 
-    /// Clear fallback_sources and reset current_source_reference
-    pub fn clear_fallback_sources(&mut self) {
-        // TODO
+    // Doesn't expect `ark:` scheme, used for checking keys in our vdoc map
+    fn is_ark_debug_path(uri: &str) -> bool {
+        static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
+        re.is_match(uri)
     }
 
     fn renv_autoloader_reply() -> Option<String> {
@@ -2090,6 +2109,19 @@ impl RMain {
 
         self.send_lsp_notification(KernelNotification::DidOpenVirtualDocument(
             DidOpenVirtualDocumentParams { uri, contents },
+        ))
+    }
+
+    pub fn remove_virtual_document(&mut self, uri: String) {
+        log::trace!("Removing vdoc for `{uri}`");
+
+        // Strip scheme if any. We're only storing the path.
+        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+
+        self.lsp_virtual_documents.remove(&uri);
+
+        self.send_lsp_notification(KernelNotification::DidCloseVirtualDocument(
+            DidCloseVirtualDocumentParams { uri },
         ))
     }
 
