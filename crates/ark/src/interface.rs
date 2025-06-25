@@ -260,6 +260,8 @@ pub struct RMain {
     /// debugger. This is `Some()` only when R is idle and in a `browser()`
     /// prompt.
     debug_env: Option<RObject>,
+
+    debug_current_source_reference: i32,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -594,6 +596,7 @@ impl RMain {
             debug_preserve_focus: false,
             debug_last_stack: vec![],
             debug_env: None,
+            debug_current_source_reference: 1,
         }
     }
 
@@ -1159,7 +1162,6 @@ impl RMain {
         return ConsoleResult::Error(Error::InvalidInputRequest(message));
     }
 
-    /// Starts a debugging session in the DAP.
     fn start_debug(&mut self) {
         match self.dap.stack_info() {
             Ok(stack) => {
@@ -1183,18 +1185,58 @@ impl RMain {
                 let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
                 let same_stack = stack_id == self.debug_last_stack;
 
+                // Initialize fallback sources for this stack
+                let fallback_sources = self.load_fallback_sources(&stack);
+
                 self.debug_last_stack = stack_id;
-                self.dap
-                    .start_debug(stack, same_stack && self.debug_preserve_focus);
+                self.dap.start_debug(
+                    stack,
+                    same_stack && self.debug_preserve_focus,
+                    fallback_sources,
+                );
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
         };
     }
 
-    /// Terminates a debug session and resets state.
     fn stop_debug(&mut self) {
         self.debug_last_stack = vec![];
+        self.clear_fallback_sources();
         self.dap.stop_debug();
+    }
+
+    /// Load `fallback_sources` with this stack's text sources
+    /// @returns Map of `source` -> `source_reference` used for frames that don't have
+    /// associated files (i.e. no `srcref` attribute). The `source` is the key to
+    /// ensure that we don't insert the same function multiple times, which would result
+    /// in duplicate virtual editors being opened on the client side.
+    pub fn load_fallback_sources(
+        &mut self,
+        stack: &Vec<crate::dap::dap_r_main::FrameInfo>,
+    ) -> HashMap<String, i32> {
+        let mut sources = HashMap::new();
+
+        for frame in stack.iter() {
+            let source = &frame.source;
+            match source {
+                crate::dap::dap_r_main::FrameSource::File(_) => continue,
+                crate::dap::dap_r_main::FrameSource::Text(source) => {
+                    if sources.contains_key(source) {
+                        // Already in `sources`, associated with an existing `source_reference`
+                        continue;
+                    }
+                    sources.insert(source.clone(), self.debug_current_source_reference);
+                    self.debug_current_source_reference += 1;
+                },
+            }
+        }
+
+        sources
+    }
+
+    /// Clear fallback_sources and reset current_source_reference
+    pub fn clear_fallback_sources(&mut self) {
+        self.debug_current_source_reference = 1;
     }
 
     fn renv_autoloader_reply() -> Option<String> {

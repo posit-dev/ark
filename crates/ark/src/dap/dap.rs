@@ -20,7 +20,6 @@ use stdext::log_error;
 use stdext::spawn;
 
 use crate::dap::dap_r_main::FrameInfo;
-use crate::dap::dap_r_main::FrameSource;
 use crate::dap::dap_server;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
@@ -63,7 +62,6 @@ pub struct Dap {
     /// ensure that we don't insert the same function multiple times, which would result
     /// in duplicate virtual editors being opened on the client side.
     pub fallback_sources: HashMap<String, i32>,
-    current_source_reference: i32,
 
     /// Maps a frame `id` from within the `stack` to a unique
     /// `variables_reference` id, which then allows you to use
@@ -105,7 +103,6 @@ impl Dap {
             backend_events_tx: None,
             stack: None,
             fallback_sources: HashMap::new(),
-            current_source_reference: 1,
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
             current_variables_reference: 1,
@@ -125,8 +122,14 @@ impl Dap {
         shared
     }
 
-    pub fn start_debug(&mut self, mut stack: Vec<FrameInfo>, preserve_focus: bool) {
-        self.load_fallback_sources(&stack);
+    pub fn start_debug(
+        &mut self,
+        mut stack: Vec<FrameInfo>,
+        preserve_focus: bool,
+        fallback_sources: HashMap<String, i32>,
+    ) {
+        self.fallback_sources.extend(fallback_sources);
+
         self.load_variables_references(&mut stack);
         self.stack = Some(stack);
 
@@ -152,7 +155,7 @@ impl Dap {
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
-        self.clear_fallback_sources();
+        self.fallback_sources.clear();
         self.clear_variables_reference_maps();
         self.reset_variables_reference_count();
         self.is_debugging = false;
@@ -170,31 +173,6 @@ impl Dap {
             // have received a `Continued` event already, after a `n`
             // command or similar.
         }
-    }
-
-    /// Load `fallback_sources` with this stack's text sources
-    fn load_fallback_sources(&mut self, stack: &Vec<FrameInfo>) {
-        for frame in stack.iter() {
-            let source = &frame.source;
-
-            match source {
-                FrameSource::File(_) => continue,
-                FrameSource::Text(source) => {
-                    if self.fallback_sources.contains_key(source) {
-                        // Already in `fallback_sources`, associated with an existing `source_reference`
-                        continue;
-                    }
-                    self.fallback_sources
-                        .insert(source.clone(), self.current_source_reference);
-                    self.current_source_reference += 1;
-                },
-            }
-        }
-    }
-
-    fn clear_fallback_sources(&mut self) {
-        self.fallback_sources.clear();
-        self.current_source_reference = 1;
     }
 
     fn load_variables_references(&mut self, stack: &mut Vec<FrameInfo>) {
