@@ -367,16 +367,16 @@ impl RVariables {
     /// Open a data viewer for the given variable.
     ///
     /// - `path`: The path to the variable to view, as an array of access keys
-    fn view(&mut self, path: &Vec<String>) -> Result<String, harp::error::Error> {
+    ///
+    /// Returns the ID of the comm managing the view, if any.
+    fn view(&mut self, path: &Vec<String>) -> Result<Option<String>, harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();
             let obj = PositronVariable::resolve_data_object(env.clone(), &path)?;
 
             if r_is_function(obj.sexp) {
                 harp::as_result(view(&obj, &path, &env))?;
-
-                // Return a falsy `viewerId`. Should ideally be a more explicit `None`.
-                return Ok(String::from(""));
+                return Ok(None);
             }
 
             let name = unsafe { path.get_unchecked(path.len() - 1) };
@@ -392,7 +392,7 @@ impl RVariables {
                 Some(binding),
                 self.comm_manager_tx.clone(),
             )?;
-            Ok(viewer_id)
+            Ok(Some(viewer_id))
         })
     }
 

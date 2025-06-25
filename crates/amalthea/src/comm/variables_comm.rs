@@ -295,7 +295,7 @@ pub enum VariablesBackendReply {
 	ClipboardFormatReply(FormattedVariable),
 
 	/// The ID of the viewer that was opened.
-	ViewReply(String),
+	ViewReply(Option<String>),
 
 }
 
