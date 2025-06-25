@@ -121,6 +121,7 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::srcref::ark_uri;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
@@ -261,7 +262,9 @@ pub struct RMain {
     /// prompt.
     debug_env: Option<RObject>,
 
-    debug_current_source_reference: i32,
+    /// Ever increasing debug session index. Used to create URIs that are only
+    /// valid for a single session.
+    debug_session_index: u32,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -596,7 +599,7 @@ impl RMain {
             debug_preserve_focus: false,
             debug_last_stack: vec![],
             debug_env: None,
-            debug_current_source_reference: 1,
+            debug_session_index: 1,
         }
     }
 
@@ -1202,6 +1205,7 @@ impl RMain {
     fn stop_debug(&mut self) {
         self.debug_last_stack = vec![];
         self.clear_fallback_sources();
+        self.debug_session_index += 1;
         self.dap.stop_debug();
     }
 
@@ -1213,30 +1217,46 @@ impl RMain {
     pub fn load_fallback_sources(
         &mut self,
         stack: &Vec<crate::dap::dap_r_main::FrameInfo>,
-    ) -> HashMap<String, i32> {
+    ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
         for frame in stack.iter() {
-            let source = &frame.source;
-            match source {
-                crate::dap::dap_r_main::FrameSource::File(_) => continue,
-                crate::dap::dap_r_main::FrameSource::Text(source) => {
-                    if sources.contains_key(source) {
-                        // Already in `sources`, associated with an existing `source_reference`
-                        continue;
-                    }
-                    sources.insert(source.clone(), self.debug_current_source_reference);
-                    self.debug_current_source_reference += 1;
-                },
+            if let crate::dap::dap_r_main::FrameSource::Text(source) = &frame.source {
+                let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
+
+                if self.has_virtual_document(&uri) {
+                    continue;
+                }
+
+                self.insert_virtual_document(uri.clone(), source.clone());
+                sources.insert(source.clone(), uri);
             }
         }
 
         sources
     }
 
+    fn ark_debug_uri(debug_session_index: u32, source_name: &str, source: &str) -> String {
+        // Hash the source to generate a unique identifier used in
+        // the URI. This is needed to disambiguate frames that have
+        // the same source name (used as file name in the URI) but
+        // different sources.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hash;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        source.hash(&mut hasher);
+        let hash = format!("{:x}", hasher.finish());
+
+        ark_uri(&format!(
+            "debug/session{i}/{hash}/{source_name}.R",
+            i = debug_session_index,
+        ))
+    }
+
     /// Clear fallback_sources and reset current_source_reference
     pub fn clear_fallback_sources(&mut self) {
-        self.debug_current_source_reference = 1;
+        // TODO
     }
 
     fn renv_autoloader_reply() -> Option<String> {

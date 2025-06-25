@@ -389,57 +389,11 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.respond(rsp).unwrap();
     }
 
-    fn handle_source(&mut self, req: Request, args: SourceArguments) {
-        // We fully expect a `source` argument to exist, it is only for backwards
-        // compatibility that it could be `None`
-        let Some(source) = args.source else {
-            let message = "Missing `Source` to extract a `source_reference` from.";
-            log::error!("{message}");
-            let rsp = req.error(message);
-            self.server.respond(rsp).unwrap();
-            return;
-        };
-
-        // We expect a `source_reference`. If the client had a `path` then it would
-        // not have asked us for the source content.
-        let Some(source_reference) = source.source_reference else {
-            let message = "Missing `source_reference` to locate content for.";
-            log::error!("{message}");
-            let rsp = req.error(message);
-            self.server.respond(rsp).unwrap();
-            return;
-        };
-
-        // Try to find the source content for this `source_reference`
-        let Some(content) = self.find_source_content(source_reference) else {
-            let message =
-                "Failed to locate source content for `source_reference` {source_reference}.";
-            log::error!("{message}");
-            let rsp = req.error(message);
-            self.server.respond(rsp).unwrap();
-            return;
-        };
-
-        let rsp = req.success(ResponseBody::Source(SourceResponse {
-            content,
-            mime_type: None,
-        }));
-
+    fn handle_source(&mut self, req: Request, _args: SourceArguments) {
+        let message = "Unsupported `source` request: {req:?}";
+        log::error!("{message}");
+        let rsp = req.error(message);
         self.server.respond(rsp).unwrap();
-    }
-
-    fn find_source_content(&self, source_reference: i32) -> Option<String> {
-        let state = self.state.lock().unwrap();
-        let fallback_sources = &state.fallback_sources;
-
-        // Match up the requested `source_reference` with one in our `fallback_sources`
-        for (current_source, current_source_reference) in fallback_sources.iter() {
-            if &source_reference == current_source_reference {
-                return Some(current_source.clone());
-            }
-        }
-
-        None
     }
 
     fn handle_scopes(&mut self, req: Request, args: ScopesArguments) {
@@ -566,7 +520,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 }
 
-fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, i32>) -> StackFrame {
+fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, String>) -> StackFrame {
     let id = frame.id;
     let source_name = frame.source_name.clone();
     let frame_name = frame.frame_name.clone();
@@ -576,26 +530,21 @@ fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, i32>) ->
     let end_line = frame.end_line;
     let end_column = frame.end_column;
 
-    // WIP! here
-
     // Retrieve either `path` or `source_reference` depending on the `source` type.
     // In the `Text` case, a `source_reference` should always exist because we loaded
     // the map with all possible text values in `start_debug()`.
-    let (path, source_reference) = match source {
-        FrameSource::File(path) => (Some(path), None),
-        FrameSource::Text(source) => {
-            let source_reference = fallback_sources.get(&source).cloned().or_else(|| {
-                log::error!("Failed to find a source reference for source text: '{source}'");
-                None
-            });
-            (None, source_reference)
-        },
+    let path = match source {
+        FrameSource::File(path) => Some(path),
+        FrameSource::Text(source) => fallback_sources.get(&source).cloned().or_else(|| {
+            log::error!("Failed to find a source reference for source text: '{source}'");
+            None
+        }),
     };
 
     let src = Source {
         name: Some(source_name),
         path,
-        source_reference,
+        source_reference: None,
         presentation_hint: None,
         origin: None,
         sources: None,

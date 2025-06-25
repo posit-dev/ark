@@ -125,7 +125,7 @@ impl RMainDap {
         &mut self,
         stack: Vec<FrameInfo>,
         preserve_focus: bool,
-        fallback_sources: HashMap<String, i32>,
+        fallback_sources: HashMap<String, String>,
     ) {
         self.debugging = true;
         let mut dap = self.dap.lock().unwrap();

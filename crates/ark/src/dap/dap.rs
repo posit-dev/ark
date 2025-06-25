@@ -61,7 +61,7 @@ pub struct Dap {
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
     /// ensure that we don't insert the same function multiple times, which would result
     /// in duplicate virtual editors being opened on the client side.
-    pub fallback_sources: HashMap<String, i32>,
+    pub fallback_sources: HashMap<String, String>,
 
     /// Maps a frame `id` from within the `stack` to a unique
     /// `variables_reference` id, which then allows you to use
@@ -126,7 +126,7 @@ impl Dap {
         &mut self,
         mut stack: Vec<FrameInfo>,
         preserve_focus: bool,
-        fallback_sources: HashMap<String, i32>,
+        fallback_sources: HashMap<String, String>,
     ) {
         self.fallback_sources.extend(fallback_sources);
 
