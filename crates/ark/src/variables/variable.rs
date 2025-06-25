@@ -33,6 +33,7 @@ use harp::utils::r_format_s4;
 use harp::utils::r_inherits;
 use harp::utils::r_is_altrep;
 use harp::utils::r_is_data_frame;
+use harp::utils::r_is_function;
 use harp::utils::r_is_matrix;
 use harp::utils::r_is_null;
 use harp::utils::r_is_s4;
@@ -589,6 +590,10 @@ fn has_children(value: SEXP) -> bool {
 }
 
 fn has_viewer(value: SEXP) -> bool {
+    if r_is_function(value) {
+        return true;
+    }
+
     if !(r_is_data_frame(value) || r_is_matrix(value)) {
         return false;
     }

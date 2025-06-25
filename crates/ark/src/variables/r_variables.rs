@@ -29,6 +29,7 @@ use harp::exec::RFunctionExt;
 use harp::get_option;
 use harp::object::RObject;
 use harp::utils::r_assert_type;
+use harp::utils::r_is_function;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use libr::R_GlobalEnv;
@@ -42,6 +43,7 @@ use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::PositronVariable;
+use crate::view::view;
 
 /// Enumeration of treatments for the .Last.value variable
 pub enum LastValue {
@@ -365,22 +367,32 @@ impl RVariables {
     /// Open a data viewer for the given variable.
     ///
     /// - `path`: The path to the variable to view, as an array of access keys
-    fn view(&mut self, path: &Vec<String>) -> Result<String, harp::error::Error> {
+    ///
+    /// Returns the ID of the comm managing the view, if any.
+    fn view(&mut self, path: &Vec<String>) -> Result<Option<String>, harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();
-            let data = PositronVariable::resolve_data_object(env, &path)?;
+            let obj = PositronVariable::resolve_data_object(env.clone(), &path)?;
+
+            if r_is_function(obj.sexp) {
+                harp::as_result(view(&obj, &path, &env))?;
+                return Ok(None);
+            }
+
             let name = unsafe { path.get_unchecked(path.len() - 1) };
+
             let binding = DataObjectEnvInfo {
                 name: name.to_string(),
-                env: RThreadSafe::new(self.env.get().clone()),
+                env: RThreadSafe::new(env),
             };
+
             let viewer_id = RDataExplorer::start(
                 name.clone(),
-                data,
+                obj,
                 Some(binding),
                 self.comm_manager_tx.clone(),
             )?;
-            Ok(viewer_id)
+            Ok(Some(viewer_id))
         })
     }
 

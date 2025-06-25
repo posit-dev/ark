@@ -1,0 +1,8 @@
+---
+source: crates/ark/src/view.rs
+expression: doc
+---
+URI: ark:ark-*pid*/0x*address*/foo.R
+
+function (arg) 
+body

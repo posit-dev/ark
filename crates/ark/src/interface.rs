@@ -2004,7 +2004,12 @@ impl RMain {
         }
     }
 
-    pub fn did_open_virtual_document(&mut self, uri: String, contents: String) {
+    pub fn insert_virtual_document(&mut self, uri: String, contents: String) {
+        log::trace!("Inserting vdoc for `{uri}`");
+
+        // Strip scheme if any. We're only storing the path.
+        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+
         // Save our own copy of the virtual document. If the LSP is currently closed
         // or restarts, we can notify it of all virtual documents it should know about
         // in the LSP channel setup step. It is common for the kernel to create the
@@ -2015,6 +2020,11 @@ impl RMain {
         self.send_lsp_notification(KernelNotification::DidOpenVirtualDocument(
             DidOpenVirtualDocumentParams { uri, contents },
         ))
+    }
+
+    pub fn has_virtual_document(&self, uri: &String) -> bool {
+        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+        self.lsp_virtual_documents.contains_key(&uri)
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
@@ -2309,4 +2319,18 @@ fn is_auto_printing() -> bool {
         };
         car == show_fun.sexp
     }
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_insert_virtual_document(
+    uri: SEXP,
+    contents: SEXP,
+) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let contents: String = RObject::view(contents).try_into()?;
+
+    let main = RMain::get_mut();
+    main.insert_virtual_document(uri, contents);
+
+    Ok(RObject::null().sexp)
 }

@@ -43,6 +43,7 @@ pub mod treesitter;
 pub mod ui;
 pub mod variables;
 pub mod version;
+pub mod view;
 pub mod viewer;
 
 pub(crate) use r_task::r_task;

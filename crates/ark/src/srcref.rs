@@ -35,28 +35,32 @@ pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
     resource_namespaces(loaded)
 }
 
-#[harp::register]
-unsafe extern "C-unwind" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
-    let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
-    resource_namespaces(pkgs)?;
-    Ok(harp::r_null())
-}
-
-#[harp::register]
-unsafe extern "C-unwind" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
-    let ns_name: String = RObject::view(ns_name).try_into()?;
-    futures::executor::block_on(ns_populate_srcref(ns_name))?;
-    Ok(harp::r_null())
-}
-
 pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
+    if let Some((uri, contents)) = ns_populate_srcref_without_vdoc_insertion(ns_name).await? {
+        // Register the virtual document for the namespace
+        RMain::with_mut(|main| main.insert_virtual_document(uri, contents));
+    };
+
+    Ok(())
+}
+
+/// Returns `None` if namespace vdoc was already generated. Otherwise returns
+/// `(uri, contents)`.
+async fn ns_populate_srcref_without_vdoc_insertion(
+    ns_name: String,
+) -> anyhow::Result<Option<(String, String)>> {
     let span = tracing::trace_span!("ns_populate_srcref", ns = ns_name);
+
+    // Don't redo the work if we already did it. We don't expect a namespace to change.
+    #[cfg(not(test))]
+    if RMain::with(|main| main.has_virtual_document(&ark_ns_uri(&ns_name))) {
+        return Ok(None);
+    }
+
     let mut tick = std::time::Instant::now();
 
     let ns = r_ns_env(&ns_name)?;
-
-    let uri_path = format!("namespace:{ns_name}.R");
-    let uri = format!("ark:{uri_path}");
+    let uri = ark_ns_uri(&ns_name);
 
     let mut vdoc: Vec<String> = vec![
         format!("# Virtual namespace of package {ns_name}."),
@@ -108,13 +112,11 @@ pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     );
 
     let contents = vdoc.join("\n");
+    Ok(Some((uri, contents)))
+}
 
-    // Notify LSP of the opened virtual document so the LSP can function as a
-    // text document content provider of the virtual document contents, which is
-    // used by the debugger.
-    RMain::with_mut(|main| main.did_open_virtual_document(uri_path, contents));
-
-    Ok(())
+fn ark_ns_uri(ns_name: &str) -> String {
+    ark_uri(&format!("namespace/{ns_name}.R"))
 }
 
 #[tracing::instrument(level = "trace", skip_all, fields(name = %binding.name))]
@@ -193,7 +195,74 @@ fn generate_source(
     Ok(Some(text))
 }
 
+/// Creates a URI with scheme `ark:`. These URIs are routed from the frontend by
+/// a text content provider to our LSP via a custom request.
+pub(crate) fn ark_uri(path: &str) -> String {
+    // The URI includes the process ID to disambiguate in case multiple sessions
+    // are open on the frontend side. We're not worried about pid reuse issues
+    // for our modest use cases with virtual documents.
+    //
+    // Currently if the wrong session is active when a vdoc is opened you just
+    // get an error but we could route them to the correct kernel via a Jupyter
+    // comm (Control socket for async RPC) in the future. Unlike the LSP, the
+    // Jupyter comm persists session changes. Note that we currently don't have
+    // important use cases that require opening a vdoc for a background session.
+    // It's possible that a user could call `View()` after running a long
+    // computation, but it'd be peculiar to view a function that way, we mostly
+    // expect interactive gestures.
+    let id = std::process::id();
+    format!("ark:ark-{id}/{path}")
+}
+
 #[harp::register]
 pub extern "C-unwind" fn ark_zap_srcref(x: SEXP) -> anyhow::Result<SEXP> {
     Ok(harp::attrib::zap_srcref(x).sexp)
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ps_ark_uri(path: SEXP) -> anyhow::Result<SEXP> {
+    let path: String = RObject::view(path).try_into()?;
+    let uri: RObject = ark_uri(&path).into();
+    Ok(uri.sexp)
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ps_ark_ns_uri(path: SEXP) -> anyhow::Result<SEXP> {
+    let path: String = RObject::view(path).try_into()?;
+    let uri: RObject = ark_ns_uri(&path).into();
+    Ok(uri.sexp)
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_resource_namespaces(pkgs: SEXP) -> anyhow::Result<SEXP> {
+    let pkgs: Vec<String> = RObject::view(pkgs).try_into()?;
+    resource_namespaces(pkgs)?;
+    Ok(harp::r_null())
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_ns_populate_srcref(ns_name: SEXP) -> anyhow::Result<SEXP> {
+    let ns_name: String = RObject::view(ns_name).try_into()?;
+    futures::executor::block_on(ns_populate_srcref(ns_name))?;
+    Ok(harp::r_null())
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_ns_populate_srcref_without_vdoc_insertion(
+    ns_name: SEXP,
+) -> anyhow::Result<SEXP> {
+    let ns_name: String = RObject::view(ns_name).try_into()?;
+
+    let Some((uri, contents)) =
+        futures::executor::block_on(ns_populate_srcref_without_vdoc_insertion(ns_name))?
+    else {
+        return Ok(RObject::null().sexp);
+    };
+
+    // Would ideally be a named list but currently inconvenient to create
+    let uri: RObject = uri.try_into()?;
+    let contents: RObject = contents.try_into()?;
+    let out: RObject = vec![uri, contents].try_into()?;
+
+    Ok(out.sexp)
 }

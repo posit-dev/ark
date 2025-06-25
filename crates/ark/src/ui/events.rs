@@ -60,13 +60,13 @@ pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
     file: SEXP,
-    _line: SEXP,
-    _column: SEXP,
+    line: SEXP,
+    column: SEXP,
 ) -> anyhow::Result<SEXP> {
     let params = OpenEditorParams {
         file: RObject::view(file).try_into()?,
-        line: 0,
-        column: 0,
+        line: RObject::view(line).try_into()?,
+        column: RObject::view(column).try_into()?,
     };
 
     let event = UiFrontendEvent::OpenEditor(params);
