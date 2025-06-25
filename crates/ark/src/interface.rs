@@ -99,6 +99,7 @@ use crate::errors;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
+use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::KernelNotification;
@@ -121,6 +122,7 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
+use crate::srcref::ark_uri;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
@@ -260,6 +262,10 @@ pub struct RMain {
     /// debugger. This is `Some()` only when R is idle and in a `browser()`
     /// prompt.
     debug_env: Option<RObject>,
+
+    /// Ever increasing debug session index. Used to create URIs that are only
+    /// valid for a single session.
+    debug_session_index: u32,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -594,6 +600,7 @@ impl RMain {
             debug_preserve_focus: false,
             debug_last_stack: vec![],
             debug_env: None,
+            debug_session_index: 1,
         }
     }
 
@@ -778,39 +785,10 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
-            match self.dap.stack_info() {
-                Ok(stack) => {
-                    if let Some(frame) = stack.first() {
-                        if let Some(ref env) = frame.environment {
-                            // This is reset on exit in the cleanup phase, see `r_read_console()`
-                            self.debug_env = Some(env.get().clone());
-                        }
-                    }
-
-                    // Figure out whether we changed location since last time,
-                    // e.g. because the user evaluated an expression that hit
-                    // another breakpoint. In that case we do want to move
-                    // focus, even though the user didn't explicitly used a step
-                    // gesture. Our indication that we changed location is
-                    // whether the call stack looks the same as last time. This
-                    // is not 100% reliable as this heuristic might have false
-                    // negatives, e.g. if the control flow exited the current
-                    // context via condition catching and jumped back in the
-                    // debugged function.
-                    let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
-                    let same_stack = stack_id == self.debug_last_stack;
-
-                    self.debug_last_stack = stack_id;
-                    self.dap
-                        .start_debug(stack, same_stack && self.debug_preserve_focus);
-                },
-                Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
-            };
+            self.start_debug();
         } else {
             if self.dap.is_debugging() {
-                // Terminate debugging session
-                self.debug_last_stack = vec![];
-                self.dap.stop_debug();
+                self.stop_debug();
             }
         }
 
@@ -1186,6 +1164,118 @@ impl RMain {
         ].join("\n");
 
         return ConsoleResult::Error(Error::InvalidInputRequest(message));
+    }
+
+    fn start_debug(&mut self) {
+        match self.dap.stack_info() {
+            Ok(stack) => {
+                if let Some(frame) = stack.first() {
+                    if let Some(ref env) = frame.environment {
+                        // This is reset on exit in the cleanup phase, see `r_read_console()`
+                        self.debug_env = Some(env.get().clone());
+                    }
+                }
+
+                // Figure out whether we changed location since last time,
+                // e.g. because the user evaluated an expression that hit
+                // another breakpoint. In that case we do want to move
+                // focus, even though the user didn't explicitly used a step
+                // gesture. Our indication that we changed location is
+                // whether the call stack looks the same as last time. This
+                // is not 100% reliable as this heuristic might have false
+                // negatives, e.g. if the control flow exited the current
+                // context via condition catching and jumped back in the
+                // debugged function.
+                let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
+                let same_stack = stack_id == self.debug_last_stack;
+
+                // Initialize fallback sources for this stack
+                let fallback_sources = self.load_fallback_sources(&stack);
+
+                self.debug_last_stack = stack_id;
+                self.dap.start_debug(
+                    stack,
+                    same_stack && self.debug_preserve_focus,
+                    fallback_sources,
+                );
+            },
+            Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
+        };
+    }
+
+    fn stop_debug(&mut self) {
+        self.debug_last_stack = vec![];
+        self.clear_fallback_sources();
+        self.debug_session_index += 1;
+        self.dap.stop_debug();
+    }
+
+    /// Load `fallback_sources` with this stack's text sources
+    /// @returns Map of `source` -> `source_reference` used for frames that don't have
+    /// associated files (i.e. no `srcref` attribute). The `source` is the key to
+    /// ensure that we don't insert the same function multiple times, which would result
+    /// in duplicate virtual editors being opened on the client side.
+    pub fn load_fallback_sources(
+        &mut self,
+        stack: &Vec<crate::dap::dap_r_main::FrameInfo>,
+    ) -> HashMap<String, String> {
+        let mut sources = HashMap::new();
+
+        for frame in stack.iter() {
+            if let crate::dap::dap_r_main::FrameSource::Text(source) = &frame.source {
+                let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
+
+                if self.has_virtual_document(&uri) {
+                    continue;
+                }
+
+                self.insert_virtual_document(uri.clone(), source.clone());
+                sources.insert(source.clone(), uri);
+            }
+        }
+
+        sources
+    }
+
+    pub fn clear_fallback_sources(&mut self) {
+        // Find and close URIs associated with debug sessions. We go in two
+        // steps here because we can't remove stuff from
+        // `self.lsp_virtual_documents` while borrowing it to loop over it.
+        let mut debug_uris = Vec::new();
+        for (uri, _) in &self.lsp_virtual_documents {
+            if Self::is_ark_debug_path(uri) {
+                debug_uris.push(uri.clone());
+            }
+        }
+
+        for uri in debug_uris {
+            self.remove_virtual_document(uri);
+        }
+    }
+
+    fn ark_debug_uri(debug_session_index: u32, source_name: &str, source: &str) -> String {
+        // Hash the source to generate a unique identifier used in
+        // the URI. This is needed to disambiguate frames that have
+        // the same source name (used as file name in the URI) but
+        // different sources.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hash;
+        use std::hash::Hasher;
+        let mut hasher = DefaultHasher::new();
+        source.hash(&mut hasher);
+        let hash = format!("{:x}", hasher.finish());
+
+        ark_uri(&format!(
+            "debug/session{i}/{hash}/{source_name}.R",
+            i = debug_session_index,
+        ))
+    }
+
+    // Doesn't expect `ark:` scheme, used for checking keys in our vdoc map
+    fn is_ark_debug_path(uri: &str) -> bool {
+        static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+        let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
+        re.is_match(uri)
     }
 
     fn renv_autoloader_reply() -> Option<String> {
@@ -2019,6 +2109,19 @@ impl RMain {
 
         self.send_lsp_notification(KernelNotification::DidOpenVirtualDocument(
             DidOpenVirtualDocumentParams { uri, contents },
+        ))
+    }
+
+    pub fn remove_virtual_document(&mut self, uri: String) {
+        log::trace!("Removing vdoc for `{uri}`");
+
+        // Strip scheme if any. We're only storing the path.
+        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+
+        self.lsp_virtual_documents.remove(&uri);
+
+        self.send_lsp_notification(KernelNotification::DidCloseVirtualDocument(
+            DidCloseVirtualDocumentParams { uri },
         ))
     }
 

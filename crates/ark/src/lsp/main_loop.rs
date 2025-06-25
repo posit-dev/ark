@@ -80,6 +80,7 @@ pub(crate) enum Event {
 pub(crate) enum KernelNotification {
     DidChangeConsoleInputs(ConsoleInputs),
     DidOpenVirtualDocument(DidOpenVirtualDocumentParams),
+    DidCloseVirtualDocument(DidCloseVirtualDocumentParams),
 }
 
 /// A thin wrapper struct with a custom `Debug` method more appropriate for trace logs
@@ -91,6 +92,11 @@ pub(crate) struct TraceKernelNotification<'a> {
 pub(crate) struct DidOpenVirtualDocumentParams {
     pub(crate) uri: String,
     pub(crate) contents: String,
+}
+
+#[derive(Debug)]
+pub(crate) struct DidCloseVirtualDocumentParams {
+    pub(crate) uri: String,
 }
 
 #[derive(Debug)]
@@ -344,6 +350,9 @@ impl GlobalState {
                     },
                     KernelNotification::DidOpenVirtualDocument(params) => {
                         state_handlers::did_open_virtual_document(params, &mut self.world)?;
+                    },
+                    KernelNotification::DidCloseVirtualDocument(params) => {
+                        state_handlers::did_close_virtual_document(params, &mut self.world)?
                     }
                 }
             },
@@ -657,8 +666,10 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
                 .field("uri", &params.uri)
                 .field("contents", &"<snip>")
                 .finish(),
-            // NOTE: Uncomment if we have notifications we don't care to specially handle
-            //notification => std::fmt::Debug::fmt(notification, f),
+            KernelNotification::DidCloseVirtualDocument(params) => f
+                .debug_struct("DidCloseVirtualDocument")
+                .field("uri", &params.uri)
+                .finish(),
         }
     }
 }

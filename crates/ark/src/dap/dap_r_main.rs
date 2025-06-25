@@ -5,6 +5,7 @@
 //
 //
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -120,16 +121,22 @@ impl RMainDap {
         self.debugging
     }
 
-    pub fn start_debug(&mut self, stack: Vec<FrameInfo>, preserve_focus: bool) {
+    pub fn start_debug(
+        &mut self,
+        stack: Vec<FrameInfo>,
+        preserve_focus: bool,
+        fallback_sources: HashMap<String, String>,
+    ) {
         self.debugging = true;
         let mut dap = self.dap.lock().unwrap();
-        dap.start_debug(stack, preserve_focus)
+        dap.start_debug(stack, preserve_focus, fallback_sources)
     }
 
     pub fn stop_debug(&mut self) {
         let mut dap = self.dap.lock().unwrap();
         dap.stop_debug();
         drop(dap);
+
         self.reset_frame_id();
         self.debugging = false;
     }
