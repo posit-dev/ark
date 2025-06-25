@@ -778,39 +778,10 @@ impl RMain {
         EVENTS.console_prompt.emit(());
 
         if info.browser {
-            match self.dap.stack_info() {
-                Ok(stack) => {
-                    if let Some(frame) = stack.first() {
-                        if let Some(ref env) = frame.environment {
-                            // This is reset on exit in the cleanup phase, see `r_read_console()`
-                            self.debug_env = Some(env.get().clone());
-                        }
-                    }
-
-                    // Figure out whether we changed location since last time,
-                    // e.g. because the user evaluated an expression that hit
-                    // another breakpoint. In that case we do want to move
-                    // focus, even though the user didn't explicitly used a step
-                    // gesture. Our indication that we changed location is
-                    // whether the call stack looks the same as last time. This
-                    // is not 100% reliable as this heuristic might have false
-                    // negatives, e.g. if the control flow exited the current
-                    // context via condition catching and jumped back in the
-                    // debugged function.
-                    let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
-                    let same_stack = stack_id == self.debug_last_stack;
-
-                    self.debug_last_stack = stack_id;
-                    self.dap
-                        .start_debug(stack, same_stack && self.debug_preserve_focus);
-                },
-                Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
-            };
+            self.start_debug();
         } else {
             if self.dap.is_debugging() {
-                // Terminate debugging session
-                self.debug_last_stack = vec![];
-                self.dap.stop_debug();
+                self.stop_debug();
             }
         }
 
@@ -1186,6 +1157,44 @@ impl RMain {
         ].join("\n");
 
         return ConsoleResult::Error(Error::InvalidInputRequest(message));
+    }
+
+    /// Starts a debugging session in the DAP.
+    fn start_debug(&mut self) {
+        match self.dap.stack_info() {
+            Ok(stack) => {
+                if let Some(frame) = stack.first() {
+                    if let Some(ref env) = frame.environment {
+                        // This is reset on exit in the cleanup phase, see `r_read_console()`
+                        self.debug_env = Some(env.get().clone());
+                    }
+                }
+
+                // Figure out whether we changed location since last time,
+                // e.g. because the user evaluated an expression that hit
+                // another breakpoint. In that case we do want to move
+                // focus, even though the user didn't explicitly used a step
+                // gesture. Our indication that we changed location is
+                // whether the call stack looks the same as last time. This
+                // is not 100% reliable as this heuristic might have false
+                // negatives, e.g. if the control flow exited the current
+                // context via condition catching and jumped back in the
+                // debugged function.
+                let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
+                let same_stack = stack_id == self.debug_last_stack;
+
+                self.debug_last_stack = stack_id;
+                self.dap
+                    .start_debug(stack, same_stack && self.debug_preserve_focus);
+            },
+            Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
+        };
+    }
+
+    /// Terminates a debug session and resets state.
+    fn stop_debug(&mut self) {
+        self.debug_last_stack = vec![];
+        self.dap.stop_debug();
     }
 
     fn renv_autoloader_reply() -> Option<String> {
