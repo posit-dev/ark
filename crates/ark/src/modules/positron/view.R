@@ -9,9 +9,10 @@
 # These are only passed if we could infer a variable name from the input and if
 # that variable exists in the calling environment. This is used for live
 # updating the objects, if supported (e.g. data frames in the data viewer).
-view <- function(x, title) {
+view <- function(x, title, name = NULL, env = parent.frame()) {
     # Derive the name of the object from the expression passed to View()
-    name <- as_label(substitute(x))
+    name <- name %||% as_label(substitute(x))
+    stopifnot(is_string(name))
 
     # Create a title from the name of the object if one is not provided
     if (missing(title)) {
@@ -25,9 +26,8 @@ view <- function(x, title) {
     # Note that this means that (for example) View(foo) will watch the variable
     # foo in the parent frame, but Viewing temporary variables like
     # View(cbind(foo, bar)) does not create something that can be watched.
-    if (isTRUE(exists(name, envir = parent.frame(), inherits = FALSE))) {
+    if (nzchar(name) && isTRUE(exists(name, envir = env, inherits = FALSE))) {
         var <- name
-        env <- parent.frame()
     } else {
         var <- ""
         env <- NULL

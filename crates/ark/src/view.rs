@@ -5,7 +5,28 @@
 //
 //
 
-// Tests for `view.R`
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::RObject;
+
+use crate::modules::ARK_ENVS;
+
+pub(crate) fn view(x: &RObject, path: &Vec<String>, env: &RObject) -> anyhow::Result<()> {
+    // Currently `view()` only supports identifiers
+    let name = if path.len() == 1 {
+        path.last().unwrap().clone()
+    } else {
+        String::from("")
+    };
+
+    RFunction::new("", "view")
+        .add(x.sexp)
+        .param("name", name)
+        .param("env", env.sexp)
+        .call_in(ARK_ENVS.positron_ns)?;
+
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests {

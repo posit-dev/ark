@@ -59,6 +59,7 @@ pub use vector::list::*;
 // resolve to the correct symbols
 extern crate self as harp;
 
+pub use harp::error::as_result;
 pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
 pub use harp::exec::try_eval;
