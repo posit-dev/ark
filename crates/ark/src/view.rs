@@ -100,4 +100,18 @@ mod tests {
             )
         });
     }
+
+    #[test]
+    fn test_view_function_trace() {
+        crate::r_task(|| {
+            eval_and_snapshot!(
+                "
+                {
+                    foo <- function(arg) body
+                    trace(foo, identity)
+                    .ps.internal(view_function_test(foo, 'foo', globalenv()))
+                }"
+            )
+        });
+    }
 }

@@ -98,6 +98,11 @@ view_function_info <- function(
 ) {
     stopifnot(is.function(x))
 
+    # Extract original function if `x` has been `trace()`d
+    if (inherits(x, "functionWithTrace") && is.function(x@original)) {
+        x <- x@original
+    }
+
     # Only resource the namespace if we're at top-level. Doing it while
     # arbitrary code is running is unsafe as the source references are mutated
     # globally. The mutation could invalidate assumptions made by running code.
