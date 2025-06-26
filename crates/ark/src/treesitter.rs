@@ -571,3 +571,22 @@ pub(crate) fn node_find_containing_call<'tree>(node: Node<'tree>) -> Option<Node
 
     None
 }
+
+pub(crate) fn point_end_of_previous_row(
+    mut point: tree_sitter::Point,
+    contents: &ropey::Rope,
+) -> tree_sitter::Point {
+    if point.row > 0 {
+        let prev_row = point.row - 1;
+        let line = contents.line(prev_row as usize);
+        let line_len = line.len_chars().saturating_sub(1); // Subtract 1 for newline
+        tree_sitter::Point {
+            row: prev_row,
+            column: line_len,
+        }
+    } else {
+        // We're at the very beginning of the document, can't go back further
+        point.column = 0;
+        point
+    }
+}
