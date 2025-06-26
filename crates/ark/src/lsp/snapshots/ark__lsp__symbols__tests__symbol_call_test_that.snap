@@ -1,0 +1,161 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\ntest_that('foo', {\n  # title1 ----\n  1\n  # title2 ----\n  foo <- function() {\n    2\n  }\n})\n\")"
+---
+[
+    DocumentSymbol {
+        name: "title",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 14,
+                character: 2,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 14,
+                character: 2,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "Test: foo",
+                    detail: None,
+                    kind: Function,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 7,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 14,
+                            character: 2,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 7,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 14,
+                            character: 2,
+                        },
+                    },
+                    children: Some(
+                        [
+                            DocumentSymbol {
+                                name: "title1",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 8,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 9,
+                                        character: 3,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 8,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 9,
+                                        character: 3,
+                                    },
+                                },
+                                children: Some(
+                                    [],
+                                ),
+                            },
+                            DocumentSymbol {
+                                name: "title2",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 10,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 13,
+                                        character: 3,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 10,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 13,
+                                        character: 3,
+                                    },
+                                },
+                                children: Some(
+                                    [
+                                        DocumentSymbol {
+                                            name: "foo",
+                                            detail: Some(
+                                                "function()",
+                                            ),
+                                            kind: Function,
+                                            tags: None,
+                                            deprecated: None,
+                                            range: Range {
+                                                start: Position {
+                                                    line: 11,
+                                                    character: 2,
+                                                },
+                                                end: Position {
+                                                    line: 13,
+                                                    character: 3,
+                                                },
+                                            },
+                                            selection_range: Range {
+                                                start: Position {
+                                                    line: 11,
+                                                    character: 2,
+                                                },
+                                                end: Position {
+                                                    line: 13,
+                                                    character: 3,
+                                                },
+                                            },
+                                            children: Some(
+                                                [],
+                                            ),
+                                        },
+                                    ],
+                                ),
+                            },
+                        ],
+                    ),
+                },
+            ],
+        ),
+    },
+]

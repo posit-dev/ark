@@ -156,6 +156,10 @@ fn collect_symbols(
             collect_sections(node, contents, current_level, symbols)?;
         },
 
+        NodeType::Call => {
+            collect_call(node, contents, symbols)?;
+        },
+
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
         NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
             collect_assignment(node, contents, symbols)?;
@@ -249,6 +253,72 @@ fn collect_sections(
         }
         finalize_section(&mut active_sections, symbols, contents)?;
     }
+
+    Ok(())
+}
+
+fn collect_call(
+    node: &Node,
+    contents: &Rope,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    let Some(callee) = node.child_by_field_name("function") else {
+        return Ok(());
+    };
+    if !callee.is_identifier() {
+        return Ok(());
+    }
+
+    let fun_symbol = contents.node_slice(&callee)?.to_string();
+
+    match fun_symbol.as_str() {
+        "test_that" => collect_call_test_that(node, contents, symbols)?,
+        _ => {},
+    }
+
+    Ok(())
+}
+
+// https://github.com/posit-dev/positron/issues/1428
+fn collect_call_test_that(
+    node: &Node,
+    contents: &Rope,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    // We don't do any argument matching and just consider the first argument if
+    // a string. First skip over `(`.
+    let Some(first_argument) = arguments.child(1).and_then(|n| n.child(0)) else {
+        return Ok(());
+    };
+    if !first_argument.is_string() {
+        return Ok(());
+    }
+
+    let Some(string) = first_argument.child_by_field_name("content") else {
+        return Ok(());
+    };
+
+    // Recurse in arguments. We could skip the first one if we wanted.
+    let mut children = Vec::new();
+    let mut cursor = arguments.walk();
+    for child in arguments.children_by_field_name("argument", &mut cursor) {
+        if let Some(value) = child.child_by_field_name("value") {
+            collect_symbols(&value, contents, 0, &mut children)?;
+        }
+    }
+
+    let name = contents.node_slice(&string)?.to_string();
+    let name = format!("Test: {name}");
+
+    let start = convert_point_to_position(contents, node.start_position());
+    let end = convert_point_to_position(contents, node.end_position());
+
+    let symbol = new_symbol_node(name, SymbolKind::FUNCTION, Range { start, end }, children);
+    symbols.push(symbol);
 
     Ok(())
 }
@@ -586,5 +656,27 @@ z <- 3",
         assert_eq!(section_b.name, "Section B");
         assert_eq!(section_b.range.start.line, 4);
         assert_eq!(section_b.range.end.line, 5); // End of function body
+    }
+
+    #[test]
+    fn test_symbol_call_test_that() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+test_that_not('foo', {
+  1
+})
+
+# title ----
+
+test_that('foo', {
+  # title1 ----
+  1
+  # title2 ----
+  foo <- function() {
+    2
+  }
+})
+"
+        ));
     }
 }
