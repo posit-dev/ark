@@ -282,8 +282,8 @@ fn region_processor(
 }
 
 fn parse_region_type(line_text: &str) -> Option<RegionType> {
-    let region_start = Regex::new(r"^\s*#+ #region\b").unwrap();
-    let region_end = Regex::new(r"^\s*#+ #endregion\b").unwrap();
+    let region_start = Regex::new(r"^\s*#\s*region\b").unwrap();
+    let region_end = Regex::new(r"^\s*#\s*endregion\b").unwrap();
 
     if region_start.is_match(line_text) {
         Some(RegionType::Start)
@@ -391,17 +391,17 @@ mod tests {
         assert_eq!(parse_region_type("# #endregionsomething"), None);
 
         // Valid regions
-        assert_eq!(parse_region_type("# #region"), Some(RegionType::Start));
-        assert_eq!(parse_region_type("## #region  "), Some(RegionType::Start));
+        assert_eq!(parse_region_type("#region"), Some(RegionType::Start));
+        assert_eq!(parse_region_type("# region  "), Some(RegionType::Start));
         assert_eq!(
-            parse_region_type("# #region my special area"),
+            parse_region_type("#region my special area"),
             Some(RegionType::Start)
         );
 
-        assert_eq!(parse_region_type("# #endregion"), Some(RegionType::End));
-        assert_eq!(parse_region_type("## #endregion  "), Some(RegionType::End));
+        assert_eq!(parse_region_type("#endregion"), Some(RegionType::End));
+        assert_eq!(parse_region_type("# endregion  "), Some(RegionType::End));
         assert_eq!(
-            parse_region_type("# #endregion end of my special area"),
+            parse_region_type("#endregion end of my special area"),
             Some(RegionType::End)
         );
     }
@@ -540,15 +540,15 @@ d
     fn test_folding_regions() {
         insta::assert_debug_snapshot!(test_folding_range(
             "
-# #region Important code
+#region Important code
 a
 b
 c
-# #endregion
+#endregion
 
-# #region Another section
+#region Another section
 d
-# #endregion"
+#endregion"
         ));
     }
 
@@ -597,9 +597,9 @@ list <- list(
             "
 # First section ----
 function() {
-  # #region nested region
+  #region nested region
   a
-  # #endregion
+  #endregion
 }
 
 ## Subsection ----
@@ -683,7 +683,7 @@ bar)
             "
 # Complex example ----
 function(a, b, c) {
-  # #region inner calculations
+  #region inner calculations
   x <- a + b
   y <- b + c
 
@@ -693,7 +693,7 @@ function(a, b, c) {
   } else {
     result <- x / y
   }
-  # #endregion
+  #endregion
 
   result
 }
