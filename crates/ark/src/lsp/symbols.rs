@@ -27,6 +27,7 @@ use crate::lsp::indexer::IndexEntryData;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::point_end_of_previous_row;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -116,7 +117,8 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
 struct Section {
     title: String,
     level: usize,
-    range: Range,
+    start_position: tree_sitter::Point,
+    end_position: Option<tree_sitter::Point>,
     children: Vec<DocumentSymbol>,
 }
 
@@ -192,17 +194,19 @@ fn collect_sections(
                 while !active_sections.is_empty() &&
                     active_sections.last().unwrap().level >= absolute_level
                 {
-                    finalize_section(&mut active_sections, symbols)?;
+                    // Set end position for the section being closed
+                    if let Some(section) = active_sections.last_mut() {
+                        let pos = point_end_of_previous_row(child.start_position(), contents);
+                        section.end_position = Some(pos);
+                    }
+                    finalize_section(&mut active_sections, symbols, contents)?;
                 }
 
-                let range = Range {
-                    start: convert_point_to_position(contents, child.start_position()),
-                    end: convert_point_to_position(contents, child.end_position()),
-                };
                 let section = Section {
                     title,
                     level: absolute_level,
-                    range,
+                    start_position: child.start_position(),
+                    end_position: None,
                     children: Vec::new(),
                 };
                 active_sections.push(section);
@@ -235,7 +239,15 @@ fn collect_sections(
 
     // Close any remaining active sections
     while !active_sections.is_empty() {
-        finalize_section(&mut active_sections, symbols)?;
+        // Set end position to the parent node's end for remaining sections
+        if let Some(section) = active_sections.last_mut() {
+            let mut pos = node.end_position();
+            if pos.row > section.start_position.row {
+                pos = point_end_of_previous_row(pos, contents);
+            }
+            section.end_position = Some(pos);
+        }
+        finalize_section(&mut active_sections, symbols, contents)?;
     }
 
     Ok(())
@@ -322,9 +334,18 @@ fn collect_assignment_with_function(
 fn finalize_section(
     active_sections: &mut Vec<Section>,
     symbols: &mut Vec<DocumentSymbol>,
+    contents: &Rope,
 ) -> anyhow::Result<()> {
     if let Some(section) = active_sections.pop() {
-        let symbol = new_symbol(section.title, SymbolKind::STRING, section.range);
+        let start_pos = section.start_position;
+        let end_pos = section.end_position.unwrap_or(section.start_position);
+
+        let range = Range {
+            start: convert_point_to_position(contents, start_pos),
+            end: convert_point_to_position(contents, end_pos),
+        };
+
+        let symbol = new_symbol(section.title, SymbolKind::STRING, range);
 
         let mut final_symbol = symbol;
         final_symbol.children = Some(section.children);
@@ -504,5 +525,66 @@ foo <- function() {
         let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
 
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
+    }
+
+    #[test]
+    fn test_symbol_section_ranges_extend() {
+        let symbols = test_symbol(
+            "# Section 1 ----
+x <- 1
+y <- 2
+# Section 2 ----
+z <- 3",
+        );
+
+        assert_eq!(symbols.len(), 2);
+
+        // First section should extend from line 0 to line 2 (start of next section)
+        let section1 = &symbols[0];
+        assert_eq!(section1.name, "Section 1");
+        assert_eq!(section1.range.start.line, 0);
+        assert_eq!(section1.range.end.line, 2);
+
+        // Second section should extend from line 3 to end of file
+        let section2 = &symbols[1];
+        assert_eq!(section2.name, "Section 2");
+        assert_eq!(section2.range.start.line, 3);
+        assert_eq!(section2.range.end.line, 3);
+    }
+
+    #[test]
+    fn test_symbol_section_ranges_in_function() {
+        let symbols = test_symbol(
+            "foo <- function() {
+  # Section A ----
+  x <- 1
+  y <- 2
+  # Section B ----
+  z <- 3
+}",
+        );
+
+        assert_eq!(symbols.len(), 1);
+
+        // Should have one function symbol
+        let function = &symbols[0];
+        assert_eq!(function.name, "foo");
+        assert_eq!(function.kind, SymbolKind::FUNCTION);
+
+        // Function should have two section children
+        let children = function.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+
+        // First section should extend from line 1 to line 3 (start of next section)
+        let section_a = &children[0];
+        assert_eq!(section_a.name, "Section A");
+        assert_eq!(section_a.range.start.line, 1);
+        assert_eq!(section_a.range.end.line, 3);
+
+        // Second section should extend from line 4 to end of function body
+        let section_b = &children[1];
+        assert_eq!(section_b.name, "Section B");
+        assert_eq!(section_b.range.start.line, 4);
+        assert_eq!(section_b.range.end.line, 5); // End of function body
     }
 }
