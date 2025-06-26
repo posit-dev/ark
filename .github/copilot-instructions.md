@@ -11,3 +11,11 @@ Use fully qualified result types (`anyhow::Result`) instead of importing them.
 When writing tests, prefer simple assertion macros without custom error messages:
 - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
 - Use `assert!(condition);` instead of `assert!(condition, "custom message");`
+
+Tests are run with `just test`, not `cargo test`.
+
+When you extract code in a function (or move things around) that function goes
+_below_ the calling function. A general goal is to be able to read linearly from
+top to bottom with the relevant context and main logic first. The code should be
+organised like a call stack. Of course that's not always possible, use best
+judgement to produce the clearest code organization.
