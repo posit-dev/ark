@@ -1,0 +1,69 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\nfoo <- {\n    bar <- function() {}\n}\n\")"
+---
+[
+    DocumentSymbol {
+        name: "foo",
+        detail: None,
+        kind: Variable,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 3,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 3,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "bar",
+                    detail: Some(
+                        "function()",
+                    ),
+                    kind: Function,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 2,
+                            character: 4,
+                        },
+                        end: Position {
+                            line: 2,
+                            character: 24,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 2,
+                            character: 4,
+                        },
+                        end: Position {
+                            line: 2,
+                            character: 24,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+]
