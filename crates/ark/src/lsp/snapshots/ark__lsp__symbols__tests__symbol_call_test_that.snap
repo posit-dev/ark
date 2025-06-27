@@ -1,6 +1,6 @@
 ---
 source: crates/ark/src/lsp/symbols.rs
-expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\ntest_that('foo', {\n  # title1 ----\n  1\n  # title2 ----\n  foo <- function() {\n    2\n  }\n})\n\")"
+expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\ntest_that('foo', {\n  # title1 ----\n  1\n  # title2 ----\n  foo <- function() {\n    2\n  }\n})\n\n# title2 ----\ntest_that('bar', {\n  1\n})\n\")"
 ---
 [
     DocumentSymbol {
@@ -15,8 +15,8 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
                 character: 0,
             },
             end: Position {
-                line: 14,
-                character: 2,
+                line: 15,
+                character: 0,
             },
         },
         selection_range: Range {
@@ -25,8 +25,8 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
                 character: 0,
             },
             end: Position {
-                line: 14,
-                character: 2,
+                line: 15,
+                character: 0,
             },
         },
         children: Some(
@@ -153,6 +153,67 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
                                 ),
                             },
                         ],
+                    ),
+                },
+            ],
+        ),
+    },
+    DocumentSymbol {
+        name: "title2",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 16,
+                character: 0,
+            },
+            end: Position {
+                line: 19,
+                character: 2,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 16,
+                character: 0,
+            },
+            end: Position {
+                line: 19,
+                character: 2,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "Test: bar",
+                    detail: None,
+                    kind: Function,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 17,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 19,
+                            character: 2,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 17,
+                            character: 0,
+                        },
+                        end: Position {
+                            line: 19,
+                            character: 2,
+                        },
+                    },
+                    children: Some(
+                        [],
                     ),
                 },
             ],
