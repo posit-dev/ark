@@ -47,8 +47,11 @@ expression: entries
                 character: 22,
             },
         },
-        data: Variable {
+        data: Function {
             name: "method(generic, Class)",
+            arguments: [
+                "arg",
+            ],
         },
     },
 ]
