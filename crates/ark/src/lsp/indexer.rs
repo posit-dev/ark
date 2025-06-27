@@ -340,3 +340,96 @@ fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<O
         data: IndexEntryData::Section { level, title },
     }))
 }
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use insta::assert_debug_snapshot;
+
+    use super::*;
+    use crate::lsp::documents::Document;
+
+    macro_rules! test_index {
+        ($code:expr) => {
+            let doc = Document::new($code, None);
+            let path = PathBuf::from("/path/to/file.R");
+            let root = doc.ast.root_node();
+            let mut cursor = root.walk();
+
+            let mut entries = vec![];
+            for node in root.children(&mut cursor) {
+                if let Ok(Some(entry)) = index_node(&path, &doc.contents, &node) {
+                    entries.push(entry);
+                }
+            }
+            assert_debug_snapshot!(entries);
+        };
+    }
+
+    // Note that unlike document symbols whose ranges cover the whole entity
+    // they represent, the range of workspace symbols only cover the identifers
+
+    #[test]
+    fn test_index_function() {
+        test_index!(
+            r#"
+my_function <- function(a, b = 1) {
+  a + b
+
+  # These are not indexed as workspace symbol
+  inner <- function() {
+    2
+  }
+  inner_var <- 3
+}
+
+my_variable <- 1
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_variable() {
+        test_index!(
+            r#"
+x <- 10
+y = "hello"
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_s7_methods() {
+        test_index!(
+            r#"
+Class <- new_class("Class")
+generic <- new_generic("generic", "arg",
+  function(arg) {
+    S7_dispatch()
+  }
+)
+method(generic, Class) <- function(arg) {
+  NULL
+}
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_comment_section() {
+        test_index!(
+            r#"
+# Section 1 ----
+x <- 10
+
+## Subsection ======
+y <- 20
+
+x <- function() {
+    # This inner section is not indexed ----
+}
+
+"#
+        );
+    }
+}
