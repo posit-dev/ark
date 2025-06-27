@@ -265,16 +265,17 @@ fn collect_call(
     let Some(callee) = node.child_by_field_name("function") else {
         return Ok(());
     };
-    if !callee.is_identifier() {
-        return Ok(());
+
+    if callee.is_identifier() {
+        let fun_symbol = contents.node_slice(&callee)?.to_string();
+
+        match fun_symbol.as_str() {
+            "test_that" => return collect_call_test_that(node, contents, symbols),
+            _ => {}, // fallthrough
+        }
     }
 
-    let fun_symbol = contents.node_slice(&callee)?.to_string();
-
-    match fun_symbol.as_str() {
-        "test_that" => collect_call_test_that(node, contents, symbols)?,
-        _ => collect_call_arguments(node, contents, symbols)?,
-    }
+    collect_call_arguments(node, contents, symbols)?;
 
     Ok(())
 }
@@ -401,32 +402,36 @@ fn collect_assignment(
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
-    // Check for assignment
-    matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    )
-    .into_result()?;
+    let (NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+    NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)) = node.node_type()
+    else {
+        return Ok(());
+    };
 
-    // check for lhs, rhs
-    let lhs = node.child_by_field_name("lhs").into_result()?;
-    let rhs = node.child_by_field_name("rhs").into_result()?;
+    let (Some(lhs), Some(rhs)) = (
+        node.child_by_field_name("lhs"),
+        node.child_by_field_name("rhs"),
+    ) else {
+        return Ok(());
+    };
 
-    // check for identifier on lhs, function on rhs
+    // If a function, collect symbol as function
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
-
     if function {
         return collect_assignment_with_function(node, contents, symbols);
     }
 
-    // otherwise, just index as generic object
+    // Otherwise, collect as generic object
     let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
     let end = convert_point_to_position(contents, lhs.end_position());
 
-    let symbol = new_symbol(name, SymbolKind::VARIABLE, Range { start, end });
+    // Now recurse into RHS
+    let mut children = Vec::new();
+    collect_symbols(&rhs, contents, 0, &mut children)?;
+
+    let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
     symbols.push(symbol);
 
     Ok(())
@@ -791,6 +796,36 @@ local({
         1
     }
 })
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_rhs_braced_list() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+foo <- {
+    bar <- function() {}
+}
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_rhs_methods() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+class <- r6::r6class(
+  'class',
+  public = list(
+    initialize = function() 'initialize',
+    foo = function() 'foo'
+  ),
+  private = list(
+    bar = function() 'bar'
+  )
+)
 "
         ));
     }
