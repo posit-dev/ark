@@ -225,7 +225,7 @@ fn index_node(
 }
 
 fn index_assignment(
-    _path: &Path,
+    path: &Path,
     contents: &Rope,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
@@ -242,6 +242,16 @@ fn index_assignment(
         Some(lhs) => lhs,
         None => return Ok(()),
     };
+
+    let Some(rhs) = node.child_by_field_name("rhs") else {
+        return Ok(());
+    };
+
+    if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
+        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
+    {
+        index_r6_class(path, contents, &rhs, entries)?;
+    }
 
     let lhs_text = contents.node_slice(&lhs)?.to_string();
 
@@ -289,6 +299,73 @@ fn index_assignment(
             range: Range { start, end },
             data: IndexEntryData::Variable { name: lhs_text },
         });
+    }
+
+    Ok(())
+}
+
+fn index_r6_class(
+    _path: &Path,
+    contents: &Rope,
+    node: &Node,
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
+    let Some(args_node) = node.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    let mut cursor = args_node.walk();
+    for arg in args_node.children(&mut cursor) {
+        // Only consider `public = ` and `private = ` arguments
+        let Some(arg_name) = arg.child_by_field_name("name") else {
+            continue;
+        };
+        if !arg_name.is_identifier_or_string() {
+            continue;
+        }
+        let arg_name_str = contents.node_slice(&arg_name)?;
+        if arg_name_str != "public" && arg_name_str != "private" {
+            continue;
+        }
+
+        let Some(list_node) = arg.child_by_field_name("value") else {
+            continue;
+        };
+        if !list_node.is_call() {
+            continue;
+        }
+
+        let Some(list_args) = list_node.child_by_field_name("arguments") else {
+            return Ok(());
+        };
+
+        let mut cursor = list_args.walk();
+        for arg in list_args.children(&mut cursor) {
+            if !arg.is_argument() {
+                continue;
+            }
+
+            let (Some(mtd_name), Some(mtd_value)) = (
+                arg.child_by_field_name("name"),
+                arg.child_by_field_name("value"),
+            ) else {
+                continue;
+            };
+            if !mtd_name.is_identifier_or_string() || !mtd_value.is_function_definition() {
+                continue;
+            }
+
+            let name = contents.node_slice(&mtd_name)?.to_string();
+            let start = convert_point_to_position(contents, mtd_name.start_position());
+            let end = convert_point_to_position(contents, mtd_name.end_position());
+
+            // TODO!: Should be Method
+            entries.push(IndexEntry {
+                key: name.clone(),
+                range: Range { start, end },
+                data: IndexEntryData::Variable { name },
+            });
+        }
     }
 
     Ok(())
@@ -422,6 +499,49 @@ x <- function() {
     # This inner section is not indexed ----
 }
 
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_r6class() {
+        test_index!(
+            r#"
+class <- R6Class(
+    public = list(
+        initialize = function() {
+            1
+        },
+        public_method = function() {
+            2
+        }
+    ),
+    private = list(
+        private_method = function() {
+            1
+        }
+    ),
+    other = list(
+        other_method = function() {
+            1
+        }
+    )
+)
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_r6class_namespaced() {
+        test_index!(
+            r#"
+class <- R6::R6Class(
+    public = list(
+        initialize = function() {
+            1
+        },
+    )
+)
 "#
         );
     }

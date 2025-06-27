@@ -1,0 +1,38 @@
+---
+source: crates/ark/src/lsp/indexer.rs
+expression: entries
+---
+[
+    IndexEntry {
+        key: "initialize",
+        range: Range {
+            start: Position {
+                line: 3,
+                character: 8,
+            },
+            end: Position {
+                line: 3,
+                character: 18,
+            },
+        },
+        data: Variable {
+            name: "initialize",
+        },
+    },
+    IndexEntry {
+        key: "class",
+        range: Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 5,
+            },
+        },
+        data: Variable {
+            name: "class",
+        },
+    },
+]

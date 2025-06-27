@@ -465,6 +465,38 @@ pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> b
     fun == name
 }
 
+pub(crate) fn node_is_namespaced_call(
+    node: &Node,
+    namespace: &str,
+    name: &str,
+    contents: &ropey::Rope,
+) -> bool {
+    if !node.is_call() {
+        return false;
+    }
+
+    let Some(op) = node.child_by_field_name("function") else {
+        return false;
+    };
+    if !op.is_namespace_operator() {
+        return false;
+    }
+
+    let (Some(node_namespace), Some(node_name)) =
+        (op.child_by_field_name("lhs"), op.child_by_field_name("rhs"))
+    else {
+        return false;
+    };
+    let Some(node_namespace) = node_text(&node_namespace, contents) else {
+        return false;
+    };
+    let Some(node_name) = node_text(&node_name, contents) else {
+        return false;
+    };
+
+    node_namespace == namespace && node_name == name
+}
+
 /// This function takes a [Node] that you suspect might be in a call argument position
 /// and walks up the tree, looking for the containing call node
 ///
