@@ -29,6 +29,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+use crate::treesitter::TSQuery;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -314,61 +315,39 @@ fn index_r6_class(
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
-    let Some(args_node) = node.child_by_field_name("arguments") else {
-        return Ok(());
-    };
+    // Tree-sitter query to match individual methods in R6Class public/private lists
+    let query_str = r#"
+    (argument
+      name: (identifier) @access
+      value: (call
+        function: (identifier) @_list_fn
+        arguments: (arguments
+          (argument
+            name: (identifier) @method_name
+            value: (function_definition) @method_fn
+          )
+        )
+      )
+      (#match? @access "public|private")
+      (#eq? @_list_fn "list")
+    )
+    "#;
+    let mut ts_query = TSQuery::new(query_str)?;
 
-    let mut cursor = args_node.walk();
-    for arg in args_node.children(&mut cursor) {
-        // Only consider `public = ` and `private = ` arguments
-        let Some(arg_name) = arg.child_by_field_name("name") else {
-            continue;
-        };
-        if !arg_name.is_identifier_or_string() {
-            continue;
-        }
-        let arg_name_str = contents.node_slice(&arg_name)?;
-        if arg_name_str != "public" && arg_name_str != "private" {
-            continue;
-        }
+    // We'll switch from Rope to String in the near future so let's not
+    // worry about this conversion now
+    let contents_str = contents.to_string();
 
-        let Some(list_node) = arg.child_by_field_name("value") else {
-            continue;
-        };
-        if !list_node.is_call() {
-            continue;
-        }
+    for method_node in ts_query.captures_for(*node, "method_name", contents_str.as_bytes()) {
+        let name = contents.node_slice(&method_node)?.to_string();
+        let start = convert_point_to_position(contents, method_node.start_position());
+        let end = convert_point_to_position(contents, method_node.end_position());
 
-        let Some(list_args) = list_node.child_by_field_name("arguments") else {
-            return Ok(());
-        };
-
-        let mut cursor = list_args.walk();
-        for arg in list_args.children(&mut cursor) {
-            if !arg.is_argument() {
-                continue;
-            }
-
-            let (Some(mtd_name), Some(mtd_value)) = (
-                arg.child_by_field_name("name"),
-                arg.child_by_field_name("value"),
-            ) else {
-                continue;
-            };
-            if !mtd_name.is_identifier_or_string() || !mtd_value.is_function_definition() {
-                continue;
-            }
-
-            let name = contents.node_slice(&mtd_name)?.to_string();
-            let start = convert_point_to_position(contents, mtd_name.start_position());
-            let end = convert_point_to_position(contents, mtd_name.end_position());
-
-            entries.push(IndexEntry {
-                key: name.clone(),
-                range: Range { start, end },
-                data: IndexEntryData::Method { name },
-            });
-        }
+        entries.push(IndexEntry {
+            key: name.clone(),
+            range: Range { start, end },
+            data: IndexEntryData::Method { name },
+        });
     }
 
     Ok(())

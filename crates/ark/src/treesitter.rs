@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use tree_sitter::Node;
 
 use crate::lsp::traits::node::NodeExt;
@@ -620,6 +621,45 @@ pub(crate) fn point_end_of_previous_row(
         // We're at the very beginning of the document, can't go back further
         point.column = 0;
         point
+    }
+}
+
+pub(crate) struct TSQuery {
+    query: tree_sitter::Query,
+    cursor: tree_sitter::QueryCursor,
+}
+
+impl TSQuery {
+    pub(crate) fn new(query_str: &str) -> anyhow::Result<Self> {
+        let language = &tree_sitter_r::LANGUAGE.into();
+        let query = tree_sitter::Query::new(language, query_str)
+            .map_err(|err| anyhow!("Failed to compile query: {err}"))?;
+
+        let cursor = tree_sitter::QueryCursor::new();
+
+        Ok(Self { query, cursor })
+    }
+
+    /// Match query against `contents` and collect all nodes captured with the
+    /// given capture name
+    pub(crate) fn captures_for<'tree>(
+        &mut self,
+        node: tree_sitter::Node<'tree>,
+        capture_name: &str,
+        contents: &[u8],
+    ) -> Vec<tree_sitter::Node<'tree>> {
+        let mut result = Vec::new();
+
+        for m in self.cursor.matches(&self.query, node, contents) {
+            for cap in m.captures.iter() {
+                let cap_name = &self.query.capture_names()[cap.index as usize];
+                if *cap_name == capture_name {
+                    result.push(cap.node);
+                }
+            }
+        }
+
+        result
     }
 }
 
