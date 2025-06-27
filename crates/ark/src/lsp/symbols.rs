@@ -273,7 +273,65 @@ fn collect_call(
 
     match fun_symbol.as_str() {
         "test_that" => collect_call_test_that(node, contents, symbols)?,
-        _ => {},
+        _ => collect_call_methods(node, contents, symbols)?,
+    }
+
+    Ok(())
+}
+
+fn collect_call_methods(
+    node: &Node,
+    contents: &Rope,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    let mut cursor = node.walk();
+    for arg in arguments.children(&mut cursor) {
+        if arg.kind() != "argument" {
+            continue;
+        }
+
+        let Some(arg_value) = arg.child_by_field_name("value") else {
+            continue;
+        };
+        if arg_value.kind() != "function_definition" {
+            continue;
+        }
+
+        // Process the function body to extract child symbols.
+        // We do this even if it's not a "method", i.e. if it's not named.
+        let body = arg_value.child_by_field_name("body").into_result()?;
+        let mut children = Vec::new();
+        collect_symbols(&body, contents, 0, &mut children)?;
+
+        // There must be a name node, we're only collecting named functions as methods
+        let Some(arg_name) = arg.child_by_field_name("name") else {
+            continue;
+        };
+        if !arg_name.is_identifier_or_string() {
+            continue;
+        }
+        let arg_name_str = contents.node_slice(&arg_name)?.to_string();
+
+        let start = convert_point_to_position(contents, arg_value.start_position());
+        let end = convert_point_to_position(contents, arg_value.end_position());
+
+        let mut symbol = new_symbol_node(
+            arg_name_str,
+            SymbolKind::METHOD,
+            Range { start, end },
+            vec![],
+        );
+
+        // Don't include whole function as detail as the body often doesn't
+        // provide useful information and only make the outline more busy (with
+        // curly braces, newline characters, etc).
+        symbol.detail = Some(String::from("function()"));
+
+        symbols.push(symbol);
     }
 
     Ok(())
@@ -684,4 +742,34 @@ test_that('bar', {
 "
         ));
     }
+
+    #[test]
+    fn test_symbol_call_methods() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+list(
+    foo = function() {
+        1
+    }, # matched
+    function() {
+        2
+    }, # not matched
+    bar = function() {
+        3
+    }, # matched
+    baz = (function() {
+        4
+    }) # not matched
+)
+"
+        ));
+    }
 }
+
+// chat <- r6::r6class(
+//   "chat",
+//   public = list(
+//     initialize = function() "initialize",
+//  )
+//     )
