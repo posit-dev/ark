@@ -453,8 +453,8 @@ fn collect_assignment(
         // too busy.
         let name = contents.node_slice(&lhs)?.to_string();
 
-        let start = convert_point_to_position(contents, lhs.start_position());
-        let end = convert_point_to_position(contents, lhs.end_position());
+        let start = convert_point_to_position(contents, node.start_position());
+        let end = convert_point_to_position(contents, node.end_position());
 
         // Now recurse into RHS
         let mut children = Vec::new();
@@ -624,7 +624,7 @@ mod tests {
             },
             end: Position {
                 line: 0,
-                character: 3,
+                character: 8,
             },
         };
         assert_eq!(test_symbol("foo <- 1"), vec![new_symbol(

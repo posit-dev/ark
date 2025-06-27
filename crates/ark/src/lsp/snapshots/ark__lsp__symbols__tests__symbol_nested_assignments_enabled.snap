@@ -16,7 +16,7 @@ expression: symbols
             },
             end: Position {
                 line: 2,
-                character: 8,
+                character: 13,
             },
         },
         selection_range: Range {
@@ -26,7 +26,7 @@ expression: symbols
             },
             end: Position {
                 line: 2,
-                character: 8,
+                character: 13,
             },
         },
         children: Some(
@@ -76,7 +76,7 @@ expression: symbols
                         },
                         end: Position {
                             line: 5,
-                            character: 8,
+                            character: 13,
                         },
                     },
                     selection_range: Range {
@@ -86,7 +86,7 @@ expression: symbols
                         },
                         end: Position {
                             line: 5,
-                            character: 8,
+                            character: 13,
                         },
                     },
                     children: Some(
