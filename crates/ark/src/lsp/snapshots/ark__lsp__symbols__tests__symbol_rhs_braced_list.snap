@@ -15,8 +15,8 @@ expression: "test_symbol(\"\nfoo <- {\n    bar <- function() {}\n}\n\")"
                 character: 0,
             },
             end: Position {
-                line: 1,
-                character: 3,
+                line: 3,
+                character: 1,
             },
         },
         selection_range: Range {
@@ -25,8 +25,8 @@ expression: "test_symbol(\"\nfoo <- {\n    bar <- function() {}\n}\n\")"
                 character: 0,
             },
             end: Position {
-                line: 1,
-                character: 3,
+                line: 3,
+                character: 1,
             },
         },
         children: Some(
