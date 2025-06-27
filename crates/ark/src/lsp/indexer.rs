@@ -39,6 +39,10 @@ pub enum IndexEntryData {
         name: String,
         arguments: Vec<String>,
     },
+    // Like Function but not used for completions yet
+    Method {
+        name: String,
+    },
     Section {
         level: usize,
         title: String,
@@ -359,11 +363,10 @@ fn index_r6_class(
             let start = convert_point_to_position(contents, mtd_name.start_position());
             let end = convert_point_to_position(contents, mtd_name.end_position());
 
-            // TODO!: Should be Method
             entries.push(IndexEntry {
                 key: name.clone(),
                 range: Range { start, end },
-                data: IndexEntryData::Variable { name },
+                data: IndexEntryData::Method { name },
             });
         }
     }
