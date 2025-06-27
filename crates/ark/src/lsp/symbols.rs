@@ -304,17 +304,13 @@ fn collect_call_arguments(
         collect_symbols(&arg_value, contents, 0, symbols)?;
 
         if arg_value.kind() == "function_definition" {
-            // Functions are not collected by `collect_symbols()` so we deal
-            // with them here by processing the function body to extract child
-            // symbols. We do this even if it's not a "method", i.e. if it's not
-            // named.
-            let body = arg_value.child_by_field_name("body").into_result()?;
-            let mut children = Vec::new();
-            collect_symbols(&body, contents, 0, &mut children)?;
-
-            // If there is a name node, collect it as a method
             if let Some(arg_fun) = arg.child_by_field_name("name") {
+                // If this is a named function, collect it as a method
                 collect_method(&arg_fun, &arg_value, contents, symbols)?;
+            } else {
+                // Otherwise, just recurse into the function
+                let body = arg_value.child_by_field_name("body").into_result()?;
+                collect_symbols(&body, contents, 0, symbols)?;
             };
         }
     }
@@ -336,11 +332,15 @@ fn collect_method(
     let start = convert_point_to_position(contents, arg_value.start_position());
     let end = convert_point_to_position(contents, arg_value.end_position());
 
+    let body = arg_value.child_by_field_name("body").into_result()?;
+    let mut children = vec![];
+    collect_symbols(&body, contents, 0, &mut children)?;
+
     let mut symbol = new_symbol_node(
         arg_name_str,
         SymbolKind::METHOD,
         Range { start, end },
-        vec![],
+        children,
     );
 
     // Don't include whole function as detail as the body often doesn't
@@ -771,9 +771,14 @@ test_that('bar', {
 list(
     foo = function() {
         1
+        # nested section ----
+        nested <- function() {}
     }, # matched
     function() {
         2
+        # `nested` is a symbol even if the unnamed method is not
+        nested <- function () {
+    }
     }, # not matched
     bar = function() {
         3
