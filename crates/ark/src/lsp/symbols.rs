@@ -273,13 +273,13 @@ fn collect_call(
 
     match fun_symbol.as_str() {
         "test_that" => collect_call_test_that(node, contents, symbols)?,
-        _ => collect_call_methods(node, contents, symbols)?,
+        _ => collect_call_arguments(node, contents, symbols)?,
     }
 
     Ok(())
 }
 
-fn collect_call_methods(
+fn collect_call_arguments(
     node: &Node,
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
@@ -297,42 +297,57 @@ fn collect_call_methods(
         let Some(arg_value) = arg.child_by_field_name("value") else {
             continue;
         };
-        if arg_value.kind() != "function_definition" {
-            continue;
+
+        // Recurse into arguments. They might be a braced list, another call
+        // that might contain functions, etc.
+        collect_symbols(&arg_value, contents, 0, symbols)?;
+
+        if arg_value.kind() == "function_definition" {
+            // Functions are not collected by `collect_symbols()` so we deal
+            // with them here by processing the function body to extract child
+            // symbols. We do this even if it's not a "method", i.e. if it's not
+            // named.
+            let body = arg_value.child_by_field_name("body").into_result()?;
+            let mut children = Vec::new();
+            collect_symbols(&body, contents, 0, &mut children)?;
+
+            // If there is a name node, collect it as a method
+            if let Some(arg_fun) = arg.child_by_field_name("name") {
+                collect_method(&arg_fun, &arg_value, contents, symbols)?;
+            };
         }
-
-        // Process the function body to extract child symbols.
-        // We do this even if it's not a "method", i.e. if it's not named.
-        let body = arg_value.child_by_field_name("body").into_result()?;
-        let mut children = Vec::new();
-        collect_symbols(&body, contents, 0, &mut children)?;
-
-        // There must be a name node, we're only collecting named functions as methods
-        let Some(arg_name) = arg.child_by_field_name("name") else {
-            continue;
-        };
-        if !arg_name.is_identifier_or_string() {
-            continue;
-        }
-        let arg_name_str = contents.node_slice(&arg_name)?.to_string();
-
-        let start = convert_point_to_position(contents, arg_value.start_position());
-        let end = convert_point_to_position(contents, arg_value.end_position());
-
-        let mut symbol = new_symbol_node(
-            arg_name_str,
-            SymbolKind::METHOD,
-            Range { start, end },
-            vec![],
-        );
-
-        // Don't include whole function as detail as the body often doesn't
-        // provide useful information and only make the outline more busy (with
-        // curly braces, newline characters, etc).
-        symbol.detail = Some(String::from("function()"));
-
-        symbols.push(symbol);
     }
+
+    Ok(())
+}
+
+fn collect_method(
+    arg_fun: &Node,
+    arg_value: &Node,
+    contents: &Rope,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    if !arg_fun.is_identifier_or_string() {
+        return Ok(());
+    }
+    let arg_name_str = contents.node_slice(&arg_fun)?.to_string();
+
+    let start = convert_point_to_position(contents, arg_value.start_position());
+    let end = convert_point_to_position(contents, arg_value.end_position());
+
+    let mut symbol = new_symbol_node(
+        arg_name_str,
+        SymbolKind::METHOD,
+        Range { start, end },
+        vec![],
+    );
+
+    // Don't include whole function as detail as the body often doesn't
+    // provide useful information and only make the outline more busy (with
+    // curly braces, newline characters, etc).
+    symbol.detail = Some(String::from("function()"));
+
+    symbols.push(symbol);
 
     Ok(())
 }
@@ -765,11 +780,18 @@ list(
 "
         ));
     }
-}
 
-// chat <- r6::r6class(
-//   "chat",
-//   public = list(
-//     initialize = function() "initialize",
-//  )
-//     )
+    #[test]
+    fn test_symbol_call_arguments() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+local({
+    a <- function() {
+        1
+    }
+})
+"
+        ));
+    }
+}
