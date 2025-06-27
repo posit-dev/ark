@@ -402,26 +402,26 @@ fn collect_assignment(
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
-    // Check for assignment
-    matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    )
-    .into_result()?;
+    let (NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+    NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)) = node.node_type()
+    else {
+        return Ok(());
+    };
 
-    // check for lhs, rhs
-    let lhs = node.child_by_field_name("lhs").into_result()?;
-    let rhs = node.child_by_field_name("rhs").into_result()?;
+    let (Some(lhs), Some(rhs)) = (
+        node.child_by_field_name("lhs"),
+        node.child_by_field_name("rhs"),
+    ) else {
+        return Ok(());
+    };
 
-    // check for identifier on lhs, function on rhs
+    // If a function, collect symbol as function
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
-
     if function {
         return collect_assignment_with_function(node, contents, symbols);
     }
 
-    // otherwise, just index as generic object
+    // Otherwise, collect as generic object
     let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
@@ -429,6 +429,9 @@ fn collect_assignment(
 
     let symbol = new_symbol(name, SymbolKind::VARIABLE, Range { start, end });
     symbols.push(symbol);
+
+    // Now recurse into RHS
+    collect_symbols(&rhs, contents, 0, symbols)?;
 
     Ok(())
 }
@@ -792,6 +795,25 @@ local({
         1
     }
 })
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_rhs() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+class <- r6::r6class(
+  'class',
+  public = list(
+    initialize = function() 'initialize',
+    foo = function() 'foo'
+  ),
+  private = list(
+    bar = function() 'bar'
+  )
+)
 "
         ));
     }
