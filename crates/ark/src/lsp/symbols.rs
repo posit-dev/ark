@@ -122,6 +122,16 @@ struct Section {
     children: Vec<DocumentSymbol>,
 }
 
+struct CollectContext {
+    top_level: bool,
+}
+
+impl CollectContext {
+    fn new() -> Self {
+        Self { top_level: true }
+    }
+}
+
 pub(crate) fn document_symbols(
     state: &WorldState,
     params: &DocumentSymbolParams,
@@ -136,7 +146,13 @@ pub(crate) fn document_symbols(
     let mut result = Vec::new();
 
     // Extract and process all symbols from the AST
-    if let Err(err) = collect_symbols(&root_node, contents, 0, &mut result) {
+    if let Err(err) = collect_symbols(
+        &mut CollectContext::new(),
+        &root_node,
+        contents,
+        0,
+        &mut result,
+    ) {
         log::error!("Failed to collect symbols: {err:?}");
         return Ok(Vec::new());
     }
@@ -146,33 +162,39 @@ pub(crate) fn document_symbols(
 
 /// Collect all document symbols from a node recursively
 fn collect_symbols(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     match node.node_type() {
-        NodeType::Program | NodeType::BracedExpression => {
-            collect_sections(node, contents, current_level, symbols)?;
+        NodeType::Program => {
+            collect_sections(ctx, node, contents, current_level, symbols)?;
+        },
+
+        NodeType::BracedExpression => {
+            ctx.top_level = false;
+            collect_sections(ctx, node, contents, current_level, symbols)?;
         },
 
         NodeType::Call => {
-            collect_call(node, contents, symbols)?;
+            collect_call(ctx, node, contents, symbols)?;
         },
 
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
         NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
-            collect_assignment(node, contents, symbols)?;
+            collect_assignment(ctx, node, contents, symbols)?;
         },
 
         // For all other node types, no symbols need to be added
         _ => {},
     }
-
     Ok(())
 }
 
 fn collect_sections(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     current_level: usize,
@@ -224,11 +246,11 @@ fn collect_sections(
 
         if active_sections.is_empty() {
             // If no active section, extend current vector of symbols
-            collect_symbols(&child, contents, current_level, symbols)?;
+            collect_symbols(ctx, &child, contents, current_level, symbols)?;
         } else {
             // Otherwise create new store of symbols for the current section
             let mut child_symbols = Vec::new();
-            collect_symbols(&child, contents, current_level, &mut child_symbols)?;
+            collect_symbols(ctx, &child, contents, current_level, &mut child_symbols)?;
 
             // Nest them inside last section
             if !child_symbols.is_empty() {
@@ -258,6 +280,7 @@ fn collect_sections(
 }
 
 fn collect_call(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
@@ -268,19 +291,19 @@ fn collect_call(
 
     if callee.is_identifier() {
         let fun_symbol = contents.node_slice(&callee)?.to_string();
-
         match fun_symbol.as_str() {
-            "test_that" => return collect_call_test_that(node, contents, symbols),
+            "test_that" => return collect_call_test_that(ctx, node, contents, symbols),
             _ => {}, // fallthrough
         }
     }
 
-    collect_call_arguments(node, contents, symbols)?;
+    collect_call_arguments(ctx, node, contents, symbols)?;
 
     Ok(())
 }
 
 fn collect_call_arguments(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
@@ -289,28 +312,24 @@ fn collect_call_arguments(
         return Ok(());
     };
 
-    let mut cursor = node.walk();
+    let mut cursor = arguments.walk();
     for arg in arguments.children(&mut cursor) {
-        if arg.kind() != "argument" {
-            continue;
-        }
-
         let Some(arg_value) = arg.child_by_field_name("value") else {
             continue;
         };
 
         // Recurse into arguments. They might be a braced list, another call
         // that might contain functions, etc.
-        collect_symbols(&arg_value, contents, 0, symbols)?;
+        collect_symbols(ctx, &arg_value, contents, 0, symbols)?;
 
         if arg_value.kind() == "function_definition" {
             if let Some(arg_fun) = arg.child_by_field_name("name") {
                 // If this is a named function, collect it as a method
-                collect_method(&arg_fun, &arg_value, contents, symbols)?;
+                collect_method(ctx, &arg_fun, &arg_value, contents, symbols)?;
             } else {
                 // Otherwise, just recurse into the function
                 let body = arg_value.child_by_field_name("body").into_result()?;
-                collect_symbols(&body, contents, 0, symbols)?;
+                collect_symbols(ctx, &body, contents, 0, symbols)?;
             };
         }
     }
@@ -319,6 +338,7 @@ fn collect_call_arguments(
 }
 
 fn collect_method(
+    ctx: &mut CollectContext,
     arg_fun: &Node,
     arg_value: &Node,
     contents: &Rope,
@@ -334,7 +354,7 @@ fn collect_method(
 
     let body = arg_value.child_by_field_name("body").into_result()?;
     let mut children = vec![];
-    collect_symbols(&body, contents, 0, &mut children)?;
+    collect_symbols(ctx, &body, contents, 0, &mut children)?;
 
     let mut symbol = new_symbol_node(
         arg_name_str,
@@ -355,6 +375,7 @@ fn collect_method(
 
 // https://github.com/posit-dev/positron/issues/1428
 fn collect_call_test_that(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
@@ -381,7 +402,7 @@ fn collect_call_test_that(
     let mut cursor = arguments.walk();
     for child in arguments.children_by_field_name("argument", &mut cursor) {
         if let Some(value) = child.child_by_field_name("value") {
-            collect_symbols(&value, contents, 0, &mut children)?;
+            collect_symbols(ctx, &value, contents, 0, &mut children)?;
         }
     }
 
@@ -398,6 +419,7 @@ fn collect_call_test_that(
 }
 
 fn collect_assignment(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
@@ -418,26 +440,34 @@ fn collect_assignment(
     // If a function, collect symbol as function
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
     if function {
-        return collect_assignment_with_function(node, contents, symbols);
+        return collect_assignment_with_function(ctx, node, contents, symbols);
     }
 
-    // Otherwise, collect as generic object
-    let name = contents.node_slice(&lhs)?.to_string();
+    if ctx.top_level {
+        // Collect as generic object, but only if we're at top-level. Assigned
+        // objects in nested functions and blocks cause the outline to become
+        // too busy.
+        let name = contents.node_slice(&lhs)?.to_string();
 
-    let start = convert_point_to_position(contents, lhs.start_position());
-    let end = convert_point_to_position(contents, lhs.end_position());
+        let start = convert_point_to_position(contents, lhs.start_position());
+        let end = convert_point_to_position(contents, lhs.end_position());
 
-    // Now recurse into RHS
-    let mut children = Vec::new();
-    collect_symbols(&rhs, contents, 0, &mut children)?;
+        // Now recurse into RHS
+        let mut children = Vec::new();
+        collect_symbols(ctx, &rhs, contents, 0, &mut children)?;
 
-    let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
-    symbols.push(symbol);
+        let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
+        symbols.push(symbol);
+    } else {
+        // Recurse into RHS
+        collect_symbols(ctx, &rhs, contents, 0, symbols)?;
+    }
 
     Ok(())
 }
 
 fn collect_assignment_with_function(
+    ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
@@ -469,7 +499,7 @@ fn collect_assignment_with_function(
 
     // Process the function body to extract child symbols
     let mut children = Vec::new();
-    collect_symbols(&body, contents, 0, &mut children)?;
+    collect_symbols(ctx, &body, contents, 0, &mut children)?;
 
     let mut symbol = new_symbol_node(name, SymbolKind::FUNCTION, range, children);
     symbol.detail = Some(detail);
@@ -536,7 +566,14 @@ mod tests {
         let node = doc.ast.root_node();
 
         let mut symbols = Vec::new();
-        collect_symbols(&node, &doc.contents, 0, &mut symbols).unwrap();
+        collect_symbols(
+            &mut CollectContext::new(),
+            &node,
+            &doc.contents,
+            0,
+            &mut symbols,
+        )
+        .unwrap();
         symbols
     }
 
@@ -614,33 +651,7 @@ mod tests {
 
     #[test]
     fn test_symbol_assignment_function_nested() {
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 20,
-            },
-            end: Position {
-                line: 0,
-                character: 23,
-            },
-        };
-        let bar = new_symbol(String::from("bar"), SymbolKind::VARIABLE, range);
-
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 0,
-                character: 30,
-            },
-        };
-        let mut foo = new_symbol(String::from("foo"), SymbolKind::FUNCTION, range);
-        foo.children = Some(vec![bar]);
-        foo.detail = Some(String::from("function()"));
-
-        assert_eq!(test_symbol("foo <- function() { bar <- 1 }"), vec![foo]);
+        insta::assert_debug_snapshot!(test_symbol("foo <- function() { bar <- function() 1 }"));
     }
 
     #[test]
@@ -656,23 +667,6 @@ foo <- function() {
 }
 # title5 ----"
         ));
-    }
-
-    #[test]
-    fn test_symbol_braced_list() {
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 2,
-            },
-            end: Position {
-                line: 0,
-                character: 5,
-            },
-        };
-        let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
-
-        assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
 
     #[test]
@@ -833,5 +827,22 @@ class <- r6::r6class(
 )
 "
         ));
+    }
+
+    #[test]
+    // Assigned variables in nested contexts are not emitted as symbols
+    fn test_symbol_nested_assignments() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+local({
+  inner1 <- 1            # Not a symbol
+})
+a <- function() {
+  inner2 <- 2            # Not a symbol
+  inner3 <- function() 3 # Symbol
+}
+"
+        ));
+        assert_eq!(test_symbol("{ foo <- 1 }"), vec![]);
     }
 }
