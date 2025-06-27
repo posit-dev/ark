@@ -676,6 +676,11 @@ test_that('foo', {
     2
   }
 })
+
+# title2 ----
+test_that('bar', {
+  1
+})
 "
         ));
     }
