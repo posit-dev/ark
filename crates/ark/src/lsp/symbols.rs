@@ -122,7 +122,15 @@ struct Section {
     children: Vec<DocumentSymbol>,
 }
 
-struct CollectContext;
+struct CollectContext {
+    top_level: bool,
+}
+
+impl CollectContext {
+    fn new() -> Self {
+        Self { top_level: true }
+    }
+}
 
 pub(crate) fn document_symbols(
     state: &WorldState,
@@ -138,8 +146,13 @@ pub(crate) fn document_symbols(
     let mut result = Vec::new();
 
     // Extract and process all symbols from the AST
-    let mut ctx = CollectContext;
-    if let Err(err) = collect_symbols(&mut ctx, &root_node, contents, 0, &mut result) {
+    if let Err(err) = collect_symbols(
+        &mut CollectContext::new(),
+        &root_node,
+        contents,
+        0,
+        &mut result,
+    ) {
         log::error!("Failed to collect symbols: {err:?}");
         return Ok(Vec::new());
     }
@@ -156,7 +169,12 @@ fn collect_symbols(
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     match node.node_type() {
-        NodeType::Program | NodeType::BracedExpression => {
+        NodeType::Program => {
+            collect_sections(ctx, node, contents, current_level, symbols)?;
+        },
+
+        NodeType::BracedExpression => {
+            ctx.top_level = false;
             collect_sections(ctx, node, contents, current_level, symbols)?;
         },
 
@@ -428,18 +446,25 @@ fn collect_assignment(
         return collect_assignment_with_function(ctx, node, contents, symbols);
     }
 
-    // Otherwise, collect as generic object
-    let name = contents.node_slice(&lhs)?.to_string();
+    if ctx.top_level {
+        // Collect as generic object, but only if we're at top-level. Assigned
+        // objects in nested functions and blocks cause the outline to become
+        // too busy.
+        let name = contents.node_slice(&lhs)?.to_string();
 
-    let start = convert_point_to_position(contents, lhs.start_position());
-    let end = convert_point_to_position(contents, lhs.end_position());
+        let start = convert_point_to_position(contents, lhs.start_position());
+        let end = convert_point_to_position(contents, lhs.end_position());
 
-    // Now recurse into RHS
-    let mut children = Vec::new();
-    collect_symbols(ctx, &rhs, contents, 0, &mut children)?;
+        // Now recurse into RHS
+        let mut children = Vec::new();
+        collect_symbols(ctx, &rhs, contents, 0, &mut children)?;
 
-    let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
-    symbols.push(symbol);
+        let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
+        symbols.push(symbol);
+    } else {
+        // Recurse into RHS
+        collect_symbols(ctx, &rhs, contents, 0, symbols)?;
+    }
 
     Ok(())
 }
@@ -544,8 +569,14 @@ mod tests {
         let node = doc.ast.root_node();
 
         let mut symbols = Vec::new();
-        let mut ctx = CollectContext;
-        collect_symbols(&mut ctx, &node, &doc.contents, 0, &mut symbols).unwrap();
+        collect_symbols(
+            &mut CollectContext::new(),
+            &node,
+            &doc.contents,
+            0,
+            &mut symbols,
+        )
+        .unwrap();
         symbols
     }
 
@@ -623,33 +654,7 @@ mod tests {
 
     #[test]
     fn test_symbol_assignment_function_nested() {
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 20,
-            },
-            end: Position {
-                line: 0,
-                character: 23,
-            },
-        };
-        let bar = new_symbol(String::from("bar"), SymbolKind::VARIABLE, range);
-
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 0,
-            },
-            end: Position {
-                line: 0,
-                character: 30,
-            },
-        };
-        let mut foo = new_symbol(String::from("foo"), SymbolKind::FUNCTION, range);
-        foo.children = Some(vec![bar]);
-        foo.detail = Some(String::from("function()"));
-
-        assert_eq!(test_symbol("foo <- function() { bar <- 1 }"), vec![foo]);
+        insta::assert_debug_snapshot!(test_symbol("foo <- function() { bar <- function() 1 }"));
     }
 
     #[test]
@@ -665,23 +670,6 @@ foo <- function() {
 }
 # title5 ----"
         ));
-    }
-
-    #[test]
-    fn test_symbol_braced_list() {
-        let range = Range {
-            start: Position {
-                line: 0,
-                character: 2,
-            },
-            end: Position {
-                line: 0,
-                character: 5,
-            },
-        };
-        let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
-
-        assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
     }
 
     #[test]
@@ -842,5 +830,22 @@ class <- r6::r6class(
 )
 "
         ));
+    }
+
+    #[test]
+    // Assigned variables in nested contexts are not emitted as symbols
+    fn test_symbol_nested_assignments() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+local({
+  inner1 <- 1            # Not a symbol
+})
+a <- function() {
+  inner2 <- 2            # Not a symbol
+  inner3 <- function() 3 # Symbol
+}
+"
+        ));
+        assert_eq!(test_symbol("{ foo <- 1 }"), vec![]);
     }
 }

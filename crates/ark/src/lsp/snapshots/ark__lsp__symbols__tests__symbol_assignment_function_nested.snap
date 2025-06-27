@@ -1,0 +1,71 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"foo <- function() { bar <- function() 1 }\")"
+---
+[
+    DocumentSymbol {
+        name: "foo",
+        detail: Some(
+            "function()",
+        ),
+        kind: Function,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 41,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 41,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "bar",
+                    detail: Some(
+                        "function()",
+                    ),
+                    kind: Function,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 20,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 39,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 0,
+                            character: 20,
+                        },
+                        end: Position {
+                            line: 0,
+                            character: 39,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+]
