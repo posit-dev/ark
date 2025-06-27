@@ -15,7 +15,7 @@ expression: entries
                 character: 18,
             },
         },
-        data: Variable {
+        data: Method {
             name: "initialize",
         },
     },
@@ -31,7 +31,7 @@ expression: entries
                 character: 21,
             },
         },
-        data: Variable {
+        data: Method {
             name: "public_method",
         },
     },
@@ -47,7 +47,7 @@ expression: entries
                 character: 22,
             },
         },
-        data: Variable {
+        data: Method {
             name: "private_method",
         },
     },
