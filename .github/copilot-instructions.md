@@ -19,3 +19,6 @@ _below_ the calling function. A general goal is to be able to read linearly from
 top to bottom with the relevant context and main logic first. The code should be
 organised like a call stack. Of course that's not always possible, use best
 judgement to produce the clearest code organization.
+
+ Keep the main logic as unnested as possible. Favour Rust's `let ... else`
+ syntax to return early or continue a loop in the `else` clause, over `if let`.
