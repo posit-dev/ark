@@ -282,6 +282,7 @@ fn region_processor(
 }
 
 fn parse_region_type(line_text: &str) -> Option<RegionType> {
+    // Source: https://github.com/microsoft/vscode/blob/d6d5034f/extensions/python/language-configuration.json#L45-L48
     let region_start = Regex::new(r"^\s*#\s*region\b").unwrap();
     let region_end = Regex::new(r"^\s*#\s*endregion\b").unwrap();
 
