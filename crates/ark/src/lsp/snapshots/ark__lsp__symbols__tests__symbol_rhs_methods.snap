@@ -43,8 +43,8 @@ expression: "test_symbol(\"\n# section ----\nclass <- r6::r6class(\n  'class',\n
                             character: 0,
                         },
                         end: Position {
-                            line: 2,
-                            character: 5,
+                            line: 11,
+                            character: 1,
                         },
                     },
                     selection_range: Range {
@@ -53,8 +53,8 @@ expression: "test_symbol(\"\n# section ----\nclass <- r6::r6class(\n  'class',\n
                             character: 0,
                         },
                         end: Position {
-                            line: 2,
-                            character: 5,
+                            line: 11,
+                            character: 1,
                         },
                     },
                     children: Some(
