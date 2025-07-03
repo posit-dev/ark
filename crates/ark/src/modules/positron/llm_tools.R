@@ -25,7 +25,7 @@
     }
 
     # Search for help topics in the package
-    help_db <- help.search(
+    help_db <- utils::help.search(
         "",
         package = package_name,
         fields = c("alias", "title"),
@@ -40,20 +40,17 @@
 
     res_split <- split(res, res$Name)
     res_list <- lapply(res_split, function(group) {
-        data.frame(
+        list(
             topic_id = group$Name[1],
             title = group$Entry[group$Field == "Title"][1],
             aliases = paste(
                 group$Entry[group$Field == "alias"],
                 collapse = ", "
-            ),
-            stringsAsFactors = FALSE
+            )
         )
     })
-    res <- do.call(rbind, res_list)
-    rownames(res) <- NULL
-    res <- res[, c("topic_id", "title", "aliases")]
-    res
+    names(res_list) <- NULL
+    res_list
 }
 
 #' Get available vignettes for a package
@@ -174,11 +171,11 @@
     on.exit(options(menu.graphics = old.menu.graphics), add = TRUE)
 
     # Read the help page
-    help_page <- help(
+    help_page <- utils::help(
         package = (package_name),
         topic = (topic),
         help_type = "text",
-        try.all.packages = is.null(package_name)
+        try.all.packages = (is.null(package_name))
     )
 
     if (!length(help_page)) {

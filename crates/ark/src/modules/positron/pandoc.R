@@ -81,14 +81,24 @@ pandoc_convert <- function(
         args <- c(args, "--output", pandoc_path_arg(output))
     }
 
-    # set pandoc stack size
-    args <- prepend_pandoc_stack_size(args)
-
     # additional command line options
     args <- c(args, options)
 
+    # ensure pandoc is available
+    pandoc_info <- find_pandoc()
+    if (is.null(pandoc_info$dir) || !utils::file_test("-x", pandoc())) {
+        stop(
+            "pandoc is not available. Please install pandoc or set the ",
+            "RSTUDIO_PANDOC environment variable to the directory containing ",
+            "the pandoc executable."
+        )
+    }
+
     # build the conversion command
-    command <- paste(quoted(pandoc()), paste(quoted(args), collapse = " "))
+    command <- paste(
+        quoted(file.path(pandoc_info$dir, "pandoc")),
+        paste(quoted(args), collapse = " ")
+    )
 
     # show it in verbose mode
     if (verbose) {
@@ -141,12 +151,6 @@ pandoc <- function() {
         find_pandoc()$dir,
         "pandoc"
     )
-}
-
-#' Prepend pandoc stack size to command line arguments
-prepend_pandoc_stack_size <- function(args) {
-    stack_size <- getOption("pandoc.stack.size", default = "512m")
-    c(c("+RTS", paste0("-K", stack_size), "-RTS"), args)
 }
 
 #' Test if a directory exists
