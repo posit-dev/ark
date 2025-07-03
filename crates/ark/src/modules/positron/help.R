@@ -1,7 +1,7 @@
 #
 # help.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -426,4 +426,71 @@ rewrite_help_links <- function(line, package, package_root) {
     # installed, unknown package  a href="/library/devhelp/help/match">
 
     line
+}
+
+#' Convert a help page to an Rd object.
+#'
+#' Ported from btw:::help_to_rd()
+help_to_rd <- function(help_page) {
+    if (inherits(help_page, "dev_topic")) {
+        rd_path <- help_page$path
+        return(tools::parse_Rd(rd_path))
+    }
+
+    help_path <- as.character(help_page)
+    rd_name <- basename(help_path)
+    rd_package <- basename(dirname(dirname(help_path)))
+    tools::Rd_db(rd_package)[[paste0(rd_name, ".Rd")]]
+}
+
+
+#' Format a help page as Markdown.
+#'
+#' Ported from btw:::format_help_page_markdown()
+format_help_page_markdown <- function(
+    help_page,
+    ...,
+    to = "markdown_strict+pipe_tables+backtick_code_blocks"
+) {
+    rd_obj <- help_to_rd(help_page)
+    tmp_rd_file <- tempfile(fileext = ".html")
+
+    tools::Rd2HTML(rd_obj, out = tmp_rd_file)
+
+    pandoc_convert(
+        tmp_rd_file,
+        to = to,
+        ...
+    )
+}
+
+#' Get the help topic and package from a help page.
+#'
+#' Ported from btw:::help_package_topic()
+help_package_topic <- function(help_page) {
+    if (inherits(help_page, "dev_topic")) {
+        return(list(
+            topic = help_page$topic,
+            resolved = help_page$path,
+            package = help_page$pkg
+        ))
+    }
+
+    # help() mainly returns a path to the un-aliased help topic
+    # help("promise"): .../library/promises/help/promise
+    # help("mutate_if", "dplyr"): .../library/dplyr/help/mutate_all
+    topic <- attr(help_page, "topic", exact = TRUE)
+
+    help_path <- as.character(help_page)
+
+    # In the case where there are multiple matches, sort them so that the
+    # raised error is deterministic
+    package <- basename(dirname(dirname(help_path)))
+    sort_indices <- rank(package, ties.method = "first")
+
+    list(
+        topic = rep(topic, length(help_path)),
+        resolved = basename(help_path)[sort_indices],
+        package = if (length(package)) package[sort_indices]
+    )
 }
