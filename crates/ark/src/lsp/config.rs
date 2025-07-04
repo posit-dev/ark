@@ -6,9 +6,16 @@ use crate::lsp;
 use crate::lsp::diagnostics::DiagnosticsConfig;
 
 /// Configuration of the LSP
-#[derive(Clone, Debug)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct LspConfig {
     pub(crate) diagnostics: DiagnosticsConfig,
+    pub(crate) symbols: SymbolsConfig,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SymbolsConfig {
+    /// Whether to emit assignments in `{` bloks as document symbols.
+    pub include_assignments_in_blocks: bool,
 }
 
 /// Configuration of a document.
@@ -53,6 +60,12 @@ pub(crate) struct VscDiagnosticsConfig {
     pub enable: bool,
 }
 
+#[derive(Serialize, Deserialize, FieldNamesAsArray, Clone, Debug)]
+pub(crate) struct VscSymbolsConfig {
+    // DEV NOTE: Update `section_from_key()` method after adding a field
+    pub include_assignments_in_blocks: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
 pub(crate) enum VscIndentSize {
@@ -60,10 +73,10 @@ pub(crate) enum VscIndentSize {
     Size(usize),
 }
 
-impl Default for LspConfig {
+impl Default for SymbolsConfig {
     fn default() -> Self {
         Self {
-            diagnostics: Default::default(),
+            include_assignments_in_blocks: false,
         }
     }
 }
@@ -130,6 +143,23 @@ impl From<VscDiagnosticsConfig> for DiagnosticsConfig {
     fn from(value: VscDiagnosticsConfig) -> Self {
         Self {
             enable: value.enable,
+        }
+    }
+}
+
+impl VscSymbolsConfig {
+    pub(crate) fn section_from_key(key: &str) -> &str {
+        match key {
+            "include_assignments_in_blocks" => "positron.r.symbols.includeAssignmentsInBlocks",
+            _ => "unknown", // To be caught via downstream errors
+        }
+    }
+}
+
+impl From<VscSymbolsConfig> for SymbolsConfig {
+    fn from(value: VscSymbolsConfig) -> Self {
+        Self {
+            include_assignments_in_blocks: value.include_assignments_in_blocks,
         }
     }
 }
