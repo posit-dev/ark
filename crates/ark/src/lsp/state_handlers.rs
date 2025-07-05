@@ -43,8 +43,10 @@ use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DocumentConfig;
+use crate::lsp::config::SymbolsConfig;
 use crate::lsp::config::VscDiagnosticsConfig;
 use crate::lsp::config::VscDocumentConfig;
+use crate::lsp::config::VscSymbolsConfig;
 use crate::lsp::diagnostics::DiagnosticsConfig;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
@@ -244,6 +246,9 @@ pub(crate) async fn did_change_configuration(
     // we should just ignore it. Instead we need to pull the settings again for
     // all URI of interest.
 
+    // Note that the client sends notifications for settings for which we have
+    // declared interest in. This registration is done in `handle_initialized()`.
+
     update_config(workspace_uris(state), client, state)
         .instrument(tracing::info_span!("did_change_configuration"))
         .await
@@ -296,6 +301,16 @@ async fn update_config(
         .collect();
     items.append(&mut diagnostics_items);
 
+    let symbols_keys = VscSymbolsConfig::FIELD_NAMES_AS_ARRAY;
+    let mut symbols_items: Vec<ConfigurationItem> = symbols_keys
+        .iter()
+        .map(|key| ConfigurationItem {
+            scope_uri: None,
+            section: Some(VscSymbolsConfig::section_from_key(key).into()),
+        })
+        .collect();
+    items.append(&mut symbols_items);
+
     // For document configs we collect all pairs of URIs and config keys of
     // interest in a flat vector
     let document_keys = VscDocumentConfig::FIELD_NAMES_AS_ARRAY;
@@ -316,7 +331,8 @@ async fn update_config(
     // by chunk
     let n_document_items = document_keys.len();
     let n_diagnostics_items = diagnostics_keys.len();
-    let n_items = n_diagnostics_items + (n_document_items * uris.len());
+    let n_symbols_items = symbols_keys.len();
+    let n_items = n_diagnostics_items + n_symbols_items + (n_document_items * uris.len());
 
     if configs.len() != n_items {
         return Err(anyhow!(
@@ -350,6 +366,19 @@ async fn update_config(
     if changed {
         lsp::spawn_diagnostics_refresh_all(state.clone());
     }
+
+    // --- Symbols
+    let keys = symbols_keys.into_iter();
+    let items: Vec<Value> = configs.by_ref().take(n_symbols_items).collect();
+
+    let mut map = serde_json::Map::new();
+    std::iter::zip(keys, items).for_each(|(key, item)| {
+        map.insert(key.into(), item);
+    });
+
+    let config: VscSymbolsConfig = serde_json::from_value(serde_json::Value::Object(map))?;
+    let config: SymbolsConfig = config.into();
+    state.config.symbols = config;
 
     // --- Documents
     // For each document, deserialise the vector of JSON values into a typed config
