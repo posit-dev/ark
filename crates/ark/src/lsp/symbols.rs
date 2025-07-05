@@ -124,11 +124,15 @@ struct Section {
 
 struct CollectContext {
     top_level: bool,
+    include_assignments_in_blocks: bool,
 }
 
 impl CollectContext {
     fn new() -> Self {
-        Self { top_level: true }
+        Self {
+            top_level: true,
+            include_assignments_in_blocks: false,
+        }
     }
 }
 
@@ -145,14 +149,11 @@ pub(crate) fn document_symbols(
     let root_node = ast.root_node();
     let mut result = Vec::new();
 
+    let mut ctx = CollectContext::new();
+    ctx.include_assignments_in_blocks = state.config.symbols.include_assignments_in_blocks;
+
     // Extract and process all symbols from the AST
-    if let Err(err) = collect_symbols(
-        &mut CollectContext::new(),
-        &root_node,
-        contents,
-        0,
-        &mut result,
-    ) {
+    if let Err(err) = collect_symbols(&mut ctx, &root_node, contents, 0, &mut result) {
         log::error!("Failed to collect symbols: {err:?}");
         return Ok(Vec::new());
     }
@@ -446,7 +447,7 @@ fn collect_assignment(
         return collect_assignment_with_function(ctx, node, contents, symbols);
     }
 
-    if ctx.top_level {
+    if ctx.top_level || ctx.include_assignments_in_blocks {
         // Collect as generic object, but only if we're at top-level. Assigned
         // objects in nested functions and blocks cause the outline to become
         // too busy.
