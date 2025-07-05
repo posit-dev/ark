@@ -1,15 +1,75 @@
 use serde::Deserialize;
 use serde::Serialize;
-use struct_field_names_as_array::FieldNamesAsArray;
+use serde_json::Value;
 
-use crate::lsp;
 use crate::lsp::diagnostics::DiagnosticsConfig;
+
+pub struct Setting {
+    pub key: &'static str,
+    pub set: fn(&mut LspConfig, Value),
+}
+
+// List of LSP settings for which clients can send `didChangeConfiguration`
+// notifications. We register our interest in watching over these settings in
+// our `initialized` handler. The `set` methods convert from a json `Value` to
+// the expected type, using a default value if the conversion fails.
+pub static SETTINGS: &[Setting] = &[
+    Setting {
+        key: "editor.insertSpaces",
+        set: |cfg, v| {
+            let default_style = IndentationConfig::default().indent_style;
+            cfg.document.indent.indent_style = if v
+                .as_bool()
+                .unwrap_or_else(|| default_style == IndentStyle::Space)
+            {
+                IndentStyle::Space
+            } else {
+                IndentStyle::Tab
+            }
+        },
+    },
+    Setting {
+        key: "editor.indentSize",
+        set: |cfg, v| {
+            cfg.document.indent.indent_size = v
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or_else(|| IndentationConfig::default().indent_size)
+        },
+    },
+    Setting {
+        key: "editor.tabSize",
+        set: |cfg, v| {
+            cfg.document.indent.tab_width = v
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or_else(|| IndentationConfig::default().tab_width)
+        },
+    },
+    Setting {
+        key: "positron.r.diagnostics.enable",
+        set: |cfg, v| {
+            cfg.diagnostics.enable = v
+                .as_bool()
+                .unwrap_or_else(|| DiagnosticsConfig::default().enable)
+        },
+    },
+    Setting {
+        key: "positron.r.symbols.includeAssignmentsInBlocks",
+        set: |cfg, v| {
+            cfg.symbols.include_assignments_in_blocks = v
+                .as_bool()
+                .unwrap_or_else(|| SymbolsConfig::default().include_assignments_in_blocks)
+        },
+    },
+];
 
 /// Configuration of the LSP
 #[derive(Clone, Default, Debug)]
 pub(crate) struct LspConfig {
     pub(crate) diagnostics: DiagnosticsConfig,
     pub(crate) symbols: SymbolsConfig,
+    pub(crate) document: DocumentConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -39,14 +99,14 @@ pub struct IndentationConfig {
     pub tab_width: usize,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Debug)]
 pub enum IndentStyle {
     Tab,
     Space,
 }
 
 /// VS Code representation of a document configuration
-#[derive(Serialize, Deserialize, FieldNamesAsArray, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct VscDocumentConfig {
     // DEV NOTE: Update `section_from_key()` method after adding a field
     pub insert_spaces: bool,
@@ -54,13 +114,13 @@ pub(crate) struct VscDocumentConfig {
     pub tab_size: usize,
 }
 
-#[derive(Serialize, Deserialize, FieldNamesAsArray, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct VscDiagnosticsConfig {
     // DEV NOTE: Update `section_from_key()` method after adding a field
     pub enable: bool,
 }
 
-#[derive(Serialize, Deserialize, FieldNamesAsArray, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub(crate) struct VscSymbolsConfig {
     // DEV NOTE: Update `section_from_key()` method after adding a field
     pub include_assignments_in_blocks: bool,
@@ -87,79 +147,6 @@ impl Default for IndentationConfig {
             indent_style: IndentStyle::Space,
             indent_size: 2,
             tab_width: 2,
-        }
-    }
-}
-
-impl VscDocumentConfig {
-    pub(crate) fn section_from_key(key: &str) -> &str {
-        match key {
-            "insert_spaces" => "editor.insertSpaces",
-            "indent_size" => "editor.indentSize",
-            "tab_size" => "editor.tabSize",
-            _ => "unknown", // To be caught via downstream errors
-        }
-    }
-}
-
-/// Convert from VS Code representation of a document config to our own
-/// representation. Currently one-to-one.
-impl From<VscDocumentConfig> for DocumentConfig {
-    fn from(x: VscDocumentConfig) -> Self {
-        let indent_style = indent_style_from_lsp(x.insert_spaces);
-
-        let indent_size = match x.indent_size {
-            VscIndentSize::Size(size) => size,
-            VscIndentSize::Alias(var) => {
-                if var == "tabSize" {
-                    x.tab_size
-                } else {
-                    lsp::log_warn!("Unknown indent alias {var}, using default");
-                    2
-                }
-            },
-        };
-
-        Self {
-            indent: IndentationConfig {
-                indent_style,
-                indent_size,
-                tab_width: x.tab_size,
-            },
-        }
-    }
-}
-
-impl VscDiagnosticsConfig {
-    pub(crate) fn section_from_key(key: &str) -> &str {
-        match key {
-            "enable" => "positron.r.diagnostics.enable",
-            _ => "unknown", // To be caught via downstream errors
-        }
-    }
-}
-
-impl From<VscDiagnosticsConfig> for DiagnosticsConfig {
-    fn from(value: VscDiagnosticsConfig) -> Self {
-        Self {
-            enable: value.enable,
-        }
-    }
-}
-
-impl VscSymbolsConfig {
-    pub(crate) fn section_from_key(key: &str) -> &str {
-        match key {
-            "include_assignments_in_blocks" => "positron.r.symbols.includeAssignmentsInBlocks",
-            _ => "unknown", // To be caught via downstream errors
-        }
-    }
-}
-
-impl From<VscSymbolsConfig> for SymbolsConfig {
-    fn from(value: VscSymbolsConfig) -> Self {
-        Self {
-            include_assignments_in_blocks: value.include_assignments_in_blocks,
         }
     }
 }
