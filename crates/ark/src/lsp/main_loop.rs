@@ -281,7 +281,7 @@ impl GlobalState {
                             respond(tx, || state_handlers::initialize(params, &mut self.lsp_state, &mut self.world), LspResponse::Initialize)?;
                         },
                         LspRequest::WorkspaceSymbol(params) => {
-                            respond(tx, || handlers::handle_symbol(params), LspResponse::WorkspaceSymbol)?;
+                            respond(tx, || handlers::handle_symbol(params, &self.world), LspResponse::WorkspaceSymbol)?;
                         },
                         LspRequest::DocumentSymbol(params) => {
                             respond(tx, || handlers::handle_document_symbol(params, &self.world), LspResponse::DocumentSymbol)?;

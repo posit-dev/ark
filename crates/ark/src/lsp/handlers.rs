@@ -129,8 +129,9 @@ pub(crate) async fn handle_initialized(
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_symbol(
     params: WorkspaceSymbolParams,
+    state: &WorldState,
 ) -> anyhow::Result<Option<Vec<SymbolInformation>>> {
-    symbols::symbols(&params)
+    symbols::symbols(&params, state)
         .map(|res| Some(res))
         .or_else(|err| {
             // Missing doc: Why are we not propagating errors to the frontend?

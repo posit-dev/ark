@@ -56,7 +56,10 @@ fn new_symbol_node(
     symbol
 }
 
-pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInformation>> {
+pub(crate) fn symbols(
+    params: &WorkspaceSymbolParams,
+    state: &WorldState,
+) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
@@ -81,17 +84,19 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
             },
 
             IndexEntryData::Section { level: _, title } => {
-                info.push(SymbolInformation {
-                    name: title.to_string(),
-                    kind: SymbolKind::STRING,
-                    location: Location {
-                        uri: Url::from_file_path(path).unwrap(),
-                        range: entry.range,
-                    },
-                    tags: None,
-                    deprecated: None,
-                    container_name: None,
-                });
+                if state.config.workspace_symbols.include_comment_sections {
+                    info.push(SymbolInformation {
+                        name: title.to_string(),
+                        kind: SymbolKind::STRING,
+                        location: Location {
+                            uri: Url::from_file_path(path).unwrap(),
+                            range: entry.range,
+                        },
+                        tags: None,
+                        deprecated: None,
+                        container_name: None,
+                    });
+                }
             },
 
             IndexEntryData::Variable { name } => {
