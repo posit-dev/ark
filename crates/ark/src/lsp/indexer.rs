@@ -126,10 +126,17 @@ fn insert(path: &Path, entry: IndexEntry) -> anyhow::Result<()> {
 
     let index = index.entry(path.to_string()).or_default();
 
-    // Retain the first occurrence in the index. In the future we'll track every occurrences and
-    // their scopes but for now we only track the first definition of an object (in a way, its
+    // We generally retain only the first occurrence in the index. In the
+    // future we'll track every occurrences and their scopes but for now we
+    // only track the first definition of an object (in a way, its
     // declaration).
-    if !index.contains_key(&entry.key) {
+    if let Some(existing_entry) = index.get(&entry.key) {
+        // Give priority to non-section entries.
+        if matches!(existing_entry.data, IndexEntryData::Section { .. }) {
+            index.insert(entry.key.clone(), entry);
+        }
+        // Else, ignore.
+    } else {
         index.insert(entry.key.clone(), entry);
     }
 
