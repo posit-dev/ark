@@ -62,6 +62,14 @@ pub static SETTINGS: &[Setting] = &[
                 .unwrap_or_else(|| SymbolsConfig::default().include_assignments_in_blocks)
         },
     },
+    Setting {
+        key: "positron.r.workspaceSymbols.includeCommentSections",
+        set: |cfg, v| {
+            cfg.workspace_symbols.include_comment_sections = v
+                .as_bool()
+                .unwrap_or_else(|| WorkspaceSymbolsConfig::default().include_comment_sections)
+        },
+    },
 ];
 
 /// Configuration of the LSP
@@ -69,6 +77,7 @@ pub static SETTINGS: &[Setting] = &[
 pub(crate) struct LspConfig {
     pub(crate) diagnostics: DiagnosticsConfig,
     pub(crate) symbols: SymbolsConfig,
+    pub(crate) workspace_symbols: WorkspaceSymbolsConfig,
     pub(crate) document: DocumentConfig,
 }
 
@@ -76,6 +85,12 @@ pub(crate) struct LspConfig {
 pub struct SymbolsConfig {
     /// Whether to emit assignments in `{` bloks as document symbols.
     pub include_assignments_in_blocks: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WorkspaceSymbolsConfig {
+    /// Whether to include sections like `# My section ---` in workspace symbols.
+    pub include_comment_sections: bool,
 }
 
 /// Configuration of a document.
@@ -137,6 +152,14 @@ impl Default for SymbolsConfig {
     fn default() -> Self {
         Self {
             include_assignments_in_blocks: false,
+        }
+    }
+}
+
+impl Default for WorkspaceSymbolsConfig {
+    fn default() -> Self {
+        Self {
+            include_comment_sections: false,
         }
     }
 }
