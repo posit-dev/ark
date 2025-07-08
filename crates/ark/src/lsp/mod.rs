@@ -28,6 +28,7 @@ pub mod hover;
 pub mod indent;
 pub mod indexer;
 pub mod input_boundaries;
+pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
 pub mod offset;
