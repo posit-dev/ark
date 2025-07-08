@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::future;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -174,13 +175,29 @@ impl GlobalState {
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
 
-        Self {
+        let mut state = Self {
             world: WorldState::default(),
             lsp_state: LspState::default(),
             client,
             events_tx,
             events_rx,
-        }
+        };
+
+        // FIXME: We shouldn't call R code in the kernel to figure this out
+        if let Err(err) = crate::r_task(|| -> anyhow::Result<()> {
+            let paths: Vec<String> = harp::RFunction::new("base", ".libPaths")
+                .call()?
+                .try_into()?;
+
+            log::info!("Using library paths: {paths:#?}");
+            state.world.library_paths = paths.into_iter().map(PathBuf::from).collect();
+
+            Ok(())
+        }) {
+            log::error!("Can't evaluate `libPaths()`: {err:?}");
+        };
+
+        state
     }
 
     /// Get `Event` transmission channel

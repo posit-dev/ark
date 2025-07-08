@@ -58,7 +58,7 @@ pub(crate) struct WorldState {
     pub(crate) _library: HashMap<String, Package>,
 
     /// Paths to library directories, i.e. what `base::libPaths()` returns.
-    pub(crate) _library_paths: Vec<PathBuf>,
+    pub(crate) library_paths: Vec<PathBuf>,
 
     pub(crate) config: LspConfig,
 }
