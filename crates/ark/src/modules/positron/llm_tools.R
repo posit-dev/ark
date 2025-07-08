@@ -184,7 +184,7 @@
                 "No help page found for topic ",
                 topic,
                 if (!is.null(package_name)) {
-                    " in package {.pkg {package_name}}"
+                    paste(" in package", package_name)
                 } else {
                     " in all installed packages"
                 },
