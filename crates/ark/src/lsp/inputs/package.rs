@@ -10,17 +10,27 @@ use std::path::PathBuf;
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
 pub struct Package {
-    pub name: String,
-    pub version: String,
-
     /// Path to the directory that contains `DESCRIPTION`. Could be an installed
     /// package, or a package source.
     pub path: PathBuf,
 
-    /// Imports and exports in `NAMESPACE`
+    pub description: Description,
+    pub namespace: Namespace,
+}
+
+/// Parsed DESCRIPTION file
+#[derive(Clone, Debug)]
+pub struct Description {
+    pub name: String,
+    pub version: String,
+
+    /// `Depends` field
+    pub depends: Vec<String>,
+}
+
+/// Parsed NAMESPACE file
+#[derive(Clone, Debug)]
+pub struct Namespace {
     pub imports: Vec<String>,
     pub exports: Vec<String>,
-
-    /// `Depends` field in `DESCRIPTION`
-    pub depends: Vec<String>,
 }
