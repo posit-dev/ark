@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::path::PathBuf;
 
 use anyhow::anyhow;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
 use crate::lsp::documents::Document;
-use crate::lsp::inputs::package::Package;
+use crate::lsp::inputs::library::Library;
 use crate::lsp::inputs::source_root::SourceRoot;
 
 #[derive(Clone, Default, Debug)]
@@ -55,10 +54,7 @@ pub(crate) struct WorldState {
     pub(crate) _root: Option<SourceRoot>,
 
     /// Map of package name to package metadata for installed libraries. Lazily populated.
-    pub(crate) _library: HashMap<String, Package>,
-
-    /// Paths to library directories, i.e. what `base::libPaths()` returns.
-    pub(crate) library_paths: Vec<PathBuf>,
+    pub(crate) library: Library,
 
     pub(crate) config: LspConfig,
 }

@@ -5,5 +5,6 @@
 //
 //
 
+pub mod library;
 pub mod package;
 pub mod source_root;
