@@ -33,6 +33,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics;
 use crate::lsp::documents::Document;
 use crate::lsp::handlers;
+use crate::lsp::inputs::library::Library;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -190,7 +191,8 @@ impl GlobalState {
                 .try_into()?;
 
             log::info!("Using library paths: {paths:#?}");
-            state.world.library_paths = paths.into_iter().map(PathBuf::from).collect();
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            state.world.library = Library::new(paths);
 
             Ok(())
         }) {
