@@ -1,0 +1,89 @@
+---
+source: crates/ark/src/lsp/indexer.rs
+expression: entries
+---
+[
+    IndexEntry {
+        key: "Section 1",
+        range: Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 16,
+            },
+        },
+        data: Section {
+            level: 1,
+            title: "Section 1",
+        },
+    },
+    IndexEntry {
+        key: "x",
+        range: Range {
+            start: Position {
+                line: 2,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 1,
+            },
+        },
+        data: Variable {
+            name: "x",
+        },
+    },
+    IndexEntry {
+        key: "Subsection",
+        range: Range {
+            start: Position {
+                line: 4,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 20,
+            },
+        },
+        data: Section {
+            level: 2,
+            title: "Subsection",
+        },
+    },
+    IndexEntry {
+        key: "y",
+        range: Range {
+            start: Position {
+                line: 5,
+                character: 0,
+            },
+            end: Position {
+                line: 5,
+                character: 1,
+            },
+        },
+        data: Variable {
+            name: "y",
+        },
+    },
+    IndexEntry {
+        key: "x",
+        range: Range {
+            start: Position {
+                line: 7,
+                character: 0,
+            },
+            end: Position {
+                line: 7,
+                character: 1,
+            },
+        },
+        data: Function {
+            name: "x",
+            arguments: [],
+        },
+    },
+]
