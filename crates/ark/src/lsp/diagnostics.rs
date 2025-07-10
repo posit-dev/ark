@@ -24,6 +24,7 @@ use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
+use crate::lsp::inputs::library::Library;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -55,6 +56,14 @@ pub struct DiagnosticContext<'a> {
     // The set of packages that are currently installed.
     pub installed_packages: HashSet<String>,
 
+    /// Reference to the library for looking up package exports.
+    pub library: &'a Library,
+
+    /// The symbols exported by packages loaded via `library()` calls in this
+    /// document. Currently global. TODO: Store individual exports in a BTreeMap
+    /// sorted by position in the source?
+    pub library_symbols: HashSet<String>,
+
     // Whether or not we're inside of a formula.
     pub in_formula: bool,
 
@@ -69,13 +78,15 @@ impl Default for DiagnosticsConfig {
 }
 
 impl<'a> DiagnosticContext<'a> {
-    pub fn new(contents: &'a Rope) -> Self {
+    pub fn new(contents: &'a Rope, library: &'a crate::lsp::inputs::library::Library) -> Self {
         Self {
             contents,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
             installed_packages: HashSet::new(),
+            library,
+            library_symbols: HashSet::new(),
             in_formula: false,
             in_call_like_arguments: false,
         }
@@ -86,16 +97,22 @@ impl<'a> DiagnosticContext<'a> {
         symbols.insert(name.to_string(), location);
     }
 
-    pub fn has_definition(&mut self, name: &str) -> bool {
+    pub fn has_definition(&self, name: &str) -> bool {
         // First, check document symbols.
-        for symbols in self.document_symbols.iter() {
+        for symbols in &self.document_symbols {
             if symbols.contains_key(name) {
                 return true;
             }
         }
 
-        // Next, check workspace symbols.
+        // Then, check workspace symbols.
         if self.workspace_symbols.contains(name) {
+            return true;
+        }
+
+        // Finally, check library symbols from library() calls.
+        // TODO: Take `Node` and check by position.
+        if self.library_symbols.contains(name) {
             return true;
         }
 
@@ -118,7 +135,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         return diagnostics;
     }
 
-    let mut context = DiagnosticContext::new(&doc.contents);
+    let mut context = DiagnosticContext::new(&doc.contents, &state.library);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
@@ -780,11 +797,62 @@ fn recurse_call(
     let fun = fun.as_str();
 
     match fun {
+        "library" => {
+            // Track symbols exported by `library()` calls
+            handle_library_call(node, context, diagnostics)?;
+        },
         // default case: recurse into each argument
         _ => recurse_call_like_arguments_default(node, context, diagnostics)?,
     };
 
     ().ok()
+}
+
+fn handle_library_call(
+    node: Node,
+    context: &mut DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    // Get the arguments node
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    // Find the first argument (package name)
+    let mut cursor = arguments.walk();
+    let mut children = arguments.children_by_field_name("argument", &mut cursor);
+
+    let Some(first_arg) = children.next() else {
+        return Ok(());
+    };
+
+    // Get the package name from the argument value
+    let Some(value) = first_arg.child_by_field_name("value") else {
+        return Ok(());
+    };
+
+    let package_name = if value.is_identifier() {
+        context.contents.node_slice(&value)?.to_string()
+    } else if value.is_string() {
+        // Remove quotes from string literal
+        let raw = context.contents.node_slice(&value)?.to_string();
+        raw.trim_matches('"').trim_matches('\'').to_string()
+    } else {
+        return Ok(());
+    };
+
+    // Try to get the package from the library
+    if let Some(package) = context.library.get(&package_name) {
+        // Add all exported symbols to library_symbols
+        for symbol in &package.namespace.exports {
+            context.library_symbols.insert(symbol.clone());
+        }
+    }
+
+    // Continue with default recursion to handle any other arguments
+    recurse_call_like_arguments_default(node, context, diagnostics)?;
+
+    Ok(())
 }
 
 fn recurse_subset_or_subset2(
@@ -1454,5 +1522,93 @@ foo
                 0
             );
         })
+    }
+
+    #[test]
+    fn test_library_static_exports() {
+        r_task(|| {
+            use std::path::PathBuf;
+
+            use crate::lsp::inputs::library::Library;
+            use crate::lsp::inputs::package::Description;
+            use crate::lsp::inputs::package::Namespace;
+            use crate::lsp::inputs::package::Package;
+
+            // `mockpkg` exports `foo` and `bar`
+            let namespace = Namespace {
+                exports: vec!["foo".to_string(), "bar".to_string()],
+                imports: vec![],
+                bulk_imports: vec![],
+            };
+            let description = Description {
+                name: "mockpkg".to_string(),
+                version: "1.0.0".to_string(),
+                depends: vec![],
+            };
+            let package = Package {
+                path: PathBuf::from("/mock/path"),
+                description,
+                namespace,
+            };
+
+            // Create a library with `mockpkg` installed
+            let library = Library::new(vec![]).insert("mockpkg", package);
+
+            // Simulate a search path with `library` in scope
+            let console_scopes = vec![vec!["library".to_string()]];
+
+            // Whereas `DEFAULT_STATE` contains base package attached, this world state
+            // only contains `mockpkg` as installed package and `library()` on
+            // the search path.
+            let state = WorldState {
+                library,
+                console_scopes,
+                ..Default::default()
+            };
+
+            // Test that exported symbols are recognized
+            let code = "
+                library(mockpkg)
+                foo()
+                bar
+            ";
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state.clone());
+
+            assert_eq!(diagnostics.len(), 0);
+
+            // Test that non-exported symbols still generate diagnostics
+            let code = "
+                library(mockpkg)
+                undefined()
+                also_undefined
+            ";
+            let document = Document::new(code, None);
+
+            let diagnostics = generate_diagnostics(document, state.clone());
+            assert_eq!(diagnostics.len(), 2);
+
+            assert!(diagnostics
+                .get(0)
+                .unwrap()
+                .message
+                .contains("No symbol named 'undefined' in scope"));
+            assert!(diagnostics
+                .get(1)
+                .unwrap()
+                .message
+                .contains("No symbol named 'also_undefined' in scope"));
+
+            // Test duplicate call
+            let code = "
+                library(mockpkg)
+                library(mockpkg)  # duplicate is fine
+                foo()
+                bar
+            ";
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state);
+            assert_eq!(diagnostics.len(), 0);
+        });
     }
 }

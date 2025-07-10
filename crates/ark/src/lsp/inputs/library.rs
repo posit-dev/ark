@@ -59,6 +59,16 @@ impl Library {
         pkg
     }
 
+    /// Insert a package in the library for testing purposes.
+    #[cfg(test)]
+    pub fn insert(self, name: &str, package: Package) -> Self {
+        self.packages
+            .write()
+            .unwrap()
+            .insert(name.to_string(), Some(Arc::new(package)));
+        self
+    }
+
     fn load_package(&self, name: &str) -> anyhow::Result<Option<Package>> {
         for lib_path in self.library_paths.iter() {
             let package_path = lib_path.join(name);
