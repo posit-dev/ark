@@ -5,15 +5,12 @@
 //
 
 use std::collections::HashMap;
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
 use super::package::Package;
 use crate::lsp;
-use crate::lsp::inputs::package::Description;
-use crate::lsp::inputs::package::Namespace;
 
 /// Lazily manages a list of known R packages by name
 #[derive(Default, Clone, Debug)]
@@ -71,33 +68,11 @@ impl Library {
 
     fn load_package(&self, name: &str) -> anyhow::Result<Option<Package>> {
         for lib_path in self.library_paths.iter() {
-            let package_path = lib_path.join(name);
-            let description_path = package_path.join("DESCRIPTION");
-            let namespace_path = package_path.join("NAMESPACE");
-
-            // Only consider libraries that have a folder named after the
-            // requested package and that contains a description file
-            if !description_path.is_file() {
-                continue;
+            match Package::load(&lib_path, name) {
+                Ok(Some(pkg)) => return Ok(Some(pkg)),
+                Ok(None) => (),
+                Err(err) => lsp::log_warn!("Can't load package: {err:?}"),
             }
-
-            // TODO
-            // let _desc_contents = fs::read_to_string(&description_path)?;
-
-            let description = Description {
-                name: name.to_string(),
-                version: "unknown".to_string(),
-                depends: vec![],
-            };
-
-            let namespace_contents = fs::read_to_string(&namespace_path)?;
-            let namespace = Namespace::parse(&namespace_contents)?;
-
-            return Ok(Some(Package {
-                path: package_path,
-                description,
-                namespace,
-            }));
         }
 
         Ok(None)
@@ -139,13 +114,13 @@ mod tests {
     fn test_load_and_cache_package() {
         let pkg_name = "mypkg";
         let description = r#"
-            Package: mypkg
-            Version: 1.0
+Package: mypkg
+Version: 1.0
         "#;
         let namespace = r#"
-            export(foo)
-            export(bar)
-            importFrom(pkg, baz)
+export(foo)
+export(bar)
+importFrom(pkg, baz)
         "#;
 
         let (temp_dir, _pkg_dir) = create_temp_package(pkg_name, description, namespace);
@@ -154,7 +129,7 @@ mod tests {
         let lib = Library::new(vec![temp_dir.path().to_path_buf()]);
 
         // First access loads from disk
-        let pkg = lib.get(pkg_name).expect("should load package");
+        let pkg = lib.get(pkg_name).unwrap();
         assert_eq!(pkg.description.name, "mypkg");
 
         // Second access uses cache (note that we aren't testing that we are
