@@ -5,11 +5,11 @@
 //
 //
 
+use std::fs;
 use std::path::PathBuf;
 
-use tree_sitter::Parser;
-
-use crate::treesitter::TSQuery;
+use crate::lsp::inputs::package_description::Description;
+use crate::lsp::inputs::package_namespace::Namespace;
 
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
@@ -22,162 +22,38 @@ pub struct Package {
     pub namespace: Namespace,
 }
 
-/// Parsed DESCRIPTION file
-#[derive(Clone, Debug)]
-pub struct Description {
-    pub name: String,
-    pub version: String,
+impl Package {
+    /// Attempts to load a package from the given path and name.
+    pub fn load(lib_path: &std::path::Path, name: &str) -> anyhow::Result<Option<Self>> {
+        let package_path = lib_path.join(name);
 
-    /// `Depends` field
-    pub depends: Vec<String>,
-}
+        let description_path = package_path.join("DESCRIPTION");
+        let namespace_path = package_path.join("NAMESPACE");
 
-/// Parsed NAMESPACE file
-#[derive(Clone, Debug)]
-pub struct Namespace {
-    /// Names of objects exported with `export()`
-    pub exports: Vec<String>,
-    /// Names of objects imported with `importFrom()`
-    pub imports: Vec<String>,
-    /// Names of packages bulk-imported with `import()`
-    pub bulk_imports: Vec<String>,
-}
-
-impl Namespace {
-    /// Parse a NAMESPACE file using tree-sitter to extract exports and imports.
-    pub fn parse(contents: &str) -> anyhow::Result<Self> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_r::LANGUAGE.into())
-            .map_err(|err| anyhow::anyhow!("Failed to set tree-sitter language: {err:?}"))?;
-
-        let tree = parser
-            .parse(contents, None)
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse NAMESPACE file"))?;
-        let root_node = tree.root_node();
-
-        let query_str = r#"
-            (call
-                function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @exported))
-                (#eq? @fn_name "export")
-            )
-            (call
-                function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @pkg) (argument value: (identifier) @imported))
-                (#eq? @fn_name "importFrom")
-            )
-            (call
-                function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @bulk_imported))
-                (#eq? @fn_name "import")
-            )
-        "#;
-        let mut ts_query = TSQuery::new(query_str)?;
-
-        let mut exports = Vec::new();
-        for capture in ts_query.captures_for(root_node, "exported", contents.as_bytes()) {
-            let symbol = capture
-                .utf8_text(contents.as_bytes())
-                .unwrap_or("")
-                .to_string();
-            exports.push(symbol);
+        // Only consider libraries that have a folder named after the
+        // requested package and that contains a description file
+        if !description_path.is_file() {
+            return Ok(None);
         }
 
-        let mut imports = Vec::new();
-        for capture in ts_query.captures_for(root_node, "imported", contents.as_bytes()) {
-            let symbol = capture
-                .utf8_text(contents.as_bytes())
-                .unwrap_or("")
-                .to_string();
-            imports.push(symbol);
+        // This fails if there is no `Package` field, so we're never loading
+        // folders like bookdown projects as package
+        let description_contents = fs::read_to_string(&description_path)?;
+        let description = Description::parse(&description_contents)?;
+
+        if description.name != name {
+            return Err(anyhow::anyhow!(
+                "`Package` field in `DESCRIPTION` doesn't match folder name '{name}'"
+            ));
         }
 
-        let mut bulk_imports = Vec::new();
-        for capture in ts_query.captures_for(root_node, "bulk_imported", contents.as_bytes()) {
-            let symbol = capture
-                .utf8_text(contents.as_bytes())
-                .unwrap_or("")
-                .to_string();
-            bulk_imports.push(symbol);
-        }
+        let namespace_contents = fs::read_to_string(&namespace_path)?;
+        let namespace = Namespace::parse(&namespace_contents)?;
 
-        // Take unique values of imports and exports. In the future we'll lint
-        // this but for now just be defensive.
-        exports.sort();
-        exports.dedup();
-        imports.sort();
-        imports.dedup();
-        bulk_imports.sort();
-        bulk_imports.dedup();
-
-        Ok(Namespace {
-            imports,
-            exports,
-            bulk_imports,
-        })
-    }
-
-    /// TODO: Take a `Library` and incorporate bulk imports
-    pub(crate) fn _resolve_imports(&self) -> &Vec<String> {
-        &self.imports
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_exports() {
-        let ns = r#"
-            export(foo)
-            export(bar)
-            exports(baz) # typo
-        "#;
-        let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports, vec!["bar", "foo"]);
-        assert!(parsed.imports.is_empty());
-    }
-
-    #[test]
-    fn parses_importfrom() {
-        let ns = r#"
-            importFrom(stats, median)
-            importFrom(utils, head)
-            importsFrom(utils, tail) # typo
-        "#;
-        let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.imports, vec!["head", "median"]);
-        assert!(parsed.exports.is_empty());
-    }
-
-    #[test]
-    fn parses_mixed_namespace_with_duplicates() {
-        let ns = r#"
-            export(foo)
-            importFrom(stats, median)
-            export(bar)
-            importFrom(utils, head)
-            importFrom(utils, median)
-        "#;
-        let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports, vec!["bar", "foo"]);
-        assert_eq!(parsed.imports, vec!["head", "median"]);
-    }
-
-    #[test]
-    fn parses_bulk_imports() {
-        let ns = r#"
-                import(rlang)
-                import(utils)
-                export(foo)
-                import(utils)
-                importFrom(stats, median)
-            "#;
-        let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.bulk_imports, vec!["rlang", "utils"]);
-        assert_eq!(parsed.exports, vec!["foo"]);
-        assert_eq!(parsed.imports, vec!["median"]);
+        Ok(Some(Package {
+            path: package_path.to_path_buf(),
+            description,
+            namespace,
+        }))
     }
 }
