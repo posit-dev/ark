@@ -19,6 +19,7 @@ use tower_lsp::lsp_types::DiagnosticSeverity;
 use tree_sitter::Node;
 use tree_sitter::Range;
 
+use crate::lsp;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::documents::Document;
@@ -26,6 +27,7 @@ use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;
 use crate::lsp::state::WorldState;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
@@ -799,58 +801,33 @@ fn recurse_call(
     match fun {
         "library" => {
             // Track symbols exported by `library()` calls
-            handle_library_call(node, context, diagnostics)?;
+            handle_library_call(node, context)?;
         },
-        // default case: recurse into each argument
-        _ => recurse_call_like_arguments_default(node, context, diagnostics)?,
+        _ => {},
     };
+
+    // Continue with default recursion to handle any other arguments
+    recurse_call_like_arguments_default(node, context, diagnostics)?;
 
     ().ok()
 }
 
-fn handle_library_call(
-    node: Node,
-    context: &mut DiagnosticContext,
-    diagnostics: &mut Vec<Diagnostic>,
-) -> anyhow::Result<()> {
-    // Get the arguments node
-    let Some(arguments) = node.child_by_field_name("arguments") else {
-        return Ok(());
+fn handle_library_call(node: Node, context: &mut DiagnosticContext) -> anyhow::Result<()> {
+    // Find the first argument (package name). Positionally for now.
+    let Some(value) = node.arguments_values().nth(0) else {
+        return Err(anyhow::anyhow!("Can't unpack `library()` argument"));
     };
 
-    // Find the first argument (package name)
-    let mut cursor = arguments.walk();
-    let mut children = arguments.children_by_field_name("argument", &mut cursor);
+    let package_name = value.get_identifier_or_string_text(context.contents)?;
 
-    let Some(first_arg) = children.next() else {
-        return Ok(());
-    };
-
-    // Get the package name from the argument value
-    let Some(value) = first_arg.child_by_field_name("value") else {
-        return Ok(());
-    };
-
-    let package_name = if value.is_identifier() {
-        context.contents.node_slice(&value)?.to_string()
-    } else if value.is_string() {
-        // Remove quotes from string literal
-        let raw = context.contents.node_slice(&value)?.to_string();
-        raw.trim_matches('"').trim_matches('\'').to_string()
-    } else {
-        return Ok(());
-    };
-
-    // Try to get the package from the library
+    // Insert exports globablly for now
     if let Some(package) = context.library.get(&package_name) {
-        // Add all exported symbols to library_symbols
         for symbol in &package.namespace.exports {
             context.library_symbols.insert(symbol.clone());
         }
+    } else {
+        lsp::log_warn!("Can't get exports from package {package_name} because it is not installed.")
     }
-
-    // Continue with default recursion to handle any other arguments
-    recurse_call_like_arguments_default(node, context, diagnostics)?;
 
     Ok(())
 }

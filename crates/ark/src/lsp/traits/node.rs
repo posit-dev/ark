@@ -90,6 +90,9 @@ pub trait NodeExt: Sized {
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_>;
 
     fn ancestors(&self) -> impl Iterator<Item = Self>;
+    fn children_of(node: Self) -> impl Iterator<Item = Self>;
+    fn next_siblings(&self) -> impl Iterator<Item = Self>;
+    fn arguments_values(&self) -> impl Iterator<Item = Self>;
 }
 
 impl<'tree> NodeExt for Node<'tree> {
@@ -199,12 +202,67 @@ impl<'tree> NodeExt for Node<'tree> {
         BwdLeafIterator { node: *self }
     }
 
-    // From rowan. Note that until we switch to rowan, each `parent()` call
-    // causes a linear traversal of the whole tree to find the parent node.
-    // We could do better in the future:
-    // https://github.com/tree-sitter/tree-sitter/pull/3214
     fn ancestors(&self) -> impl Iterator<Item = Node<'tree>> {
+        // We'd ideally use the cursor API here too but
+        // `ts_tree_cursor_goto_parent()` doesn't behave like
+        // `ts_node_parent()`: the latter traverses `ERROR` nodes but not the
+        // former. So for now we accept the performance hit of tree traversal at
+        // each `parent()` call.
         std::iter::successors(Some(*self), |p| p.parent())
+    }
+
+    fn next_siblings(&self) -> impl Iterator<Item = Node<'tree>> {
+        let mut cursor = self.walk();
+
+        let first = if cursor.goto_next_sibling() {
+            Some(cursor.node())
+        } else {
+            None
+        };
+
+        std::iter::successors(first, move |_| {
+            if cursor.goto_next_sibling() {
+                Some(cursor.node())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn children_of(node: Node<'tree>) -> impl Iterator<Item = Node<'tree>> {
+        let mut cursor = node.walk();
+        let mut first = true;
+
+        std::iter::from_fn(move || {
+            let advanced = if first {
+                first = false;
+                cursor.goto_first_child()
+            } else {
+                cursor.goto_next_sibling()
+            };
+
+            if advanced {
+                Some(cursor.node())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Takes a call node and iterates over the values of its arguments
+    fn arguments_values(&self) -> impl Iterator<Item = Node<'tree>> {
+        self.child_by_field_name("arguments")
+            // Create iterator that unpacks Option with `flat_map()`
+            .into_iter()
+            .flat_map(Self::children_of)
+            .filter_map(|node| {
+                // This takes care of non-argument nodes like `(` and `)`
+                if node.kind() == "argument" {
+                    node.child_by_field_name("value")
+                } else {
+                    None
+                }
+            })
     }
 }
 
