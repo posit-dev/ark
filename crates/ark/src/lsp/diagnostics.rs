@@ -806,9 +806,9 @@ fn recurse_call(
     let fun = fun.as_str();
 
     match fun {
-        "library" => {
-            // Track symbols exported by `library()` calls
-            handle_library_call(node, context)?;
+        "library" | "require" => {
+            // Track symbols exported by `library()` or `require()` calls
+            handle_package_attach_call(node, context)?;
         },
         _ => {},
     };
@@ -819,15 +819,15 @@ fn recurse_call(
     ().ok()
 }
 
-fn handle_library_call(node: Node, context: &mut DiagnosticContext) -> anyhow::Result<()> {
+fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> anyhow::Result<()> {
     // Find the first argument (package name). Positionally for now.
     let Some(value) = node.arguments_values().nth(0) else {
-        return Err(anyhow::anyhow!("Can't unpack `library()` argument"));
+        return Err(anyhow::anyhow!("Can't unpack attached package argument"));
     };
 
     let package_name = value.get_identifier_or_string_text(context.contents)?;
 
-    // Insert exports globablly for now
+    // Insert exports for the attached package
     if let Some(package) = context.library.get(&package_name) {
         for symbol in &package.namespace.exports {
             let pos = node.end_position();
@@ -1673,6 +1673,50 @@ foo
             assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
             assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
             assert_eq!(messages.len(), 4);
+        });
+    }
+
+    #[test]
+    fn test_library_static_exports_require() {
+        r_task(|| {
+            // `pkg` exports `foo` and `bar`
+            let namespace = Namespace {
+                exports: vec!["foo".to_string(), "bar".to_string()],
+                imports: vec![],
+                bulk_imports: vec![],
+            };
+            let description = Description {
+                name: "pkg".to_string(),
+                version: "1.0.0".to_string(),
+                depends: vec![],
+            };
+            let package = Package {
+                path: PathBuf::from("/mock/path"),
+                description,
+                namespace,
+            };
+
+            let library = Library::new(vec![]).insert("pkg", package);
+
+            let console_scopes = vec![vec!["require".to_string()]];
+            let state = WorldState {
+                library,
+                console_scopes,
+                ..Default::default()
+            };
+
+            let code = "
+                    foo()
+                    require(pkg)
+                    bar
+                    foo()
+                ";
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state.clone());
+            assert!(diagnostics
+                .iter()
+                .any(|d| d.message.contains("No symbol named 'foo'")));
+            assert_eq!(diagnostics.len(), 1);
         });
     }
 }
