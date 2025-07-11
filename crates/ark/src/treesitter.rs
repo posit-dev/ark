@@ -283,6 +283,7 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier(&self) -> bool;
     fn is_string(&self) -> bool;
     fn is_identifier_or_string(&self) -> bool;
+    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String>;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
     fn is_subset(&self) -> bool;
@@ -323,6 +324,20 @@ impl NodeTypeExt for Node<'_> {
     // This combination is particularly common
     fn is_identifier_or_string(&self) -> bool {
         matches!(self.node_type(), NodeType::Identifier | NodeType::String)
+    }
+
+    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String> {
+        match self.node_type() {
+            NodeType::Identifier => return Ok(contents.node_slice(self)?.to_string()),
+            NodeType::String => {
+                // Remove quotes from string literal
+                let string = contents.node_slice(self)?.to_string();
+                Ok(string.trim_matches('"').trim_matches('\'').to_string())
+            },
+            _ => {
+                return Err(anyhow::anyhow!("Not an identifier or string"));
+            },
+        }
     }
 
     fn is_keyword(&self) -> bool {
