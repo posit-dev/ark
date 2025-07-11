@@ -5,6 +5,7 @@
 //
 //
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -17,6 +18,7 @@ use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
 use tree_sitter::Node;
+use tree_sitter::Point;
 use tree_sitter::Range;
 
 use crate::lsp;
@@ -64,7 +66,7 @@ pub struct DiagnosticContext<'a> {
     /// The symbols exported by packages loaded via `library()` calls in this
     /// document. Currently global. TODO: Store individual exports in a BTreeMap
     /// sorted by position in the source?
-    pub library_symbols: HashSet<String>,
+    pub library_symbols: BTreeMap<Point, HashSet<String>>,
 
     // Whether or not we're inside of a formula.
     pub in_formula: bool,
@@ -88,7 +90,7 @@ impl<'a> DiagnosticContext<'a> {
             workspace_symbols: HashSet::new(),
             installed_packages: HashSet::new(),
             library,
-            library_symbols: HashSet::new(),
+            library_symbols: BTreeMap::new(),
             in_formula: false,
             in_call_like_arguments: false,
         }
@@ -99,8 +101,8 @@ impl<'a> DiagnosticContext<'a> {
         symbols.insert(name.to_string(), location);
     }
 
-    pub fn has_definition(&self, name: &str) -> bool {
-        // First, check document symbols.
+    // First, check document symbols.
+    pub fn has_definition(&self, name: &str, start_position: Point) -> bool {
         for symbols in &self.document_symbols {
             if symbols.contains_key(name) {
                 return true;
@@ -112,10 +114,15 @@ impl<'a> DiagnosticContext<'a> {
             return true;
         }
 
-        // Finally, check library symbols from library() calls.
-        // TODO: Take `Node` and check by position.
-        if self.library_symbols.contains(name) {
-            return true;
+        // Finally, check package symbols from `library()` calls.
+        // Check all symbols exported by `library()` before the given position.
+        for (library_position, exports) in self.library_symbols.iter() {
+            if *library_position > start_position {
+                break;
+            }
+            if exports.contains(name) {
+                return true;
+            }
         }
 
         // Finally, check session symbols.
@@ -823,7 +830,12 @@ fn handle_library_call(node: Node, context: &mut DiagnosticContext) -> anyhow::R
     // Insert exports globablly for now
     if let Some(package) = context.library.get(&package_name) {
         for symbol in &package.namespace.exports {
-            context.library_symbols.insert(symbol.clone());
+            let pos = node.end_position();
+            context
+                .library_symbols
+                .entry(pos)
+                .or_insert_with(HashSet::new)
+                .insert(symbol.clone());
         }
     } else {
         lsp::log_warn!("Can't get exports from package {package_name} because it is not installed.")
@@ -990,7 +1002,7 @@ fn check_symbol_in_scope(
 
     // Skip if a symbol with this name is in scope.
     let name = context.contents.node_slice(&node)?.to_string();
-    if context.has_definition(name.as_str()) {
+    if context.has_definition(name.as_str(), node.start_position()) {
         return false.ok();
     }
 
@@ -1008,6 +1020,8 @@ fn check_symbol_in_scope(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use harp::eval::RParseEvalOptions;
     use once_cell::sync::Lazy;
     use tower_lsp::lsp_types::Position;
@@ -1015,6 +1029,10 @@ mod tests {
     use crate::interface::console_inputs;
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::documents::Document;
+    use crate::lsp::inputs::library::Library;
+    use crate::lsp::inputs::package::Description;
+    use crate::lsp::inputs::package::Namespace;
+    use crate::lsp::inputs::package::Package;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -1504,13 +1522,6 @@ foo
     #[test]
     fn test_library_static_exports() {
         r_task(|| {
-            use std::path::PathBuf;
-
-            use crate::lsp::inputs::library::Library;
-            use crate::lsp::inputs::package::Description;
-            use crate::lsp::inputs::package::Namespace;
-            use crate::lsp::inputs::package::Package;
-
             // `mockpkg` exports `foo` and `bar`
             let namespace = Namespace {
                 exports: vec!["foo".to_string(), "bar".to_string()],
@@ -1586,6 +1597,82 @@ foo
             let document = Document::new(code, None);
             let diagnostics = generate_diagnostics(document, state);
             assert_eq!(diagnostics.len(), 0);
+        });
+    }
+
+    #[test]
+    fn test_library_static_exports_multiple_packages() {
+        r_task(|| {
+            // pkg1 exports `foo` and `bar`
+            let namespace1 = Namespace {
+                exports: vec!["foo".to_string(), "bar".to_string()],
+                imports: vec![],
+                bulk_imports: vec![],
+            };
+            let description1 = Description {
+                name: "pkg1".to_string(),
+                version: "1.0.0".to_string(),
+                depends: vec![],
+            };
+            let package1 = Package {
+                path: PathBuf::from("/mock/path1"),
+                description: description1,
+                namespace: namespace1,
+            };
+
+            // pkg2 exports `bar` and `baz`
+            let namespace2 = Namespace {
+                exports: vec!["bar".to_string(), "baz".to_string()],
+                imports: vec![],
+                bulk_imports: vec![],
+            };
+            let description2 = Description {
+                name: "pkg2".to_string(),
+                version: "1.0.0".to_string(),
+                depends: vec![],
+            };
+            let package2 = Package {
+                path: PathBuf::from("/mock/path2"),
+                description: description2,
+                namespace: namespace2,
+            };
+
+            let library = Library::new(vec![])
+                .insert("pkg1", package1)
+                .insert("pkg2", package2);
+
+            let console_scopes = vec![vec!["library".to_string()]];
+            let state = WorldState {
+                library,
+                console_scopes,
+                ..Default::default()
+            };
+
+            // Code with two library calls at different points
+            let code = "
+                    foo           # not in scope
+                    bar           # not in scope
+                    baz           # not in scope
+
+                    library(pkg1)
+                    foo           # in scope
+                    bar           # in scope
+                    baz           # not in scope
+
+                    library(pkg2)
+                    foo           # in scope
+                    bar           # in scope
+                    baz           # in scope
+                ";
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state.clone());
+
+            let messages: Vec<_> = diagnostics.iter().map(|d| d.message.clone()).collect();
+            assert!(messages.iter().any(|m| m.contains("No symbol named 'foo'")));
+            assert!(messages.iter().any(|m| m.contains("No symbol named 'bar'")));
+            assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
+            assert!(messages.iter().any(|m| m.contains("No symbol named 'baz'")));
+            assert_eq!(messages.len(), 4);
         });
     }
 }
