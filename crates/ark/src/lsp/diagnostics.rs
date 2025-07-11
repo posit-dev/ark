@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use anyhow::bail;
 use anyhow::Result;
@@ -28,6 +29,7 @@ use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;
+use crate::lsp::inputs::package::Package;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
@@ -826,22 +828,89 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     };
 
     let package_name = value.get_identifier_or_string_text(context.contents)?;
+    let attach_pos = node.end_position();
 
-    // Insert exports for the attached package
-    if let Some(package) = context.library.get(&package_name) {
-        for symbol in &package.namespace.exports {
-            let pos = node.end_position();
-            context
-                .library_symbols
-                .entry(pos)
-                .or_insert_with(HashSet::new)
-                .insert(symbol.clone());
+    let package = match insert_package_exports(&package_name, attach_pos, context) {
+        Ok(package) => package,
+        Err(err) => {
+            lsp::log_warn!("{err:?}");
+            return Ok(());
+        },
+    };
+
+    // Also attach packages from `Depends` field
+    let mut attach_dependencies = package.description.depends.clone();
+
+    // Special handling for the tidyverse and tidymodels packages. Hard-coded
+    // for now but in the future, this should probably be expressed as a
+    // `DESCRIPTION` field like `Config/Needs/attach`.
+    let attach_field = match package.description.name.as_str() {
+        // https://github.com/tidyverse/tidyverse/blob/0231aafb/R/attach.R#L1
+        "tidyverse" => {
+            vec![
+                "dplyr",
+                "readr",
+                "forcats",
+                "stringr",
+                "ggplot2",
+                "tibble",
+                "lubridate",
+                "tidyr",
+                "purrr",
+            ]
+        },
+        // https://github.com/tidymodels/tidymodels/blob/aa3f82cf/R/attach.R#L1
+        "tidymodels" => {
+            vec![
+                "broom",
+                "dials",
+                "dplyr",
+                "ggplot2",
+                "infer",
+                "modeldata",
+                "parsnip",
+                "purrr",
+                "recipes",
+                "rsample",
+                "tibble",
+                "tidyr",
+                "tune",
+                "workflows",
+                "workflowsets",
+                "yardstick",
+            ]
+        },
+        _ => vec![],
+    };
+    attach_dependencies.extend(attach_field.into_iter().map(String::from));
+
+    for package_name in attach_dependencies {
+        if let Err(err) = insert_package_exports(&package_name, attach_pos, context) {
+            lsp::log_warn!("{err:?}");
         }
-    } else {
-        lsp::log_warn!("Can't get exports from package {package_name} because it is not installed.")
     }
 
     Ok(())
+}
+
+fn insert_package_exports(
+    package_name: &str,
+    attach_pos: Point,
+    context: &mut DiagnosticContext,
+) -> anyhow::Result<Arc<Package>> {
+    let Some(package) = context.library.get(package_name) else {
+        return Err(anyhow::anyhow!(
+            "Can't get exports from package {package_name} because it is not installed."
+        ));
+    };
+
+    context
+        .library_symbols
+        .entry(attach_pos)
+        .or_default()
+        .extend(package.namespace.exports.iter().cloned());
+
+    Ok(package)
 }
 
 fn recurse_subset_or_subset2(
@@ -1030,9 +1099,10 @@ mod tests {
     use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::documents::Document;
     use crate::lsp::inputs::library::Library;
-    use crate::lsp::inputs::package::Description;
-    use crate::lsp::inputs::package::Namespace;
     use crate::lsp::inputs::package::Package;
+    use crate::lsp::inputs::package_description::Dcf;
+    use crate::lsp::inputs::package_description::Description;
+    use crate::lsp::inputs::package_namespace::Namespace;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -1532,6 +1602,7 @@ foo
                 name: "mockpkg".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                fields: Dcf::new(),
             };
             let package = Package {
                 path: PathBuf::from("/mock/path"),
@@ -1613,6 +1684,7 @@ foo
                 name: "pkg1".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                fields: Dcf::new(),
             };
             let package1 = Package {
                 path: PathBuf::from("/mock/path1"),
@@ -1630,6 +1702,7 @@ foo
                 name: "pkg2".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                fields: Dcf::new(),
             };
             let package2 = Package {
                 path: PathBuf::from("/mock/path2"),
@@ -1689,6 +1762,7 @@ foo
                 name: "pkg".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                fields: Dcf::new(),
             };
             let package = Package {
                 path: PathBuf::from("/mock/path"),
