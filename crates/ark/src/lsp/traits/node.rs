@@ -11,6 +11,7 @@ use tree_sitter::Range;
 use tree_sitter::TreeCursor;
 
 use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::rope::RopeExt;
 
 fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut String) {
     let node = cursor.node();
@@ -95,6 +96,7 @@ pub trait NodeExt: Sized {
     fn arguments(&self) -> impl Iterator<Item = (Option<Self>, Option<Self>)>;
     fn arguments_values(&self) -> impl Iterator<Item = Self>;
     fn arguments_names(&self) -> impl Iterator<Item = Self>;
+    fn arguments_names_as_string(&self, contents: &ropey::Rope) -> impl Iterator<Item = String>;
 }
 
 impl<'tree> NodeExt for Node<'tree> {
@@ -277,6 +279,18 @@ impl<'tree> NodeExt for Node<'tree> {
 
     fn arguments_names(&self) -> impl Iterator<Item = Node<'tree>> {
         self.arguments().filter_map(|(name, _value)| name)
+    }
+
+    fn arguments_names_as_string(&self, contents: &ropey::Rope) -> impl Iterator<Item = String> {
+        self.arguments_names().filter_map(|node| -> Option<String> {
+            match contents.node_slice(&node) {
+                Err(err) => {
+                    tracing::error!("Can't convert argument name to text: {err:?}");
+                    None
+                },
+                Ok(text) => Some(text.to_string()),
+            }
+        })
     }
 
     fn arguments_values(&self) -> impl Iterator<Item = Node<'tree>> {
