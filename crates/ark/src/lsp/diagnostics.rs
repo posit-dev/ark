@@ -822,12 +822,23 @@ fn recurse_call(
 }
 
 fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> anyhow::Result<()> {
-    // Find the first argument (package name). Positionally for now.
-    let Some(value) = node.arguments_values().nth(0) else {
+    // Find the first argument (package name). Positionally for now, no attempt
+    // at argument matching whatsoever.
+    let Some(package_node) = node.arguments_values().nth(0) else {
         return Err(anyhow::anyhow!("Can't unpack attached package argument"));
     };
 
-    let package_name = value.get_identifier_or_string_text(context.contents)?;
+    // Just bail if `character.only` is passed, even if it's actually `FALSE`.
+    // We'll do better when we have a more capable argument inspection
+    // infrastructure.
+    if let Some(_) = node
+        .arguments_names_as_string(context.contents)
+        .find(|n| n == "character.only")
+    {
+        return Ok(());
+    }
+
+    let package_name = package_node.get_identifier_or_string_text(context.contents)?;
     let attach_pos = node.end_position();
 
     let package = match insert_package_exports(&package_name, attach_pos, context) {
@@ -1666,8 +1677,26 @@ foo
                 bar
             ";
             let document = Document::new(code, None);
-            let diagnostics = generate_diagnostics(document, state);
+            let diagnostics = generate_diagnostics(document, state.clone());
             assert_eq!(diagnostics.len(), 0);
+
+            // If the library call includes the `character.only` argument, we bail
+            let code = r#"
+                library(mockpkg, character.only = TRUE)
+                foo()
+            "#;
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state.clone());
+            assert_eq!(diagnostics.len(), 1);
+
+            // Same if passed `FALSE`, we're not trying to be smart (yet)
+            let code = r#"
+                library(mockpkg, character.only = FALSE)
+                foo()
+            "#;
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state);
+            assert_eq!(diagnostics.len(), 1);
         });
     }
 
