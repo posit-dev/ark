@@ -810,7 +810,9 @@ fn recurse_call(
     match fun {
         "library" | "require" => {
             // Track symbols exported by `library()` or `require()` calls
-            handle_package_attach_call(node, context)?;
+            if let Err(err) = handle_package_attach_call(node, context) {
+                lsp::log_warn!("Can't handle attach call: {err:?}");
+            }
         },
         _ => {},
     };
@@ -841,13 +843,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     let package_name = package_node.get_identifier_or_string_text(context.contents)?;
     let attach_pos = node.end_position();
 
-    let package = match insert_package_exports(&package_name, attach_pos, context) {
-        Ok(package) => package,
-        Err(err) => {
-            lsp::log_warn!("{err:?}");
-            return Ok(());
-        },
-    };
+    let package = insert_package_exports(&package_name, attach_pos, context)?;
 
     // Also attach packages from `Depends` field
     let mut attach_dependencies = package.description.depends.clone();
@@ -896,9 +892,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     attach_dependencies.extend(attach_field.into_iter().map(String::from));
 
     for package_name in attach_dependencies {
-        if let Err(err) = insert_package_exports(&package_name, attach_pos, context) {
-            lsp::log_warn!("{err:?}");
-        }
+        insert_package_exports(&package_name, attach_pos, context)?;
     }
 
     Ok(())
