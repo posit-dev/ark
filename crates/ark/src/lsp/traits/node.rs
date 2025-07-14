@@ -92,7 +92,9 @@ pub trait NodeExt: Sized {
     fn ancestors(&self) -> impl Iterator<Item = Self>;
     fn children_of(node: Self) -> impl Iterator<Item = Self>;
     fn next_siblings(&self) -> impl Iterator<Item = Self>;
+    fn arguments(&self) -> impl Iterator<Item = (Option<Self>, Option<Self>)>;
     fn arguments_values(&self) -> impl Iterator<Item = Self>;
+    fn arguments_names(&self) -> impl Iterator<Item = Self>;
 }
 
 impl<'tree> NodeExt for Node<'tree> {
@@ -249,20 +251,36 @@ impl<'tree> NodeExt for Node<'tree> {
         })
     }
 
-    /// Takes a call node and iterates over the values of its arguments
-    fn arguments_values(&self) -> impl Iterator<Item = Node<'tree>> {
+    /// Iterator over argument names and values. Either of `name` and `value`
+    /// may be absent, but not both.
+    fn arguments(&self) -> impl Iterator<Item = (Option<Node<'tree>>, Option<Node<'tree>>)> {
         self.child_by_field_name("arguments")
             // Create iterator that unpacks Option with `flat_map()`
             .into_iter()
             .flat_map(Self::children_of)
             .filter_map(|node| {
-                // This takes care of non-argument nodes like `(` and `)`
-                if node.kind() == "argument" {
-                    node.child_by_field_name("value")
-                } else {
-                    None
+                if node.kind() != "argument" {
+                    return None;
                 }
+
+                let name = node.child_by_field_name("name");
+                let value = node.child_by_field_name("value");
+
+                // Likely not possible but just in case
+                if value.is_none() && name.is_none() {
+                    return None;
+                }
+
+                Some((name, value))
             })
+    }
+
+    fn arguments_names(&self) -> impl Iterator<Item = Node<'tree>> {
+        self.arguments().filter_map(|(name, _value)| name)
+    }
+
+    fn arguments_values(&self) -> impl Iterator<Item = Node<'tree>> {
+        self.arguments().filter_map(|(_name, value)| value)
     }
 }
 
