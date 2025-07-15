@@ -166,7 +166,10 @@ is_on_disk <- function(pkg) {
 system_path <- function(pkg) {
     # Important for this to be first because packages loaded with pkgload
     # will have a different path than the one in `.libPaths()` (if any).
-    if (isNamespaceLoaded(pkg)) {
+    #
+    # Note that this will not work for the base package, since we can't call
+    # getNamespaceInfo on it.
+    if (isNamespaceLoaded(pkg) && !identical(pkg, "base")) {
         return(.getNamespaceInfo(asNamespace(pkg), "path"))
     }
 
