@@ -84,7 +84,7 @@ impl Default for DiagnosticsConfig {
 }
 
 impl<'a> DiagnosticContext<'a> {
-    pub fn new(contents: &'a Rope, library: &'a crate::lsp::inputs::library::Library) -> Self {
+    pub fn new(contents: &'a Rope, library: &'a Library) -> Self {
         Self {
             contents,
             document_symbols: Vec::new(),
@@ -103,21 +103,20 @@ impl<'a> DiagnosticContext<'a> {
         symbols.insert(name.to_string(), location);
     }
 
-    // First, check document symbols.
     pub fn has_definition(&self, name: &str, start_position: Point) -> bool {
+        // Check document symbols
         for symbols in &self.document_symbols {
             if symbols.contains_key(name) {
                 return true;
             }
         }
 
-        // Then, check workspace symbols.
+        // Check workspace symbols
         if self.workspace_symbols.contains(name) {
             return true;
         }
 
-        // Finally, check package symbols from `library()` calls.
-        // Check all symbols exported by `library()` before the given position.
+        // Check all symbols exported by `library()` calls before the given position
         for (library_position, exports) in self.library_symbols.iter() {
             if *library_position > start_position {
                 break;
@@ -127,7 +126,7 @@ impl<'a> DiagnosticContext<'a> {
             }
         }
 
-        // Finally, check session symbols.
+        // Finally, check session symbols
         self.session_symbols.contains(name)
     }
 }
