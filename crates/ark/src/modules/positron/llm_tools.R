@@ -64,7 +64,7 @@
 #' @export
 .ps.rpc.get_package_versions <- function(package_names, ...) {
     lapply(set_names(package_names), function(pkg) {
-        if (is_on_disk(pkg)) {
+        if (identical(pkg, "base") || is_on_disk(pkg)) {
             as.character(utils::packageVersion(pkg))
         } else {
             "Not installed"
