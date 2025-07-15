@@ -14,8 +14,8 @@ use crate::lsp::inputs::package_namespace::Namespace;
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
 pub struct Package {
-    /// Path to the directory that contains `DESCRIPTION`. Could be an installed
-    /// package, or a package source.
+    /// Path to the directory that contains `DESCRIPTION` and `NAMESPACE`. Can
+    /// be an installed package or a package source.
     pub path: PathBuf,
 
     pub description: Description,
