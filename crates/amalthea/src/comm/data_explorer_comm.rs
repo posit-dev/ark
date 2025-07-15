@@ -38,6 +38,20 @@ pub struct ExportedData {
 	pub format: ExportFormat
 }
 
+/// Resulting code
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ExportedCode {
+	/// Exported code as a string suitable for copy and paste
+	pub data: Option<String>
+}
+
+/// Code syntaxes available for export
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CodeSyntaxOptions {
+	/// Available code syntaxes supported for export
+	pub code_syntaxes: Vec<String>
+}
+
 /// The result of applying filters to a table
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterResult {
@@ -1073,6 +1087,22 @@ pub struct ExportDataSelectionParams {
 	pub format: ExportFormat,
 }
 
+/// Parameters for the TranslateToCode method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct TranslateToCodeParams {
+	/// Zero or more column filters to apply
+	pub column_filters: Vec<ColumnFilter>,
+
+	/// Zero or more row filters to apply
+	pub row_filters: Vec<RowFilter>,
+
+	/// Zero or more sort keys to apply
+	pub sort_keys: Vec<ColumnSortKey>,
+
+	/// The code syntax to use for translation
+	pub code_syntax: String,
+}
+
 /// Parameters for the SetColumnFilters method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SetColumnFiltersParams {
@@ -1164,6 +1194,20 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "export_data_selection")]
 	ExportDataSelection(ExportDataSelectionParams),
 
+	/// Translates the current data view into a code snippet.
+	///
+	/// Translate filters and sort keys as code in different syntaxes like
+	/// pandas, polars, data.table, dplyr
+	#[serde(rename = "translate_to_code")]
+	TranslateToCode(TranslateToCodeParams),
+
+	/// Get code syntaxes supported for code translation
+	///
+	/// Get all available code syntaxes supported for translation for a data
+	/// view
+	#[serde(rename = "get_code_syntaxes")]
+	GetCodeSyntaxes,
+
 	/// Set column filters to select subset of table columns
 	///
 	/// Set or clear column filters on table, replacing any previous filters
@@ -1219,6 +1263,12 @@ pub enum DataExplorerBackendReply {
 
 	/// Exported result
 	ExportDataSelectionReply(ExportedData),
+
+	/// Resulting code
+	TranslateToCodeReply(ExportedCode),
+
+	/// Code syntaxes available for export
+	GetCodeSyntaxesReply(CodeSyntaxOptions),
 
 	/// Reply for the set_column_filters method (no result)
 	SetColumnFiltersReply(),
