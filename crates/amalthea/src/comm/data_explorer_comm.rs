@@ -38,11 +38,11 @@ pub struct ExportedData {
 	pub format: ExportFormat
 }
 
-/// Resulting code
+/// Code snippet for the data view
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ExportedCode {
 	/// Exported code as a string suitable for copy and paste
-	pub data: Option<String>
+	pub code: String
 }
 
 /// Code syntaxes available for export
@@ -1264,7 +1264,7 @@ pub enum DataExplorerBackendReply {
 	/// Exported result
 	ExportDataSelectionReply(ExportedData),
 
-	/// Resulting code
+	/// Code snippet for the data view
 	TranslateToCodeReply(ExportedCode),
 
 	/// Code syntaxes available for export

@@ -556,6 +556,7 @@ impl RDataExplorer {
                     format,
                 },
             )),
+            DataExplorerBackendRequest::TranslateToCode(_) | DataExplorerBackendRequest::GetCodeSyntaxes => todo!(),
         }
     }
 }
