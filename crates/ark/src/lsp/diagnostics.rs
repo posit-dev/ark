@@ -30,6 +30,7 @@ use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
 use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;
 use crate::lsp::inputs::package::Package;
+use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
@@ -62,6 +63,9 @@ pub struct DiagnosticContext<'a> {
     // The set of packages that are currently installed.
     pub installed_packages: HashSet<String>,
 
+    /// Reference to source root, if any.
+    pub root: &'a Option<SourceRoot>,
+
     /// Reference to the library for looking up package exports.
     pub library: &'a Library,
 
@@ -83,13 +87,14 @@ impl Default for DiagnosticsConfig {
 }
 
 impl<'a> DiagnosticContext<'a> {
-    pub fn new(contents: &'a Rope, library: &'a Library) -> Self {
+    pub fn new(contents: &'a Rope, root: &'a Option<SourceRoot>, library: &'a Library) -> Self {
         Self {
             contents,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
             installed_packages: HashSet::new(),
+            root,
             library,
             library_symbols: BTreeMap::new(),
             in_formula: false,
@@ -144,7 +149,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         return diagnostics;
     }
 
-    let mut context = DiagnosticContext::new(&doc.contents, &state.library);
+    let mut context = DiagnosticContext::new(&doc.contents, &state.root, &state.library);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
@@ -156,6 +161,23 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         },
         _ => {},
     });
+
+    // If this is a package, add imported symbols to workspace
+    if let Some(SourceRoot::Package(root)) = &state.root {
+        // Add symbols from `importFrom()` directives
+        for import in &root.namespace.imports {
+            context.workspace_symbols.insert(import.clone());
+        }
+
+        // Add symbols from `import()` directives
+        for package_import in &root.namespace.package_imports {
+            if let Some(pkg) = state.library.get(package_import) {
+                for export in &pkg.namespace.exports {
+                    context.workspace_symbols.insert(export.clone());
+                }
+            }
+        }
+    }
 
     // Add per-environment session symbols
     for scope in state.console_scopes.iter() {

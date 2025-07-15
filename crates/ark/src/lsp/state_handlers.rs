@@ -45,6 +45,8 @@ use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::indexer;
+use crate::lsp::inputs::package::Package;
+use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
@@ -84,8 +86,35 @@ pub(crate) fn initialize(
         for folder in workspace_folders.iter() {
             state.workspace.folders.push(folder.uri.clone());
             if let Ok(path) = folder.uri.to_file_path() {
-                if let Some(path) = path.to_str() {
-                    folders.push(path.to_string());
+                // Try to load package from this workspace folder and set as
+                // root if found. This means we're dealing with a package
+                // source.
+                if state.root.is_none() {
+                    match Package::load(&path) {
+                        Ok(Some(pkg)) => {
+                            log::info!(
+                                "Root: Loaded package `{pkg}` from {path} as project root",
+                                pkg = pkg.description.name,
+                                path = path.display()
+                            );
+                            state.root = Some(SourceRoot::Package(pkg));
+                        },
+                        Ok(None) => {
+                            log::info!(
+                                "Root: No package found at {path}, treating as folder of scripts",
+                                path = path.display()
+                            );
+                        },
+                        Err(err) => {
+                            log::warn!(
+                                "Root: Error loading package at {path}: {err}",
+                                path = path.display()
+                            );
+                        },
+                    }
+                }
+                if let Some(path_str) = path.to_str() {
+                    folders.push(path_str.to_string());
                 }
             }
         }
