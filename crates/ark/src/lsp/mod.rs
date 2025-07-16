@@ -63,7 +63,6 @@ pub(crate) use _log;
 pub(crate) use log_error;
 pub(crate) use log_info;
 pub(crate) use log_warn;
+pub(crate) use main_loop::diagnostics_refresh_all;
 pub(crate) use main_loop::publish_diagnostics;
 pub(crate) use main_loop::spawn_blocking;
-pub(crate) use main_loop::spawn_diagnostics_refresh;
-pub(crate) use main_loop::spawn_diagnostics_refresh_all;
