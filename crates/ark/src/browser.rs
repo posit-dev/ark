@@ -53,6 +53,8 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {
 
     // For all other URLs, create a ShowUrl event and send it to the main
     // thread; Positron will handle it.
+
+    // @jennybc: This looks an awful lot like ps_ui_show_url().
     let params = ShowUrlParams { url };
     let event = UiFrontendEvent::ShowUrl(params);
 

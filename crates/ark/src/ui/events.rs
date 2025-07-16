@@ -97,6 +97,7 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
 }
 
 #[harp::register]
+// we KNOW this is a real URL
 pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
     let params = ShowUrlParams {
         url: RObject::view(url).try_into()?,
