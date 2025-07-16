@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use tree_sitter::Node;
 
 use crate::lsp::traits::node::NodeExt;
@@ -282,6 +283,7 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier(&self) -> bool;
     fn is_string(&self) -> bool;
     fn is_identifier_or_string(&self) -> bool;
+    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String>;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
     fn is_subset(&self) -> bool;
@@ -322,6 +324,20 @@ impl NodeTypeExt for Node<'_> {
     // This combination is particularly common
     fn is_identifier_or_string(&self) -> bool {
         matches!(self.node_type(), NodeType::Identifier | NodeType::String)
+    }
+
+    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String> {
+        match self.node_type() {
+            NodeType::Identifier => return Ok(contents.node_slice(self)?.to_string()),
+            NodeType::String => {
+                // Remove quotes from string literal
+                let string = contents.node_slice(self)?.to_string();
+                Ok(string.trim_matches('"').trim_matches('\'').to_string())
+            },
+            _ => {
+                return Err(anyhow::anyhow!("Not an identifier or string"));
+            },
+        }
     }
 
     fn is_keyword(&self) -> bool {
@@ -570,4 +586,43 @@ pub(crate) fn node_find_containing_call<'tree>(node: Node<'tree>) -> Option<Node
     }
 
     None
+}
+
+pub(crate) struct TSQuery {
+    query: tree_sitter::Query,
+    cursor: tree_sitter::QueryCursor,
+}
+
+impl TSQuery {
+    pub(crate) fn new(query_str: &str) -> anyhow::Result<Self> {
+        let language = &tree_sitter_r::LANGUAGE.into();
+        let query = tree_sitter::Query::new(language, query_str)
+            .map_err(|err| anyhow!("Failed to compile query: {err}"))?;
+
+        let cursor = tree_sitter::QueryCursor::new();
+
+        Ok(Self { query, cursor })
+    }
+
+    /// Match query against `contents` and collect all nodes captured with the
+    /// given capture name
+    pub(crate) fn captures_for<'tree>(
+        &mut self,
+        node: tree_sitter::Node<'tree>,
+        capture_name: &str,
+        contents: &[u8],
+    ) -> Vec<tree_sitter::Node<'tree>> {
+        let mut result = Vec::new();
+
+        for m in self.cursor.matches(&self.query, node, contents) {
+            for cap in m.captures.iter() {
+                let cap_name = &self.query.capture_names()[cap.index as usize];
+                if *cap_name == capture_name {
+                    result.push(cap.node);
+                }
+            }
+        }
+
+        result
+    }
 }

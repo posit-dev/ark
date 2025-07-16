@@ -6,6 +6,8 @@ use url::Url;
 
 use crate::lsp::config::LspConfig;
 use crate::lsp::documents::Document;
+use crate::lsp::inputs::library::Library;
+use crate::lsp::inputs::source_root::SourceRoot;
 
 #[derive(Clone, Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
@@ -47,6 +49,12 @@ pub(crate) struct WorldState {
 
     /// Currently installed packages
     pub(crate) installed_packages: Vec<String>,
+
+    /// The root of the source tree (e.g., a package).
+    pub(crate) _root: Option<SourceRoot>,
+
+    /// Map of package name to package metadata for installed libraries. Lazily populated.
+    pub(crate) library: Library,
 
     pub(crate) config: LspConfig,
 }

@@ -11,6 +11,7 @@ use tree_sitter::Range;
 use tree_sitter::TreeCursor;
 
 use crate::lsp::traits::point::PointExt;
+use crate::lsp::traits::rope::RopeExt;
 
 fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut String) {
     let node = cursor.node();
@@ -90,6 +91,12 @@ pub trait NodeExt: Sized {
     fn bwd_leaf_iter(&self) -> BwdLeafIterator<'_>;
 
     fn ancestors(&self) -> impl Iterator<Item = Self>;
+    fn children_of(node: Self) -> impl Iterator<Item = Self>;
+    fn next_siblings(&self) -> impl Iterator<Item = Self>;
+    fn arguments(&self) -> impl Iterator<Item = (Option<Self>, Option<Self>)>;
+    fn arguments_values(&self) -> impl Iterator<Item = Self>;
+    fn arguments_names(&self) -> impl Iterator<Item = Self>;
+    fn arguments_names_as_string(&self, contents: &ropey::Rope) -> impl Iterator<Item = String>;
 }
 
 impl<'tree> NodeExt for Node<'tree> {
@@ -199,12 +206,95 @@ impl<'tree> NodeExt for Node<'tree> {
         BwdLeafIterator { node: *self }
     }
 
-    // From rowan. Note that until we switch to rowan, each `parent()` call
-    // causes a linear traversal of the whole tree to find the parent node.
-    // We could do better in the future:
-    // https://github.com/tree-sitter/tree-sitter/pull/3214
     fn ancestors(&self) -> impl Iterator<Item = Node<'tree>> {
+        // We'd ideally use the cursor API here too but
+        // `ts_tree_cursor_goto_parent()` doesn't behave like
+        // `ts_node_parent()`: the latter traverses `ERROR` nodes but not the
+        // former. So for now we accept the performance hit of tree traversal at
+        // each `parent()` call.
         std::iter::successors(Some(*self), |p| p.parent())
+    }
+
+    fn next_siblings(&self) -> impl Iterator<Item = Node<'tree>> {
+        let mut cursor = self.walk();
+
+        let first = if cursor.goto_next_sibling() {
+            Some(cursor.node())
+        } else {
+            None
+        };
+
+        std::iter::successors(first, move |_| {
+            if cursor.goto_next_sibling() {
+                Some(cursor.node())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn children_of(node: Node<'tree>) -> impl Iterator<Item = Node<'tree>> {
+        let mut cursor = node.walk();
+        let mut first = true;
+
+        std::iter::from_fn(move || {
+            let advanced = if first {
+                first = false;
+                cursor.goto_first_child()
+            } else {
+                cursor.goto_next_sibling()
+            };
+
+            if advanced {
+                Some(cursor.node())
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Iterator over argument names and values. Either of `name` and `value`
+    /// may be absent, but not both.
+    fn arguments(&self) -> impl Iterator<Item = (Option<Node<'tree>>, Option<Node<'tree>>)> {
+        self.child_by_field_name("arguments")
+            // Create iterator that unpacks Option with `flat_map()`
+            .into_iter()
+            .flat_map(Self::children_of)
+            .filter_map(|node| {
+                if node.kind() != "argument" {
+                    return None;
+                }
+
+                let name = node.child_by_field_name("name");
+                let value = node.child_by_field_name("value");
+
+                // Likely not possible but just in case
+                if value.is_none() && name.is_none() {
+                    return None;
+                }
+
+                Some((name, value))
+            })
+    }
+
+    fn arguments_names(&self) -> impl Iterator<Item = Node<'tree>> {
+        self.arguments().filter_map(|(name, _value)| name)
+    }
+
+    fn arguments_names_as_string(&self, contents: &ropey::Rope) -> impl Iterator<Item = String> {
+        self.arguments_names().filter_map(|node| -> Option<String> {
+            match contents.node_slice(&node) {
+                Err(err) => {
+                    tracing::error!("Can't convert argument name to text: {err:?}");
+                    None
+                },
+                Ok(text) => Some(text.to_string()),
+            }
+        })
+    }
+
+    fn arguments_values(&self) -> impl Iterator<Item = Node<'tree>> {
+        self.arguments().filter_map(|(_name, value)| value)
     }
 }
 
