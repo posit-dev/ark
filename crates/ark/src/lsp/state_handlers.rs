@@ -8,11 +8,8 @@
 use std::path::Path;
 
 use anyhow::anyhow;
-use serde_json::Value;
-use struct_field_names_as_array::FieldNamesAsArray;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
-use tower_lsp::lsp_types::ConfigurationItem;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
@@ -42,12 +39,6 @@ use url::Url;
 use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
-use crate::lsp::config::DocumentConfig;
-use crate::lsp::config::SymbolsConfig;
-use crate::lsp::config::VscDiagnosticsConfig;
-use crate::lsp::config::VscDocumentConfig;
-use crate::lsp::config::VscSymbolsConfig;
-use crate::lsp::diagnostics::DiagnosticsConfig;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::indexer;
@@ -284,121 +275,35 @@ pub(crate) fn did_change_formatting_options(
     // `insert_final_newline`
 }
 
+use crate::lsp::config::SETTINGS;
+
 async fn update_config(
-    uris: Vec<Url>,
+    _uris: Vec<Url>,
     client: &tower_lsp::Client,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    let mut items: Vec<ConfigurationItem> = vec![];
-
-    let diagnostics_keys = VscDiagnosticsConfig::FIELD_NAMES_AS_ARRAY;
-    let mut diagnostics_items: Vec<ConfigurationItem> = diagnostics_keys
+    // Build the configuration request for global settings
+    let items: Vec<_> = SETTINGS
         .iter()
-        .map(|key| ConfigurationItem {
+        .map(|mapping| tower_lsp::lsp_types::ConfigurationItem {
             scope_uri: None,
-            section: Some(VscDiagnosticsConfig::section_from_key(key).into()),
+            section: Some(mapping.key.to_string()),
         })
         .collect();
-    items.append(&mut diagnostics_items);
-
-    let symbols_keys = VscSymbolsConfig::FIELD_NAMES_AS_ARRAY;
-    let mut symbols_items: Vec<ConfigurationItem> = symbols_keys
-        .iter()
-        .map(|key| ConfigurationItem {
-            scope_uri: None,
-            section: Some(VscSymbolsConfig::section_from_key(key).into()),
-        })
-        .collect();
-    items.append(&mut symbols_items);
-
-    // For document configs we collect all pairs of URIs and config keys of
-    // interest in a flat vector
-    let document_keys = VscDocumentConfig::FIELD_NAMES_AS_ARRAY;
-    let mut document_items: Vec<ConfigurationItem> =
-        itertools::iproduct!(uris.iter(), document_keys.iter())
-            .map(|(uri, key)| ConfigurationItem {
-                scope_uri: Some(uri.clone()),
-                section: Some(VscDocumentConfig::section_from_key(key).into()),
-            })
-            .collect();
-    items.append(&mut document_items);
 
     let configs = client.configuration(items).await?;
 
-    // We got the config items in a flat vector that's guaranteed to be
-    // ordered in the same way it was sent in. Be defensive and check that
-    // we've got the expected number of items before we process them chunk
-    // by chunk
-    let n_document_items = document_keys.len();
-    let n_diagnostics_items = diagnostics_keys.len();
-    let n_symbols_items = symbols_keys.len();
-    let n_items = n_diagnostics_items + n_symbols_items + (n_document_items * uris.len());
-
-    if configs.len() != n_items {
+    if configs.len() != SETTINGS.len() {
         return Err(anyhow!(
             "Unexpected number of retrieved configurations: {}/{}",
             configs.len(),
-            n_items
+            SETTINGS.len()
         ));
     }
 
-    let mut configs = configs.into_iter();
-
-    // --- Diagnostics
-    let keys = diagnostics_keys.into_iter();
-    let items: Vec<Value> = configs.by_ref().take(n_diagnostics_items).collect();
-
-    // Create a new `serde_json::Value::Object` manually to convert it
-    // to a `VscDocumentConfig` with `from_value()`. This way serde_json
-    // can type-check the dynamic JSON value we got from the client.
-    let mut map = serde_json::Map::new();
-    std::iter::zip(keys, items).for_each(|(key, item)| {
-        map.insert(key.into(), item);
-    });
-
-    // Deserialise the VS Code configuration
-    let config: VscDiagnosticsConfig = serde_json::from_value(serde_json::Value::Object(map))?;
-    let config: DiagnosticsConfig = config.into();
-
-    let changed = state.config.diagnostics != config;
-    state.config.diagnostics = config;
-
-    if changed {
-        lsp::spawn_diagnostics_refresh_all(state.clone());
-    }
-
-    // --- Symbols
-    let keys = symbols_keys.into_iter();
-    let items: Vec<Value> = configs.by_ref().take(n_symbols_items).collect();
-
-    let mut map = serde_json::Map::new();
-    std::iter::zip(keys, items).for_each(|(key, item)| {
-        map.insert(key.into(), item);
-    });
-
-    let config: VscSymbolsConfig = serde_json::from_value(serde_json::Value::Object(map))?;
-    let config: SymbolsConfig = config.into();
-    state.config.symbols = config;
-
-    // --- Documents
-    // For each document, deserialise the vector of JSON values into a typed config
-    for uri in uris.into_iter() {
-        let keys = document_keys.into_iter();
-        let items: Vec<Value> = configs.by_ref().take(n_document_items).collect();
-
-        let mut map = serde_json::Map::new();
-        std::iter::zip(keys, items).for_each(|(key, item)| {
-            map.insert(key.into(), item);
-        });
-
-        // Deserialise the VS Code configuration
-        let config: VscDocumentConfig = serde_json::from_value(serde_json::Value::Object(map))?;
-
-        // Now convert the VS Code specific type into our own type
-        let config: DocumentConfig = config.into();
-
-        // Finally, update the document's config
-        state.get_document_mut(&uri)?.config = config;
+    // Apply each config value using its update closure
+    for (mapping, value) in SETTINGS.iter().zip(configs) {
+        (mapping.set)(&mut state.config, value);
     }
 
     Ok(())
