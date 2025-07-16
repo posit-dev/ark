@@ -182,6 +182,22 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         }
     }
 
+    // Simple workaround to include testthat exports in test files. I think the
+    // general principle would be that (a) files in `tests/testthat/` include
+    // `testthat.R` as a preamble (note that people modify that file e.g. to add
+    // more `library()` calls), and (b) all helper files are included in a
+    // test-specific workspace (which is effectively the case currently as we
+    // don't special-case how workspace inclusion works for packages). We might
+    // want to provide a mechanism for test packages to declare this sort of
+    // test files setup.
+    if doc.testthat {
+        if let Some(pkg) = state.library.get("testthat") {
+            for export in &pkg.namespace.exports {
+                context.workspace_symbols.insert(export.clone());
+            }
+        }
+    }
+
     // Add per-environment session symbols
     for scope in state.console_scopes.iter() {
         for name in scope.iter() {

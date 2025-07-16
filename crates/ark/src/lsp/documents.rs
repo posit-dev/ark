@@ -48,6 +48,10 @@ pub struct Document {
 
     // Configuration of the document, such as indentation settings.
     pub config: DocumentConfig,
+
+    /// Whether the document is a testthat file. This property should not be
+    /// here, it's just a short term stopgap.
+    pub testthat: bool,
 }
 
 impl std::fmt::Debug for Document {
@@ -80,6 +84,7 @@ impl Document {
             version,
             ast,
             config: Default::default(),
+            testthat: false,
         }
     }
 
