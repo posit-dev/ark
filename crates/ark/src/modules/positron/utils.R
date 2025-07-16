@@ -152,3 +152,32 @@ obj_address <- function(x) {
 paste_line <- function(x) {
     paste(x, collapse = "\n")
 }
+
+set_names <- function(x, names = x) {
+    names(x) <- x
+    x
+}
+
+# From rlang
+is_on_disk <- function(pkg) {
+    system_path(pkg) != ""
+}
+
+system_path <- function(pkg) {
+    # Important for this to be first because packages loaded with pkgload
+    # will have a different path than the one in `.libPaths()` (if any).
+    #
+    # Note that this will not work for the base package, since we can't call
+    # getNamespaceInfo on it.
+    if (isNamespaceLoaded(pkg) && !identical(pkg, "base")) {
+        return(.getNamespaceInfo(asNamespace(pkg), "path"))
+    }
+
+    for (path in file.path(.libPaths(), pkg)) {
+        if (file.exists(path)) {
+            return(path)
+        }
+    }
+
+    ""
+}

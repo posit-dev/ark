@@ -53,6 +53,25 @@
     res_list
 }
 
+#' Get the version of installed packages
+#'
+#' This function retrieves the versions of specified packages in R.
+#'
+#' It returns a named list where the names are the package names and the values
+#' are the corresponding package versions, or "Not installed" if the package is
+#' not found.
+#'
+#' @export
+.ps.rpc.get_package_versions <- function(package_names, ...) {
+    lapply(set_names(package_names), function(pkg) {
+        if (is_on_disk(pkg)) {
+            as.character(utils::packageVersion(pkg))
+        } else {
+            "Not installed"
+        }
+    })
+}
+
 #' Get available vignettes for a package
 #'
 #' This function retrieves the vignettes available for a specified package in R.
