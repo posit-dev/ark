@@ -159,6 +159,9 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
         indexer::IndexEntryData::Function { name, arguments: _ } => {
             context.workspace_symbols.insert(name.to_string());
         },
+        indexer::IndexEntryData::Variable { name } => {
+            context.workspace_symbols.insert(name.to_string());
+        },
         _ => {},
     });
 
