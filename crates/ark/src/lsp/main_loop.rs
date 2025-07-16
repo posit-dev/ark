@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::future;
+use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
@@ -806,7 +807,19 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
             let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
 
             if let Some(document) = state.documents.get(&uri) {
-                let diagnostics = generate_diagnostics(document.clone(), state.clone());
+                // Special case testthat-specific behaviour. This is a simple
+                // stopgap approach that has some false positives (e.g. when we
+                // work on testthat itself the flag will always be true), but
+                // that shouldn't have much practical impact.
+                let mut doc = document.clone();
+                if Path::new(uri.path())
+                    .components()
+                    .any(|c| c.as_os_str() == "testthat")
+                {
+                    doc.testthat = true;
+                };
+
+                let diagnostics = generate_diagnostics(doc, state.clone());
                 Some(RefreshDiagnosticsResult {
                     uri,
                     diagnostics,
