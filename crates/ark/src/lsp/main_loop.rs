@@ -726,30 +726,46 @@ static INDEXER_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<IndexerQueueTa
 /// refreshes don't race against each other. The frontend will receive all
 /// results in order, ensuring that diagnostics for an outdated version are
 /// eventually replaced by the most up-to-date diagnostics.
+///
+/// Note that this setup will be entirely replaced in the future by Salsa
+/// dependencies. Diagnostics refreshes will depend on indexer results in a
+/// natural way and they will be cancelled automatically as document updates
+/// arrive.
 async fn process_indexer_queue(mut rx: mpsc::UnboundedReceiver<IndexerQueueTask>) {
+    let mut diagnostics_batch = Vec::new();
+    let mut indexer_batch = Vec::new();
+
     while let Some(task) = rx.recv().await {
-        // Drain all available tasks
         let mut tasks = vec![task];
-        while let Ok(next_task) = rx.try_recv() {
-            tasks.push(next_task);
-        }
 
-        // Separate by type
-        let mut diagnostics_batch = Vec::new();
-        let mut indexer_batch = Vec::new();
-
-        for task in tasks {
-            match task {
-                IndexerQueueTask::Indexer(indexer_task) => indexer_batch.push(indexer_task),
-                IndexerQueueTask::Diagnostics(diagnostic_task) => {
-                    diagnostics_batch.push(diagnostic_task)
-                },
+        // Process diagnostics at least every 10 iterations if indexer tasks
+        // keep coming in, so the user gets intermediate diagnostics refreshes
+        for _ in 0..10 {
+            while let Ok(task) = rx.try_recv() {
+                tasks.push(task);
             }
+
+            // Separate by type
+            for task in std::mem::take(&mut tasks) {
+                match task {
+                    IndexerQueueTask::Indexer(indexer_task) => indexer_batch.push(indexer_task),
+                    IndexerQueueTask::Diagnostics(diagnostic_task) => {
+                        diagnostics_batch.push(diagnostic_task)
+                    },
+                }
+            }
+
+            // No more indexer tasks, let's do diagnostics
+            if indexer_batch.is_empty() {
+                break;
+            }
+
+            // Process indexer tasks first so diagnostics tasks work with an
+            // up-to-date index
+            process_indexer_batch(std::mem::take(&mut indexer_batch)).await;
         }
 
-        // Process indexer tasks first so diagnostics tasks work with an up-to-date index
-        process_indexer_batch(indexer_batch).await;
-        process_diagnostics_batch(diagnostics_batch).await;
+        process_diagnostics_batch(std::mem::take(&mut diagnostics_batch)).await;
     }
 }
 
