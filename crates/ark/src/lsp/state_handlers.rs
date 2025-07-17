@@ -5,8 +5,6 @@
 //
 //
 
-use std::path::Path;
-
 use anyhow::anyhow;
 use serde_json::Value;
 use struct_field_names_as_array::FieldNamesAsArray;
@@ -48,7 +46,8 @@ use crate::lsp::config::VscDocumentConfig;
 use crate::lsp::diagnostics::DiagnosticsConfig;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
-use crate::lsp::indexer;
+use crate::lsp::inputs::package::Package;
+use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
@@ -88,18 +87,42 @@ pub(crate) fn initialize(
         for folder in workspace_folders.iter() {
             state.workspace.folders.push(folder.uri.clone());
             if let Ok(path) = folder.uri.to_file_path() {
-                if let Some(path) = path.to_str() {
-                    folders.push(path.to_string());
+                // Try to load package from this workspace folder and set as
+                // root if found. This means we're dealing with a package
+                // source.
+                if state.root.is_none() {
+                    match Package::load(&path) {
+                        Ok(Some(pkg)) => {
+                            log::info!(
+                                "Root: Loaded package `{pkg}` from {path} as project root",
+                                pkg = pkg.description.name,
+                                path = path.display()
+                            );
+                            state.root = Some(SourceRoot::Package(pkg));
+                        },
+                        Ok(None) => {
+                            log::info!(
+                                "Root: No package found at {path}, treating as folder of scripts",
+                                path = path.display()
+                            );
+                        },
+                        Err(err) => {
+                            log::warn!(
+                                "Root: Error loading package at {path}: {err}",
+                                path = path.display()
+                            );
+                        },
+                    }
+                }
+                if let Some(path_str) = path.to_str() {
+                    folders.push(path_str.to_string());
                 }
             }
         }
     }
 
     // Start first round of indexing
-    lsp::spawn_blocking(|| {
-        indexer::start(folders);
-        Ok(None)
-    });
+    lsp::main_loop::index_start(folders, state.clone());
 
     Ok(InitializeResult {
         server_info: Some(ServerInfo {
@@ -181,8 +204,7 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    update_index(&uri, &document);
-    lsp::spawn_diagnostics_refresh(uri, document, state.clone());
+    lsp::main_loop::index_update(uri.clone(), document.clone(), state.clone());
 
     Ok(())
 }
@@ -194,17 +216,16 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
-    let doc = state.get_document_mut(uri)?;
+    let document = state.get_document_mut(uri)?;
 
     let mut parser = lsp_state
         .parsers
         .get_mut(uri)
         .ok_or(anyhow!("No parser for {uri}"))?;
 
-    doc.on_did_change(&mut parser, &params);
+    document.on_did_change(&mut parser, &params);
 
-    update_index(uri, doc);
-    lsp::spawn_diagnostics_refresh(uri.clone(), doc.clone(), state.clone());
+    lsp::main_loop::index_update(uri.clone(), document.clone(), state.clone());
 
     Ok(())
 }
@@ -348,7 +369,7 @@ async fn update_config(
     state.config.diagnostics = config;
 
     if changed {
-        lsp::spawn_diagnostics_refresh_all(state.clone());
+        lsp::main_loop::diagnostics_refresh_all(state.clone());
     }
 
     // --- Documents
@@ -387,7 +408,7 @@ pub(crate) fn did_change_console_inputs(
     // during package development in conjunction with `devtools::load_all()`.
     // Ideally diagnostics would not rely on these though, and we wouldn't need
     // to refresh from here.
-    lsp::spawn_diagnostics_refresh_all(state.clone());
+    lsp::diagnostics_refresh_all(state.clone());
 
     Ok(())
 }
@@ -409,17 +430,4 @@ pub(crate) fn did_close_virtual_document(
 ) -> anyhow::Result<()> {
     state.virtual_documents.remove(&params.uri);
     Ok(())
-}
-
-// FIXME: The initial indexer is currently racing against our state notification
-// handlers. The indexer is synchronised through a mutex but we might end up in
-// a weird state. Eventually the index should be moved to WorldState and created
-// on demand with Salsa instrumenting and cancellation.
-fn update_index(uri: &url::Url, doc: &Document) {
-    if let Ok(path) = uri.to_file_path() {
-        let path = Path::new(&path);
-        if let Err(err) = indexer::update(&doc, &path) {
-            lsp::log_error!("{err:?}");
-        }
-    }
 }

@@ -51,7 +51,7 @@ pub(crate) struct WorldState {
     pub(crate) installed_packages: Vec<String>,
 
     /// The root of the source tree (e.g., a package).
-    pub(crate) _root: Option<SourceRoot>,
+    pub(crate) root: Option<SourceRoot>,
 
     /// Map of package name to package metadata for installed libraries. Lazily populated.
     pub(crate) library: Library,

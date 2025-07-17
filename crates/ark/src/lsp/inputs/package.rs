@@ -23,15 +23,12 @@ pub struct Package {
 }
 
 impl Package {
-    /// Attempts to load a package from the given path and name.
-    pub fn load(lib_path: &std::path::Path, name: &str) -> anyhow::Result<Option<Self>> {
-        let package_path = lib_path.join(name);
-
+    /// Load a package from a given path.
+    pub fn load(package_path: &std::path::Path) -> anyhow::Result<Option<Self>> {
         let description_path = package_path.join("DESCRIPTION");
         let namespace_path = package_path.join("NAMESPACE");
 
-        // Only consider libraries that have a folder named after the
-        // requested package and that contains a description file
+        // Only consider directories that contain a description file
         if !description_path.is_file() {
             return Ok(None);
         }
@@ -41,12 +38,6 @@ impl Package {
         let description_contents = fs::read_to_string(&description_path)?;
         let description = Description::parse(&description_contents)?;
 
-        if description.name != name {
-            return Err(anyhow::anyhow!(
-                "`Package` field in `DESCRIPTION` doesn't match folder name '{name}'"
-            ));
-        }
-
         let namespace_contents = fs::read_to_string(&namespace_path)?;
         let namespace = Namespace::parse(&namespace_contents)?;
 
@@ -55,5 +46,26 @@ impl Package {
             description,
             namespace,
         }))
+    }
+
+    /// Load a package from the given library path and name.
+    pub fn load_from_library(
+        lib_path: &std::path::Path,
+        name: &str,
+    ) -> anyhow::Result<Option<Self>> {
+        let package_path = lib_path.join(name);
+
+        // For library packages, ensure the invariant that the package name
+        // matches the folder name
+        if let Some(pkg) = Self::load(&package_path)? {
+            if pkg.description.name != name {
+                return Err(anyhow::anyhow!(
+                    "`Package` field in `DESCRIPTION` doesn't match folder name '{name}'"
+                ));
+            }
+            Ok(Some(pkg))
+        } else {
+            Ok(None)
+        }
     }
 }
