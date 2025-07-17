@@ -869,21 +869,12 @@ pub(crate) fn index_update(uri: Url, document: Document, state: WorldState) {
         }))
         .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
 
-    diagnostics_refresh(uri, state.clone());
-}
-
-pub(crate) fn diagnostics_refresh(uri: Url, state: WorldState) {
-    INDEXER_QUEUE
-        .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
-            uri,
-            state,
-        }))
-        .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
+    // Refresh all diagnostics since the indexer results for one file may affect
+    // other files
+    diagnostics_refresh_all(state);
 }
 
 pub(crate) fn diagnostics_refresh_all(state: WorldState) {
-    // Expand RefreshAll into individual RefreshDiagnostics tasks
-    // This allows the deduplication logic to work uniformly
     for (uri, _document) in state.documents.iter() {
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
