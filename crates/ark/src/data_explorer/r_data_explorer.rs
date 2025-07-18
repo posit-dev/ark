@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::BackendState;
+use amalthea::comm::data_explorer_comm::CodeSyntaxName;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -19,6 +20,7 @@ use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
+use amalthea::comm::data_explorer_comm::ConvertToCodeFeatures;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -556,7 +558,8 @@ impl RDataExplorer {
                     format,
                 },
             )),
-            DataExplorerBackendRequest::ConvertToCode(_) | DataExplorerBackendRequest::SuggestCodeSyntax => todo!(),
+            DataExplorerBackendRequest::ConvertToCode(_) |
+            DataExplorerBackendRequest::SuggestCodeSyntax => todo!(),
         }
     }
 }
@@ -981,6 +984,20 @@ impl RDataExplorer {
                         ExportFormat::Tsv,
                         ExportFormat::Html,
                     ],
+                },
+                convert_to_code: ConvertToCodeFeatures {
+                    support_status: SupportStatus::Supported,
+                    code_syntaxes: Some(vec![
+                        CodeSyntaxName {
+                            code_syntax_name: "base r".into(),
+                        },
+                        CodeSyntaxName {
+                            code_syntax_name: "data table".into(),
+                        },
+                        CodeSyntaxName {
+                            code_syntax_name: "dplyr".into(),
+                        },
+                    ]),
                 },
             },
         };
