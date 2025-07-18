@@ -40,16 +40,16 @@ pub struct ExportedData {
 
 /// Code snippet for the data view
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct ExportedCode {
-	/// Exported code as a string suitable for copy and paste
-	pub code: String
+pub struct ConvertedCode {
+	/// Lines of code that implement filters and sort keys
+	pub converted_code: Vec<String>
 }
 
-/// Code syntaxes available for export
+/// Syntax to use for code conversion
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct CodeSyntaxOptions {
-	/// Available code syntaxes supported for export
-	pub code_syntaxes: Vec<String>
+pub struct CodeSyntaxName {
+	/// The name of the code syntax, eg, pandas, polars, dplyr, etc.
+	pub code_syntax_name: String
 }
 
 /// The result of applying filters to a table
@@ -551,7 +551,10 @@ pub struct SupportedFeatures {
 	pub set_sort_columns: SetSortColumnsFeatures,
 
 	/// Support for 'export_data_selection' RPC and its features
-	pub export_data_selection: ExportDataSelectionFeatures
+	pub export_data_selection: ExportDataSelectionFeatures,
+
+	/// Support for 'convert_to_code' RPC and its features
+	pub convert_to_code: ConvertToCodeFeatures
 }
 
 /// Feature flags for 'search_schema' RPC
@@ -612,6 +615,16 @@ pub struct ExportDataSelectionFeatures {
 pub struct SetSortColumnsFeatures {
 	/// The support status for this RPC method
 	pub support_status: SupportStatus
+}
+
+/// Feature flags for convert to code RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConvertToCodeFeatures {
+	/// The support status for this RPC method
+	pub support_status: SupportStatus,
+
+	/// The syntaxes for converted code
+	pub code_syntaxes: Option<Vec<CodeSyntaxName>>
 }
 
 /// A selection on the data grid, for copying to the clipboard or other
@@ -1087,9 +1100,9 @@ pub struct ExportDataSelectionParams {
 	pub format: ExportFormat,
 }
 
-/// Parameters for the TranslateToCode method.
+/// Parameters for the ConvertToCode method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct TranslateToCodeParams {
+pub struct ConvertToCodeParams {
 	/// Zero or more column filters to apply
 	pub column_filters: Vec<ColumnFilter>,
 
@@ -1099,8 +1112,8 @@ pub struct TranslateToCodeParams {
 	/// Zero or more sort keys to apply
 	pub sort_keys: Vec<ColumnSortKey>,
 
-	/// The code syntax to use for translation
-	pub code_syntax: String,
+	/// The code syntax to use for conversion
+	pub code_syntax_name: CodeSyntaxName,
 }
 
 /// Parameters for the SetColumnFilters method.
@@ -1194,19 +1207,19 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "export_data_selection")]
 	ExportDataSelection(ExportDataSelectionParams),
 
-	/// Translates the current data view into a code snippet.
+	/// Converts the current data view into a code snippet.
 	///
-	/// Translate filters and sort keys as code in different syntaxes like
+	/// Converts filters and sort keys as code in different syntaxes like
 	/// pandas, polars, data.table, dplyr
-	#[serde(rename = "translate_to_code")]
-	TranslateToCode(TranslateToCodeParams),
+	#[serde(rename = "convert_to_code")]
+	ConvertToCode(ConvertToCodeParams),
 
-	/// Get code syntaxes supported for code translation
+	/// Suggest code syntax for code conversion
 	///
-	/// Get all available code syntaxes supported for translation for a data
-	/// view
-	#[serde(rename = "get_code_syntaxes")]
-	GetCodeSyntaxes,
+	/// Suggest code syntax for code conversion based on the current backend
+	/// state
+	#[serde(rename = "suggest_code_syntax")]
+	SuggestCodeSyntax,
 
 	/// Set column filters to select subset of table columns
 	///
@@ -1265,10 +1278,10 @@ pub enum DataExplorerBackendReply {
 	ExportDataSelectionReply(ExportedData),
 
 	/// Code snippet for the data view
-	TranslateToCodeReply(ExportedCode),
+	ConvertToCodeReply(ConvertedCode),
 
-	/// Code syntaxes available for export
-	GetCodeSyntaxesReply(CodeSyntaxOptions),
+	/// Syntax to use for code conversion
+	SuggestCodeSyntaxReply(CodeSyntaxName),
 
 	/// Reply for the set_column_filters method (no result)
 	SetColumnFiltersReply(),
