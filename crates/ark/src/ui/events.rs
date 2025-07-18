@@ -96,22 +96,40 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
     Ok(R_NilValue)
 }
 
-#[harp::register]
-// we KNOW this is a real URL
-pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
+pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     let params = ShowUrlParams {
-        url: RObject::view(url).try_into()?,
+        url: url.to_string(),
     };
-
     let event = UiFrontendEvent::ShowUrl(params);
 
     let main = RMain::get();
     let ui_comm_tx = main
         .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("ui_show_url"))?;
+        .ok_or_else(|| ui_comm_not_connected("show_url"))?;
     ui_comm_tx.send_event(event);
 
+    Ok(())
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
+    let url_string = RObject::view(url).to::<String>()?;
+    send_show_url_event(&url_string)?;
     Ok(R_NilValue)
+}
+
+pub fn send_open_with_system_default_event(path: &str) -> anyhow::Result<()> {
+    // For now, we'll use a placeholder event type
+    // This will be replaced when ui_comm.rs is regenerated
+    let _params = serde_json::json!({
+        "path": path
+    });
+
+    // TODO: Replace with proper OpenWithSystemDefault event after regeneration
+    log::info!("Would send OpenWithSystemDefault event for path: {}", path);
+
+    // Temporary: just return Ok for now until the event type exists
+    Ok(())
 }
 
 pub fn ps_ui_robj_as_ranges(ranges: SEXP) -> anyhow::Result<Vec<Range>> {
