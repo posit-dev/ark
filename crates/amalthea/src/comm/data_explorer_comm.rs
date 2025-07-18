@@ -38,6 +38,20 @@ pub struct ExportedData {
 	pub format: ExportFormat
 }
 
+/// Code snippet for the data view
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConvertedCode {
+	/// Lines of code that implement filters and sort keys
+	pub converted_code: Vec<String>
+}
+
+/// Syntax to use for code conversion
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CodeSyntaxName {
+	/// The name of the code syntax, eg, pandas, polars, dplyr, etc.
+	pub code_syntax_name: String
+}
+
 /// The result of applying filters to a table
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FilterResult {
@@ -537,7 +551,10 @@ pub struct SupportedFeatures {
 	pub set_sort_columns: SetSortColumnsFeatures,
 
 	/// Support for 'export_data_selection' RPC and its features
-	pub export_data_selection: ExportDataSelectionFeatures
+	pub export_data_selection: ExportDataSelectionFeatures,
+
+	/// Support for 'convert_to_code' RPC and its features
+	pub convert_to_code: ConvertToCodeFeatures
 }
 
 /// Feature flags for 'search_schema' RPC
@@ -598,6 +615,16 @@ pub struct ExportDataSelectionFeatures {
 pub struct SetSortColumnsFeatures {
 	/// The support status for this RPC method
 	pub support_status: SupportStatus
+}
+
+/// Feature flags for convert to code RPC
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConvertToCodeFeatures {
+	/// The support status for this RPC method
+	pub support_status: SupportStatus,
+
+	/// The syntaxes for converted code
+	pub code_syntaxes: Option<Vec<CodeSyntaxName>>
 }
 
 /// A selection on the data grid, for copying to the clipboard or other
@@ -1073,6 +1100,22 @@ pub struct ExportDataSelectionParams {
 	pub format: ExportFormat,
 }
 
+/// Parameters for the ConvertToCode method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ConvertToCodeParams {
+	/// Zero or more column filters to apply
+	pub column_filters: Vec<ColumnFilter>,
+
+	/// Zero or more row filters to apply
+	pub row_filters: Vec<RowFilter>,
+
+	/// Zero or more sort keys to apply
+	pub sort_keys: Vec<ColumnSortKey>,
+
+	/// The code syntax to use for conversion
+	pub code_syntax_name: CodeSyntaxName,
+}
+
 /// Parameters for the SetColumnFilters method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SetColumnFiltersParams {
@@ -1164,6 +1207,20 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "export_data_selection")]
 	ExportDataSelection(ExportDataSelectionParams),
 
+	/// Converts the current data view into a code snippet.
+	///
+	/// Converts filters and sort keys as code in different syntaxes like
+	/// pandas, polars, data.table, dplyr
+	#[serde(rename = "convert_to_code")]
+	ConvertToCode(ConvertToCodeParams),
+
+	/// Suggest code syntax for code conversion
+	///
+	/// Suggest code syntax for code conversion based on the current backend
+	/// state
+	#[serde(rename = "suggest_code_syntax")]
+	SuggestCodeSyntax,
+
 	/// Set column filters to select subset of table columns
 	///
 	/// Set or clear column filters on table, replacing any previous filters
@@ -1219,6 +1276,12 @@ pub enum DataExplorerBackendReply {
 
 	/// Exported result
 	ExportDataSelectionReply(ExportedData),
+
+	/// Code snippet for the data view
+	ConvertToCodeReply(ConvertedCode),
+
+	/// Syntax to use for code conversion
+	SuggestCodeSyntaxReply(CodeSyntaxName),
 
 	/// Reply for the set_column_filters method (no result)
 	SetColumnFiltersReply(),
