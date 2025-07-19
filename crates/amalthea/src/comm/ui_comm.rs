@@ -292,6 +292,13 @@ pub struct ShowHtmlFileParams {
 	pub height: i64,
 }
 
+/// Parameters for the OpenWithSystem method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct OpenWithSystemParams {
+	/// The file path to open with the system default application
+	pub path: String,
+}
+
 /**
  * Backend RPC request types for the ui comm
  */
@@ -501,6 +508,10 @@ pub enum UiFrontendEvent {
 	/// Causes the HTML file to be shown in Positron.
 	#[serde(rename = "show_html_file")]
 	ShowHtmlFile(ShowHtmlFileParams),
+
+	/// Open a file or folder with the system default application
+	#[serde(rename = "open_with_system")]
+	OpenWithSystem(OpenWithSystemParams),
 
 	/// This event is used to signal that the stored messages the front-end
 	/// replays when constructing multi-output plots should be reset. This
