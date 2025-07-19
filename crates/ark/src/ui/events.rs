@@ -6,6 +6,7 @@
 //
 
 use amalthea::comm::ui_comm::OpenEditorParams;
+use amalthea::comm::ui_comm::OpenWithSystemParams;
 use amalthea::comm::ui_comm::OpenWorkspaceParams;
 use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::Range;
@@ -119,16 +120,17 @@ pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP
 }
 
 pub fn send_open_with_system_default_event(path: &str) -> anyhow::Result<()> {
-    // For now, we'll use a placeholder event type
-    // This will be replaced when ui_comm.rs is regenerated
-    let _params = serde_json::json!({
-        "path": path
-    });
+    let params = OpenWithSystemParams {
+        path: path.to_string(),
+    };
+    let event = UiFrontendEvent::OpenWithSystem(params);
 
-    // TODO: Replace with proper OpenWithSystemDefault event after regeneration
-    log::info!("Would send OpenWithSystemDefault event for path: {}", path);
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("open_with_system"))?;
+    ui_comm_tx.send_event(event);
 
-    // Temporary: just return Ok for now until the event type exists
     Ok(())
 }
 
