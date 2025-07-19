@@ -6,6 +6,7 @@
 //
 
 use harp::object::RObject;
+use harp::utils::r_normalize_path;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
 
@@ -55,8 +56,9 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {
 
     // This is probably a file path? Send to the front end and ask for system
     // default opener.
-    log::trace!("Treating as file path");
-    send_open_with_system_default_event(&url_string)?;
+    log::trace!("Treating as file path and asking system to open");
+    let path = r_normalize_path(url.into())?;
+    send_open_with_system_default_event(&path)?;
     Ok(Rf_ScalarLogical(1))
 }
 
