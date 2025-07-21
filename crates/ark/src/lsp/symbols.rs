@@ -290,11 +290,7 @@ fn collect_call_arguments(
     };
 
     let mut cursor = node.walk();
-    for arg in arguments.children(&mut cursor) {
-        if arg.kind() != "argument" {
-            continue;
-        }
-
+    for arg in arguments.children_by_field_name("argument", &mut cursor) {
         let Some(arg_value) = arg.child_by_field_name("value") else {
             continue;
         };
