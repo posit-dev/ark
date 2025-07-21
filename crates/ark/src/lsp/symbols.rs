@@ -295,19 +295,22 @@ fn collect_call_arguments(
             continue;
         };
 
-        // Recurse into arguments. They might be a braced list, another call
-        // that might contain functions, etc.
-        collect_symbols(&arg_value, contents, 0, symbols)?;
-
-        if arg_value.kind() == "function_definition" {
-            if let Some(arg_fun) = arg.child_by_field_name("name") {
-                // If this is a named function, collect it as a method
-                collect_method(&arg_fun, &arg_value, contents, symbols)?;
-            } else {
-                // Otherwise, just recurse into the function
-                let body = arg_value.child_by_field_name("body").into_result()?;
-                collect_symbols(&body, contents, 0, symbols)?;
-            };
+        match arg_value.kind() {
+            "function_definition" => {
+                if let Some(arg_fun) = arg.child_by_field_name("name") {
+                    // If this is a named function, collect it as a method
+                    collect_method(&arg_fun, &arg_value, contents, symbols)?;
+                } else {
+                    // Otherwise, just recurse into the function
+                    let body = arg_value.child_by_field_name("body").into_result()?;
+                    collect_symbols(&body, contents, 0, symbols)?;
+                };
+            },
+            _ => {
+                // Recurse into arguments. They might be a braced list, another call
+                // that might contain functions, etc.
+                collect_symbols(&arg_value, contents, 0, symbols)?;
+            },
         }
     }
 
