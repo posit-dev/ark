@@ -1,0 +1,42 @@
+---
+source: crates/ark/src/lsp/indexer.rs
+expression: entries
+---
+[
+    IndexEntry {
+        key: "my_function",
+        range: Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 11,
+            },
+        },
+        data: Function {
+            name: "my_function",
+            arguments: [
+                "a",
+                "b",
+            ],
+        },
+    },
+    IndexEntry {
+        key: "my_variable",
+        range: Range {
+            start: Position {
+                line: 11,
+                character: 0,
+            },
+            end: Position {
+                line: 11,
+                character: 11,
+            },
+        },
+        data: Variable {
+            name: "my_variable",
+        },
+    },
+]

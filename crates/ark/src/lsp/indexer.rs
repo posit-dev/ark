@@ -29,6 +29,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
+use crate::treesitter::TSQuery;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -38,6 +39,10 @@ pub enum IndexEntryData {
     Function {
         name: String,
         arguments: Vec<String>,
+    },
+    // Like Function but not used for completions yet
+    Method {
+        name: String,
     },
     Section {
         level: usize,
@@ -198,127 +203,176 @@ fn index_document(document: &Document, path: &Path) {
 
     let root = ast.root_node();
     let mut cursor = root.walk();
+    let mut entries = Vec::new();
+
     for node in root.children(&mut cursor) {
-        if let Err(err) = match index_node(path, contents, &node) {
-            Ok(Some(entry)) => insert(path, entry),
-            Ok(None) => Ok(()),
-            Err(err) => Err(err),
-        } {
+        if let Err(err) = index_node(path, contents, &node, &mut entries) {
             lsp::log_error!("Can't index document: {err:?}");
         }
     }
-}
 
-fn index_node(path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<Option<IndexEntry>> {
-    if let Ok(Some(entry)) = index_function(path, contents, node) {
-        return Ok(Some(entry));
-    }
-
-    // Should be after function indexing as this is a more general case
-    if let Ok(Some(entry)) = index_variable(path, contents, node) {
-        return Ok(Some(entry));
-    }
-
-    if let Ok(Some(entry)) = index_comment(path, contents, node) {
-        return Ok(Some(entry));
-    }
-
-    Ok(None)
-}
-
-fn index_function(
-    _path: &Path,
-    contents: &Rope,
-    node: &Node,
-) -> anyhow::Result<Option<IndexEntry>> {
-    // Check for assignment.
-    matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    )
-    .into_result()?;
-
-    // Check for identifier on left-hand side.
-    let lhs = node.child_by_field_name("lhs").into_result()?;
-    lhs.is_identifier_or_string().into_result()?;
-
-    // Check for a function definition on the right-hand side.
-    let rhs = node.child_by_field_name("rhs").into_result()?;
-    rhs.is_function_definition().into_result()?;
-
-    let name = contents.node_slice(&lhs)?.to_string();
-    let mut arguments = Vec::new();
-
-    // Get the parameters node.
-    let parameters = rhs.child_by_field_name("parameters").into_result()?;
-
-    // Iterate through each, and get the names.
-    let mut cursor = parameters.walk();
-    for child in parameters.children(&mut cursor) {
-        let name = unwrap!(child.child_by_field_name("name"), None => continue);
-        if name.is_identifier() {
-            let name = contents.node_slice(&name)?.to_string();
-            arguments.push(name);
+    for entry in entries {
+        if let Err(err) = insert(path, entry) {
+            lsp::log_error!("Can't insert index entry: {err:?}");
         }
     }
-
-    let start = convert_point_to_position(contents, lhs.start_position());
-    let end = convert_point_to_position(contents, lhs.end_position());
-
-    Ok(Some(IndexEntry {
-        key: name.clone(),
-        range: Range { start, end },
-        data: IndexEntryData::Function {
-            name: name.clone(),
-            arguments,
-        },
-    }))
 }
 
-fn index_variable(
-    _path: &Path,
+fn index_node(
+    path: &Path,
     contents: &Rope,
     node: &Node,
-) -> anyhow::Result<Option<IndexEntry>> {
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
+    index_assignment(path, contents, node, entries)?;
+    index_comment(path, contents, node, entries)?;
+    Ok(())
+}
+
+fn index_assignment(
+    path: &Path,
+    contents: &Rope,
+    node: &Node,
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
     if !matches!(
         node.node_type(),
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
             NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
     ) {
-        return Ok(None);
+        return Ok(());
     }
 
-    let Some(lhs) = node.child_by_field_name("lhs") else {
-        return Ok(None);
+    let lhs = match node.child_by_field_name("lhs") {
+        Some(lhs) => lhs,
+        None => return Ok(()),
     };
+
+    let Some(rhs) = node.child_by_field_name("rhs") else {
+        return Ok(());
+    };
+
+    if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
+        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
+    {
+        index_r6_class_methods(path, contents, &rhs, entries)?;
+        // Fallthrough to index the variable to which the R6 class is assigned
+    }
 
     let lhs_text = contents.node_slice(&lhs)?.to_string();
 
-    // Super hacky but let's wait until the typed API to do better
+    // The method matching is super hacky but let's wait until the typed API to
+    // do better
     if !lhs_text.starts_with("method(") && !lhs.is_identifier_or_string() {
-        return Ok(None);
+        return Ok(());
     }
 
-    let start = convert_point_to_position(contents, lhs.start_position());
-    let end = convert_point_to_position(contents, lhs.end_position());
+    let Some(rhs) = node.child_by_field_name("rhs") else {
+        return Ok(());
+    };
 
-    Ok(Some(IndexEntry {
-        key: lhs_text.clone(),
-        range: Range { start, end },
-        data: IndexEntryData::Variable { name: lhs_text },
-    }))
+    if rhs.is_function_definition() {
+        // If RHS is a function definition, emit a function symbol
+        let mut arguments = Vec::new();
+        if let Some(parameters) = rhs.child_by_field_name("parameters") {
+            let mut cursor = parameters.walk();
+            for child in parameters.children(&mut cursor) {
+                let name = unwrap!(child.child_by_field_name("name"), None => continue);
+                if name.is_identifier() {
+                    let name = contents.node_slice(&name)?.to_string();
+                    arguments.push(name);
+                }
+            }
+        }
+
+        // Note that unlike document symbols whose ranges cover the whole entity
+        // they represent, the range of workspace symbols only cover the identifers
+        let start = convert_point_to_position(contents, lhs.start_position());
+        let end = convert_point_to_position(contents, lhs.end_position());
+
+        entries.push(IndexEntry {
+            key: lhs_text.clone(),
+            range: Range { start, end },
+            data: IndexEntryData::Function {
+                name: lhs_text,
+                arguments,
+            },
+        });
+    } else {
+        // Otherwise, emit variable
+        let start = convert_point_to_position(contents, lhs.start_position());
+        let end = convert_point_to_position(contents, lhs.end_position());
+        entries.push(IndexEntry {
+            key: lhs_text.clone(),
+            range: Range { start, end },
+            data: IndexEntryData::Variable { name: lhs_text },
+        });
+    }
+
+    Ok(())
 }
 
-fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<Option<IndexEntry>> {
+fn index_r6_class_methods(
+    _path: &Path,
+    contents: &Rope,
+    node: &Node,
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
+    // Tree-sitter query to match individual methods in R6Class public/private lists
+    let query_str = r#"
+    (argument
+      name: (identifier) @access
+      value: (call
+        function: (identifier) @_list_fn
+        arguments: (arguments
+          (argument
+            name: (identifier) @method_name
+            value: (function_definition) @method_fn
+          )
+        )
+      )
+      (#match? @access "public|private")
+      (#eq? @_list_fn "list")
+    )
+    "#;
+    let mut ts_query = TSQuery::new(query_str)?;
+
+    // We'll switch from Rope to String in the near future so let's not
+    // worry about this conversion now
+    let contents_str = contents.to_string();
+
+    for method_node in ts_query.captures_for(*node, "method_name", contents_str.as_bytes()) {
+        let name = contents.node_slice(&method_node)?.to_string();
+        let start = convert_point_to_position(contents, method_node.start_position());
+        let end = convert_point_to_position(contents, method_node.end_position());
+
+        entries.push(IndexEntry {
+            key: name.clone(),
+            range: Range { start, end },
+            data: IndexEntryData::Method { name },
+        });
+    }
+
+    Ok(())
+}
+
+fn index_comment(
+    _path: &Path,
+    contents: &Rope,
+    node: &Node,
+    entries: &mut Vec<IndexEntry>,
+) -> anyhow::Result<()> {
     // check for comment
-    node.is_comment().into_result()?;
+    if !node.is_comment() {
+        return Ok(());
+    }
 
     // see if it looks like a section
     let comment = contents.node_slice(node)?.to_string();
-    let matches = RE_COMMENT_SECTION
-        .captures(comment.as_str())
-        .into_result()?;
+    let matches = match RE_COMMENT_SECTION.captures(comment.as_str()) {
+        Some(m) => m,
+        None => return Ok(()),
+    };
 
     let level = matches.get(1).into_result()?;
     let title = matches.get(2).into_result()?;
@@ -328,15 +382,154 @@ fn index_comment(_path: &Path, contents: &Rope, node: &Node) -> anyhow::Result<O
 
     // skip things that look like knitr output
     if title.starts_with("----") {
-        return Ok(None);
+        return Ok(());
     }
 
     let start = convert_point_to_position(contents, node.start_position());
     let end = convert_point_to_position(contents, node.end_position());
 
-    Ok(Some(IndexEntry {
+    entries.push(IndexEntry {
         key: title.clone(),
         range: Range::new(start, end),
         data: IndexEntryData::Section { level, title },
-    }))
+    });
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use insta::assert_debug_snapshot;
+
+    use super::*;
+    use crate::lsp::documents::Document;
+
+    macro_rules! test_index {
+        ($code:expr) => {
+            let doc = Document::new($code, None);
+            let path = PathBuf::from("/path/to/file.R");
+            let root = doc.ast.root_node();
+            let mut cursor = root.walk();
+
+            let mut entries = vec![];
+            for node in root.children(&mut cursor) {
+                let _ = index_node(&path, &doc.contents, &node, &mut entries);
+            }
+            assert_debug_snapshot!(entries);
+        };
+    }
+
+    // Note that unlike document symbols whose ranges cover the whole entity
+    // they represent, the range of workspace symbols only cover the identifers
+
+    #[test]
+    fn test_index_function() {
+        test_index!(
+            r#"
+my_function <- function(a, b = 1) {
+  a + b
+
+  # These are not indexed as workspace symbol
+  inner <- function() {
+    2
+  }
+  inner_var <- 3
+}
+
+my_variable <- 1
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_variable() {
+        test_index!(
+            r#"
+x <- 10
+y = "hello"
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_s7_methods() {
+        test_index!(
+            r#"
+Class <- new_class("Class")
+generic <- new_generic("generic", "arg",
+  function(arg) {
+    S7_dispatch()
+  }
+)
+method(generic, Class) <- function(arg) {
+  NULL
+}
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_comment_section() {
+        test_index!(
+            r#"
+# Section 1 ----
+x <- 10
+
+## Subsection ======
+y <- 20
+
+x <- function() {
+    # This inner section is not indexed ----
+}
+
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_r6class() {
+        test_index!(
+            r#"
+class <- R6Class(
+    public = list(
+        initialize = function() {
+            1
+        },
+        public_method = function() {
+            2
+        },
+        public_variable = NA
+    ),
+    private = list(
+        private_method = function() {
+            1
+        },
+        private_variable = NA
+    ),
+    other = list(
+        other_method = function() {
+            1
+        }
+    )
+)
+"#
+        );
+    }
+
+    #[test]
+    fn test_index_r6class_namespaced() {
+        test_index!(
+            r#"
+class <- R6::R6Class(
+    public = list(
+        initialize = function() {
+            1
+        },
+    )
+)
+"#
+        );
+    }
 }

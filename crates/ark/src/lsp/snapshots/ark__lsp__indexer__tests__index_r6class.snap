@@ -1,0 +1,70 @@
+---
+source: crates/ark/src/lsp/indexer.rs
+expression: entries
+---
+[
+    IndexEntry {
+        key: "initialize",
+        range: Range {
+            start: Position {
+                line: 3,
+                character: 8,
+            },
+            end: Position {
+                line: 3,
+                character: 18,
+            },
+        },
+        data: Method {
+            name: "initialize",
+        },
+    },
+    IndexEntry {
+        key: "public_method",
+        range: Range {
+            start: Position {
+                line: 6,
+                character: 8,
+            },
+            end: Position {
+                line: 6,
+                character: 21,
+            },
+        },
+        data: Method {
+            name: "public_method",
+        },
+    },
+    IndexEntry {
+        key: "private_method",
+        range: Range {
+            start: Position {
+                line: 12,
+                character: 8,
+            },
+            end: Position {
+                line: 12,
+                character: 22,
+            },
+        },
+        data: Method {
+            name: "private_method",
+        },
+    },
+    IndexEntry {
+        key: "class",
+        range: Range {
+            start: Position {
+                line: 1,
+                character: 0,
+            },
+            end: Position {
+                line: 1,
+                character: 5,
+            },
+        },
+        data: Variable {
+            name: "class",
+        },
+    },
+]

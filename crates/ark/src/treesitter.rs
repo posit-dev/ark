@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use tree_sitter::Node;
 
 use crate::lsp::traits::node::NodeExt;
@@ -465,6 +466,38 @@ pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> b
     fun == name
 }
 
+pub(crate) fn node_is_namespaced_call(
+    node: &Node,
+    namespace: &str,
+    name: &str,
+    contents: &ropey::Rope,
+) -> bool {
+    if !node.is_call() {
+        return false;
+    }
+
+    let Some(op) = node.child_by_field_name("function") else {
+        return false;
+    };
+    if !op.is_namespace_operator() {
+        return false;
+    }
+
+    let (Some(node_namespace), Some(node_name)) =
+        (op.child_by_field_name("lhs"), op.child_by_field_name("rhs"))
+    else {
+        return false;
+    };
+    let Some(node_namespace) = node_text(&node_namespace, contents) else {
+        return false;
+    };
+    let Some(node_name) = node_text(&node_name, contents) else {
+        return false;
+    };
+
+    node_namespace == namespace && node_name == name
+}
+
 /// This function takes a [Node] that you suspect might be in a call argument position
 /// and walks up the tree, looking for the containing call node
 ///
@@ -588,6 +621,45 @@ pub(crate) fn point_end_of_previous_row(
         // We're at the very beginning of the document, can't go back further
         point.column = 0;
         point
+    }
+}
+
+pub(crate) struct TSQuery {
+    query: tree_sitter::Query,
+    cursor: tree_sitter::QueryCursor,
+}
+
+impl TSQuery {
+    pub(crate) fn new(query_str: &str) -> anyhow::Result<Self> {
+        let language = &tree_sitter_r::LANGUAGE.into();
+        let query = tree_sitter::Query::new(language, query_str)
+            .map_err(|err| anyhow!("Failed to compile query: {err}"))?;
+
+        let cursor = tree_sitter::QueryCursor::new();
+
+        Ok(Self { query, cursor })
+    }
+
+    /// Match query against `contents` and collect all nodes captured with the
+    /// given capture name
+    pub(crate) fn captures_for<'tree>(
+        &mut self,
+        node: tree_sitter::Node<'tree>,
+        capture_name: &str,
+        contents: &[u8],
+    ) -> Vec<tree_sitter::Node<'tree>> {
+        let mut result = Vec::new();
+
+        for m in self.cursor.matches(&self.query, node, contents) {
+            for cap in m.captures.iter() {
+                let cap_name = &self.query.capture_names()[cap.index as usize];
+                if *cap_name == capture_name {
+                    result.push(cap.node);
+                }
+            }
+        }
+
+        result
     }
 }
 

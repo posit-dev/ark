@@ -93,10 +93,25 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
                     container_name: None,
                 });
             },
+
             IndexEntryData::Variable { name } => {
                 info.push(SymbolInformation {
                     name: name.clone(),
                     kind: SymbolKind::VARIABLE,
+                    location: Location {
+                        uri: Url::from_file_path(path).unwrap(),
+                        range: entry.range,
+                    },
+                    tags: None,
+                    deprecated: None,
+                    container_name: None,
+                });
+            },
+
+            IndexEntryData::Method { name } => {
+                info.push(SymbolInformation {
+                    name: name.clone(),
+                    kind: SymbolKind::METHOD,
                     location: Location {
                         uri: Url::from_file_path(path).unwrap(),
                         range: entry.range,
