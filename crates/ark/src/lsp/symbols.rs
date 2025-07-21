@@ -448,7 +448,7 @@ fn collect_assignment(
     }
 
     if ctx.top_level || ctx.include_assignments_in_blocks {
-        // Collect as generic object, but only if we're at top-level. Assigned
+        // Collect as generic object, but typically only if we're at top-level. Assigned
         // objects in nested functions and blocks cause the outline to become
         // too busy.
         let name = contents.node_slice(&lhs)?.to_string();
