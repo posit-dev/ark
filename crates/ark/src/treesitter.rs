@@ -590,3 +590,53 @@ pub(crate) fn point_end_of_previous_row(
         point
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ropey::Rope;
+    use tree_sitter::Point;
+
+    use super::*;
+
+    #[test]
+    fn test_point_end_of_previous_row() {
+        let contents = Rope::from_str("hello world\nfoo bar\nbaz");
+        let point = Point { row: 2, column: 1 };
+        let result = point_end_of_previous_row(point, &contents);
+        assert_eq!(result, Point { row: 1, column: 7 });
+    }
+
+    #[test]
+    fn test_point_end_of_previous_row_first_row() {
+        let contents = Rope::from_str("hello world\nfoo bar\nbaz");
+        let point = Point { row: 0, column: 5 };
+        let result = point_end_of_previous_row(point, &contents);
+        assert_eq!(result, Point { row: 0, column: 0 });
+    }
+
+    #[test]
+    fn test_point_end_of_previous_row_empty_previous_line() {
+        let contents = Rope::from_str("hello\n\nworld");
+
+        let point = Point { row: 2, column: 1 };
+        let result = point_end_of_previous_row(point, &contents);
+        assert_eq!(result, Point { row: 1, column: 0 });
+
+        let point = Point { row: 1, column: 1 };
+        let result = point_end_of_previous_row(point, &contents);
+        assert_eq!(result, Point { row: 0, column: 5 });
+    }
+
+    #[test]
+    fn test_point_end_of_previous_row_single_line() {
+        let contents = Rope::from_str("hello world");
+
+        let point = Point { row: 0, column: 0 };
+        let result = point_end_of_previous_row(point, &contents);
+        assert_eq!(result, Point { row: 0, column: 0 });
+
+        let point = Point { row: 0, column: 5 };
+        let result = point_end_of_previous_row(point, &contents);
+        assert_eq!(result, Point { row: 0, column: 0 });
+    }
+}
