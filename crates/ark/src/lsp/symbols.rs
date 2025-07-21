@@ -849,4 +849,29 @@ a <- function() {
         ));
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![]);
     }
+
+    #[test]
+    fn test_symbol_nested_assignments_enabled() {
+        let doc = Document::new(
+            "
+local({
+  inner1 <- 1
+})
+a <- function() {
+  inner2 <- 2
+  inner3 <- function() 3
+}
+",
+            None,
+        );
+        let node = doc.ast.root_node();
+
+        let ctx = &mut CollectContext::new();
+        ctx.include_assignments_in_blocks = true;
+
+        let mut symbols = Vec::new();
+        collect_symbols(ctx, &node, &doc.contents, 0, &mut symbols).unwrap();
+
+        insta::assert_debug_snapshot!(symbols);
+    }
 }
