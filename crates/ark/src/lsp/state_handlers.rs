@@ -39,6 +39,7 @@ use url::Url;
 use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
+use crate::lsp::config::SETTINGS;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::indexer;
@@ -274,8 +275,6 @@ pub(crate) fn did_change_formatting_options(
     // `trim_final_newlines`
     // `insert_final_newline`
 }
-
-use crate::lsp::config::SETTINGS;
 
 async fn update_config(
     _uris: Vec<Url>,

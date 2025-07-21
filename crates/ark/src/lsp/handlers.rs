@@ -103,9 +103,7 @@ pub(crate) async fn handle_initialized(
         // changed by extensions or by the user without changing the actual
         // underlying setting. Unfortunately we don't receive updates in that case.
 
-        use crate::lsp::config::SETTINGS;
-
-        for setting in SETTINGS {
+        for setting in crate::lsp::config::SETTINGS {
             regs.push(Registration {
                 id: uuid::Uuid::new_v4().to_string(),
                 method: String::from("workspace/didChangeConfiguration"),
