@@ -13,7 +13,7 @@ use libr::SEXP;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlParams;
 use crate::interface::RMain;
-use crate::ui::events::send_open_with_system_default_event;
+use crate::ui::events::send_open_with_system_event;
 use crate::ui::events::send_show_url_event;
 
 #[harp::register]
@@ -58,7 +58,7 @@ unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {
     // default opener.
     log::trace!("Treating as file path and asking system to open");
     let path = r_normalize_path(url.into())?;
-    send_open_with_system_default_event(&path)?;
+    send_open_with_system_event(&path)?;
     Ok(Rf_ScalarLogical(1))
 }
 

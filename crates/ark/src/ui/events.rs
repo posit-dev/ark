@@ -119,7 +119,7 @@ pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP
     Ok(R_NilValue)
 }
 
-pub fn send_open_with_system_default_event(path: &str) -> anyhow::Result<()> {
+pub fn send_open_with_system_event(path: &str) -> anyhow::Result<()> {
     let params = OpenWithSystemParams {
         path: path.to_string(),
     };
