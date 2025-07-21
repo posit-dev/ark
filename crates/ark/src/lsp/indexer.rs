@@ -285,6 +285,8 @@ fn index_assignment(
             }
         }
 
+        // Note that unlike document symbols whose ranges cover the whole entity
+        // they represent, the range of workspace symbols only cover the identifers
         let start = convert_point_to_position(contents, lhs.start_position());
         let end = convert_point_to_position(contents, lhs.end_position());
 
