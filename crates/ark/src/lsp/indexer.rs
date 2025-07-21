@@ -255,7 +255,8 @@ fn index_assignment(
     if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
         crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
     {
-        index_r6_class(path, contents, &rhs, entries)?;
+        index_r6_class_methods(path, contents, &rhs, entries)?;
+        // Fallthrough to index the variable to which the R6 class is assigned
     }
 
     let lhs_text = contents.node_slice(&lhs)?.to_string();
@@ -309,7 +310,7 @@ fn index_assignment(
     Ok(())
 }
 
-fn index_r6_class(
+fn index_r6_class_methods(
     _path: &Path,
     contents: &Rope,
     node: &Node,
