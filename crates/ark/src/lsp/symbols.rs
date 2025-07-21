@@ -265,16 +265,89 @@ fn collect_call(
     let Some(callee) = node.child_by_field_name("function") else {
         return Ok(());
     };
-    if !callee.is_identifier() {
+
+    if callee.is_identifier() {
+        let fun_symbol = contents.node_slice(&callee)?.to_string();
+
+        match fun_symbol.as_str() {
+            "test_that" => return collect_call_test_that(node, contents, symbols),
+            _ => {}, // fallthrough
+        }
+    }
+
+    collect_call_arguments(node, contents, symbols)?;
+
+    Ok(())
+}
+
+fn collect_call_arguments(
+    node: &Node,
+    contents: &Rope,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return Ok(());
+    };
+
+    let mut cursor = node.walk();
+    for arg in arguments.children_by_field_name("argument", &mut cursor) {
+        let Some(arg_value) = arg.child_by_field_name("value") else {
+            continue;
+        };
+
+        match arg_value.kind() {
+            "function_definition" => {
+                if let Some(arg_fun) = arg.child_by_field_name("name") {
+                    // If this is a named function, collect it as a method
+                    collect_method(&arg_fun, &arg_value, contents, symbols)?;
+                } else {
+                    // Otherwise, just recurse into the function
+                    let body = arg_value.child_by_field_name("body").into_result()?;
+                    collect_symbols(&body, contents, 0, symbols)?;
+                };
+            },
+            _ => {
+                // Recurse into arguments. They might be a braced list, another call
+                // that might contain functions, etc.
+                collect_symbols(&arg_value, contents, 0, symbols)?;
+            },
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_method(
+    arg_fun: &Node,
+    arg_value: &Node,
+    contents: &Rope,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    if !arg_fun.is_identifier_or_string() {
         return Ok(());
     }
+    let arg_name_str = contents.node_slice(&arg_fun)?.to_string();
 
-    let fun_symbol = contents.node_slice(&callee)?.to_string();
+    let start = convert_point_to_position(contents, arg_value.start_position());
+    let end = convert_point_to_position(contents, arg_value.end_position());
 
-    match fun_symbol.as_str() {
-        "test_that" => collect_call_test_that(node, contents, symbols)?,
-        _ => {},
-    }
+    let body = arg_value.child_by_field_name("body").into_result()?;
+    let mut children = vec![];
+    collect_symbols(&body, contents, 0, &mut children)?;
+
+    let mut symbol = new_symbol_node(
+        arg_name_str,
+        SymbolKind::METHOD,
+        Range { start, end },
+        children,
+    );
+
+    // Don't include whole function as detail as the body often doesn't
+    // provide useful information and only make the outline more busy (with
+    // curly braces, newline characters, etc).
+    symbol.detail = Some(String::from("function()"));
+
+    symbols.push(symbol);
 
     Ok(())
 }
@@ -328,32 +401,36 @@ fn collect_assignment(
     contents: &Rope,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
-    // Check for assignment
-    matches!(
-        node.node_type(),
-        NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
-            NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)
-    )
-    .into_result()?;
+    let (NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
+    NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment)) = node.node_type()
+    else {
+        return Ok(());
+    };
 
-    // check for lhs, rhs
-    let lhs = node.child_by_field_name("lhs").into_result()?;
-    let rhs = node.child_by_field_name("rhs").into_result()?;
+    let (Some(lhs), Some(rhs)) = (
+        node.child_by_field_name("lhs"),
+        node.child_by_field_name("rhs"),
+    ) else {
+        return Ok(());
+    };
 
-    // check for identifier on lhs, function on rhs
+    // If a function, collect symbol as function
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
-
     if function {
         return collect_assignment_with_function(node, contents, symbols);
     }
 
-    // otherwise, just index as generic object
+    // Otherwise, collect as generic object
     let name = contents.node_slice(&lhs)?.to_string();
 
     let start = convert_point_to_position(contents, lhs.start_position());
     let end = convert_point_to_position(contents, lhs.end_position());
 
-    let symbol = new_symbol(name, SymbolKind::VARIABLE, Range { start, end });
+    // Now recurse into RHS
+    let mut children = Vec::new();
+    collect_symbols(&rhs, contents, 0, &mut children)?;
+
+    let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
     symbols.push(symbol);
 
     Ok(())
@@ -681,6 +758,78 @@ test_that('foo', {
 test_that('bar', {
   1
 })
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_call_methods() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+list(
+    foo = function() {
+        1
+        # nested section ----
+        nested <- function() {}
+    }, # matched
+    function() {
+        2
+        # `nested` is a symbol even if the unnamed method is not
+        nested <- function () {
+    }
+    }, # not matched
+    bar = function() {
+        3
+    }, # matched
+    baz = (function() {
+        4
+    }) # not matched
+)
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_call_arguments() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+local({
+    a <- function() {
+        1
+    }
+})
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_rhs_braced_list() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+foo <- {
+    bar <- function() {}
+}
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_rhs_methods() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# section ----
+class <- r6::r6class(
+  'class',
+  public = list(
+    initialize = function() 'initialize',
+    foo = function() 'foo'
+  ),
+  private = list(
+    bar = function() 'bar'
+  )
+)
 "
         ));
     }
