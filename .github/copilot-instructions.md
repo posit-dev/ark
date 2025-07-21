@@ -22,3 +22,5 @@ judgement to produce the clearest code organization.
 
  Keep the main logic as unnested as possible. Favour Rust's `let ... else`
  syntax to return early or continue a loop in the `else` clause, over `if let`.
+
+Always prefer importing with `use` instead of qualifying with `::`, unless specifically requested in these instructions or by the user, or you see existing `::` usages in the file you're editing.
