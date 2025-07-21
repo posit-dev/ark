@@ -9,7 +9,6 @@
 
 use std::result::Result::Ok;
 
-use anyhow::anyhow;
 use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::DocumentSymbol;
@@ -28,11 +27,10 @@ use crate::lsp::indexer::IndexEntryData;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::rope::RopeExt;
 use crate::lsp::traits::string::StringExt;
+use crate::treesitter::point_end_of_previous_row;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
-
-type StoreStack = Vec<(usize, Option<DocumentSymbol>, Vec<DocumentSymbol>)>;
 
 fn new_symbol(name: String, kind: SymbolKind, range: Range) -> DocumentSymbol {
     DocumentSymbol {
@@ -114,6 +112,16 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
     Ok(info)
 }
 
+/// Represents a section in the document with its title, level, range, and children
+#[derive(Debug)]
+struct Section {
+    title: String,
+    level: usize,
+    start_position: tree_sitter::Point,
+    end_position: Option<tree_sitter::Point>,
+    children: Vec<DocumentSymbol>,
+}
+
 pub(crate) fn document_symbols(
     state: &WorldState,
     params: &DocumentSymbolParams,
@@ -123,158 +131,133 @@ pub(crate) fn document_symbols(
     let ast = &document.ast;
     let contents = &document.contents;
 
-    let node = ast.root_node();
+    // Start walking from the root node
+    let root_node = ast.root_node();
+    let mut result = Vec::new();
 
-    // Index from the root
-    match index_node(&node, vec![], &contents) {
-        Ok(children) => Ok(children),
-        Err(err) => {
-            log::error!("Error indexing node: {err:?}");
-            return Ok(Vec::new());
-        },
+    // Extract and process all symbols from the AST
+    if let Err(err) = collect_symbols(&root_node, contents, 0, &mut result) {
+        log::error!("Failed to collect symbols: {err:?}");
+        return Ok(Vec::new());
     }
+
+    Ok(result)
 }
 
-fn index_node(
+/// Collect all document symbols from a node recursively
+fn collect_symbols(
     node: &Node,
-    store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<Vec<DocumentSymbol>> {
-    Ok(match node.node_type() {
-        // Handle comment sections in expression lists
+    current_level: usize,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    match node.node_type() {
         NodeType::Program | NodeType::BracedExpression => {
-            index_expression_list(&node, store, contents)?
+            collect_sections(node, contents, current_level, symbols)?;
         },
-        // Index assignments as object or function symbols
+
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
         NodeType::BinaryOperator(BinaryOperatorType::EqualsAssignment) => {
-            index_assignment(&node, store, contents)?
+            collect_assignment(node, contents, symbols)?;
         },
-        // Nothing to index. FIXME: We should handle argument lists, e.g. to
-        // index inside functions passed as arguments, or inside `test_that()`
-        // blocks.
-        _ => store,
-    })
+
+        // For all other node types, no symbols need to be added
+        _ => {},
+    }
+
+    Ok(())
 }
 
-// Handles root node and braced lists
-fn index_expression_list(
+fn collect_sections(
     node: &Node,
-    store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<Vec<DocumentSymbol>> {
+    current_level: usize,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    // In lists of expressions we track and collect section comments, then
+    // collect symbols from children nodes
+
     let mut cursor = node.walk();
 
-    // This is a stack of section levels and associated stores for comments of
-    // the type `# title ----`. It contains all currently active sections.
-    // The top-level section is the current store and has level 0. It should
-    // always be in the stack and popping it before we have finished indexing
-    // the whole expression list is a logic error.
-    let mut store_stack: StoreStack = vec![(0, None, store)];
+    // Track active sections at each level
+    let mut active_sections: Vec<Section> = Vec::new();
 
     for child in node.children(&mut cursor) {
         if let NodeType::Comment = child.node_type() {
-            store_stack = index_comments(&child, store_stack, contents)?;
-            continue;
-        }
+            let comment_text = contents.node_slice(&child)?.to_string();
 
-        // Get the current store to index the child subtree with.
-        // We restore the store in the stack right after that.
-        let Some((level, symbol, store)) = store_stack.pop() else {
-            return Err(anyhow!(
-                "Internal error: Store stack must have at least one element"
-            ));
-        };
-        let store = index_node(&child, store, contents)?;
-        store_stack.push((level, symbol, store));
-    }
+            // If we have a section comment, add it to our stack and close any sections if needed
+            if let Some((level, title)) = parse_comment_as_section(&comment_text) {
+                let absolute_level = current_level + level;
 
-    // Pop all sections from the stack, assigning their childrens and their
-    // parents along the way
-    while store_stack.len() > 0 {
-        if let Some(store) = store_stack_pop(&mut store_stack)? {
-            return Ok(store);
-        }
-    }
+                // Close any sections with equal or higher level
+                while !active_sections.is_empty() &&
+                    active_sections.last().unwrap().level >= absolute_level
+                {
+                    // Set end position for the section being closed
+                    if let Some(section) = active_sections.last_mut() {
+                        let pos = point_end_of_previous_row(child.start_position(), contents);
+                        section.end_position = Some(pos);
+                    }
+                    finalize_section(&mut active_sections, symbols, contents)?;
+                }
 
-    Err(anyhow!(
-        "Internal error: Store stack must have at least one element"
-    ))
-}
-
-// Pop store from the stack, recording its children and adding it as child to
-// its parent (which becomes the last element in the stack).
-fn store_stack_pop(store_stack: &mut StoreStack) -> anyhow::Result<Option<Vec<DocumentSymbol>>> {
-    let Some((_, symbol, last)) = store_stack.pop() else {
-        return Ok(None);
-    };
-
-    if let Some(mut sym) = symbol {
-        // Assign children to symbol
-        sym.children = Some(last);
-
-        let Some((_, _, ref mut parent_store)) = store_stack.last_mut() else {
-            return Err(anyhow!(
-                "Internal error: Store stack must have at least one element"
-            ));
-        };
-
-        // Store symbol as child of the last symbol on the stack
-        parent_store.push(sym);
-
-        Ok(None)
-    } else {
-        Ok(Some(last))
-    }
-}
-
-fn index_comments(
-    node: &Node,
-    mut store_stack: StoreStack,
-    contents: &Rope,
-) -> anyhow::Result<StoreStack> {
-    let comment_text = contents.node_slice(&node)?.to_string();
-
-    // Check if the comment starts with one or more '#' followed by any text and ends with 4+ punctuations
-    let Some((level, title)) = parse_comment_as_section(&comment_text) else {
-        return Ok(store_stack);
-    };
-
-    // Create a section symbol based on the parsed comment
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
-    let symbol = new_symbol(title, SymbolKind::STRING, Range { start, end });
-
-    // Now pop all sections still on the stack that have a higher or equal
-    // level. Because we pop sections with equal levels, i.e. siblings, we
-    // ensure that there is only one active section per level on the stack.
-    // That simplifies things because we need to assign popped sections to their
-    // parents and we can assume the relevant parent is always the next on the
-    // stack.
-    loop {
-        let Some((last_level, _, _)) = store_stack.last() else {
-            return Err(anyhow!("Unexpectedly reached the end of the store stack"));
-        };
-
-        if *last_level >= level {
-            if store_stack_pop(&mut store_stack)?.is_some() {
-                return Err(anyhow!("Unexpectedly reached the end of the store stack"));
+                let section = Section {
+                    title,
+                    level: absolute_level,
+                    start_position: child.start_position(),
+                    end_position: None,
+                    children: Vec::new(),
+                };
+                active_sections.push(section);
             }
+
             continue;
         }
 
-        break;
+        // If we get to this point, `child` is not a section comment.
+        // Recurse into child.
+
+        if active_sections.is_empty() {
+            // If no active section, extend current vector of symbols
+            collect_symbols(&child, contents, current_level, symbols)?;
+        } else {
+            // Otherwise create new store of symbols for the current section
+            let mut child_symbols = Vec::new();
+            collect_symbols(&child, contents, current_level, &mut child_symbols)?;
+
+            // Nest them inside last section
+            if !child_symbols.is_empty() {
+                active_sections
+                    .last_mut()
+                    .unwrap()
+                    .children
+                    .extend(child_symbols);
+            }
+        }
     }
 
-    store_stack.push((level, Some(symbol), vec![]));
-    Ok(store_stack)
+    // Close any remaining active sections
+    while !active_sections.is_empty() {
+        // Set end position to the parent node's end for remaining sections
+        if let Some(section) = active_sections.last_mut() {
+            let mut pos = node.end_position();
+            if pos.row > section.start_position.row {
+                pos = point_end_of_previous_row(pos, contents);
+            }
+            section.end_position = Some(pos);
+        }
+        finalize_section(&mut active_sections, symbols, contents)?;
+    }
+
+    Ok(())
 }
 
-fn index_assignment(
+fn collect_assignment(
     node: &Node,
-    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<Vec<DocumentSymbol>> {
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
     // Check for assignment
     matches!(
         node.node_type(),
@@ -291,7 +274,7 @@ fn index_assignment(
     let function = lhs.is_identifier_or_string() && rhs.is_function_definition();
 
     if function {
-        return index_assignment_with_function(node, store, contents);
+        return collect_assignment_with_function(node, contents, symbols);
     }
 
     // otherwise, just index as generic object
@@ -301,16 +284,16 @@ fn index_assignment(
     let end = convert_point_to_position(contents, lhs.end_position());
 
     let symbol = new_symbol(name, SymbolKind::VARIABLE, Range { start, end });
-    store.push(symbol);
+    symbols.push(symbol);
 
-    Ok(store)
+    Ok(())
 }
 
-fn index_assignment_with_function(
+fn collect_assignment_with_function(
     node: &Node,
-    mut store: Vec<DocumentSymbol>,
     contents: &Rope,
-) -> anyhow::Result<Vec<DocumentSymbol>> {
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
     // check for lhs, rhs
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
@@ -336,15 +319,45 @@ fn index_assignment_with_function(
 
     let body = rhs.child_by_field_name("body").into_result()?;
 
-    // At this point we increase the nesting level. Recurse into the function
-    // node with a new store of children nodes.
-    let children = index_node(&body, vec![], contents)?;
+    // Process the function body to extract child symbols
+    let mut children = Vec::new();
+    collect_symbols(&body, contents, 0, &mut children)?;
 
     let mut symbol = new_symbol_node(name, SymbolKind::FUNCTION, range, children);
     symbol.detail = Some(detail);
-    store.push(symbol);
+    symbols.push(symbol);
 
-    Ok(store)
+    Ok(())
+}
+
+/// Finalize a section by creating a symbol and adding it to the parent section or output
+fn finalize_section(
+    active_sections: &mut Vec<Section>,
+    symbols: &mut Vec<DocumentSymbol>,
+    contents: &Rope,
+) -> anyhow::Result<()> {
+    if let Some(section) = active_sections.pop() {
+        let start_pos = section.start_position;
+        let end_pos = section.end_position.unwrap_or(section.start_position);
+
+        let range = Range {
+            start: convert_point_to_position(contents, start_pos),
+            end: convert_point_to_position(contents, end_pos),
+        };
+
+        let symbol = new_symbol(section.title, SymbolKind::STRING, range);
+
+        let mut final_symbol = symbol;
+        final_symbol.children = Some(section.children);
+
+        if let Some(parent) = active_sections.last_mut() {
+            parent.children.push(final_symbol);
+        } else {
+            symbols.push(final_symbol);
+        }
+    }
+
+    Ok(())
 }
 
 // Function to parse a comment and return the section level and title
@@ -374,7 +387,9 @@ mod tests {
         let doc = Document::new(code, None);
         let node = doc.ast.root_node();
 
-        index_node(&node, vec![], &doc.contents).unwrap()
+        let mut symbols = Vec::new();
+        collect_symbols(&node, &doc.contents, 0, &mut symbols).unwrap();
+        symbols
     }
 
     #[test]
@@ -510,5 +525,66 @@ foo <- function() {
         let foo = new_symbol(String::from("foo"), SymbolKind::VARIABLE, range);
 
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![foo]);
+    }
+
+    #[test]
+    fn test_symbol_section_ranges_extend() {
+        let symbols = test_symbol(
+            "# Section 1 ----
+x <- 1
+y <- 2
+# Section 2 ----
+z <- 3",
+        );
+
+        assert_eq!(symbols.len(), 2);
+
+        // First section should extend from line 0 to line 2 (start of next section)
+        let section1 = &symbols[0];
+        assert_eq!(section1.name, "Section 1");
+        assert_eq!(section1.range.start.line, 0);
+        assert_eq!(section1.range.end.line, 2);
+
+        // Second section should extend from line 3 to end of file
+        let section2 = &symbols[1];
+        assert_eq!(section2.name, "Section 2");
+        assert_eq!(section2.range.start.line, 3);
+        assert_eq!(section2.range.end.line, 3);
+    }
+
+    #[test]
+    fn test_symbol_section_ranges_in_function() {
+        let symbols = test_symbol(
+            "foo <- function() {
+  # Section A ----
+  x <- 1
+  y <- 2
+  # Section B ----
+  z <- 3
+}",
+        );
+
+        assert_eq!(symbols.len(), 1);
+
+        // Should have one function symbol
+        let function = &symbols[0];
+        assert_eq!(function.name, "foo");
+        assert_eq!(function.kind, SymbolKind::FUNCTION);
+
+        // Function should have two section children
+        let children = function.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+
+        // First section should extend from line 1 to line 3 (start of next section)
+        let section_a = &children[0];
+        assert_eq!(section_a.name, "Section A");
+        assert_eq!(section_a.range.start.line, 1);
+        assert_eq!(section_a.range.end.line, 3);
+
+        // Second section should extend from line 4 to end of function body
+        let section_b = &children[1];
+        assert_eq!(section_b.name, "Section B");
+        assert_eq!(section_b.range.start.line, 4);
+        assert_eq!(section_b.range.end.line, 5); // End of function body
     }
 }
