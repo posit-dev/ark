@@ -1,0 +1,131 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: symbols
+---
+[
+    DocumentSymbol {
+        name: "inner1",
+        detail: None,
+        kind: Variable,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 2,
+                character: 2,
+            },
+            end: Position {
+                line: 2,
+                character: 8,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 2,
+                character: 2,
+            },
+            end: Position {
+                line: 2,
+                character: 8,
+            },
+        },
+        children: Some(
+            [],
+        ),
+    },
+    DocumentSymbol {
+        name: "a",
+        detail: Some(
+            "function()",
+        ),
+        kind: Function,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 4,
+                character: 0,
+            },
+            end: Position {
+                line: 7,
+                character: 1,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 4,
+                character: 0,
+            },
+            end: Position {
+                line: 7,
+                character: 1,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "inner2",
+                    detail: None,
+                    kind: Variable,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 5,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 5,
+                            character: 8,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 5,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 5,
+                            character: 8,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+                DocumentSymbol {
+                    name: "inner3",
+                    detail: Some(
+                        "function()",
+                    ),
+                    kind: Function,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 6,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 6,
+                            character: 24,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 6,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 6,
+                            character: 24,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+]
