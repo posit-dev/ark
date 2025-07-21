@@ -39,11 +39,11 @@ expression: entries
         key: "private_method",
         range: Range {
             start: Position {
-                line: 11,
+                line: 12,
                 character: 8,
             },
             end: Position {
-                line: 11,
+                line: 12,
                 character: 22,
             },
         },

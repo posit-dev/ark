@@ -499,12 +499,14 @@ class <- R6Class(
         },
         public_method = function() {
             2
-        }
+        },
+        public_variable = NA
     ),
     private = list(
         private_method = function() {
             1
-        }
+        },
+        private_variable = NA
     ),
     other = list(
         other_method = function() {
