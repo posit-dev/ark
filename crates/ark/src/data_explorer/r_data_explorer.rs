@@ -21,6 +21,8 @@ use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::ConvertToCodeFeatures;
+use amalthea::comm::data_explorer_comm::ConvertToCodeParams;
+use amalthea::comm::data_explorer_comm::ConvertedCode;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
@@ -558,8 +560,16 @@ impl RDataExplorer {
                     format,
                 },
             )),
-            DataExplorerBackendRequest::ConvertToCode(_) |
-            DataExplorerBackendRequest::SuggestCodeSyntax => todo!(),
+            DataExplorerBackendRequest::ConvertToCode(_) => Ok(
+                DataExplorerBackendReply::ConvertToCodeReply(ConvertedCode {
+                    converted_code: vec!["not yet implemented".to_string()],
+                }),
+            ),
+            DataExplorerBackendRequest::SuggestCodeSyntax => Ok(
+                DataExplorerBackendReply::SuggestCodeSyntaxReply(CodeSyntaxName {
+                    code_syntax_name: "base r".into(),
+                }),
+            ),
         }
     }
 }
