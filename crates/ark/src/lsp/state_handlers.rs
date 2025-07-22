@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use anyhow::anyhow;
+use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
@@ -39,7 +40,8 @@ use url::Url;
 use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
-use crate::lsp::config::SETTINGS;
+use crate::lsp::config::DOCUMENT_SETTINGS;
+use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::get_position_encoding_kind;
 use crate::lsp::indexer;
@@ -277,32 +279,74 @@ pub(crate) fn did_change_formatting_options(
 }
 
 async fn update_config(
-    _uris: Vec<Url>,
+    uris: Vec<Url>,
     client: &tower_lsp::Client,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
-    // Build the configuration request for global settings
-    let items: Vec<_> = SETTINGS
+    // Build the configuration request for global and document settings
+    let mut items: Vec<_> = vec![];
+
+    // This should be first because we first handle the global settings below,
+    // splitting them off the response array
+    let mut global_items: Vec<_> = GLOBAL_SETTINGS
         .iter()
-        .map(|mapping| tower_lsp::lsp_types::ConfigurationItem {
+        .map(|mapping| lsp_types::ConfigurationItem {
             scope_uri: None,
             section: Some(mapping.key.to_string()),
         })
         .collect();
 
-    let configs = client.configuration(items).await?;
+    // For document items we create a n_uris * n_document_settings array that we'll
+    // handle by batch in a double loop over URIs and document settings
+    let mut document_items: Vec<_> = uris
+        .iter()
+        .flat_map(|uri| {
+            DOCUMENT_SETTINGS
+                .iter()
+                .map(|mapping| lsp_types::ConfigurationItem {
+                    scope_uri: Some(uri.clone()),
+                    section: Some(mapping.key.to_string()),
+                })
+        })
+        .collect();
 
-    if configs.len() != SETTINGS.len() {
+    // Concatenate everything into a flat array that we'll send in one request
+    items.append(&mut global_items);
+    items.append(&mut document_items);
+
+    // The response better match the number of items we send in
+    let n_items = items.len();
+
+    let mut configs = client.configuration(items).await?;
+
+    if configs.len() != n_items {
         return Err(anyhow!(
             "Unexpected number of retrieved configurations: {}/{}",
             configs.len(),
-            SETTINGS.len()
+            n_items
         ));
     }
 
-    // Apply each config value using its update closure
-    for (mapping, value) in SETTINGS.iter().zip(configs) {
+    let document_configs = configs.split_off(GLOBAL_SETTINGS.len());
+    let global_configs = configs;
+
+    for (mapping, value) in GLOBAL_SETTINGS.into_iter().zip(global_configs) {
         (mapping.set)(&mut state.config, value);
+    }
+
+    let mut remaining = document_configs;
+
+    for uri in uris.into_iter() {
+        // Need to juggle a bit because `split_off()` returns the tail of the
+        // split and updates the vector with the head
+        let tail = remaining.split_off(DOCUMENT_SETTINGS.len());
+        let head = std::mem::replace(&mut remaining, tail);
+
+        for (mapping, value) in DOCUMENT_SETTINGS.iter().zip(head) {
+            if let Ok(doc) = state.get_document_mut(&uri) {
+                (mapping.set)(&mut doc.config, value);
+            }
+        }
     }
 
     Ok(())

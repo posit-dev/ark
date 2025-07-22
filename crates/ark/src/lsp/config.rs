@@ -4,48 +4,19 @@ use serde_json::Value;
 
 use crate::lsp::diagnostics::DiagnosticsConfig;
 
-pub struct Setting {
+pub struct Setting<T> {
     pub key: &'static str,
-    pub set: fn(&mut LspConfig, Value),
+    pub set: fn(&mut T, Value),
 }
 
-// List of LSP settings for which clients can send `didChangeConfiguration`
-// notifications. We register our interest in watching over these settings in
-// our `initialized` handler. The `set` methods convert from a json `Value` to
-// the expected type, using a default value if the conversion fails.
-pub static SETTINGS: &[Setting] = &[
-    Setting {
-        key: "editor.insertSpaces",
-        set: |cfg, v| {
-            let default_style = IndentationConfig::default().indent_style;
-            cfg.document.indent.indent_style = if v
-                .as_bool()
-                .unwrap_or_else(|| default_style == IndentStyle::Space)
-            {
-                IndentStyle::Space
-            } else {
-                IndentStyle::Tab
-            }
-        },
-    },
-    Setting {
-        key: "editor.indentSize",
-        set: |cfg, v| {
-            cfg.document.indent.indent_size = v
-                .as_u64()
-                .map(|n| n as usize)
-                .unwrap_or_else(|| IndentationConfig::default().indent_size)
-        },
-    },
-    Setting {
-        key: "editor.tabSize",
-        set: |cfg, v| {
-            cfg.document.indent.tab_width = v
-                .as_u64()
-                .map(|n| n as usize)
-                .unwrap_or_else(|| IndentationConfig::default().tab_width)
-        },
-    },
+/// List of LSP settings for which clients can send `didChangeConfiguration`
+/// notifications. We register our interest in watching over these settings in
+/// our `initialized` handler. The `set` methods convert from a json `Value` to
+/// the expected type, using a default value if the conversion fails.
+///
+/// This array is for global settings. If the setting should only affect a given
+/// document URI, add it to `DOCUMENT_SETTINGS` instead.
+pub static GLOBAL_SETTINGS: &[Setting<LspConfig>] = &[
     Setting {
         key: "positron.r.diagnostics.enable",
         set: |cfg, v| {
@@ -64,12 +35,48 @@ pub static SETTINGS: &[Setting] = &[
     },
 ];
 
+/// These document settings are updated on a URI basis. Each document has its
+/// own value of the setting.
+pub static DOCUMENT_SETTINGS: &[Setting<DocumentConfig>] = &[
+    Setting {
+        key: "editor.insertSpaces",
+        set: |cfg, v| {
+            let default_style = IndentationConfig::default().indent_style;
+            cfg.indent.indent_style = if v
+                .as_bool()
+                .unwrap_or_else(|| default_style == IndentStyle::Space)
+            {
+                IndentStyle::Space
+            } else {
+                IndentStyle::Tab
+            }
+        },
+    },
+    Setting {
+        key: "editor.indentSize",
+        set: |cfg, v| {
+            cfg.indent.indent_size = v
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or_else(|| IndentationConfig::default().indent_size)
+        },
+    },
+    Setting {
+        key: "editor.tabSize",
+        set: |cfg, v| {
+            cfg.indent.tab_width = v
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or_else(|| IndentationConfig::default().tab_width)
+        },
+    },
+];
+
 /// Configuration of the LSP
 #[derive(Clone, Default, Debug)]
 pub(crate) struct LspConfig {
     pub(crate) diagnostics: DiagnosticsConfig,
     pub(crate) symbols: SymbolsConfig,
-    pub(crate) document: DocumentConfig,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
