@@ -128,4 +128,52 @@ print(foo)
             }
         );
     }
+
+    #[test]
+    fn test_goto_definition_comment_section() {
+        // Reset the indexer on exit
+        let _guard = indexer::IndexerGuard;
+
+        let code = r#"
+# foo ----
+foo <- 1
+print(foo)
+"#;
+        let doc = Document::new(code, None);
+        let path = PathBuf::from("/foo/section_test.R");
+        indexer::update(&doc, &path).unwrap();
+
+        let params = lsp_types::GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier {
+                    uri: lsp_types::Url::from_file_path(&path).unwrap(),
+                },
+                position: lsp_types::Position::new(3, 7),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        assert_matches!(
+            goto_definition(&doc, params).unwrap(),
+            Some(lsp_types::GotoDefinitionResponse::Link(ref links)) => {
+                assert!(!links.is_empty());
+
+                let link = &links[0];
+                assert_eq!(
+                    link.target_uri,
+                    lsp_types::Url::from_file_path(&path).unwrap()
+                );
+
+                // The section should is not the target, the variable has priority
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(2, 0),
+                        end: lsp_types::Position::new(2, 3),
+                    }
+                );
+            }
+        );
+    }
 }
