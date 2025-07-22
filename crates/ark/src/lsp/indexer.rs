@@ -158,6 +158,12 @@ fn clear(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) fn indexer_clear() {
+    let mut index = WORKSPACE_INDEX.lock().unwrap();
+    index.clear();
+}
+
 fn str_from_path(path: &Path) -> anyhow::Result<&str> {
     path.to_str().ok_or(anyhow!(
         "Couldn't convert path {} to string",

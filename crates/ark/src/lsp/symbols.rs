@@ -583,6 +583,8 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use super::*;
+    use crate::lsp::config::LspConfig;
+    use crate::lsp::config::WorkspaceSymbolsConfig;
     use crate::lsp::documents::Document;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
@@ -893,5 +895,42 @@ a <- function() {
         collect_symbols(ctx, &node, &doc.contents, 0, &mut symbols).unwrap();
 
         insta::assert_debug_snapshot!(symbols);
+    }
+
+    #[test]
+    fn test_workspace_symbols_include_comment_sections() {
+        fn run(include_comment_sections: bool) -> Vec<String> {
+            let code = "# Section ----\nfoo <- 1";
+
+            let mut config = LspConfig::default();
+            config.workspace_symbols = WorkspaceSymbolsConfig {
+                include_comment_sections,
+            };
+            let mut state = WorldState::default();
+            state.config = config;
+
+            // Index the document
+            let doc = Document::new(code, None);
+            indexer::update(&doc, std::path::Path::new("/test.R")).unwrap();
+
+            // Query for all symbols
+            let params = WorkspaceSymbolParams {
+                query: "Section".to_string(),
+                ..Default::default()
+            };
+            let result = super::symbols(&params, &state).unwrap();
+            let out = result.into_iter().map(|s| s.name).collect();
+
+            indexer::indexer_clear();
+            out
+        }
+
+        // Should include section when true
+        let with_sections = run(true);
+        assert!(with_sections.contains(&"Section".to_string()));
+
+        // Should not include section when false
+        let without_sections = run(false);
+        assert!(!without_sections.contains(&"Section".to_string()));
     }
 }
