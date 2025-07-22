@@ -587,6 +587,7 @@ mod tests {
     use crate::lsp::config::WorkspaceSymbolsConfig;
     use crate::lsp::documents::Document;
     use crate::lsp::indexer::ResetIndexerGuard;
+    use crate::lsp::util::test_path;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
         let doc = Document::new(code, None);
@@ -914,7 +915,8 @@ a <- function() {
 
             // Index the document
             let doc = Document::new(code, None);
-            indexer::update(&doc, std::path::Path::new("/test.R")).unwrap();
+            let (path, _) = test_path();
+            indexer::update(&doc, &path).unwrap();
 
             // Query for all symbols
             let params = WorkspaceSymbolParams {

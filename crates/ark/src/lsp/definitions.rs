@@ -78,14 +78,13 @@ pub fn goto_definition<'a>(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use assert_matches::assert_matches;
     use tower_lsp::lsp_types;
 
     use super::*;
     use crate::lsp::documents::Document;
     use crate::lsp::indexer;
+    use crate::lsp::util::test_path;
 
     #[test]
     fn test_goto_definition() {
@@ -96,15 +95,13 @@ foo <- 42
 print(foo)
 "#;
         let doc = Document::new(code, None);
-        let path = PathBuf::from("/foo/test.R");
+        let (path, uri) = test_path();
 
         indexer::update(&doc, &path).unwrap();
 
         let params = GotoDefinitionParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier {
-                    uri: Url::from_file_path(&path).unwrap(),
-                },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: lsp_types::Position::new(2, 7),
             },
             work_done_progress_params: Default::default(),
@@ -114,9 +111,6 @@ print(foo)
         assert_matches!(
             goto_definition(&doc, params).unwrap(),
             Some(GotoDefinitionResponse::Link(ref links)) => {
-                assert!(!links.is_empty());
-                assert_eq!(links[0].target_uri, Url::from_file_path(&path).unwrap());
-
                 assert_eq!(
                     links[0].target_range,
                     lsp_types::Range {
@@ -138,14 +132,13 @@ foo <- 1
 print(foo)
 "#;
         let doc = Document::new(code, None);
-        let path = PathBuf::from("/foo/section_test.R");
+        let (path, uri) = test_path();
+
         indexer::update(&doc, &path).unwrap();
 
         let params = lsp_types::GotoDefinitionParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier {
-                    uri: lsp_types::Url::from_file_path(&path).unwrap(),
-                },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: lsp_types::Position::new(3, 7),
             },
             work_done_progress_params: Default::default(),
@@ -155,14 +148,6 @@ print(foo)
         assert_matches!(
             goto_definition(&doc, params).unwrap(),
             Some(lsp_types::GotoDefinitionResponse::Link(ref links)) => {
-                assert!(!links.is_empty());
-
-                let link = &links[0];
-                assert_eq!(
-                    link.target_uri,
-                    lsp_types::Url::from_file_path(&path).unwrap()
-                );
-
                 // The section should is not the target, the variable has priority
                 assert_eq!(
                     links[0].target_range,

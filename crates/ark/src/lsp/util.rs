@@ -28,3 +28,17 @@ pub unsafe extern "C-unwind" fn ps_object_id(object: SEXP) -> anyhow::Result<SEX
     let value = format!("{:p}", object);
     return Ok(Rf_mkString(value.as_ptr() as *const c_char));
 }
+
+#[cfg(test)]
+pub(crate) fn test_path() -> (std::path::PathBuf, url::Url) {
+    use std::path::PathBuf;
+
+    let path = if cfg!(windows) {
+        PathBuf::from(r"C:\test.R")
+    } else {
+        PathBuf::from("/test.R")
+    };
+    let uri = url::Url::from_file_path(&path).unwrap();
+
+    (path, uri)
+}
