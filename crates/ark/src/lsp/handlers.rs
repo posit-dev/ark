@@ -129,8 +129,9 @@ pub(crate) async fn handle_initialized(
 #[tracing::instrument(level = "info", skip_all)]
 pub(crate) fn handle_symbol(
     params: WorkspaceSymbolParams,
+    state: &WorldState,
 ) -> anyhow::Result<Option<Vec<SymbolInformation>>> {
-    symbols::symbols(&params)
+    symbols::symbols(&params, state)
         .map(|res| Some(res))
         .or_else(|err| {
             // Missing doc: Why are we not propagating errors to the frontend?
@@ -288,7 +289,7 @@ pub(crate) fn handle_goto_definition(
     let document = state.get_document(uri)?;
 
     // build goto definition context
-    let result = unwrap!(unsafe { goto_definition(&document, params) }, Err(err) => {
+    let result = unwrap!(goto_definition(&document, params), Err(err) => {
         lsp::log_error!("{err:?}");
         return Ok(None);
     });

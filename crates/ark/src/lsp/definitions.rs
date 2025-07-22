@@ -20,7 +20,7 @@ use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub unsafe fn goto_definition<'a>(
+pub fn goto_definition<'a>(
     document: &'a Document,
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
@@ -74,4 +74,89 @@ pub unsafe fn goto_definition<'a>(
 
     let response = GotoDefinitionResponse::Link(vec![link]);
     Ok(Some(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use assert_matches::assert_matches;
+    use tower_lsp::lsp_types;
+
+    use super::*;
+    use crate::lsp::documents::Document;
+    use crate::lsp::indexer;
+    use crate::lsp::util::test_path;
+
+    #[test]
+    fn test_goto_definition() {
+        let _guard = indexer::ResetIndexerGuard;
+
+        let code = r#"
+foo <- 42
+print(foo)
+"#;
+        let doc = Document::new(code, None);
+        let (path, uri) = test_path();
+
+        indexer::update(&doc, &path).unwrap();
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: lsp_types::Position::new(2, 7),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        assert_matches!(
+            goto_definition(&doc, params).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 3),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_comment_section() {
+        let _guard = indexer::ResetIndexerGuard;
+
+        let code = r#"
+# foo ----
+foo <- 1
+print(foo)
+"#;
+        let doc = Document::new(code, None);
+        let (path, uri) = test_path();
+
+        indexer::update(&doc, &path).unwrap();
+
+        let params = lsp_types::GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri },
+                position: lsp_types::Position::new(3, 7),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        assert_matches!(
+            goto_definition(&doc, params).unwrap(),
+            Some(lsp_types::GotoDefinitionResponse::Link(ref links)) => {
+                // The section should is not the target, the variable has priority
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(2, 0),
+                        end: lsp_types::Position::new(2, 3),
+                    }
+                );
+            }
+        );
+    }
 }

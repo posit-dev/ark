@@ -283,6 +283,7 @@ dependencies = [
  "actix-web",
  "amalthea",
  "anyhow",
+ "assert_matches",
  "async-trait",
  "base64 0.21.0",
  "bus",

@@ -125,15 +125,25 @@ fn insert(path: &Path, entry: IndexEntry) -> anyhow::Result<()> {
     let path = str_from_path(path)?;
 
     let index = index.entry(path.to_string()).or_default();
-
-    // Retain the first occurrence in the index. In the future we'll track every occurrences and
-    // their scopes but for now we only track the first definition of an object (in a way, its
-    // declaration).
-    if !index.contains_key(&entry.key) {
-        index.insert(entry.key.clone(), entry);
-    }
+    index_insert(index, entry);
 
     Ok(())
+}
+
+fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
+    // We generally retain only the first occurrence in the index. In the
+    // future we'll track every occurrences and their scopes but for now we
+    // only track the first definition of an object (in a way, its
+    // declaration).
+    if let Some(existing_entry) = index.get(&entry.key) {
+        // Give priority to non-section entries.
+        if matches!(existing_entry.data, IndexEntryData::Section { .. }) {
+            index.insert(entry.key.clone(), entry);
+        }
+        // Else, ignore.
+    } else {
+        index.insert(entry.key.clone(), entry);
+    }
 }
 
 fn clear(path: &Path) -> anyhow::Result<()> {
@@ -146,6 +156,24 @@ fn clear(path: &Path) -> anyhow::Result<()> {
     });
 
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn indexer_clear() {
+    let mut index = WORKSPACE_INDEX.lock().unwrap();
+    index.clear();
+}
+
+/// RAII guard that clears `WORKSPACE_INDEX` when dropped.
+/// Useful for ensuring a clean index state in tests.
+#[cfg(test)]
+pub(crate) struct ResetIndexerGuard;
+
+#[cfg(test)]
+impl Drop for ResetIndexerGuard {
+    fn drop(&mut self) {
+        indexer_clear();
+    }
 }
 
 fn str_from_path(path: &Path) -> anyhow::Result<&str> {
@@ -401,7 +429,9 @@ fn index_comment(
 mod tests {
     use std::path::PathBuf;
 
+    use assert_matches::assert_matches;
     use insta::assert_debug_snapshot;
+    use tower_lsp::lsp_types;
 
     use super::*;
     use crate::lsp::documents::Document;
@@ -530,6 +560,69 @@ class <- R6::R6Class(
     )
 )
 "#
+        );
+    }
+
+    #[test]
+    fn test_index_insert_priority() {
+        let mut index = HashMap::new();
+
+        let section_entry = IndexEntry {
+            key: "foo".to_string(),
+            range: Range::new(
+                lsp_types::Position::new(0, 0),
+                lsp_types::Position::new(0, 3),
+            ),
+            data: IndexEntryData::Section {
+                level: 1,
+                title: "foo".to_string(),
+            },
+        };
+
+        let variable_entry = IndexEntry {
+            key: "foo".to_string(),
+            range: Range::new(
+                lsp_types::Position::new(1, 0),
+                lsp_types::Position::new(1, 3),
+            ),
+            data: IndexEntryData::Variable {
+                name: "foo".to_string(),
+            },
+        };
+
+        // The Variable has priority and should replace the Section
+        index_insert(&mut index, section_entry.clone());
+        index_insert(&mut index, variable_entry.clone());
+        assert_matches!(
+            &index.get("foo").unwrap().data,
+            IndexEntryData::Variable { name } => assert_eq!(name, "foo")
+        );
+
+        // Inserting a Section again with the same key does not override the Variable
+        index_insert(&mut index, section_entry.clone());
+        assert_matches!(
+            &index.get("foo").unwrap().data,
+            IndexEntryData::Variable { name } => assert_eq!(name, "foo")
+        );
+
+        let function_entry = IndexEntry {
+            key: "foo".to_string(),
+            range: Range::new(
+                lsp_types::Position::new(2, 0),
+                lsp_types::Position::new(2, 3),
+            ),
+            data: IndexEntryData::Function {
+                name: "foo".to_string(),
+                arguments: vec!["a".to_string()],
+            },
+        };
+
+        // Inserting another kind of variable (e.g., Function) with the same key
+        // does not override it either. The first occurrence is generally retained.
+        index_insert(&mut index, function_entry.clone());
+        assert_matches!(
+            &index.get("foo").unwrap().data,
+            IndexEntryData::Variable { name } => assert_eq!(name, "foo")
         );
     }
 }

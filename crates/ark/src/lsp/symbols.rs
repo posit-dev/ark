@@ -56,7 +56,10 @@ fn new_symbol_node(
     symbol
 }
 
-pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInformation>> {
+pub(crate) fn symbols(
+    params: &WorkspaceSymbolParams,
+    state: &WorldState,
+) -> anyhow::Result<Vec<SymbolInformation>> {
     let query = &params.query;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
@@ -81,17 +84,19 @@ pub fn symbols(params: &WorkspaceSymbolParams) -> anyhow::Result<Vec<SymbolInfor
             },
 
             IndexEntryData::Section { level: _, title } => {
-                info.push(SymbolInformation {
-                    name: title.to_string(),
-                    kind: SymbolKind::STRING,
-                    location: Location {
-                        uri: Url::from_file_path(path).unwrap(),
-                        range: entry.range,
-                    },
-                    tags: None,
-                    deprecated: None,
-                    container_name: None,
-                });
+                if state.config.workspace_symbols.include_comment_sections {
+                    info.push(SymbolInformation {
+                        name: title.to_string(),
+                        kind: SymbolKind::STRING,
+                        location: Location {
+                            uri: Url::from_file_path(path).unwrap(),
+                            range: entry.range,
+                        },
+                        tags: None,
+                        deprecated: None,
+                        container_name: None,
+                    });
+                }
             },
 
             IndexEntryData::Variable { name } => {
@@ -578,7 +583,11 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use super::*;
+    use crate::lsp::config::LspConfig;
+    use crate::lsp::config::WorkspaceSymbolsConfig;
     use crate::lsp::documents::Document;
+    use crate::lsp::indexer::ResetIndexerGuard;
+    use crate::lsp::util::test_path;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
         let doc = Document::new(code, None);
@@ -888,5 +897,44 @@ a <- function() {
         collect_symbols(ctx, &node, &doc.contents, 0, &mut symbols).unwrap();
 
         insta::assert_debug_snapshot!(symbols);
+    }
+
+    #[test]
+    fn test_workspace_symbols_include_comment_sections() {
+        fn run(include_comment_sections: bool) -> Vec<String> {
+            let _guard = ResetIndexerGuard;
+
+            let code = "# Section ----\nfoo <- 1";
+
+            let mut config = LspConfig::default();
+            config.workspace_symbols = WorkspaceSymbolsConfig {
+                include_comment_sections,
+            };
+            let mut state = WorldState::default();
+            state.config = config;
+
+            // Index the document
+            let doc = Document::new(code, None);
+            let (path, _) = test_path();
+            indexer::update(&doc, &path).unwrap();
+
+            // Query for all symbols
+            let params = WorkspaceSymbolParams {
+                query: "Section".to_string(),
+                ..Default::default()
+            };
+            let result = super::symbols(&params, &state).unwrap();
+            let out = result.into_iter().map(|s| s.name).collect();
+
+            out
+        }
+
+        // Should include section when true
+        let with_sections = run(true);
+        assert!(with_sections.contains(&"Section".to_string()));
+
+        // Should not include section when false
+        let without_sections = run(false);
+        assert!(!without_sections.contains(&"Section".to_string()));
     }
 }
