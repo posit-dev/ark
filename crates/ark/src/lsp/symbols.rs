@@ -191,12 +191,12 @@ fn collect_symbols(
 ) -> anyhow::Result<()> {
     match node.node_type() {
         NodeType::Program => {
-            collect_sections(ctx, node, contents, current_level, symbols)?;
+            collect_list_sections(ctx, node, contents, current_level, symbols)?;
         },
 
         NodeType::BracedExpression => {
             ctx.top_level = false;
-            collect_sections(ctx, node, contents, current_level, symbols)?;
+            collect_list_sections(ctx, node, contents, current_level, symbols)?;
         },
 
         NodeType::Call => {
@@ -214,13 +214,62 @@ fn collect_symbols(
     Ok(())
 }
 
-fn collect_sections(
+/// This collects sections from comments like `# My section ----`. Like Markdown,
+/// sections may be nested depending on the number of `#` signs.
+///
+/// We collect sections in:
+/// - The top-level program list
+/// - In curly braces lists
+/// - In lists of call arguments.
+///
+/// Sections in calls are very useful for {targets} users, see
+/// <https://github.com/posit-dev/positron/issues/8402>.
+///
+/// Because our outline combines both markdown-like headers and syntax elements,
+/// we preserve syntax tree invariants. A section header is only allowed to
+/// close other headers at the current syntactic level. You can think of every
+/// level of blocks and calls as creating a new Markdown "document" that is
+/// nested under the current level. In practice this means that in this example:
+///
+/// ```r
+/// # top ----
+/// class <- R6::R6Class(
+///   'class',
+///   public = list(
+///     initialize = function() {
+///       'initialize'
+///     },
+///     # middle ----
+///     foo = function() {
+///       # inner ----
+///       1
+///     },
+///     bar = function() {
+///       2
+///     }
+///   )
+/// )
+/// ```
+///
+/// - `inner` is nested inside `middle` which is nested inside `top`
+/// - Other syntactic elements are included in the outline tree, e.g.
+///   `class` is nested within `top` and contains `middle`. The R6
+///   methods `foo` and `bar` are nested within `middle`.
+/// - In particular, `inner` does not close `middle` or `top`. If it
+///   were able to close another section across the syntax tree, this
+///   would create a confusing outline where e.g. the rest of R6 methods
+///  (`bar` in this case) would be pulled at top-level.
+fn collect_sections<F>(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
     current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
-) -> anyhow::Result<()> {
+    mut handle_child: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(&mut CollectContext, &Node, &Rope, &mut Vec<DocumentSymbol>) -> anyhow::Result<()>,
+{
     // In lists of expressions we track and collect section comments, then
     // collect symbols from children nodes
 
@@ -263,15 +312,15 @@ fn collect_sections(
         }
 
         // If we get to this point, `child` is not a section comment.
-        // Recurse into child.
+        // Handle recursion into the child using the provided handler.
 
         if active_sections.is_empty() {
             // If no active section, extend current vector of symbols
-            collect_symbols(ctx, &child, contents, current_level, symbols)?;
+            handle_child(ctx, &child, contents, symbols)?;
         } else {
             // Otherwise create new store of symbols for the current section
             let mut child_symbols = Vec::new();
-            collect_symbols(ctx, &child, contents, current_level, &mut child_symbols)?;
+            handle_child(ctx, &child, contents, &mut child_symbols)?;
 
             // Nest them inside last section
             if !child_symbols.is_empty() {
@@ -298,6 +347,25 @@ fn collect_sections(
     }
 
     Ok(())
+}
+
+fn collect_list_sections(
+    ctx: &mut CollectContext,
+    node: &Node,
+    contents: &Rope,
+    current_level: usize,
+    symbols: &mut Vec<DocumentSymbol>,
+) -> anyhow::Result<()> {
+    collect_sections(
+        ctx,
+        node,
+        contents,
+        current_level,
+        symbols,
+        |ctx, child, contents, symbols| {
+            collect_symbols(ctx, child, contents, current_level, symbols)
+        },
+    )
 }
 
 fn collect_call(
@@ -333,15 +401,23 @@ fn collect_call_arguments(
         return Ok(());
     };
 
-    let mut cursor = node.walk();
-    for arg in arguments.children_by_field_name("argument", &mut cursor) {
-        let Some(arg_value) = arg.child_by_field_name("value") else {
-            continue;
-        };
+    collect_sections(
+        ctx,
+        &arguments,
+        contents,
+        0,
+        symbols,
+        |ctx, child, contents, symbols| {
+            let Some(arg_value) = child.child_by_field_name("value") else {
+                return Ok(());
+            };
 
-        match arg_value.kind() {
-            "function_definition" => {
-                if let Some(arg_fun) = arg.child_by_field_name("name") {
+            // Recurse into arguments. They might be a braced list, another call
+            // that might contain functions, etc.
+            collect_symbols(ctx, &arg_value, contents, 0, symbols)?;
+
+            if arg_value.kind() == "function_definition" {
+                if let Some(arg_fun) = child.child_by_field_name("name") {
                     // If this is a named function, collect it as a method
                     collect_method(ctx, &arg_fun, &arg_value, contents, symbols)?;
                 } else {
@@ -349,16 +425,11 @@ fn collect_call_arguments(
                     let body = arg_value.child_by_field_name("body").into_result()?;
                     collect_symbols(ctx, &body, contents, 0, symbols)?;
                 };
-            },
-            _ => {
-                // Recurse into arguments. They might be a braced list, another call
-                // that might contain functions, etc.
-                collect_symbols(ctx, &arg_value, contents, 0, symbols)?;
-            },
-        }
-    }
+            }
 
-    Ok(())
+            Ok(())
+        },
+    )
 }
 
 fn collect_method(
@@ -936,5 +1007,63 @@ a <- function() {
         // Should not include section when false
         let without_sections = run(false);
         assert!(!without_sections.contains(&"Section".to_string()));
+    }
+
+    #[test]
+    fn test_symbol_section_in_blocks() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# level 1 ----
+
+list({
+  ## foo ----
+  1
+  2 ## bar ----
+  3
+  4
+  ## baz ----
+})
+
+## level 2 ----
+
+list({
+  # foo ----
+  1
+  2 # bar ----
+  3
+  4
+  # baz ----
+})
+"
+        ));
+    }
+
+    #[test]
+    fn test_symbol_section_in_calls() {
+        insta::assert_debug_snapshot!(test_symbol(
+            "
+# level 1 ----
+
+list(
+  ## foo ----
+  1,
+  2, ## bar ----
+  3,
+  4
+  ## baz ----
+)
+
+## level 2 ----
+
+list(
+  # foo ----
+  1,
+  2, # bar ----
+  3,
+  4
+  # baz ----
+)
+"
+        ));
     }
 }
