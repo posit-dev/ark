@@ -6,6 +6,7 @@
 //
 
 use amalthea::comm::ui_comm::OpenEditorParams;
+use amalthea::comm::ui_comm::OpenWithSystemParams;
 use amalthea::comm::ui_comm::OpenWorkspaceParams;
 use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::Range;
@@ -96,21 +97,41 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
     Ok(R_NilValue)
 }
 
-#[harp::register]
-pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
+pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     let params = ShowUrlParams {
-        url: RObject::view(url).try_into()?,
+        url: url.to_string(),
     };
-
     let event = UiFrontendEvent::ShowUrl(params);
 
     let main = RMain::get();
     let ui_comm_tx = main
         .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("ui_show_url"))?;
+        .ok_or_else(|| ui_comm_not_connected("show_url"))?;
     ui_comm_tx.send_event(event);
 
+    Ok(())
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_ui_show_url(url: SEXP) -> anyhow::Result<SEXP> {
+    let url_string = RObject::view(url).to::<String>()?;
+    send_show_url_event(&url_string)?;
     Ok(R_NilValue)
+}
+
+pub fn send_open_with_system_event(path: &str) -> anyhow::Result<()> {
+    let params = OpenWithSystemParams {
+        path: path.to_string(),
+    };
+    let event = UiFrontendEvent::OpenWithSystem(params);
+
+    let main = RMain::get();
+    let ui_comm_tx = main
+        .get_ui_comm_tx()
+        .ok_or_else(|| ui_comm_not_connected("open_with_system"))?;
+    ui_comm_tx.send_event(event);
+
+    Ok(())
 }
 
 pub fn ps_ui_robj_as_ranges(ranges: SEXP) -> anyhow::Result<Vec<Range>> {
