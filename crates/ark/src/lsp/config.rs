@@ -112,34 +112,6 @@ pub enum IndentStyle {
     Space,
 }
 
-/// VS Code representation of a document configuration
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) struct VscDocumentConfig {
-    // DEV NOTE: Update `section_from_key()` method after adding a field
-    pub insert_spaces: bool,
-    pub indent_size: VscIndentSize,
-    pub tab_size: usize,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) struct VscDiagnosticsConfig {
-    // DEV NOTE: Update `section_from_key()` method after adding a field
-    pub enable: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub(crate) struct VscSymbolsConfig {
-    // DEV NOTE: Update `section_from_key()` method after adding a field
-    pub include_assignments_in_blocks: bool,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(untagged)]
-pub(crate) enum VscIndentSize {
-    Alias(String),
-    Size(usize),
-}
-
 impl Default for SymbolsConfig {
     fn default() -> Self {
         Self {
