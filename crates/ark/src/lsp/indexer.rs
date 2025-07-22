@@ -167,10 +167,10 @@ pub(crate) fn indexer_clear() {
 /// RAII guard that clears `WORKSPACE_INDEX` when dropped.
 /// Useful for ensuring a clean index state in tests.
 #[cfg(test)]
-pub(crate) struct IndexerGuard;
+pub(crate) struct ResetIndexerGuard;
 
 #[cfg(test)]
-impl Drop for IndexerGuard {
+impl Drop for ResetIndexerGuard {
     fn drop(&mut self) {
         indexer_clear();
     }

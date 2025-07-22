@@ -89,8 +89,7 @@ mod tests {
 
     #[test]
     fn test_goto_definition() {
-        // Reset the indexer on exit
-        let _guard = indexer::IndexerGuard;
+        let _guard = indexer::ResetIndexerGuard;
 
         let code = r#"
 foo <- 42
@@ -131,8 +130,7 @@ print(foo)
 
     #[test]
     fn test_goto_definition_comment_section() {
-        // Reset the indexer on exit
-        let _guard = indexer::IndexerGuard;
+        let _guard = indexer::ResetIndexerGuard;
 
         let code = r#"
 # foo ----

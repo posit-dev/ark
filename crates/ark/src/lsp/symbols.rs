@@ -586,7 +586,7 @@ mod tests {
     use crate::lsp::config::LspConfig;
     use crate::lsp::config::WorkspaceSymbolsConfig;
     use crate::lsp::documents::Document;
-    use crate::lsp::indexer::IndexerGuard;
+    use crate::lsp::indexer::ResetIndexerGuard;
 
     fn test_symbol(code: &str) -> Vec<DocumentSymbol> {
         let doc = Document::new(code, None);
@@ -901,7 +901,7 @@ a <- function() {
     #[test]
     fn test_workspace_symbols_include_comment_sections() {
         fn run(include_comment_sections: bool) -> Vec<String> {
-            let _guard = IndexerGuard;
+            let _guard = ResetIndexerGuard;
 
             let code = "# Section ----\nfoo <- 1";
 
