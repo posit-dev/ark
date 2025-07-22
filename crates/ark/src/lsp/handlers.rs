@@ -9,7 +9,6 @@ use anyhow::anyhow;
 use serde_json::Value;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
-use struct_field_names_as_array::FieldNamesAsArray;
 use tower_lsp::lsp_types::CodeActionParams;
 use tower_lsp::lsp_types::CodeActionResponse;
 use tower_lsp::lsp_types::CompletionItem;
@@ -46,9 +45,6 @@ use crate::lsp;
 use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
-use crate::lsp::config::VscDiagnosticsConfig;
-use crate::lsp::config::VscDocumentConfig;
-use crate::lsp::config::VscSymbolsConfig;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::encoding::convert_lsp_range_to_tree_sitter_range;
@@ -106,22 +102,21 @@ pub(crate) async fn handle_initialized(
         // Note that some settings, such as editor indentation properties, may be
         // changed by extensions or by the user without changing the actual
         // underlying setting. Unfortunately we don't receive updates in that case.
-        let mut config_document_regs = collect_regs(
-            VscDocumentConfig::FIELD_NAMES_AS_ARRAY.to_vec(),
-            VscDocumentConfig::section_from_key,
-        );
-        let mut config_symbols_regs: Vec<Registration> = collect_regs(
-            VscSymbolsConfig::FIELD_NAMES_AS_ARRAY.to_vec(),
-            VscSymbolsConfig::section_from_key,
-        );
-        let mut config_diagnostics_regs: Vec<Registration> = collect_regs(
-            VscDiagnosticsConfig::FIELD_NAMES_AS_ARRAY.to_vec(),
-            VscDiagnosticsConfig::section_from_key,
-        );
 
-        regs.append(&mut config_document_regs);
-        regs.append(&mut config_symbols_regs);
-        regs.append(&mut config_diagnostics_regs);
+        for setting in crate::lsp::config::GLOBAL_SETTINGS {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeConfiguration"),
+                register_options: Some(serde_json::json!({ "section": setting.key })),
+            });
+        }
+        for setting in crate::lsp::config::DOCUMENT_SETTINGS {
+            regs.push(Registration {
+                id: uuid::Uuid::new_v4().to_string(),
+                method: String::from("workspace/didChangeConfiguration"),
+                register_options: Some(serde_json::json!({ "section": setting.key })),
+            });
+        }
     }
 
     client
@@ -129,17 +124,6 @@ pub(crate) async fn handle_initialized(
         .instrument(span.exit())
         .await?;
     Ok(())
-}
-
-fn collect_regs(fields: Vec<&str>, into_section: impl Fn(&str) -> &str) -> Vec<Registration> {
-    fields
-        .into_iter()
-        .map(|field| Registration {
-            id: uuid::Uuid::new_v4().to_string(),
-            method: String::from("workspace/didChangeConfiguration"),
-            register_options: Some(serde_json::json!({ "section": into_section(field) })),
-        })
-        .collect()
 }
 
 #[tracing::instrument(level = "info", skip_all)]
