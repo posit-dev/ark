@@ -283,6 +283,9 @@ async fn update_config(
     client: &tower_lsp::Client,
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
+    // Keep track of existing config to detect whether it was changed
+    let diagnostics_config = state.config.diagnostics.clone();
+
     // Build the configuration request for global and document settings
     let mut items: Vec<_> = vec![];
 
@@ -347,6 +350,12 @@ async fn update_config(
                 (mapping.set)(&mut doc.config, value);
             }
         }
+    }
+
+    // Refresh diagnostics if the configuration changed
+    if state.config.diagnostics != diagnostics_config {
+        tracing::info!("Refreshing diagnostics after configuration changed");
+        lsp::spawn_diagnostics_refresh_all(state.clone());
     }
 
     Ok(())
