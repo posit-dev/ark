@@ -214,6 +214,51 @@ fn collect_symbols(
     Ok(())
 }
 
+/// This collects sections from comments like `# My section ----`. Like Markdown,
+/// sections may be nested depending on the number of `#` signs.
+///
+/// We collect sections in:
+/// - The top-level program list
+/// - In curly braces lists
+/// - In lists of call arguments.
+///
+/// Sections in calls are very useful for {targets} users, see
+/// <https://github.com/posit-dev/positron/issues/8402>.
+///
+/// Because our outline combines both markdown-like headers and syntax elements,
+/// we preserve syntax tree invariants. A section header is only allowed to
+/// close other headers at the current syntactic level. You can think of every
+/// level of blocks and calls as creating a new Markdown "document" that is
+/// nested under the current level. In practice this means that in this example:
+///
+/// ```r
+/// # top ----
+/// class <- R6::R6Class(
+///   'class',
+///   public = list(
+///     initialize = function() {
+///       'initialize'
+///     },
+///     # middle ----
+///     foo = function() {
+///       # inner ----
+///       1
+///     },
+///     bar = function() {
+///       2
+///     }
+///   )
+/// )
+/// ```
+///
+/// - `inner` is nested inside `middle` which is nested inside `top`
+/// - Other syntactic elements are included in the outline tree, e.g.
+///   `class` is nested within `top` and contains `middle`. The R6
+///   methods `foo` and `bar` are nested within `middle`.
+/// - In particular, `inner` does not close `middle` or `top`. If it
+///   were able to close another section across the syntax tree, this
+///   would create a confusing outline where e.g. the rest of R6 methods
+///  (`bar` in this case) would be pulled at top-level.
 fn collect_sections<F>(
     ctx: &mut CollectContext,
     node: &Node,
