@@ -164,6 +164,18 @@ pub(crate) fn indexer_clear() {
     index.clear();
 }
 
+/// RAII guard that clears `WORKSPACE_INDEX` when dropped.
+/// Useful for ensuring a clean index state in tests.
+#[cfg(test)]
+pub(crate) struct IndexerGuard;
+
+#[cfg(test)]
+impl Drop for IndexerGuard {
+    fn drop(&mut self) {
+        indexer_clear();
+    }
+}
+
 fn str_from_path(path: &Path) -> anyhow::Result<&str> {
     path.to_str().ok_or(anyhow!(
         "Couldn't convert path {} to string",

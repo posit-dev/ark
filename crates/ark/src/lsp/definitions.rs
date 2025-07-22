@@ -20,7 +20,7 @@ use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub unsafe fn goto_definition<'a>(
+pub fn goto_definition<'a>(
     document: &'a Document,
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
@@ -74,4 +74,58 @@ pub unsafe fn goto_definition<'a>(
 
     let response = GotoDefinitionResponse::Link(vec![link]);
     Ok(Some(response))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use assert_matches::assert_matches;
+    use tower_lsp::lsp_types;
+
+    use super::*;
+    use crate::lsp::documents::Document;
+    use crate::lsp::indexer;
+
+    #[test]
+    fn test_goto_definition() {
+        // Reset the indexer on exit
+        let _guard = indexer::IndexerGuard;
+
+        let code = r#"
+foo <- 42
+print(foo)
+"#;
+        let doc = Document::new(code, None);
+        let path = PathBuf::from("/foo/test.R");
+
+        indexer::update(&doc, &path).unwrap();
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier {
+                    uri: Url::from_file_path(&path).unwrap(),
+                },
+                position: lsp_types::Position::new(2, 7),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        assert_matches!(
+            goto_definition(&doc, params).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert!(!links.is_empty());
+                assert_eq!(links[0].target_uri, Url::from_file_path(&path).unwrap());
+
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 3),
+                    }
+                );
+            }
+        );
+    }
 }

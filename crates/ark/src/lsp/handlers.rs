@@ -289,7 +289,7 @@ pub(crate) fn handle_goto_definition(
     let document = state.get_document(uri)?;
 
     // build goto definition context
-    let result = unwrap!(unsafe { goto_definition(&document, params) }, Err(err) => {
+    let result = unwrap!(goto_definition(&document, params), Err(err) => {
         lsp::log_error!("{err:?}");
         return Ok(None);
     });
