@@ -1642,7 +1642,7 @@ foo
 
             // Test that non-exported symbols still generate diagnostics
             let code = "
-                library(mockpkg)
+                library('mockpkg')
                 undefined()
                 also_undefined
             ";
