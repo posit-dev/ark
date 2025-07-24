@@ -260,11 +260,6 @@ impl<'tree> NodeExt for Node<'tree> {
                 let name = node.child_by_field_name("name");
                 let value = node.child_by_field_name("value");
 
-                // Likely not possible but just in case
-                if value.is_none() && name.is_none() {
-                    return None;
-                }
-
                 Some((name, value))
             })
     }
