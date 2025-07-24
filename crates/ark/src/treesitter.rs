@@ -330,9 +330,10 @@ impl NodeTypeExt for Node<'_> {
         match self.node_type() {
             NodeType::Identifier => return Ok(contents.node_slice(self)?.to_string()),
             NodeType::String => {
-                // Remove quotes from string literal
-                let string = contents.node_slice(self)?.to_string();
-                Ok(string.trim_matches('"').trim_matches('\'').to_string())
+                let string_content = self
+                    .child_by_field_name("content")
+                    .ok_or_else(|| anyhow::anyhow!("Can't extract string's `content` field"))?;
+                Ok(contents.node_slice(&string_content)?.to_string())
             },
             _ => {
                 return Err(anyhow::anyhow!("Not an identifier or string"));
