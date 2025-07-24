@@ -9,7 +9,7 @@ use tree_sitter::Parser;
 use crate::treesitter::TSQuery;
 
 /// Parsed NAMESPACE file
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct Namespace {
     /// Names of objects exported with `export()`
     pub exports: Vec<String>,
