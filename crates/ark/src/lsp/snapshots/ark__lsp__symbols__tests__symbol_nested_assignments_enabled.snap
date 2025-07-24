@@ -128,4 +128,34 @@ expression: symbols
             ],
         ),
     },
+    DocumentSymbol {
+        name: "outer",
+        detail: None,
+        kind: Variable,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 8,
+                character: 0,
+            },
+            end: Position {
+                line: 8,
+                character: 10,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 8,
+                character: 0,
+            },
+            end: Position {
+                line: 8,
+                character: 10,
+            },
+        },
+        children: Some(
+            [],
+        ),
+    },
 ]

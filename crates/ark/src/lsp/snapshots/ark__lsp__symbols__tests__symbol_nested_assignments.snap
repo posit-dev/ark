@@ -1,6 +1,6 @@
 ---
 source: crates/ark/src/lsp/symbols.rs
-expression: "test_symbol(\"\nlocal({\n  inner1 <- 1            # Not a symbol\n})\na <- function() {\n  inner2 <- 2            # Not a symbol\n  inner3 <- function() 3 # Symbol\n}\n\")"
+expression: "test_symbol(\"\nlocal({\n  inner1 <- 1            # Not a symbol\n})\na <- function() {\n  inner2 <- 2            # Not a symbol\n  inner3 <- function() 3 # Symbol\n}\nouter <- 4\n\")"
 ---
 [
     DocumentSymbol {
@@ -66,6 +66,36 @@ expression: "test_symbol(\"\nlocal({\n  inner1 <- 1            # Not a symbol\n}
                     ),
                 },
             ],
+        ),
+    },
+    DocumentSymbol {
+        name: "outer",
+        detail: None,
+        kind: Variable,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 8,
+                character: 0,
+            },
+            end: Position {
+                line: 8,
+                character: 10,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 8,
+                character: 0,
+            },
+            end: Position {
+                line: 8,
+                character: 10,
+            },
+        },
+        children: Some(
+            [],
         ),
     },
 ]
