@@ -14,7 +14,7 @@ use crate::lsp::inputs::package_namespace::Namespace;
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
 pub struct Package {
-    /// Path to the directory that contains `DESCRIPTION` and `NAMESPACE`. Can
+    /// Path to the directory that contains `DESCRIPTION``. Can
     /// be an installed package or a package source.
     pub path: PathBuf,
 
@@ -47,11 +47,16 @@ impl Package {
             ));
         }
 
-        let namespace_contents = fs::read_to_string(&namespace_path)?;
-        let namespace = Namespace::parse(&namespace_contents)?;
+        let namespace = if namespace_path.is_file() {
+            let namespace_contents = fs::read_to_string(&namespace_path)?;
+            Namespace::parse(&namespace_contents)?
+        } else {
+            tracing::info!("Package `{name}` doesn't contain a NAMESPACE file, using defaults");
+            Namespace::default()
+        };
 
         Ok(Some(Package {
-            path: package_path.to_path_buf(),
+            path: package_path,
             description,
             namespace,
         }))
