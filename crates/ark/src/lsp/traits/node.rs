@@ -221,13 +221,7 @@ impl<'tree> NodeExt for Node<'tree> {
     fn next_siblings(&self) -> impl Iterator<Item = Node<'tree>> {
         let mut cursor = self.walk();
 
-        let first = if cursor.goto_next_sibling() {
-            Some(cursor.node())
-        } else {
-            None
-        };
-
-        std::iter::successors(first, move |_| {
+        std::iter::from_fn(move || {
             if cursor.goto_next_sibling() {
                 Some(cursor.node())
             } else {
@@ -238,20 +232,15 @@ impl<'tree> NodeExt for Node<'tree> {
 
     fn children_of(node: Node<'tree>) -> impl Iterator<Item = Node<'tree>> {
         let mut cursor = node.walk();
-        let mut first = true;
+        let mut done = !cursor.goto_first_child();
 
         std::iter::from_fn(move || {
-            let advanced = if first {
-                first = false;
-                cursor.goto_first_child()
-            } else {
-                cursor.goto_next_sibling()
-            };
-
-            if advanced {
-                Some(cursor.node())
-            } else {
+            if done {
                 None
+            } else {
+                let item = Some(cursor.node());
+                done = !cursor.goto_next_sibling();
+                item
             }
         })
     }
