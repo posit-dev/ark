@@ -94,9 +94,12 @@ pub trait NodeExt: Sized {
     fn children_of(node: Self) -> impl Iterator<Item = Self>;
     fn next_siblings(&self) -> impl Iterator<Item = Self>;
     fn arguments(&self) -> impl Iterator<Item = (Option<Self>, Option<Self>)>;
-    fn arguments_values(&self) -> impl Iterator<Item = Self>;
-    fn arguments_names(&self) -> impl Iterator<Item = Self>;
-    fn arguments_names_as_string(&self, contents: &ropey::Rope) -> impl Iterator<Item = String>;
+    fn arguments_values(&self) -> impl Iterator<Item = Option<Self>>;
+    fn arguments_names(&self) -> impl Iterator<Item = Option<Self>>;
+    fn arguments_names_as_string(
+        &self,
+        contents: &ropey::Rope,
+    ) -> impl Iterator<Item = Option<String>>;
 }
 
 impl<'tree> NodeExt for Node<'tree> {
@@ -277,24 +280,27 @@ impl<'tree> NodeExt for Node<'tree> {
             })
     }
 
-    fn arguments_names(&self) -> impl Iterator<Item = Node<'tree>> {
-        self.arguments().filter_map(|(name, _value)| name)
+    fn arguments_names(&self) -> impl Iterator<Item = Option<Node<'tree>>> {
+        self.arguments().map(|(name, _value)| name)
     }
 
-    fn arguments_names_as_string(&self, contents: &ropey::Rope) -> impl Iterator<Item = String> {
-        self.arguments_names().filter_map(|node| -> Option<String> {
-            match contents.node_slice(&node) {
+    fn arguments_names_as_string(
+        &self,
+        contents: &ropey::Rope,
+    ) -> impl Iterator<Item = Option<String>> {
+        self.arguments_names().map(|maybe_node| {
+            maybe_node.and_then(|node| match contents.node_slice(&node) {
                 Err(err) => {
                     tracing::error!("Can't convert argument name to text: {err:?}");
                     None
                 },
                 Ok(text) => Some(text.to_string()),
-            }
+            })
         })
     }
 
-    fn arguments_values(&self) -> impl Iterator<Item = Node<'tree>> {
-        self.arguments().filter_map(|(_name, value)| value)
+    fn arguments_values(&self) -> impl Iterator<Item = Option<Node<'tree>>> {
+        self.arguments().map(|(_name, value)| value)
     }
 }
 

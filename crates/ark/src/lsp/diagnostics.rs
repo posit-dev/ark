@@ -824,7 +824,7 @@ fn recurse_call(
 fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> anyhow::Result<()> {
     // Find the first argument (package name). Positionally for now, no attempt
     // at argument matching whatsoever.
-    let Some(package_node) = node.arguments_values().nth(0) else {
+    let Some(package_node) = node.arguments_values().flatten().nth(0) else {
         return Err(anyhow::anyhow!("Can't unpack attached package argument"));
     };
 
@@ -833,6 +833,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     // infrastructure.
     if let Some(_) = node
         .arguments_names_as_string(context.contents)
+        .flatten()
         .find(|n| n == "character.only")
     {
         return Ok(());
