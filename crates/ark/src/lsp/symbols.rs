@@ -195,8 +195,10 @@ fn collect_symbols(
         },
 
         NodeType::BracedExpression => {
+            let old = ctx.top_level;
             ctx.top_level = false;
             collect_list_sections(ctx, node, contents, current_level, symbols)?;
+            ctx.top_level = old;
         },
 
         NodeType::Call => {
@@ -940,6 +942,7 @@ a <- function() {
   inner2 <- 2            # Not a symbol
   inner3 <- function() 3 # Symbol
 }
+outer <- 4
 "
         ));
         assert_eq!(test_symbol("{ foo <- 1 }"), vec![]);
@@ -956,6 +959,7 @@ a <- function() {
   inner2 <- 2
   inner3 <- function() 3
 }
+outer <- 4
 ",
             None,
         );
