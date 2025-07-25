@@ -135,7 +135,11 @@ impl<'a> DiagnosticContext<'a> {
     }
 }
 
-pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diagnostic> {
+pub(crate) fn generate_diagnostics(
+    doc: Document,
+    state: WorldState,
+    testthat: bool,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if !state.config.diagnostics.enable {
@@ -190,7 +194,7 @@ pub(crate) fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<Diag
     // don't special-case how workspace inclusion works for packages). We might
     // want to provide a mechanism for test packages to declare this sort of
     // test files setup.
-    if doc.testthat {
+    if testthat {
         if let Some(pkg) = state.library.get("testthat") {
             for export in &pkg.namespace.exports {
                 context.workspace_symbols.insert(export.clone());
@@ -1138,10 +1142,10 @@ mod tests {
 
     use harp::eval::RParseEvalOptions;
     use once_cell::sync::Lazy;
+    use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
 
     use crate::interface::console_inputs;
-    use crate::lsp::diagnostics::generate_diagnostics;
     use crate::lsp::documents::Document;
     use crate::lsp::inputs::library::Library;
     use crate::lsp::inputs::package::Package;
@@ -1153,6 +1157,10 @@ mod tests {
 
     // Default state that includes installed packages and default scopes.
     static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());
+
+    fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<lsp_types::Diagnostic> {
+        super::generate_diagnostics(doc, state, false)
+    }
 
     fn current_state() -> WorldState {
         let inputs = console_inputs().unwrap();
