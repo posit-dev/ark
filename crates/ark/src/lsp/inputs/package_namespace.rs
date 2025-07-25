@@ -6,7 +6,7 @@
 
 use tree_sitter::Parser;
 
-use crate::treesitter::TSQuery;
+use crate::treesitter::TsQuery;
 
 /// Parsed NAMESPACE file
 #[derive(Default, Clone, Debug)]
@@ -49,7 +49,7 @@ impl Namespace {
                 (#eq? @fn_name "import")
             )
         "#;
-        let mut ts_query = TSQuery::new(query_str)?;
+        let mut ts_query = TsQuery::new(query_str)?;
 
         let mut exports = Vec::new();
         for capture in ts_query.captures_for(root_node, "exported", contents.as_bytes()) {
