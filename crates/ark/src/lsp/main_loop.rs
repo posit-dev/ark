@@ -827,15 +827,11 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
                 // stopgap approach that has some false positives (e.g. when we
                 // work on testthat itself the flag will always be true), but
                 // that shouldn't have much practical impact.
-                let mut doc = document.clone();
-                if Path::new(uri.path())
+                let testthat = Path::new(uri.path())
                     .components()
-                    .any(|c| c.as_os_str() == "testthat")
-                {
-                    doc.testthat = true;
-                };
+                    .any(|c| c.as_os_str() == "testthat");
 
-                let diagnostics = generate_diagnostics(doc, state.clone());
+                let diagnostics = generate_diagnostics(document.clone(), state.clone(), testthat);
                 Some(RefreshDiagnosticsResult {
                     uri,
                     diagnostics,
