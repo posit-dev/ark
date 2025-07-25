@@ -4,7 +4,10 @@
 // Copyright (C) 2025 by Posit Software, PBC
 //
 
+use std::sync::LazyLock;
+
 use tree_sitter::Parser;
+use tree_sitter::Query;
 
 use crate::treesitter::TsQuery;
 
@@ -32,24 +35,29 @@ impl Namespace {
             .ok_or_else(|| anyhow::anyhow!("Failed to parse NAMESPACE file"))?;
         let root_node = tree.root_node();
 
-        let query_str = r#"
-            (call
-                function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @exported))
-                (#eq? @fn_name "export")
-            )
-            (call
-                function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @pkg) (argument value: (identifier) @imported))
-                (#eq? @fn_name "importFrom")
-            )
-            (call
-                function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @imported_pkgs))
-                (#eq? @fn_name "import")
-            )
-        "#;
-        let mut ts_query = TsQuery::new(query_str)?;
+        static NAMESPACE_QUERY: LazyLock<Query> = LazyLock::new(|| {
+            let query_str = r#"
+                (call
+                    function: (identifier) @fn_name
+                    arguments: (arguments (argument value: (identifier) @exported))
+                    (#eq? @fn_name "export")
+                )
+                (call
+                    function: (identifier) @fn_name
+                    arguments: (arguments (argument value: (identifier) @pkg) (argument value: (identifier) @imported))
+                    (#eq? @fn_name "importFrom")
+                )
+                (call
+                    function: (identifier) @fn_name
+                    arguments: (arguments (argument value: (identifier) @imported_pkgs))
+                    (#eq? @fn_name "import")
+                )
+            "#;
+            let language = &tree_sitter_r::LANGUAGE.into();
+            tree_sitter::Query::new(language, query_str).expect("Failed to compile NAMESPACE query")
+        });
+
+        let mut ts_query = TsQuery::from_query(&*NAMESPACE_QUERY);
 
         let captures = ts_query.captures_by(
             root_node,

@@ -642,23 +642,35 @@ pub(crate) fn point_end_of_previous_row(
     }
 }
 
-pub(crate) struct TsQuery {
-    query: tree_sitter::Query,
+pub(crate) struct TsQuery<'ts_query> {
+    query: QueryStorage<'ts_query>,
     cursor: tree_sitter::QueryCursor,
 }
 
-impl TsQuery {
+pub(crate) enum QueryStorage<'ts_query> {
+    Owned(tree_sitter::Query),
+    Borrowed(&'ts_query tree_sitter::Query),
+}
+
+impl<'ts_query> TsQuery<'ts_query> {
+    #[allow(unused)]
     pub(crate) fn new(query_str: &str) -> anyhow::Result<Self> {
         let language = &tree_sitter_r::LANGUAGE.into();
         let query = tree_sitter::Query::new(language, query_str)
             .map_err(|err| anyhow!("Failed to compile query: {err}"))?;
 
-        Ok(Self::from_query(query))
+        Ok(Self {
+            query: QueryStorage::Owned(query),
+            cursor: tree_sitter::QueryCursor::new(),
+        })
     }
 
-    pub(crate) fn from_query(query: tree_sitter::Query) -> Self {
+    pub(crate) fn from_query(query: &'ts_query tree_sitter::Query) -> Self {
         let cursor = tree_sitter::QueryCursor::new();
-        Self { query, cursor }
+        Self {
+            query: QueryStorage::Borrowed(query),
+            cursor,
+        }
     }
 
     /// Run the query on `contents` and collect all captures as (capture_name, node) pairs
@@ -670,8 +682,12 @@ impl TsQuery {
     where
         'tree: 'query,
     {
-        let matches_iter = self.cursor.matches(&self.query, node, contents);
-        AllCaptures::new(&self.query, matches_iter)
+        let query = match self.query {
+            QueryStorage::Owned(ref q) => q,
+            QueryStorage::Borrowed(q) => q,
+        };
+        let matches_iter = self.cursor.matches(query, node, contents);
+        AllCaptures::new(query, matches_iter)
     }
 
     /// Run the query on `contents` and filter captures that match `capture_name`
