@@ -674,11 +674,11 @@ impl<'ts_query> TsQuery<'ts_query> {
     }
 
     /// Run the query on `contents` and collect all captures as (capture_name, node) pairs
-    pub(crate) fn all_captures<'tree, 'query>(
+    pub(crate) fn all_captures<'tree, 'query, 'contents>(
         &'query mut self,
         node: tree_sitter::Node<'tree>,
-        contents: &'query [u8],
-    ) -> AllCaptures<'tree, 'query>
+        contents: &'contents [u8],
+    ) -> AllCaptures<'tree, 'query, 'contents>
     where
         'tree: 'query,
     {
@@ -739,16 +739,16 @@ impl<'ts_query> TsQuery<'ts_query> {
     }
 }
 
-pub(crate) struct AllCaptures<'tree, 'query> {
+pub(crate) struct AllCaptures<'tree, 'query, 'contents> {
     query: &'query tree_sitter::Query,
-    matches_iter: tree_sitter::QueryMatches<'query, 'tree, &'query [u8], &'query [u8]>,
+    matches_iter: tree_sitter::QueryMatches<'query, 'tree, &'contents [u8], &'contents [u8]>,
     current_captures_iter: Option<std::slice::Iter<'query, tree_sitter::QueryCapture<'tree>>>,
 }
 
-impl<'tree, 'query> AllCaptures<'tree, 'query> {
+impl<'tree, 'query, 'contents> AllCaptures<'tree, 'query, 'contents> {
     pub(crate) fn new(
         query: &'query tree_sitter::Query,
-        matches_iter: tree_sitter::QueryMatches<'query, 'tree, &'query [u8], &'query [u8]>,
+        matches_iter: tree_sitter::QueryMatches<'query, 'tree, &'contents [u8], &'contents [u8]>,
     ) -> Self {
         Self {
             query,
@@ -758,7 +758,7 @@ impl<'tree, 'query> AllCaptures<'tree, 'query> {
     }
 }
 
-impl<'tree, 'query> Iterator for AllCaptures<'tree, 'query> {
+impl<'tree, 'query, 'contents> Iterator for AllCaptures<'tree, 'query, 'contents> {
     type Item = (String, tree_sitter::Node<'tree>);
 
     // The iterator yields `(capture_name, node)` pairs by walking through all query matches.
