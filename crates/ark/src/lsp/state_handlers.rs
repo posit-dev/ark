@@ -216,15 +216,19 @@ pub(crate) fn did_close(
     // Publish empty set of diagnostics to clear them
     lsp::publish_diagnostics(uri.clone(), Vec::new(), None);
 
-    state
-        .documents
-        .remove(&uri)
-        .ok_or(anyhow!("Failed to remove document for URI: {uri}"))?;
+    if let None = state.documents.remove(&uri) {
+        lsp::log_error!("Failed to remove document for URI '{uri}'");
+    }
 
-    lsp_state
-        .parsers
-        .remove(&uri)
-        .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
+    if let None = lsp_state.parsers.remove(&uri) {
+        lsp::log_error!("Failed to remove parser for URI '{uri}'");
+    }
+
+    if let Ok(path) = uri.to_file_path() {
+        if let Err(err) = lsp::indexer::clear(&path) {
+            lsp::log_error!("Failed to clear index for URI '{uri}': {err:?}");
+        }
+    }
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
