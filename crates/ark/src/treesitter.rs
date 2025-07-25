@@ -659,26 +659,40 @@ impl TsQuery {
         Self { query, cursor }
     }
 
-    /// Match query against `contents` and collect all nodes captured with the
-    /// given capture name
+    /// Run the query on `contents` and collect all captures as (capture_name, node) pairs
+    pub(crate) fn all_captures<'tree>(
+        &mut self,
+        node: tree_sitter::Node<'tree>,
+        contents: &[u8],
+    ) -> Vec<(String, tree_sitter::Node<'tree>)> {
+        self.cursor
+            .matches(&self.query, node, contents)
+            .flat_map(|m| {
+                m.captures.iter().map(|cap| {
+                    let cap_name = self.query.capture_names()[cap.index as usize].to_string();
+                    (cap_name, cap.node)
+                })
+            })
+            .collect()
+    }
+
+    /// Run the query on `contents` and filter captures that match `capture_name`
     pub(crate) fn captures_for<'tree>(
         &mut self,
         node: tree_sitter::Node<'tree>,
         capture_name: &str,
         contents: &[u8],
     ) -> Vec<tree_sitter::Node<'tree>> {
-        let mut result = Vec::new();
-
-        for m in self.cursor.matches(&self.query, node, contents) {
-            for cap in m.captures.iter() {
-                let cap_name = &self.query.capture_names()[cap.index as usize];
-                if *cap_name == capture_name {
-                    result.push(cap.node);
+        self.all_captures(node, contents)
+            .into_iter()
+            .filter_map(|(name, node)| {
+                if name == capture_name {
+                    Some(node)
+                } else {
+                    None
                 }
-            }
-        }
-
-        result
+            })
+            .collect()
     }
 }
 
