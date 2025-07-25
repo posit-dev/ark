@@ -46,6 +46,8 @@ pub mod weak_ref;
 pub use column_names::*;
 pub use data_frame::*;
 pub use eval::*;
+pub use exec::RFunction;
+pub use exec::RFunctionExt;
 pub use matrix::*;
 pub use object::*;
 pub use parse::*;

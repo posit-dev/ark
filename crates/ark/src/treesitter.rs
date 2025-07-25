@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::anyhow;
 use tree_sitter::Node;
 
@@ -283,6 +285,7 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier(&self) -> bool;
     fn is_string(&self) -> bool;
     fn is_identifier_or_string(&self) -> bool;
+    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String>;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
     fn is_subset(&self) -> bool;
@@ -323,6 +326,21 @@ impl NodeTypeExt for Node<'_> {
     // This combination is particularly common
     fn is_identifier_or_string(&self) -> bool {
         matches!(self.node_type(), NodeType::Identifier | NodeType::String)
+    }
+
+    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String> {
+        match self.node_type() {
+            NodeType::Identifier => return Ok(contents.node_slice(self)?.to_string()),
+            NodeType::String => {
+                let string_content = self
+                    .child_by_field_name("content")
+                    .ok_or_else(|| anyhow::anyhow!("Can't extract string's `content` field"))?;
+                Ok(contents.node_slice(&string_content)?.to_string())
+            },
+            _ => {
+                return Err(anyhow::anyhow!("Not an identifier or string"));
+            },
+        }
     }
 
     fn is_keyword(&self) -> bool {
@@ -624,42 +642,151 @@ pub(crate) fn point_end_of_previous_row(
     }
 }
 
-pub(crate) struct TSQuery {
-    query: tree_sitter::Query,
+pub(crate) struct TsQuery<'ts_query> {
+    query: QueryStorage<'ts_query>,
     cursor: tree_sitter::QueryCursor,
 }
 
-impl TSQuery {
+pub(crate) enum QueryStorage<'ts_query> {
+    Owned(tree_sitter::Query),
+    Borrowed(&'ts_query tree_sitter::Query),
+}
+
+impl<'ts_query> TsQuery<'ts_query> {
+    #[allow(unused)]
     pub(crate) fn new(query_str: &str) -> anyhow::Result<Self> {
         let language = &tree_sitter_r::LANGUAGE.into();
         let query = tree_sitter::Query::new(language, query_str)
             .map_err(|err| anyhow!("Failed to compile query: {err}"))?;
 
-        let cursor = tree_sitter::QueryCursor::new();
-
-        Ok(Self { query, cursor })
+        Ok(Self {
+            query: QueryStorage::Owned(query),
+            cursor: tree_sitter::QueryCursor::new(),
+        })
     }
 
-    /// Match query against `contents` and collect all nodes captured with the
-    /// given capture name
-    pub(crate) fn captures_for<'tree>(
-        &mut self,
+    pub(crate) fn from_query(query: &'ts_query tree_sitter::Query) -> Self {
+        let cursor = tree_sitter::QueryCursor::new();
+        Self {
+            query: QueryStorage::Borrowed(query),
+            cursor,
+        }
+    }
+
+    /// Run the query on `contents` and collect all captures as (capture_name, node) pairs
+    pub(crate) fn all_captures<'tree, 'query, 'contents>(
+        &'query mut self,
+        node: tree_sitter::Node<'tree>,
+        contents: &'contents [u8],
+    ) -> AllCaptures<'tree, 'query, 'contents>
+    where
+        'tree: 'query,
+    {
+        let query = match self.query {
+            QueryStorage::Owned(ref q) => q,
+            QueryStorage::Borrowed(q) => q,
+        };
+        let matches_iter = self.cursor.matches(query, node, contents);
+        AllCaptures::new(query, matches_iter)
+    }
+
+    /// Run the query on `contents` and filter captures that match `capture_name`
+    pub(crate) fn captures_for<'tree, 'query>(
+        &'query mut self,
         node: tree_sitter::Node<'tree>,
         capture_name: &str,
-        contents: &[u8],
-    ) -> Vec<tree_sitter::Node<'tree>> {
-        let mut result = Vec::new();
-
-        for m in self.cursor.matches(&self.query, node, contents) {
-            for cap in m.captures.iter() {
-                let cap_name = &self.query.capture_names()[cap.index as usize];
-                if *cap_name == capture_name {
-                    result.push(cap.node);
+        contents: &'query [u8],
+    ) -> impl Iterator<Item = tree_sitter::Node<'tree>> + 'query
+    where
+        // The tree must outlive query
+        'tree: 'query,
+    {
+        let capture_name = capture_name.to_string();
+        self.all_captures(node, contents)
+            .filter_map(move |(name, node)| {
+                if name == capture_name {
+                    Some(node)
+                } else {
+                    None
                 }
+            })
+    }
+
+    /// Run the query on `contents` and filter captures that match `capture_names`.
+    /// They are returned in a hashmap keyed by capture name.
+    pub(crate) fn captures_by<'tree, 'query>(
+        &'query mut self,
+        node: tree_sitter::Node<'tree>,
+        capture_names: &[&str],
+        contents: &'query [u8],
+    ) -> HashMap<String, Vec<tree_sitter::Node<'tree>>>
+    where
+        'tree: 'query,
+    {
+        let mut result: HashMap<String, Vec<tree_sitter::Node<'tree>>> = HashMap::new();
+
+        for &name in capture_names {
+            result.insert(name.to_string(), Vec::new());
+        }
+
+        for (name, node) in self.all_captures(node, contents) {
+            if let Some(nodes) = result.get_mut(&name) {
+                nodes.push(node);
             }
         }
 
         result
+    }
+}
+
+pub(crate) struct AllCaptures<'tree, 'query, 'contents> {
+    query: &'query tree_sitter::Query,
+    matches_iter: tree_sitter::QueryMatches<'query, 'tree, &'contents [u8], &'contents [u8]>,
+    current_captures_iter: Option<std::slice::Iter<'query, tree_sitter::QueryCapture<'tree>>>,
+}
+
+impl<'tree, 'query, 'contents> AllCaptures<'tree, 'query, 'contents> {
+    pub(crate) fn new(
+        query: &'query tree_sitter::Query,
+        matches_iter: tree_sitter::QueryMatches<'query, 'tree, &'contents [u8], &'contents [u8]>,
+    ) -> Self {
+        Self {
+            query,
+            matches_iter,
+            current_captures_iter: None,
+        }
+    }
+}
+
+impl<'tree, 'query, 'contents> Iterator for AllCaptures<'tree, 'query, 'contents> {
+    type Item = (String, tree_sitter::Node<'tree>);
+
+    // The iterator yields `(capture_name, node)` pairs by walking through all query matches.
+    // For each match, it iterates through its captures before advancing to the next match.
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some(captures_iter) = &mut self.current_captures_iter {
+                // We have an active iterator over captures of a match, iterate over it until exhausted
+                if let Some(capture) = captures_iter.next() {
+                    let cap_name = self.query.capture_names()[capture.index as usize].to_string();
+                    return Some((cap_name, capture.node));
+                }
+            }
+
+            // We either haven't started iterating over matches yet, or the
+            // current captures iterator for a match is exhausted. Let's check
+            // if there are remaining matches.
+            match self.matches_iter.next() {
+                Some(query_match) => {
+                    // Set the iterator over the captures of this match as current
+                    self.current_captures_iter = Some(query_match.captures.iter());
+                },
+                None => {
+                    // No more captures and no more matches
+                    return None;
+                },
+            }
+        }
     }
 }
 

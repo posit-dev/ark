@@ -19,6 +19,7 @@ use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
+use tree_sitter::Query;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
@@ -29,7 +30,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
-use crate::treesitter::TSQuery;
+use crate::treesitter::TsQuery;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -347,23 +348,27 @@ fn index_r6_class_methods(
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
     // Tree-sitter query to match individual methods in R6Class public/private lists
-    let query_str = r#"
-    (argument
-      name: (identifier) @access
-      value: (call
-        function: (identifier) @_list_fn
-        arguments: (arguments
-          (argument
-            name: (identifier) @method_name
-            value: (function_definition) @method_fn
-          )
-        )
-      )
-      (#match? @access "public|private")
-      (#eq? @_list_fn "list")
-    )
-    "#;
-    let mut ts_query = TSQuery::new(query_str)?;
+    static R6_METHODS_QUERY: LazyLock<Query> = LazyLock::new(|| {
+        let query_str = r#"
+            (argument
+                name: (identifier) @access
+                value: (call
+                    function: (identifier) @_list_fn
+                    arguments: (arguments
+                        (argument
+                            name: (identifier) @method_name
+                            value: (function_definition) @method_fn
+                        )
+                    )
+                )
+                (#match? @access "public|private")
+                (#eq? @_list_fn "list")
+            )
+        "#;
+        let language = &tree_sitter_r::LANGUAGE.into();
+        Query::new(language, query_str).expect("Failed to compile R6 methods query")
+    });
+    let mut ts_query = TsQuery::from_query(&*R6_METHODS_QUERY);
 
     // We'll switch from Rope to String in the near future so let's not
     // worry about this conversion now

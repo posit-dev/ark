@@ -309,10 +309,12 @@ mod tests {
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
     use crate::lsp::documents::Document;
+    use crate::lsp::inputs::library::Library;
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
         let document = Document::new(text, None);
-        let context = DiagnosticContext::new(&document.contents);
+        let library = Library::default();
+        let context = DiagnosticContext::new(&document.contents, &library);
         let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
         diagnostics
     }
