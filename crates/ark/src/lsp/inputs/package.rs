@@ -24,7 +24,7 @@ pub struct Package {
 
 impl Package {
     /// Load a package from a given path.
-    pub fn load(package_path: &std::path::Path) -> anyhow::Result<Option<Self>> {
+    pub fn load_from_folder(package_path: &std::path::Path) -> anyhow::Result<Option<Self>> {
         let description_path = package_path.join("DESCRIPTION");
         let namespace_path = package_path.join("NAMESPACE");
 
@@ -65,7 +65,7 @@ impl Package {
 
         // For library packages, ensure the invariant that the package name
         // matches the folder name
-        if let Some(pkg) = Self::load(&package_path)? {
+        if let Some(pkg) = Self::load_from_folder(&package_path)? {
             if pkg.description.name != name {
                 return Err(anyhow::anyhow!(
                     "`Package` field in `DESCRIPTION` doesn't match folder name '{name}'"

@@ -87,7 +87,7 @@ pub(crate) fn initialize(
                 // root if found. This means we're dealing with a package
                 // source.
                 if state.root.is_none() {
-                    match Package::load(&path) {
+                    match Package::load_from_folder(&path) {
                         Ok(Some(pkg)) => {
                             log::info!(
                                 "Root: Loaded package `{pkg}` from {path} as project root",
