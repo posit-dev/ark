@@ -36,12 +36,15 @@ impl Namespace {
         let root_node = tree.root_node();
 
         // TODO: `import(foo, except = c(bar, baz))`
+        //
+        // Regarding `exportMethods`, see WRE: "Note that exporting methods on a
+        // generic in the namespace will also export the generic"
         static NAMESPACE_QUERY: LazyLock<Query> = LazyLock::new(|| {
             let query_str = r#"
                 (call
                     function: (identifier) @fn_name
                     arguments: (arguments (argument value: (identifier) @exported))
-                    (#eq? @fn_name "export")
+                    (#match? @fn_name "^(export|exportClasses|exportMethods)$")
                 )
                 (call
                     function: (identifier) @fn_name
@@ -174,5 +177,16 @@ mod tests {
         assert_eq!(parsed.imports, vec!["a", "b", "c"]);
         assert_eq!(parsed.package_imports, vec!["bar", "foo"]);
         assert_eq!(parsed.exports, vec!["baz", "qux"]);
+    }
+
+    #[test]
+    fn parses_s4_exports() {
+        let ns = r#"
+                exportClasses(foo)
+                exportClasses(bar, baz)
+                exportMethods(qux)
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.exports, vec!["bar", "baz", "foo", "qux"]);
     }
 }
