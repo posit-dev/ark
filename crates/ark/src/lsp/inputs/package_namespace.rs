@@ -35,6 +35,7 @@ impl Namespace {
             .ok_or_else(|| anyhow::anyhow!("Failed to parse NAMESPACE file"))?;
         let root_node = tree.root_node();
 
+        // TODO: `import(foo, except = c(bar, baz))`
         static NAMESPACE_QUERY: LazyLock<Query> = LazyLock::new(|| {
             let query_str = r#"
                 (call
@@ -160,5 +161,18 @@ mod tests {
         assert_eq!(parsed.package_imports, vec!["rlang", "utils"]);
         assert_eq!(parsed.exports, vec!["foo"]);
         assert_eq!(parsed.imports, vec!["median"]);
+    }
+
+    #[test]
+    fn parses_multiple_args() {
+        let ns = r#"
+                import(foo, bar)
+                export(baz, qux)
+                importFrom(pkg, a, b, c)
+            "#;
+        let parsed = Namespace::parse(ns).unwrap();
+        assert_eq!(parsed.imports, vec!["a", "b", "c"]);
+        assert_eq!(parsed.package_imports, vec!["bar", "foo"]);
+        assert_eq!(parsed.exports, vec!["baz", "qux"]);
     }
 }
