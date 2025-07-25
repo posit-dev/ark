@@ -651,9 +651,12 @@ impl TSQuery {
         let query = tree_sitter::Query::new(language, query_str)
             .map_err(|err| anyhow!("Failed to compile query: {err}"))?;
 
-        let cursor = tree_sitter::QueryCursor::new();
+        Ok(Self::from_query(query))
+    }
 
-        Ok(Self { query, cursor })
+    pub(crate) fn from_query(query: tree_sitter::Query) -> Self {
+        let cursor = tree_sitter::QueryCursor::new();
+        Self { query, cursor }
     }
 
     /// Match query against `contents` and collect all nodes captured with the
