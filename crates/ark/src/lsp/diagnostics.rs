@@ -845,7 +845,9 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     let package = insert_package_exports(&package_name, attach_pos, context)?;
 
     // Also attach packages from `Depends` field
-    let mut attach_dependencies = package.description.depends.clone();
+    for package_name in package.description.depends.iter() {
+        insert_package_exports(&package_name, attach_pos, context)?;
+    }
 
     // Special handling for the tidyverse and tidymodels packages. Hard-coded
     // for now but in the future, this should probably be expressed as a
@@ -888,9 +890,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
         },
         _ => vec![],
     };
-    attach_dependencies.extend(attach_field.into_iter().map(String::from));
-
-    for package_name in attach_dependencies {
+    for package_name in attach_field {
         insert_package_exports(&package_name, attach_pos, context)?;
     }
 
