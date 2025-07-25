@@ -51,32 +51,23 @@ impl Namespace {
         "#;
         let mut ts_query = TsQuery::new(query_str)?;
 
-        let mut exports = Vec::new();
-        for capture in ts_query.captures_for(root_node, "exported", contents.as_bytes()) {
-            let symbol = capture
-                .utf8_text(contents.as_bytes())
-                .unwrap_or("")
-                .to_string();
-            exports.push(symbol);
-        }
+        let all_captures = ts_query.all_captures(root_node, contents.as_bytes());
 
-        let mut imports = Vec::new();
-        for capture in ts_query.captures_for(root_node, "imported", contents.as_bytes()) {
-            let symbol = capture
-                .utf8_text(contents.as_bytes())
-                .unwrap_or("")
-                .to_string();
-            imports.push(symbol);
-        }
+        let filter_captures = |capture_name: &str| -> Vec<String> {
+            all_captures
+                .iter()
+                .filter(|(name, _)| name == capture_name)
+                .map(|(_, node)| {
+                    node.utf8_text(contents.as_bytes())
+                        .unwrap_or("")
+                        .to_string()
+                })
+                .collect()
+        };
 
-        let mut package_imports = Vec::new();
-        for capture in ts_query.captures_for(root_node, "bulk_imported", contents.as_bytes()) {
-            let symbol = capture
-                .utf8_text(contents.as_bytes())
-                .unwrap_or("")
-                .to_string();
-            package_imports.push(symbol);
-        }
+        let mut exports = filter_captures("exported");
+        let mut imports = filter_captures("imported");
+        let mut package_imports = filter_captures("bulk_imported");
 
         // Take unique values of imports and exports. In the future we'll lint
         // this but for now just be defensive.
