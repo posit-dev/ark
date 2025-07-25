@@ -45,29 +45,35 @@ impl Namespace {
             )
             (call
                 function: (identifier) @fn_name
-                arguments: (arguments (argument value: (identifier) @bulk_imported))
+                arguments: (arguments (argument value: (identifier) @imported_pkgs))
                 (#eq? @fn_name "import")
             )
         "#;
         let mut ts_query = TsQuery::new(query_str)?;
 
-        let all_captures = ts_query.all_captures(root_node, contents.as_bytes());
+        let captures = ts_query.captures_by(
+            root_node,
+            &["exported", "imported", "imported_pkgs"],
+            contents.as_bytes(),
+        );
 
-        let filter_captures = |capture_name: &str| -> Vec<String> {
-            all_captures
+        let as_strings = |nodes: &Vec<tree_sitter::Node>| {
+            nodes
                 .iter()
-                .filter(|(name, _)| name == capture_name)
-                .map(|(_, node)| {
+                .map(|node| {
                     node.utf8_text(contents.as_bytes())
                         .unwrap_or("")
                         .to_string()
                 })
-                .collect()
+                .collect::<Vec<_>>()
         };
 
-        let mut exports = filter_captures("exported");
-        let mut imports = filter_captures("imported");
-        let mut package_imports = filter_captures("bulk_imported");
+        let mut exports = captures.get("exported").map(as_strings).unwrap_or_default();
+        let mut imports = captures.get("imported").map(as_strings).unwrap_or_default();
+        let mut package_imports = captures
+            .get("imported_pkgs")
+            .map(as_strings)
+            .unwrap_or_default();
 
         // Take unique values of imports and exports. In the future we'll lint
         // this but for now just be defensive.
