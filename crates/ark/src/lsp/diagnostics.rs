@@ -1600,7 +1600,7 @@ foo
             let namespace = Namespace {
                 exports: vec!["foo".to_string(), "bar".to_string()],
                 imports: vec![],
-                bulk_imports: vec![],
+                package_imports: vec![],
             };
             let description = Description {
                 name: "mockpkg".to_string(),
@@ -1700,7 +1700,7 @@ foo
             let namespace1 = Namespace {
                 exports: vec!["foo".to_string(), "bar".to_string()],
                 imports: vec![],
-                bulk_imports: vec![],
+                package_imports: vec![],
             };
             let description1 = Description {
                 name: "pkg1".to_string(),
@@ -1718,7 +1718,7 @@ foo
             let namespace2 = Namespace {
                 exports: vec!["bar".to_string(), "baz".to_string()],
                 imports: vec![],
-                bulk_imports: vec![],
+                package_imports: vec![],
             };
             let description2 = Description {
                 name: "pkg2".to_string(),
@@ -1778,7 +1778,7 @@ foo
             let namespace = Namespace {
                 exports: vec!["foo".to_string(), "bar".to_string()],
                 imports: vec![],
-                bulk_imports: vec![],
+                package_imports: vec![],
             };
             let description = Description {
                 name: "pkg".to_string(),

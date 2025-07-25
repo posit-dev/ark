@@ -16,7 +16,7 @@ pub struct Namespace {
     /// Names of objects imported with `importFrom()`
     pub imports: Vec<String>,
     /// Names of packages bulk-imported with `import()`
-    pub bulk_imports: Vec<String>,
+    pub package_imports: Vec<String>,
 }
 
 impl Namespace {
@@ -69,13 +69,13 @@ impl Namespace {
             imports.push(symbol);
         }
 
-        let mut bulk_imports = Vec::new();
+        let mut package_imports = Vec::new();
         for capture in ts_query.captures_for(root_node, "bulk_imported", contents.as_bytes()) {
             let symbol = capture
                 .utf8_text(contents.as_bytes())
                 .unwrap_or("")
                 .to_string();
-            bulk_imports.push(symbol);
+            package_imports.push(symbol);
         }
 
         // Take unique values of imports and exports. In the future we'll lint
@@ -84,13 +84,13 @@ impl Namespace {
         exports.dedup();
         imports.sort();
         imports.dedup();
-        bulk_imports.sort();
-        bulk_imports.dedup();
+        package_imports.sort();
+        package_imports.dedup();
 
         Ok(Namespace {
             imports,
             exports,
-            bulk_imports,
+            package_imports,
         })
     }
 
@@ -152,7 +152,7 @@ mod tests {
                 importFrom(stats, median)
             "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.bulk_imports, vec!["rlang", "utils"]);
+        assert_eq!(parsed.package_imports, vec!["rlang", "utils"]);
         assert_eq!(parsed.exports, vec!["foo"]);
         assert_eq!(parsed.imports, vec!["median"]);
     }
