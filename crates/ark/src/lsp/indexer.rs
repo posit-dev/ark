@@ -146,7 +146,7 @@ fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
     }
 }
 
-fn clear(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn clear(path: &Path) -> anyhow::Result<()> {
     let mut index = WORKSPACE_INDEX.lock().unwrap();
     let path = str_from_path(path)?;
 
