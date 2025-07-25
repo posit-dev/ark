@@ -68,10 +68,9 @@ impl Library {
 
     fn load_package(&self, name: &str) -> anyhow::Result<Option<Package>> {
         for lib_path in self.library_paths.iter() {
-            match Package::load(&lib_path, name) {
-                Ok(Some(pkg)) => return Ok(Some(pkg)),
-                Ok(None) => (),
-                Err(err) => lsp::log_warn!("Can't load package: {err:?}"),
+            match Package::load(&lib_path, name)? {
+                Some(pkg) => return Ok(Some(pkg)),
+                None => (),
             }
         }
 
