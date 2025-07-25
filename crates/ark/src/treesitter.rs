@@ -640,12 +640,12 @@ pub(crate) fn point_end_of_previous_row(
     }
 }
 
-pub(crate) struct TSQuery {
+pub(crate) struct TsQuery {
     query: tree_sitter::Query,
     cursor: tree_sitter::QueryCursor,
 }
 
-impl TSQuery {
+impl TsQuery {
     pub(crate) fn new(query_str: &str) -> anyhow::Result<Self> {
         let language = &tree_sitter_r::LANGUAGE.into();
         let query = tree_sitter::Query::new(language, query_str)

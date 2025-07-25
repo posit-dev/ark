@@ -29,7 +29,7 @@ use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
-use crate::treesitter::TSQuery;
+use crate::treesitter::TsQuery;
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -363,7 +363,7 @@ fn index_r6_class_methods(
       (#eq? @_list_fn "list")
     )
     "#;
-    let mut ts_query = TSQuery::new(query_str)?;
+    let mut ts_query = TsQuery::new(query_str)?;
 
     // We'll switch from Rope to String in the near future so let's not
     // worry about this conversion now
