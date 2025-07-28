@@ -125,6 +125,9 @@ pub(crate) enum LspNotification {
     DidChangeTextDocument(DidChangeTextDocumentParams),
     DidSaveTextDocument(DidSaveTextDocumentParams),
     DidCloseTextDocument(DidCloseTextDocumentParams),
+    DidCreateFiles(CreateFilesParams),
+    DidDeleteFiles(DeleteFilesParams),
+    DidRenameFiles(RenameFilesParams),
 }
 
 #[derive(Debug)]
@@ -242,6 +245,18 @@ impl LanguageServer for Backend {
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         self.notify(LspNotification::DidChangeWatchedFiles(params));
+    }
+
+    async fn did_create_files(&self, params: CreateFilesParams) {
+        self.notify(LspNotification::DidCreateFiles(params));
+    }
+
+    async fn did_delete_files(&self, params: DeleteFilesParams) {
+        self.notify(LspNotification::DidDeleteFiles(params));
+    }
+
+    async fn did_rename_files(&self, params: RenameFilesParams) {
+        self.notify(LspNotification::DidRenameFiles(params));
     }
 
     async fn symbol(
