@@ -379,8 +379,8 @@ mod tests {
     fn test_constant_column() {
         r_task(|| {
             // This is the default `hist` behavior, single bin containing all info.
-            test_histogram("c(1, 1, 1)", 4, vec!["0.00", "1.00"], vec![3]);
-            test_histogram_method("c(1, 1, 1)", "sturges", vec!["0.00", "1.00"], vec![3])
+            test_histogram("c(1, 1, 1)", 4, vec!["1.00", "1.00"], vec![3]);
+            test_histogram_method("c(1, 1, 1)", "sturges", vec!["1.00", "1.00"], vec![3])
         })
     }
 
