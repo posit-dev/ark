@@ -808,26 +808,6 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
         summary = summarize_indexer_task(&batch)
     );
 
-    let mut updates: HashMap<PathBuf, IndexerTask> = HashMap::new();
-
-    fn flush_updates(
-        updates: &mut HashMap<PathBuf, IndexerTask>,
-    ) -> Vec<tokio::task::JoinHandle<()>> {
-        tracing::trace!("Flushing {n} update tasks", n = updates.len());
-
-        let mut handles = Vec::new();
-        for (path, task) in updates.drain() {
-            handles.push(tokio::task::spawn_blocking(move || {
-                if let IndexerTask::Update { document, .. } = task {
-                    if let Err(err) = indexer::update(&document, &path) {
-                        log::warn!("Indexer update failed: {err}");
-                    }
-                }
-            }));
-        }
-        handles
-    }
-
     let to_path_buf = |uri: &url::Url| {
         uri.to_file_path()
             .map_err(|_| anyhow!("Failed to convert URI '{uri}' to file path"))
@@ -841,16 +821,12 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
                     indexer::create(&path)?;
                 },
 
-                IndexerTask::Update { uri, .. } => {
+                IndexerTask::Update { uri, document } => {
                     let path = to_path_buf(uri)?;
-                    updates.insert(path, task);
+                    indexer::update(&document, &path)?;
                 },
 
                 IndexerTask::Delete { uri } => {
-                    let handles = flush_updates(&mut updates);
-                    for handle in handles {
-                        let _ = handle.await;
-                    }
                     let path = to_path_buf(uri)?;
                     indexer::delete(&path)?;
                 },
@@ -859,11 +835,6 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
                     uri: old_uri,
                     new: new_uri,
                 } => {
-                    let handles = flush_updates(&mut updates);
-                    for handle in handles {
-                        let _ = handle.await;
-                    }
-
                     let old_path = to_path_buf(old_uri)?;
                     let new_path = to_path_buf(new_uri)?;
 
@@ -879,11 +850,6 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
             tracing::warn!("Can't process indexer task: {err}");
             continue;
         }
-    }
-
-    let handles = flush_updates(&mut updates);
-    for handle in handles {
-        let _ = handle.await;
     }
 }
 
