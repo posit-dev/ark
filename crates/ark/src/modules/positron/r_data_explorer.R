@@ -473,6 +473,17 @@ profile_histogram <- function(
     bin_edges <- h$breaks
     bin_counts <- h$counts
 
+    # Special case: if we have a single bin, check if all values are the same
+    # If so, override the bin edges to be the same value instead of value +/- 1
+    if (length(bin_counts) == 1 && length(x) > 0) {
+        # Check if all values are the same
+        unique_values <- unique(x)
+        if (length(unique_values) == 1) {
+            # All values are the same, set bin edges to [value, value]
+            bin_edges <- c(unique_values[1], unique_values[1])
+        }
+    }
+
     # For dates, we convert back the breaks to the date representation.
     if (inherits(x, "POSIXct")) {
         # Must supply an `origin` on R <= 4.2
