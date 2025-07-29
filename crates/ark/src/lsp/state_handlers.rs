@@ -177,7 +177,7 @@ pub(crate) fn initialize(
                     let r_file_filter = FileOperationFilter {
                         scheme: Some(String::from("file")),
                         pattern: FileOperationPattern {
-                            glob: String::from("**/*.[Rr]"),
+                            glob: String::from("**/*.{r,R}"),
                             matches: Some(FileOperationPatternKind::File),
                             options: None,
                         },
