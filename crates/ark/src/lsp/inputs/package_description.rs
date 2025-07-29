@@ -48,6 +48,17 @@ pub struct Description {
     pub fields: Dcf,
 }
 
+impl Default for Description {
+    fn default() -> Self {
+        Description {
+            name: String::new(),
+            version: String::new(),
+            depends: Vec::new(),
+            fields: Dcf::default(),
+        }
+    }
+}
+
 impl Description {
     /// Parse a DESCRIPTION file in DCF format
     pub fn parse(contents: &str) -> anyhow::Result<Self> {

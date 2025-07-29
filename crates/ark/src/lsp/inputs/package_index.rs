@@ -7,6 +7,7 @@
 
 use std::path::Path;
 
+#[derive(Default, Clone, Debug)]
 pub struct Index {
     pub names: Vec<String>,
 }

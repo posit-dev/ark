@@ -1850,4 +1850,40 @@ foo
             assert_eq!(diagnostics.len(), 1);
         });
     }
+
+    #[test]
+    fn test_penguins_symbol_no_diagnostic() {
+        r_task(|| {
+            let palmerpenguins_dir = crate::lsp::inputs::package::temp_palmerpenguin();
+            let palmerpenguins_pkg = Package::load_from_folder(palmerpenguins_dir.path())
+                .unwrap()
+                .unwrap();
+            let library = Library::new(vec![]).insert("penguins", palmerpenguins_pkg);
+
+            // Simulate a world state with the penguins package installed and attached
+            let mut state = DEFAULT_STATE.clone();
+            state.library = library;
+            state.console_scopes = vec![vec!["library".to_string()]];
+
+            let code = r#"
+                library(penguins)
+                penguins
+                path_to_file
+                penguins_raw
+            "#;
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state.clone());
+            assert!(diagnostics.is_empty());
+
+            let code = r#"
+                penguins
+                path_to_file
+                penguins_raw
+                library(penguins)
+            "#;
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state);
+            assert_eq!(diagnostics.len(), 3);
+        })
+    }
 }
