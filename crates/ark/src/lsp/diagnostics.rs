@@ -957,7 +957,7 @@ fn insert_package_exports(
         .library_symbols
         .entry(attach_pos)
         .or_default()
-        .extend(package.namespace.exports.iter().cloned());
+        .extend(package.exported_symbols.iter().cloned());
 
     Ok(package)
 }
@@ -1657,11 +1657,7 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package = Package {
-                path: PathBuf::from("/mock/path"),
-                description,
-                namespace,
-            };
+            let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
 
             // Create a library with `mockpkg` installed
             let library = Library::new(vec![]).insert("mockpkg", package);
@@ -1757,11 +1753,8 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package1 = Package {
-                path: PathBuf::from("/mock/path1"),
-                description: description1,
-                namespace: namespace1,
-            };
+            let package1 =
+                Package::from_parts(PathBuf::from("/mock/path1"), description1, namespace1);
 
             // pkg2 exports `bar` and `baz`
             let namespace2 = Namespace {
@@ -1775,11 +1768,8 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package2 = Package {
-                path: PathBuf::from("/mock/path2"),
-                description: description2,
-                namespace: namespace2,
-            };
+            let package2 =
+                Package::from_parts(PathBuf::from("/mock/path2"), description2, namespace2);
 
             let library = Library::new(vec![])
                 .insert("pkg1", package1)
@@ -1835,11 +1825,7 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package = Package {
-                path: PathBuf::from("/mock/path"),
-                description,
-                namespace,
-            };
+            let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
 
             let library = Library::new(vec![]).insert("pkg", package);
 
@@ -1863,5 +1849,41 @@ foo
                 .any(|d| d.message.contains("No symbol named 'foo'")));
             assert_eq!(diagnostics.len(), 1);
         });
+    }
+
+    #[test]
+    fn test_penguins_symbol_no_diagnostic() {
+        r_task(|| {
+            let palmerpenguins_dir = crate::lsp::inputs::package::temp_palmerpenguin();
+            let palmerpenguins_pkg = Package::load_from_folder(palmerpenguins_dir.path())
+                .unwrap()
+                .unwrap();
+            let library = Library::new(vec![]).insert("penguins", palmerpenguins_pkg);
+
+            // Simulate a world state with the penguins package installed and attached
+            let mut state = DEFAULT_STATE.clone();
+            state.library = library;
+            state.console_scopes = vec![vec!["library".to_string()]];
+
+            let code = r#"
+                library(penguins)
+                penguins
+                path_to_file
+                penguins_raw
+            "#;
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state.clone());
+            assert!(diagnostics.is_empty());
+
+            let code = r#"
+                penguins
+                path_to_file
+                penguins_raw
+                library(penguins)
+            "#;
+            let document = Document::new(code, None);
+            let diagnostics = generate_diagnostics(document, state);
+            assert_eq!(diagnostics.len(), 3);
+        })
     }
 }
