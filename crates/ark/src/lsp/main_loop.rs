@@ -7,15 +7,20 @@
 
 use std::collections::HashMap;
 use std::future;
+use std::path::Path;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::LazyLock;
 use std::sync::RwLock;
 
 use anyhow::anyhow;
+use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
+use tokio::task;
 use tokio::task::JoinHandle;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Diagnostic;
@@ -30,9 +35,10 @@ use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::capabilities::Capabilities;
-use crate::lsp::diagnostics;
+use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::documents::Document;
 use crate::lsp::handlers;
+use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
@@ -641,27 +647,6 @@ where
     send_auxiliary(AuxiliaryEvent::SpawnedTask(handle));
 }
 
-pub(crate) fn spawn_diagnostics_refresh(uri: Url, document: Document, state: WorldState) {
-    lsp::spawn_blocking(move || {
-        let _s = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
-
-        let version = document.version;
-        let diagnostics = diagnostics::generate_diagnostics(document, state);
-
-        Ok(Some(AuxiliaryEvent::PublishDiagnostics(
-            uri,
-            diagnostics,
-            version,
-        )))
-    })
-}
-
-pub(crate) fn spawn_diagnostics_refresh_all(state: WorldState) {
-    for (url, document) in state.documents.iter() {
-        spawn_diagnostics_refresh(url.clone(), document.clone(), state.clone())
-    }
-}
-
 pub(crate) fn publish_diagnostics(uri: Url, diagnostics: Vec<Diagnostic>, version: Option<i32>) {
     send_auxiliary(AuxiliaryEvent::PublishDiagnostics(
         uri,
@@ -690,5 +675,208 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
                 .field("uri", &params.uri)
                 .finish(),
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum IndexerQueueTask {
+    Indexer(IndexerTask),
+    Diagnostics(RefreshDiagnosticsTask),
+}
+
+#[derive(Debug)]
+pub enum IndexerTask {
+    Start { folders: Vec<String> },
+    Update { document: Document, uri: Url },
+}
+
+#[derive(Debug)]
+pub(crate) struct RefreshDiagnosticsTask {
+    uri: Url,
+    state: WorldState,
+}
+
+#[derive(Debug)]
+struct RefreshDiagnosticsResult {
+    uri: Url,
+    diagnostics: Vec<Diagnostic>,
+    version: Option<i32>,
+}
+
+static INDEXER_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<IndexerQueueTask>> =
+    LazyLock::new(|| {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(process_indexer_queue(rx));
+        tx
+    });
+
+/// Process indexer and diagnostics tasks
+///
+/// Diagnostics need an up-to-date index to be accurate, so we synchronise
+/// indexing and diagnostics tasks using a simple queue.
+///
+/// - We make sure to refresh diagnostics after every indexer updates.
+/// - Indexer tasks are batched together, same for diagnostics tasks.
+/// - Cancellation is simply dealt with by deduplicating tasks for the same URI,
+///   retaining only the most recent one.
+///
+/// Ideally we'd process indexer tasks continually without making them dependent
+/// on diagnostics tasks. The current setup blocks the queue loop while
+/// diagnostics are running, but it has the benefit that rounds of diagnostic
+/// refreshes don't race against each other. The frontend will receive all
+/// results in order, ensuring that diagnostics for an outdated version are
+/// eventually replaced by the most up-to-date diagnostics.
+///
+/// Note that this setup will be entirely replaced in the future by Salsa
+/// dependencies. Diagnostics refreshes will depend on indexer results in a
+/// natural way and they will be cancelled automatically as document updates
+/// arrive.
+async fn process_indexer_queue(mut rx: mpsc::UnboundedReceiver<IndexerQueueTask>) {
+    let mut diagnostics_batch = Vec::new();
+    let mut indexer_batch = Vec::new();
+
+    while let Some(task) = rx.recv().await {
+        let mut tasks = vec![task];
+
+        // Process diagnostics at least every 10 iterations if indexer tasks
+        // keep coming in, so the user gets intermediate diagnostics refreshes
+        for _ in 0..10 {
+            while let Ok(task) = rx.try_recv() {
+                tasks.push(task);
+            }
+
+            // Separate by type
+            for task in std::mem::take(&mut tasks) {
+                match task {
+                    IndexerQueueTask::Indexer(indexer_task) => indexer_batch.push(indexer_task),
+                    IndexerQueueTask::Diagnostics(diagnostic_task) => {
+                        diagnostics_batch.push(diagnostic_task)
+                    },
+                }
+            }
+
+            // No more indexer tasks, let's do diagnostics
+            if indexer_batch.is_empty() {
+                break;
+            }
+
+            // Process indexer tasks first so diagnostics tasks work with an
+            // up-to-date index
+            process_indexer_batch(std::mem::take(&mut indexer_batch)).await;
+        }
+
+        process_diagnostics_batch(std::mem::take(&mut diagnostics_batch)).await;
+    }
+}
+
+async fn process_indexer_batch(batch: Vec<IndexerTask>) {
+    // Deduplicate tasks by key. We use a `HashMap` so only the last insertion
+    // is retained. `Update` tasks use URI as key, `Start` tasks use None (we
+    // only expect one though). This is effectively a way of cancelling `Update`
+    // tasks for outdated documents.
+    let batch: std::collections::HashMap<_, _> = batch
+        .into_iter()
+        .map(|task| match &task {
+            IndexerTask::Update { uri, .. } => (Some(uri.clone()), task),
+            IndexerTask::Start { .. } => (None, task),
+        })
+        .collect();
+
+    let mut handles = Vec::new();
+
+    for (_, task) in batch {
+        handles.push(tokio::task::spawn_blocking(move || match task {
+            IndexerTask::Start { folders } => {
+                indexer::start(folders);
+            },
+            IndexerTask::Update { document, uri } => {
+                let result = if let Ok(path) = uri.to_file_path() {
+                    indexer::update(&document, &path)
+                } else {
+                    Err(anyhow!("Failed to convert URI to file path: {uri}"))
+                };
+                if let Err(err) = result {
+                    log::error!("Indexer update failed: {err}");
+                }
+            },
+        }));
+    }
+
+    for handle in handles {
+        let _ = handle.await;
+    }
+}
+
+async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
+    // Deduplicate tasks by keeping only the last one for each URI. We use a
+    // `HashMap` so only the last insertion is retained. This is effectively a
+    // way of cancelling diagnostics tasks for outdated documents.
+    let batch: std::collections::HashMap<_, _> = batch
+        .into_iter()
+        .map(|task| (task.uri, task.state))
+        .collect();
+
+    let mut futures = FuturesUnordered::new();
+
+    for (uri, state) in batch {
+        futures.push(task::spawn_blocking(move || {
+            let _span = tracing::info_span!("diagnostics_refresh", uri = %uri).entered();
+
+            if let Some(document) = state.documents.get(&uri) {
+                // Special case testthat-specific behaviour. This is a simple
+                // stopgap approach that has some false positives (e.g. when we
+                // work on testthat itself the flag will always be true), but
+                // that shouldn't have much practical impact.
+                let testthat = Path::new(uri.path())
+                    .components()
+                    .any(|c| c.as_os_str() == "testthat");
+
+                let diagnostics = generate_diagnostics(document.clone(), state.clone(), testthat);
+                Some(RefreshDiagnosticsResult {
+                    uri,
+                    diagnostics,
+                    version: document.version,
+                })
+            } else {
+                None
+            }
+        }));
+    }
+
+    // Publish results as they complete
+    while let Some(Ok(Some(result))) = futures.next().await {
+        publish_diagnostics(result.uri, result.diagnostics, result.version);
+    }
+}
+
+pub(crate) fn index_start(folders: Vec<String>, state: WorldState) {
+    INDEXER_QUEUE
+        .send(IndexerQueueTask::Indexer(IndexerTask::Start { folders }))
+        .unwrap_or_else(|err| lsp::log_error!("Failed to queue initial indexing: {err}"));
+
+    diagnostics_refresh_all(state);
+}
+
+pub(crate) fn index_update(uri: Url, document: Document, state: WorldState) {
+    INDEXER_QUEUE
+        .send(IndexerQueueTask::Indexer(IndexerTask::Update {
+            document,
+            uri: uri.clone(),
+        }))
+        .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
+
+    // Refresh all diagnostics since the indexer results for one file may affect
+    // other files
+    diagnostics_refresh_all(state);
+}
+
+pub(crate) fn diagnostics_refresh_all(state: WorldState) {
+    for (uri, _document) in state.documents.iter() {
+        INDEXER_QUEUE
+            .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
+                uri: uri.clone(),
+                state: state.clone(),
+            }))
+            .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
 }
