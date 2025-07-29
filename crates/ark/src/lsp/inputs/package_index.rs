@@ -7,6 +7,12 @@
 
 use std::path::Path;
 
+/// This represents an INDEX file.
+///
+/// We use it to complement the list of exported symbols in NAMESPACE, in
+/// particular for exported datasets. This is a stopgap approach that has known
+/// shortcomings (false negatives as we will treat actually non-exported symbols
+/// as exported in some cases).
 #[derive(Default, Clone, Debug)]
 pub struct Index {
     pub names: Vec<String>,
