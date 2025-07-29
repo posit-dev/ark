@@ -972,10 +972,8 @@ pub(crate) fn index_start(folders: Vec<String>, state: WorldState) {
 
 pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
     for uri in uris {
-        crate::lsp::main_loop::INDEXER_QUEUE
-            .send(crate::lsp::main_loop::IndexerQueueTask::Indexer(
-                crate::lsp::main_loop::IndexerTask::Create { uri },
-            ))
+        INDEXER_QUEUE
+            .send(IndexerQueueTask::Indexer(IndexerTask::Create { uri }))
             .unwrap_or_else(|err| crate::lsp::log_error!("Failed to queue index create: {err}"));
     }
 
