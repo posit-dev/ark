@@ -1657,11 +1657,7 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package = Package {
-                path: PathBuf::from("/mock/path"),
-                description,
-                namespace,
-            };
+            let package = Package::new(PathBuf::from("/mock/path"), description, namespace);
 
             // Create a library with `mockpkg` installed
             let library = Library::new(vec![]).insert("mockpkg", package);
@@ -1757,11 +1753,7 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package1 = Package {
-                path: PathBuf::from("/mock/path1"),
-                description: description1,
-                namespace: namespace1,
-            };
+            let package1 = Package::new(PathBuf::from("/mock/path1"), description1, namespace1);
 
             // pkg2 exports `bar` and `baz`
             let namespace2 = Namespace {
@@ -1775,11 +1767,7 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package2 = Package {
-                path: PathBuf::from("/mock/path2"),
-                description: description2,
-                namespace: namespace2,
-            };
+            let package2 = Package::new(PathBuf::from("/mock/path2"), description2, namespace2);
 
             let library = Library::new(vec![])
                 .insert("pkg1", package1)
@@ -1835,11 +1823,7 @@ foo
                 depends: vec![],
                 fields: Dcf::new(),
             };
-            let package = Package {
-                path: PathBuf::from("/mock/path"),
-                description,
-                namespace,
-            };
+            let package = Package::new(PathBuf::from("/mock/path"), description, namespace);
 
             let library = Library::new(vec![]).insert("pkg", package);
 

@@ -1,11 +1,17 @@
 use std::fs;
 use std::path::Path;
 
+#[derive(Clone, Debug)]
 pub struct RdFile {
+    /// `name` and `title` are mandatory in a properly written documentation
+    /// file but we make them optional here in case they are missing. We
+    /// currently don't load `title` because it's possible it contains escaped
+    /// `\` characters and we don't have a proper Rd parser yet.
+    pub name: Option<String>,
     pub doc_type: Option<RdDocType>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum RdDocType {
     Data,
     Package,
@@ -20,9 +26,21 @@ impl RdFile {
             )
         })?;
 
+        let name = parse_name(&content);
         let doc_type = parse_doc_type(&content);
-        Ok(RdFile { doc_type })
+
+        Ok(RdFile { name, doc_type })
     }
+}
+
+fn parse_name(content: &str) -> Option<String> {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\\name\{([a-zA-Z0-9_]+)\}").unwrap());
+
+    let captures = RE.captures(content)?;
+    let name = captures.get(1)?.as_str().to_string();
+
+    Some(name)
 }
 
 fn parse_doc_type(content: &str) -> Option<RdDocType> {
@@ -41,6 +59,44 @@ fn parse_doc_type(content: &str) -> Option<RdDocType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_name_basic() {
+        let input = r#"\name{foobar}"#;
+        assert_eq!(parse_name(input), Some("foobar".to_string()));
+
+        let input = r#"
+            % Some Rd file
+            \name{mydata}
+            \docType{data}
+        "#;
+        assert_eq!(parse_name(input), Some("mydata".to_string()));
+    }
+
+    #[test]
+    fn test_parse_name_escaped_brace() {
+        let input = r#"\name{foo\}bar}"#;
+        assert_eq!(parse_name(input), None);
+    }
+
+    #[test]
+    fn test_parse_name_missing() {
+        let input = r#"
+            % typo
+            \namee{data}
+        "#;
+        assert_eq!(parse_name(input), None);
+    }
+
+    #[test]
+    fn test_parse_name_multiple_names() {
+        let input = r#"
+            \name{first}
+            \name{second}
+        "#;
+        // Should match the first occurrence
+        assert_eq!(parse_name(input), Some("first".to_string()));
+    }
 
     #[test]
     fn test_parse_doc_type_data() {

@@ -8,6 +8,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::lsp::inputs::documentation::Documentation;
 use crate::lsp::inputs::package_description::Description;
 use crate::lsp::inputs::package_namespace::Namespace;
 
@@ -20,13 +21,22 @@ pub struct Package {
 
     pub description: Description,
     pub namespace: Namespace,
+    pub documentation: Documentation,
 }
 
 impl Package {
+    pub fn new(path: PathBuf, description: Description, namespace: Namespace) -> Self {
+        Self {
+            path,
+            description,
+            namespace,
+            documentation: Default::default(),
+        }
+    }
+
     /// Load a package from a given path.
     pub fn load_from_folder(package_path: &std::path::Path) -> anyhow::Result<Option<Self>> {
         let description_path = package_path.join("DESCRIPTION");
-        let namespace_path = package_path.join("NAMESPACE");
 
         // Only consider directories that contain a description file
         if !description_path.is_file() {
@@ -38,6 +48,7 @@ impl Package {
         let description_contents = fs::read_to_string(&description_path)?;
         let description = Description::parse(&description_contents)?;
 
+        let namespace_path = package_path.join("NAMESPACE");
         let namespace = if namespace_path.is_file() {
             let namespace_contents = fs::read_to_string(&namespace_path)?;
             Namespace::parse(&namespace_contents)?
@@ -49,10 +60,20 @@ impl Package {
             Namespace::default()
         };
 
+        let documentation_path = package_path.join("man");
+        let documentation = match Documentation::load_from_folder(&documentation_path) {
+            Ok(documentation) => documentation,
+            Err(err) => {
+                tracing::warn!("Can't load package documentation: {err:?}");
+                Documentation::default()
+            },
+        };
+
         Ok(Some(Package {
             path: package_path.to_path_buf(),
             description,
             namespace,
+            documentation,
         }))
     }
 

@@ -5,6 +5,7 @@
 //
 //
 
+pub mod documentation;
 pub mod documentation_rd_file;
 pub mod library;
 pub mod package;
