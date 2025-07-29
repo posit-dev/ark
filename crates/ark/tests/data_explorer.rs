@@ -1987,6 +1987,51 @@ fn test_histogram() {
 }
 
 #[test]
+fn test_histogram_single_bin_same_values() {
+    let _lock = r_test_lock();
+
+    let socket = open_data_explorer_from_expression("data.frame(x = rep(5, 10))", None).unwrap();
+
+    let make_histogram_req = |id, column_index, method, num_bins, quantiles| {
+        DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+            callback_id: id,
+            profiles: vec![ColumnProfileRequest {
+                column_index,
+                profiles: vec![ColumnProfileSpec {
+                    profile_type: ColumnProfileType::SmallHistogram,
+                    params: Some(ColumnProfileParams::SmallHistogram(ColumnHistogramParams {
+                        method,
+                        num_bins,
+                        quantiles,
+                    })),
+                }],
+            }],
+            format_options: default_format_options(),
+        })
+    };
+
+    let id = String::from("histogram_same_values");
+    let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 5, None);
+
+    expect_column_profile_results(&socket, req, |profiles| {
+        let histogram = profiles[0].small_histogram.clone().unwrap();
+
+        // When all values are the same, we should get a single bin with count = number of values
+        assert_eq!(histogram.bin_counts, vec![10]);
+
+        // The bin edges should be [5, 5] since all values are 5
+        let expected_edges = r_task(|| {
+            format_string(
+                harp::parse_eval_global("c(5, 5)").unwrap().sexp,
+                &default_format_options(),
+            )
+        });
+        assert_eq!(histogram.bin_edges, expected_edges);
+        assert_eq!(histogram.quantiles, vec![]);
+    });
+}
+
+#[test]
 fn test_frequency_table() {
     let _lock = r_test_lock();
 
