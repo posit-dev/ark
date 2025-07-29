@@ -295,6 +295,15 @@ impl GlobalState {
                         LspNotification::DidCloseTextDocument(params) => {
                             state_handlers::did_close(params, &mut self.lsp_state, &mut self.world)?;
                         },
+                        LspNotification::DidCreateFiles(params) => {
+                            state_handlers::did_create_files(params, &self.world)?;
+                        },
+                        LspNotification::DidDeleteFiles(params) => {
+                            state_handlers::did_delete_files(params, &mut self.world)?;
+                        },
+                        LspNotification::DidRenameFiles(params) => {
+                            state_handlers::did_rename_files(params, &mut self.world)?;
+                        },
                     }
                 },
 
@@ -686,8 +695,10 @@ pub(crate) enum IndexerQueueTask {
 
 #[derive(Debug)]
 pub enum IndexerTask {
-    Start { folders: Vec<String> },
-    Update { document: Document, uri: Url },
+    Create { uri: Url },
+    Delete { uri: Url },
+    Rename { uri: Url, new: Url },
+    Update { uri: Url, document: Document },
 }
 
 #[derive(Debug)]
@@ -701,6 +712,27 @@ struct RefreshDiagnosticsResult {
     uri: Url,
     diagnostics: Vec<Diagnostic>,
     version: Option<i32>,
+}
+
+fn summarize_indexer_task(batch: &[IndexerTask]) -> String {
+    let mut counts = std::collections::HashMap::new();
+    for task in batch {
+        let type_name = match task {
+            IndexerTask::Create { .. } => "Create",
+            IndexerTask::Delete { .. } => "Delete",
+            IndexerTask::Rename { .. } => "Rename",
+            IndexerTask::Update { .. } => "Update",
+        };
+        *counts.entry(type_name).or_insert(0) += 1;
+    }
+
+    let mut summary = String::new();
+    for (task_type, count) in counts.iter() {
+        use std::fmt::Write;
+        let _ = write!(summary, "{task_type}: {count} ");
+    }
+
+    summary.trim_end().to_string()
 }
 
 static INDEXER_QUEUE: LazyLock<tokio::sync::mpsc::UnboundedSender<IndexerQueueTask>> =
@@ -770,44 +802,60 @@ async fn process_indexer_queue(mut rx: mpsc::UnboundedReceiver<IndexerQueueTask>
 }
 
 async fn process_indexer_batch(batch: Vec<IndexerTask>) {
-    // Deduplicate tasks by key. We use a `HashMap` so only the last insertion
-    // is retained. `Update` tasks use URI as key, `Start` tasks use None (we
-    // only expect one though). This is effectively a way of cancelling `Update`
-    // tasks for outdated documents.
-    let batch: std::collections::HashMap<_, _> = batch
-        .into_iter()
-        .map(|task| match &task {
-            IndexerTask::Update { uri, .. } => (Some(uri.clone()), task),
-            IndexerTask::Start { .. } => (None, task),
-        })
-        .collect();
+    tracing::trace!(
+        "Processing {n} indexer tasks ({summary})",
+        n = batch.len(),
+        summary = summarize_indexer_task(&batch)
+    );
 
-    let mut handles = Vec::new();
+    let to_path_buf = |uri: &url::Url| {
+        uri.to_file_path()
+            .map_err(|_| anyhow!("Failed to convert URI '{uri}' to file path"))
+    };
 
-    for (_, task) in batch {
-        handles.push(tokio::task::spawn_blocking(move || match task {
-            IndexerTask::Start { folders } => {
-                indexer::start(folders);
-            },
-            IndexerTask::Update { document, uri } => {
-                let result = if let Ok(path) = uri.to_file_path() {
-                    indexer::update(&document, &path)
-                } else {
-                    Err(anyhow!("Failed to convert URI to file path: {uri}"))
-                };
-                if let Err(err) = result {
-                    log::error!("Indexer update failed: {err}");
-                }
-            },
-        }));
-    }
+    for task in batch {
+        let result: anyhow::Result<()> = (|| async {
+            match &task {
+                IndexerTask::Create { uri } => {
+                    let path = to_path_buf(uri)?;
+                    indexer::create(&path)?;
+                },
 
-    for handle in handles {
-        let _ = handle.await;
+                IndexerTask::Update { uri, document } => {
+                    let path = to_path_buf(uri)?;
+                    indexer::update(&document, &path)?;
+                },
+
+                IndexerTask::Delete { uri } => {
+                    let path = to_path_buf(uri)?;
+                    indexer::delete(&path)?;
+                },
+
+                IndexerTask::Rename {
+                    uri: old_uri,
+                    new: new_uri,
+                } => {
+                    let old_path = to_path_buf(old_uri)?;
+                    let new_path = to_path_buf(new_uri)?;
+
+                    indexer::rename(&old_path, &new_path)?;
+                },
+            }
+
+            Ok(())
+        })()
+        .await;
+
+        if let Err(err) = result {
+            tracing::warn!("Can't process indexer task: {err}");
+            continue;
+        }
     }
 }
 
 async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
+    tracing::trace!("Processing {n} diagnostic tasks", n = batch.len());
+
     // Deduplicate tasks by keeping only the last one for each URI. We use a
     // `HashMap` so only the last insertion is retained. This is effectively a
     // way of cancelling diagnostics tasks for outdated documents.
@@ -850,20 +898,98 @@ async fn process_diagnostics_batch(batch: Vec<RefreshDiagnosticsTask>) {
 }
 
 pub(crate) fn index_start(folders: Vec<String>, state: WorldState) {
-    INDEXER_QUEUE
-        .send(IndexerQueueTask::Indexer(IndexerTask::Start { folders }))
-        .unwrap_or_else(|err| lsp::log_error!("Failed to queue initial indexing: {err}"));
+    lsp::log_info!("Initial indexing started");
+
+    let uris: Vec<Url> = folders
+        .into_iter()
+        .flat_map(|folder| {
+            walkdir::WalkDir::new(folder)
+                .into_iter()
+                .filter_entry(|e| indexer::filter_entry(e))
+                .filter_map(|entry| {
+                    let entry = match entry {
+                        Ok(e) => e,
+                        Err(_) => return None,
+                    };
+
+                    if !entry.file_type().is_file() {
+                        return None;
+                    }
+                    let path = entry.path();
+
+                    // Only index R files
+                    let ext = path.extension().unwrap_or_default();
+                    if ext != "r" && ext != "R" {
+                        return None;
+                    }
+
+                    if let Ok(uri) = url::Url::from_file_path(path) {
+                        Some(uri)
+                    } else {
+                        tracing::warn!("Can't convert path to URI: {:?}", path);
+                        None
+                    }
+                })
+        })
+        .collect();
+
+    index_create(uris, state);
+}
+
+pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
+    for uri in uris {
+        INDEXER_QUEUE
+            .send(IndexerQueueTask::Indexer(IndexerTask::Create { uri }))
+            .unwrap_or_else(|err| crate::lsp::log_error!("Failed to queue index create: {err}"));
+    }
 
     diagnostics_refresh_all(state);
 }
 
-pub(crate) fn index_update(uri: Url, document: Document, state: WorldState) {
-    INDEXER_QUEUE
-        .send(IndexerQueueTask::Indexer(IndexerTask::Update {
-            document,
-            uri: uri.clone(),
-        }))
-        .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
+pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
+    for uri in uris {
+        let document = match state.get_document(&uri) {
+            Ok(doc) => doc.clone(),
+            Err(err) => {
+                tracing::warn!("Can't get document '{uri}' for indexing: {err:?}");
+                continue;
+            },
+        };
+
+        INDEXER_QUEUE
+            .send(IndexerQueueTask::Indexer(IndexerTask::Update {
+                document,
+                uri,
+            }))
+            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
+    }
+
+    // Refresh all diagnostics since the indexer results for one file may affect
+    // other files
+    diagnostics_refresh_all(state);
+}
+
+pub(crate) fn index_delete(uris: Vec<Url>, state: WorldState) {
+    for uri in uris {
+        INDEXER_QUEUE
+            .send(IndexerQueueTask::Indexer(IndexerTask::Delete { uri }))
+            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
+    }
+
+    // Refresh all diagnostics since the indexer results for one file may affect
+    // other files
+    diagnostics_refresh_all(state);
+}
+
+pub(crate) fn index_rename(uris: Vec<(Url, Url)>, state: WorldState) {
+    for (old, new) in uris {
+        INDEXER_QUEUE
+            .send(IndexerQueueTask::Indexer(IndexerTask::Rename {
+                uri: old,
+                new,
+            }))
+            .unwrap_or_else(|err| lsp::log_error!("Failed to queue index update: {err}"));
+    }
 
     // Refresh all diagnostics since the indexer results for one file may affect
     // other files
@@ -871,6 +997,11 @@ pub(crate) fn index_update(uri: Url, document: Document, state: WorldState) {
 }
 
 pub(crate) fn diagnostics_refresh_all(state: WorldState) {
+    tracing::trace!(
+        "Refreshing diagnostics for {n} documents",
+        n = state.documents.len()
+    );
+
     for (uri, _document) in state.documents.iter() {
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {

@@ -77,7 +77,7 @@ pub fn start(folders: Vec<String>) {
         for entry in walker.into_iter().filter_entry(|e| filter_entry(e)) {
             if let Ok(entry) = entry {
                 if entry.file_type().is_file() {
-                    if let Err(err) = index_file(entry.path()) {
+                    if let Err(err) = create(entry.path()) {
                         lsp::log_error!("Can't index file {:?}: {err:?}", entry.path());
                     }
                 }
@@ -116,7 +116,7 @@ pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
 
 #[tracing::instrument(level = "trace", skip_all, fields(path = ?path))]
 pub fn update(document: &Document, path: &Path) -> anyhow::Result<()> {
-    clear(path)?;
+    delete(path)?;
     index_document(document, path);
     Ok(())
 }
@@ -147,7 +147,8 @@ fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
     }
 }
 
-fn clear(path: &Path) -> anyhow::Result<()> {
+#[tracing::instrument(level = "trace")]
+pub(crate) fn delete(path: &Path) -> anyhow::Result<()> {
     let mut index = WORKSPACE_INDEX.lock().unwrap();
     let path = str_from_path(path)?;
 
@@ -155,6 +156,19 @@ fn clear(path: &Path) -> anyhow::Result<()> {
     index.entry(path.into()).and_modify(|index| {
         index.clear();
     });
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "trace")]
+pub(crate) fn rename(old: &Path, new: &Path) -> anyhow::Result<()> {
+    let mut index = WORKSPACE_INDEX.lock().unwrap();
+    let old = str_from_path(old)?;
+    let new = str_from_path(new)?;
+
+    if let Some(entries) = index.remove(old) {
+        index.insert(new.to_string(), entries);
+    }
 
     Ok(())
 }
@@ -208,8 +222,8 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
     true
 }
 
-fn index_file(path: &Path) -> anyhow::Result<()> {
-    // only index R files
+pub(crate) fn create(path: &Path) -> anyhow::Result<()> {
+    // Only index R files
     let ext = path.extension().unwrap_or_default();
     if ext != "r" && ext != "R" {
         return Ok(());

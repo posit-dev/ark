@@ -9,12 +9,18 @@ use anyhow::anyhow;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
+use tower_lsp::lsp_types::CreateFilesParams;
+use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
+use tower_lsp::lsp_types::FileOperationFilter;
+use tower_lsp::lsp_types::FileOperationPattern;
+use tower_lsp::lsp_types::FileOperationPatternKind;
+use tower_lsp::lsp_types::FileOperationRegistrationOptions;
 use tower_lsp::lsp_types::FoldingRangeProviderCapability;
 use tower_lsp::lsp_types::FormattingOptions;
 use tower_lsp::lsp_types::HoverProviderCapability;
@@ -22,6 +28,7 @@ use tower_lsp::lsp_types::ImplementationProviderCapability;
 use tower_lsp::lsp_types::InitializeParams;
 use tower_lsp::lsp_types::InitializeResult;
 use tower_lsp::lsp_types::OneOf;
+use tower_lsp::lsp_types::RenameFilesParams;
 use tower_lsp::lsp_types::SelectionRangeProviderCapability;
 use tower_lsp::lsp_types::ServerCapabilities;
 use tower_lsp::lsp_types::ServerInfo;
@@ -166,7 +173,28 @@ pub(crate) fn initialize(
                     supported: Some(true),
                     change_notifications: Some(OneOf::Left(true)),
                 }),
-                file_operations: None,
+                file_operations: {
+                    let r_file_filter = FileOperationFilter {
+                        scheme: Some(String::from("file")),
+                        pattern: FileOperationPattern {
+                            glob: String::from("**/*.{r,R}"),
+                            matches: Some(FileOperationPatternKind::File),
+                            options: None,
+                        },
+                    };
+                    Some(lsp_types::WorkspaceFileOperationsServerCapabilities {
+                        did_create: Some(FileOperationRegistrationOptions {
+                            filters: vec![r_file_filter.clone()],
+                        }),
+                        did_delete: Some(FileOperationRegistrationOptions {
+                            filters: vec![r_file_filter.clone()],
+                        }),
+                        did_rename: Some(FileOperationRegistrationOptions {
+                            filters: vec![r_file_filter],
+                        }),
+                        ..Default::default()
+                    })
+                },
             }),
             document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
                 first_trigger_character: String::from("\n"),
@@ -200,7 +228,7 @@ pub(crate) fn did_open(
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
-    lsp::main_loop::index_update(uri.clone(), document.clone(), state.clone());
+    lsp::main_loop::diagnostics_refresh_all(state.clone());
 
     Ok(())
 }
@@ -221,7 +249,7 @@ pub(crate) fn did_change(
 
     document.on_did_change(&mut parser, &params);
 
-    lsp::main_loop::index_update(uri.clone(), document.clone(), state.clone());
+    lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
     Ok(())
 }
@@ -250,6 +278,67 @@ pub(crate) fn did_close(
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
     Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_create_files(
+    params: CreateFilesParams,
+    state: &WorldState,
+) -> anyhow::Result<()> {
+    let uris = params
+        .files
+        .iter()
+        .filter_map(|file| parse_uri_or_none(&file.uri))
+        .collect();
+
+    lsp::main_loop::index_create(uris, state.clone());
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_delete_files(
+    params: DeleteFilesParams,
+    state: &WorldState,
+) -> anyhow::Result<()> {
+    let uris = params
+        .files
+        .iter()
+        .filter_map(|file| parse_uri_or_none(&file.uri))
+        .collect();
+
+    lsp::main_loop::index_delete(uris, state.clone());
+
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_rename_files(
+    params: RenameFilesParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    let uri_pairs = params
+        .files
+        .iter()
+        .filter_map(|file| {
+            let old_url = parse_uri_or_none(&file.old_uri)?;
+            let new_url = parse_uri_or_none(&file.new_uri)?;
+            Some((old_url, new_url))
+        })
+        .collect();
+
+    lsp::main_loop::index_rename(uri_pairs, state.clone());
+    Ok(())
+}
+
+fn parse_uri_or_none(uri: &str) -> Option<url::Url> {
+    match url::Url::parse(uri) {
+        Ok(url) => Some(url),
+        Err(err) => {
+            log::warn!("Failed to parse URI '{uri}': {err}");
+            None
+        },
+    }
 }
 
 pub(crate) async fn did_change_configuration(
