@@ -38,8 +38,8 @@
     line = 0L,
     column = 0L
 ) {
-    # Don't normalize if there's a scheme, e.g. an `ark:` URI
-    if (!grepl("^[a-zA-Z][a-zA-Z0-9+.-]*:", file)) {
+    # Don't normalize if that's an `ark:` URI
+    if (!grepl("^ark:", file)) {
         file <- normalizePath(file)
     }
 
