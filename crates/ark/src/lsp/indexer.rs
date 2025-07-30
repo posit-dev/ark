@@ -91,12 +91,28 @@ pub fn start(folders: Vec<String>) {
     );
 }
 
+/// Search the workspace files and return the first symbol match
 pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
     for (path, index) in index.iter() {
         if let Some(entry) = index.get(symbol) {
             return Some((path.clone(), entry.clone()));
+        }
+    }
+
+    None
+}
+
+/// Search a specific workspace file for a symbol
+pub fn find_in_file(symbol: &str, path: &std::path::Path) -> Option<(String, IndexEntry)> {
+    let index = WORKSPACE_INDEX.lock().unwrap();
+
+    if let Ok(path_str) = str_from_path(path) {
+        if let Some(index) = index.get(path_str) {
+            if let Some(entry) = index.get(symbol) {
+                return Some((path_str.to_string(), entry.clone()));
+            }
         }
     }
 
@@ -194,7 +210,7 @@ impl Drop for ResetIndexerGuard {
 fn str_from_path(path: &Path) -> anyhow::Result<&str> {
     path.to_str().ok_or(anyhow!(
         "Couldn't convert path {} to string",
-        path.display()
+        path.to_string_lossy()
     ))
 }
 

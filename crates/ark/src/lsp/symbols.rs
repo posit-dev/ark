@@ -990,7 +990,7 @@ outer <- 4
 
             // Index the document
             let doc = Document::new(code, None);
-            let (path, _) = test_path();
+            let (path, _) = test_path("test.R");
             indexer::update(&doc, &path).unwrap();
 
             // Query for all symbols
