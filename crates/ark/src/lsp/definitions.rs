@@ -42,10 +42,20 @@ pub fn goto_definition<'a>(
     let end = convert_point_to_position(contents, node.end_position());
     let range = Range { start, end };
 
-    // search for a reference in the document index
+    // Search for a reference in the document index
     if node.is_identifier() {
         let symbol = document.contents.node_slice(&node)?.to_string();
-        if let Some((path, entry)) = indexer::find(symbol.as_str()) {
+
+        let uri = &params.text_document_position_params.text_document.uri;
+        let info = if let Ok(preferred_path) = uri.to_file_path() {
+            // First search in current file, then in all files
+            indexer::find_in_file(symbol.as_str(), &preferred_path)
+                .or_else(|| indexer::find(symbol.as_str()))
+        } else {
+            indexer::find(symbol.as_str())
+        };
+
+        if let Some((path, entry)) = info {
             let link = LocationLink {
                 origin_selection_range: None,
                 target_uri: Url::from_file_path(path).unwrap(),
@@ -154,6 +164,113 @@ print(foo)
                     lsp_types::Range {
                         start: lsp_types::Position::new(2, 0),
                         end: lsp_types::Position::new(2, 3),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_prefers_local_symbol() {
+        let _guard = indexer::ResetIndexerGuard;
+
+        // Both files define the same symbol
+        let code1 = r#"
+foo <- 1
+foo
+"#;
+        let code2 = r#"
+foo <- 2
+foo
+"#;
+
+        let doc1 = Document::new(code1, None);
+        let doc2 = Document::new(code2, None);
+        let path1 = std::path::PathBuf::from("/file1.R");
+        let path2 = std::path::PathBuf::from("/file2.R");
+        let uri1 = Url::from_file_path(&path1).unwrap();
+        let uri2 = Url::from_file_path(&path2).unwrap();
+
+        indexer::update(&doc1, &path1).unwrap();
+        indexer::update(&doc2, &path2).unwrap();
+
+        // Go to definition for foo in file1
+        let params1 = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri1.clone() },
+                position: lsp_types::Position::new(2, 0),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        assert_matches!(
+            goto_definition(&doc1, params1).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                // Should jump to foo in file1
+                assert_eq!(links[0].target_uri, uri1);
+            }
+        );
+
+        // Go to definition for foo in file2
+        let params2 = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri2.clone() },
+                position: lsp_types::Position::new(2, 0),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        assert_matches!(
+            goto_definition(&doc2, params2).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                // Should jump to foo in file2
+                assert_eq!(links[0].target_uri, uri2);
+            }
+        );
+    }
+
+    #[test]
+    fn test_goto_definition_falls_back_to_other_file() {
+        let _guard = indexer::ResetIndexerGuard;
+
+        // file1 defines foo, file2 does not
+        let code1 = r#"
+foo <- 1
+"#;
+        let code2 = r#"
+foo
+"#;
+
+        let doc1 = Document::new(code1, None);
+        let doc2 = Document::new(code2, None);
+        let path1 = std::path::PathBuf::from("/file1.R");
+        let path2 = std::path::PathBuf::from("/file2.R");
+        let uri1 = Url::from_file_path(&path1).unwrap();
+        let uri2 = Url::from_file_path(&path2).unwrap();
+
+        indexer::update(&doc1, &path1).unwrap();
+        indexer::update(&doc2, &path2).unwrap();
+
+        // Go to definition for foo in file2 (should jump to file1)
+        let params2 = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri2.clone() },
+                position: lsp_types::Position::new(1, 0),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let result2 = goto_definition(&doc2, params2).unwrap();
+        assert_matches!(
+            result2,
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                // Should jump to foo in file1
+                assert_eq!(links[0].target_uri, uri1);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 3),
                     }
                 );
             }
