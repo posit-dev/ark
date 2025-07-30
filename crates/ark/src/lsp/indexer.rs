@@ -91,6 +91,7 @@ pub fn start(folders: Vec<String>) {
     );
 }
 
+/// Search the workspace files and return the first symbol match
 pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
@@ -103,6 +104,7 @@ pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
     None
 }
 
+/// Search a specific workspace file for a symbol
 pub fn find_in_file(symbol: &str, path: &std::path::Path) -> Option<(String, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
