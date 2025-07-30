@@ -105,7 +105,7 @@ foo <- 42
 print(foo)
 "#;
         let doc = Document::new(code, None);
-        let (path, uri) = test_path();
+        let (path, uri) = test_path("test.R");
 
         indexer::update(&doc, &path).unwrap();
 
@@ -142,7 +142,7 @@ foo <- 1
 print(foo)
 "#;
         let doc = Document::new(code, None);
-        let (path, uri) = test_path();
+        let (path, uri) = test_path("test.R");
 
         indexer::update(&doc, &path).unwrap();
 
@@ -186,10 +186,9 @@ foo
 
         let doc1 = Document::new(code1, None);
         let doc2 = Document::new(code2, None);
-        let path1 = std::path::PathBuf::from("/file1.R");
-        let path2 = std::path::PathBuf::from("/file2.R");
-        let uri1 = Url::from_file_path(&path1).unwrap();
-        let uri2 = Url::from_file_path(&path2).unwrap();
+
+        let (path1, uri1) = test_path("file1.R");
+        let (path2, uri2) = test_path("file2.R");
 
         indexer::update(&doc1, &path1).unwrap();
         indexer::update(&doc2, &path2).unwrap();
@@ -243,10 +242,10 @@ foo
 
         let doc1 = Document::new(code1, None);
         let doc2 = Document::new(code2, None);
-        let path1 = std::path::PathBuf::from("/file1.R");
-        let path2 = std::path::PathBuf::from("/file2.R");
-        let uri1 = Url::from_file_path(&path1).unwrap();
-        let uri2 = Url::from_file_path(&path2).unwrap();
+
+        // Use test_path for cross-platform compatibility
+        let (path1, uri1) = crate::lsp::util::test_path("file1.R");
+        let (path2, uri2) = crate::lsp::util::test_path("file2.R");
 
         indexer::update(&doc1, &path1).unwrap();
         indexer::update(&doc2, &path2).unwrap();
