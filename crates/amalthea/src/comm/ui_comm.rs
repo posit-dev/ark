@@ -133,6 +133,9 @@ pub struct OpenEditorParams {
 
 	/// The column number to jump to
 	pub column: i64,
+
+	/// Whether `path` is a URI
+	pub uri: Option<bool>,
 }
 
 /// Parameters for the NewDocument method.

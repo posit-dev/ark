@@ -63,11 +63,13 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
     file: SEXP,
     line: SEXP,
     column: SEXP,
+    uri: SEXP,
 ) -> anyhow::Result<SEXP> {
     let params = OpenEditorParams {
         file: RObject::view(file).try_into()?,
         line: RObject::view(line).try_into()?,
         column: RObject::view(column).try_into()?,
+        uri: Some(RObject::view(uri).try_into()?),
     };
 
     let event = UiFrontendEvent::OpenEditor(params);
