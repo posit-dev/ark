@@ -706,7 +706,7 @@ pub enum SearchSchemaSortOrder {
 }
 
 /// Possible values for ColumnDisplayType
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ColumnDisplayType {
 	#[serde(rename = "number")]
 	#[strum(to_string = "number")]
@@ -754,7 +754,7 @@ pub enum ColumnDisplayType {
 }
 
 /// Possible values for Condition in RowFilter
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum RowFilterCondition {
 	#[serde(rename = "and")]
 	#[strum(to_string = "and")]
@@ -766,7 +766,7 @@ pub enum RowFilterCondition {
 }
 
 /// Possible values for RowFilterType
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum RowFilterType {
 	#[serde(rename = "between")]
 	#[strum(to_string = "between")]
@@ -814,7 +814,7 @@ pub enum RowFilterType {
 }
 
 /// Possible values for Op in FilterComparison
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum FilterComparisonOp {
 	#[serde(rename = "=")]
 	#[strum(to_string = "=")]
@@ -842,7 +842,7 @@ pub enum FilterComparisonOp {
 }
 
 /// Possible values for TextSearchType
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum TextSearchType {
 	#[serde(rename = "contains")]
 	#[strum(to_string = "contains")]
@@ -866,7 +866,7 @@ pub enum TextSearchType {
 }
 
 /// Possible values for ColumnFilterType
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ColumnFilterType {
 	#[serde(rename = "text_search")]
 	#[strum(to_string = "text_search")]
@@ -878,7 +878,7 @@ pub enum ColumnFilterType {
 }
 
 /// Possible values for ColumnProfileType
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ColumnProfileType {
 	#[serde(rename = "null_count")]
 	#[strum(to_string = "null_count")]
@@ -906,7 +906,7 @@ pub enum ColumnProfileType {
 }
 
 /// Possible values for Method in ColumnHistogramParams
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ColumnHistogramParamsMethod {
 	#[serde(rename = "sturges")]
 	#[strum(to_string = "sturges")]
@@ -926,7 +926,7 @@ pub enum ColumnHistogramParamsMethod {
 }
 
 /// Possible values for Kind in TableSelection
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum TableSelectionKind {
 	#[serde(rename = "single_cell")]
 	#[strum(to_string = "single_cell")]
@@ -954,7 +954,7 @@ pub enum TableSelectionKind {
 }
 
 /// Possible values for ExportFormat
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ExportFormat {
 	#[serde(rename = "csv")]
 	#[strum(to_string = "csv")]
@@ -970,7 +970,7 @@ pub enum ExportFormat {
 }
 
 /// Possible values for SupportStatus
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum SupportStatus {
 	#[serde(rename = "unsupported")]
 	#[strum(to_string = "unsupported")]
