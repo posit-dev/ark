@@ -39,7 +39,10 @@
     column = 0L
 ) {
     # Don't normalize if that's an `ark:` URI
-    if (!grepl("^ark:", file)) {
+    if (grepl("^ark:", file)) {
+        kind <- "uri"
+    } else {
+        kind <- "path"
         file <- normalizePath(file)
     }
 
@@ -51,7 +54,7 @@
         column <- 0L
     }
 
-    .ps.Call("ps_ui_navigate_to_file", file, line, column)
+    .ps.Call("ps_ui_navigate_to_file", file, line, column, kind)
 }
 
 #' @export

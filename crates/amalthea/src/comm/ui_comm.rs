@@ -98,6 +98,18 @@ pub struct Range {
 	pub end: Position
 }
 
+/// Possible values for Kind in OpenEditor
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
+pub enum OpenEditorKind {
+	#[serde(rename = "path")]
+	#[strum(to_string = "path")]
+	Path,
+
+	#[serde(rename = "uri")]
+	#[strum(to_string = "uri")]
+	Uri
+}
+
 /// Parameters for the DidChangePlotsRenderSettings method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DidChangePlotsRenderSettingsParams {
@@ -133,6 +145,10 @@ pub struct OpenEditorParams {
 
 	/// The column number to jump to
 	pub column: i64,
+
+	/// How to interpret the 'file' argument: as a file path or as a URI. If
+	/// omitted, defaults to 'path'.
+	pub kind: OpenEditorKind,
 }
 
 /// Parameters for the NewDocument method.
