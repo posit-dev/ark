@@ -30,7 +30,9 @@ impl CompletionSource for SingleColonSource {
 // Don't provide completions if on a single `:`, which typically precedes
 // a `::` or `:::`. It means we don't provide completions for `1:` but we
 // accept that.
-fn completions_from_single_colon(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+fn completions_from_single_colon(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     if is_single_colon(context) {
         // Return an empty vector to signal that we are done
         Ok(Some(vec![]))

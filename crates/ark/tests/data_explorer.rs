@@ -7,6 +7,9 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
+use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnFilterParams;
+use amalthea::comm::data_explorer_comm::ColumnFilterType;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTable;
 use amalthea::comm::data_explorer_comm::ColumnFrequencyTableParams;
 use amalthea::comm::data_explorer_comm::ColumnHistogram;
@@ -31,6 +34,7 @@ use amalthea::comm::data_explorer_comm::ExportFormat;
 use amalthea::comm::data_explorer_comm::ExportedData;
 use amalthea::comm::data_explorer_comm::FilterComparison;
 use amalthea::comm::data_explorer_comm::FilterComparisonOp;
+use amalthea::comm::data_explorer_comm::FilterMatchDataTypes;
 use amalthea::comm::data_explorer_comm::FilterResult;
 use amalthea::comm::data_explorer_comm::FilterTextSearch;
 use amalthea::comm::data_explorer_comm::FormatOptions;
@@ -42,15 +46,18 @@ use amalthea::comm::data_explorer_comm::RowFilter;
 use amalthea::comm::data_explorer_comm::RowFilterCondition;
 use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
+use amalthea::comm::data_explorer_comm::SearchSchemaParams;
+use amalthea::comm::data_explorer_comm::SearchSchemaResult;
+use amalthea::comm::data_explorer_comm::SearchSchemaSortOrder;
 use amalthea::comm::data_explorer_comm::Selection;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
 use amalthea::comm::data_explorer_comm::SetSortColumnsParams;
 use amalthea::comm::data_explorer_comm::SummaryStatsBoolean;
 use amalthea::comm::data_explorer_comm::SummaryStatsNumber;
 use amalthea::comm::data_explorer_comm::SummaryStatsString;
+use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableSelectionKind;
-use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use amalthea::socket::comm::CommSocket;
@@ -150,6 +157,543 @@ fn socket_rpc(
     socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket, req)
 }
 
+/// Test setup helper that reduces boilerplate for common test initialization
+struct TestSetup {
+    socket: socket::comm::CommSocket,
+}
+
+impl TestSetup {
+    fn new(dataset: &str) -> Self {
+        Self {
+            socket: open_data_explorer(String::from(dataset)),
+        }
+    }
+
+    fn from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<Self> {
+        Ok(Self {
+            socket: open_data_explorer_from_expression(expr, bind)?,
+        })
+    }
+
+    fn socket(&self) -> &socket::comm::CommSocket {
+        &self.socket
+    }
+}
+
+/// Request builder helpers to reduce repetitive request construction
+struct RequestBuilder;
+
+impl RequestBuilder {
+    fn get_schema(column_indices: Vec<i64>) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::GetSchema(GetSchemaParams { column_indices })
+    }
+
+    fn get_data_values(
+        row_start: i64,
+        num_rows: i64,
+        columns: Vec<i64>,
+    ) -> DataExplorerBackendRequest {
+        get_data_values_request(row_start, num_rows, columns, default_format_options())
+    }
+
+    fn search_schema_text(
+        term: &str,
+        search_type: amalthea::comm::data_explorer_comm::TextSearchType,
+        case_sensitive: bool,
+        sort_order: SearchSchemaSortOrder,
+    ) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::SearchSchema(SearchSchemaParams {
+            filters: vec![ColumnFilter {
+                filter_type: ColumnFilterType::TextSearch,
+                params: ColumnFilterParams::TextSearch(FilterTextSearch {
+                    search_type,
+                    term: term.to_string(),
+                    case_sensitive,
+                }),
+            }],
+            sort_order,
+        })
+    }
+
+    fn search_schema_data_types(
+        display_types: Vec<ColumnDisplayType>,
+        sort_order: SearchSchemaSortOrder,
+    ) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::SearchSchema(SearchSchemaParams {
+            filters: vec![ColumnFilter {
+                filter_type: ColumnFilterType::MatchDataTypes,
+                params: ColumnFilterParams::MatchDataTypes(FilterMatchDataTypes { display_types }),
+            }],
+            sort_order,
+        })
+    }
+
+    fn search_schema_with_filters(
+        filters: Vec<ColumnFilter>,
+        sort_order: SearchSchemaSortOrder,
+    ) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::SearchSchema(SearchSchemaParams {
+            filters,
+            sort_order,
+        })
+    }
+
+    fn set_sort_columns(sort_keys: Vec<ColumnSortKey>) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams { sort_keys })
+    }
+
+    fn get_state() -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::GetState
+    }
+
+    fn get_row_labels(selection: ArraySelection) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
+            selection,
+            format_options: default_format_options(),
+        })
+    }
+
+    fn get_column_profiles(
+        callback_id: String,
+        profiles: Vec<ColumnProfileRequest>,
+    ) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
+            callback_id,
+            profiles,
+            format_options: default_format_options(),
+        })
+    }
+
+    fn set_row_filters(filters: Vec<RowFilter>) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams { filters })
+    }
+
+    fn export_data_selection(
+        format: ExportFormat,
+        selection: TableSelection,
+    ) -> DataExplorerBackendRequest {
+        DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+            format,
+            selection,
+        })
+    }
+}
+
+/// Assertion helpers to reduce repetitive assertion patterns
+struct TestAssertions;
+
+impl TestAssertions {
+    fn assert_schema_columns(
+        socket: &socket::comm::CommSocket,
+        column_indices: Vec<i64>,
+        expected_count: usize,
+    ) {
+        let req = RequestBuilder::get_schema(column_indices);
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::GetSchemaReply(schema) => {
+                assert_eq!(schema.columns.len(), expected_count);
+            }
+        );
+    }
+
+    fn assert_search_matches(
+        socket: &socket::comm::CommSocket,
+        req: DataExplorerBackendRequest,
+        expected_matches: Vec<i64>,
+    ) {
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::SearchSchemaReply(SearchSchemaResult { matches }) => {
+                assert_eq!(matches, expected_matches);
+            }
+        );
+    }
+
+    fn assert_data_values_count(
+        socket: &socket::comm::CommSocket,
+        row_start: i64,
+        num_rows: i64,
+        columns: Vec<i64>,
+        expected_column_count: usize,
+        expected_row_count: usize,
+    ) {
+        let req = RequestBuilder::get_data_values(row_start, num_rows, columns);
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                assert_eq!(data.columns.len(), expected_column_count);
+                if expected_column_count > 0 {
+                    assert_eq!(data.columns[0].len(), expected_row_count);
+                }
+            }
+        );
+    }
+
+    fn assert_sort_columns_applied(
+        socket: &socket::comm::CommSocket,
+        sort_keys: Vec<ColumnSortKey>,
+    ) {
+        let req = RequestBuilder::set_sort_columns(sort_keys);
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::SetSortColumnsReply() => {}
+        );
+    }
+
+    fn assert_state<F>(socket: &socket::comm::CommSocket, check: F)
+    where
+        F: FnOnce(&amalthea::comm::data_explorer_comm::BackendState),
+    {
+        let req = RequestBuilder::get_state();
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::GetStateReply(state) => {
+                check(&state);
+            }
+        );
+    }
+
+    fn assert_row_labels<F>(socket: &socket::comm::CommSocket, selection: ArraySelection, check: F)
+    where
+        F: FnOnce(&Vec<Vec<String>>),
+    {
+        let req = RequestBuilder::get_row_labels(selection);
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
+                check(&row_labels.row_labels);
+            }
+        );
+    }
+
+    fn assert_data_values<F>(
+        socket: &socket::comm::CommSocket,
+        row_start: i64,
+        num_rows: i64,
+        columns: Vec<i64>,
+        check: F,
+    ) where
+        F: FnOnce(&Vec<Vec<ColumnValue>>),
+    {
+        let req = get_data_values_request(row_start, num_rows, columns, default_format_options());
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::GetDataValuesReply(data) => {
+                check(&data.columns);
+            }
+        );
+    }
+
+    fn assert_row_filters_applied(
+        socket: &socket::comm::CommSocket,
+        filters: Vec<RowFilter>,
+        expected_rows: i64,
+        had_errors: Option<bool>,
+    ) {
+        let req = RequestBuilder::set_row_filters(filters);
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::SetRowFiltersReply(FilterResult {
+                selected_num_rows,
+                had_errors: actual_had_errors
+            }) => {
+                assert_eq!(selected_num_rows, expected_rows);
+                assert_eq!(actual_had_errors, had_errors);
+            }
+        );
+    }
+
+    fn assert_export_data<F>(
+        socket: &socket::comm::CommSocket,
+        format: ExportFormat,
+        selection: TableSelection,
+        check: F,
+    ) where
+        F: FnOnce(&ExportedData),
+    {
+        let req = RequestBuilder::export_data_selection(format, selection);
+        assert_match!(socket_rpc(socket, req),
+            DataExplorerBackendReply::ExportDataSelectionReply(exported_data) => {
+                check(&exported_data);
+            }
+        );
+    }
+
+    fn get_column_schema(
+        socket: &socket::comm::CommSocket,
+        column_indices: Vec<i64>,
+    ) -> TableSchema {
+        let req = RequestBuilder::get_schema(column_indices);
+        match socket_rpc(socket, req) {
+            DataExplorerBackendReply::GetSchemaReply(schema) => schema,
+            _ => panic!("Expected GetSchemaReply"),
+        }
+    }
+}
+
+/// Factories for creating common test data
+struct TestDataBuilder;
+
+impl TestDataBuilder {
+    fn create_mixed_types_dataframe() -> anyhow::Result<TestSetup> {
+        TestSetup::from_expression(
+            "data.frame(
+                name = c('Alice', 'Bob'),
+                age = c(25L, 30L),
+                score = c(95.5, 87.2),
+                is_active = c(TRUE, FALSE),
+                date_joined = as.Date(c('2021-01-01', '2021-02-01'))
+            )",
+            None,
+        )
+    }
+
+    fn create_search_test_dataframe() -> anyhow::Result<TestSetup> {
+        TestSetup::from_expression(
+            "data.frame(
+                user_name = c('Alice', 'Bob'),
+                user_age = c(25, 30),
+                email_address = c('alice@test.com', 'bob@test.com'),
+                score = c(95.5, 87.2),
+                is_active = c(TRUE, FALSE)
+            )",
+            None,
+        )
+    }
+
+    fn create_sort_order_test_dataframe() -> anyhow::Result<TestSetup> {
+        TestSetup::from_expression(
+            "data.frame(
+                zebra = c(1, 2),
+                apple = c(3, 4),
+                banana = c(5, 6)
+            )",
+            None,
+        )
+    }
+}
+
+/// Helper to create common selections and data structures
+struct SelectionBuilder;
+
+impl SelectionBuilder {
+    fn indices(indices: Vec<i64>) -> ArraySelection {
+        ArraySelection::SelectIndices(DataSelectionIndices { indices })
+    }
+
+    fn single_cell(row_index: i64, column_index: i64) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::SingleCell,
+            selection: Selection::SingleCell(DataSelectionSingleCell {
+                row_index,
+                column_index,
+            }),
+        }
+    }
+
+    fn column_sort_key(column_index: i64, ascending: bool) -> ColumnSortKey {
+        ColumnSortKey {
+            column_index,
+            ascending,
+        }
+    }
+}
+
+/// Helper to create row filters easily
+struct RowFilterBuilder;
+
+impl RowFilterBuilder {
+    fn comparison(
+        column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
+        op: FilterComparisonOp,
+        value: &str,
+    ) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::Compare,
+            params: Some(RowFilterParams::Comparison(FilterComparison {
+                op,
+                value: value.to_string(),
+            })),
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn text_search(
+        column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
+        search_type: amalthea::comm::data_explorer_comm::TextSearchType,
+        term: &str,
+        case_sensitive: bool,
+    ) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::Search,
+            params: Some(RowFilterParams::TextSearch(FilterTextSearch {
+                search_type,
+                term: term.to_string(),
+                case_sensitive,
+            })),
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn is_null(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::IsNull,
+            params: None,
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn not_null(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::NotNull,
+            params: None,
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn is_empty(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::IsEmpty,
+            params: None,
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn is_true(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::IsTrue,
+            params: None,
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn is_false(column_schema: amalthea::comm::data_explorer_comm::ColumnSchema) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::IsFalse,
+            params: None,
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+
+    fn set_membership(
+        column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
+        values: Vec<String>,
+        inclusive: bool,
+    ) -> RowFilter {
+        RowFilter {
+            column_schema,
+            filter_type: RowFilterType::SetMembership,
+            params: Some(RowFilterParams::SetMembership(
+                amalthea::comm::data_explorer_comm::FilterSetMembership { values, inclusive },
+            )),
+            filter_id: uuid::Uuid::new_v4().to_string(),
+            condition: RowFilterCondition::And,
+            is_valid: None,
+            error_message: None,
+        }
+    }
+}
+
+/// Helper to create common column filters
+struct FilterBuilder;
+
+impl FilterBuilder {
+    fn text_contains(term: &str, case_sensitive: bool) -> ColumnFilter {
+        ColumnFilter {
+            filter_type: ColumnFilterType::TextSearch,
+            params: ColumnFilterParams::TextSearch(FilterTextSearch {
+                search_type: amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+                term: term.to_string(),
+                case_sensitive,
+            }),
+        }
+    }
+
+    fn match_data_types(display_types: Vec<ColumnDisplayType>) -> ColumnFilter {
+        ColumnFilter {
+            filter_type: ColumnFilterType::MatchDataTypes,
+            params: ColumnFilterParams::MatchDataTypes(FilterMatchDataTypes { display_types }),
+        }
+    }
+}
+
+/// Helper to create column profile requests
+struct ProfileBuilder;
+
+impl ProfileBuilder {
+    fn null_count(column_index: i64) -> ColumnProfileRequest {
+        ColumnProfileRequest {
+            column_index,
+            profiles: vec![ColumnProfileSpec {
+                profile_type: ColumnProfileType::NullCount,
+                params: None,
+            }],
+        }
+    }
+
+    fn summary_stats(column_index: i64) -> ColumnProfileRequest {
+        ColumnProfileRequest {
+            column_index,
+            profiles: vec![ColumnProfileSpec {
+                profile_type: ColumnProfileType::SummaryStats,
+                params: None,
+            }],
+        }
+    }
+
+    fn small_histogram(
+        column_index: i64,
+        method: ColumnHistogramParamsMethod,
+        num_bins: i64,
+        quantiles: Option<Vec<f64>>,
+    ) -> ColumnProfileRequest {
+        ColumnProfileRequest {
+            column_index,
+            profiles: vec![ColumnProfileSpec {
+                profile_type: ColumnProfileType::SmallHistogram,
+                params: Some(ColumnProfileParams::SmallHistogram(ColumnHistogramParams {
+                    method,
+                    num_bins,
+                    quantiles,
+                })),
+            }],
+        }
+    }
+
+    fn small_frequency_table(column_index: i64, limit: i64) -> ColumnProfileRequest {
+        ColumnProfileRequest {
+            column_index,
+            profiles: vec![ColumnProfileSpec {
+                profile_type: ColumnProfileType::SmallFrequencyTable,
+                params: Some(ColumnProfileParams::SmallFrequencyTable(
+                    ColumnFrequencyTableParams { limit },
+                )),
+            }],
+        }
+    }
+}
+
 fn default_format_options() -> FormatOptions {
     FormatOptions {
         large_num_digits: 2,
@@ -232,149 +776,78 @@ fn expect_column_profile_results(
 }
 
 fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
-    // Get the schema for the test data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    });
+    // Check that we got the right number of columns (mtcars has 11 columns)
+    TestAssertions::assert_schema_columns(&socket, (0..11).collect(), 11);
 
-    // Check that we got the right number of columns.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetSchemaReply(schema) => {
-            // mtcars is a data frame with 11 columns, so we should get
-            // 11 columns back.
-            assert_eq!(schema.columns.len(), 11);
-        }
-    );
-
-    // Get 5 rows of data from the middle of the test data set.
-    let req = get_data_values_request(5, 5, vec![0, 1, 2, 3, 4], default_format_options());
-
-    // Check that we got the right columns and row labels.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetDataValuesReply(data) => {
-            assert_eq!(data.columns.len(), 5);
-        }
-    );
+    // Check that we can get data values (5 rows, 5 columns from middle of dataset)
+    TestAssertions::assert_data_values_count(&socket, 5, 5, vec![0, 1, 2, 3, 4], 5, 5);
 
     // Check row names are present
     if has_row_names {
-        let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
-            selection: ArraySelection::SelectIndices(DataSelectionIndices {
-                indices: vec![5, 6, 7, 8, 9],
-            }),
-            format_options: default_format_options(),
-        });
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
-                let labels = row_labels.row_labels;
+        TestAssertions::assert_row_labels(
+            &socket,
+            SelectionBuilder::indices(vec![5, 6, 7, 8, 9]),
+            |labels| {
                 assert_eq!(labels[0][0], "Valiant");
                 assert_eq!(labels[0][1], "Duster 360");
                 assert_eq!(labels[0][2], "Merc 240D");
-            }
+            },
         );
     }
 
-    // Create a request to sort the data set by the 'mpg' column.
-    let mpg_sort_keys = vec![ColumnSortKey {
-        column_index: 0,
-        ascending: true,
-    }];
-    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-        sort_keys: mpg_sort_keys.clone(),
+    // Sort by 'mpg' column (ascending)
+    let mpg_sort_keys = vec![SelectionBuilder::column_sort_key(0, true)];
+    TestAssertions::assert_sort_columns_applied(&socket, mpg_sort_keys.clone());
+
+    // Verify the state shows correct sort keys and display name
+    TestAssertions::assert_state(&socket, |state| {
+        assert_eq!(state.display_name, display_name);
+        assert_eq!(state.sort_keys, mpg_sort_keys);
     });
 
-    // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
+    // Check sorted values are correct (first three rows)
+    TestAssertions::assert_data_values(&socket, 0, 3, vec![0, 1], |data| {
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].len(), 3);
+        assert_eq!(data[0][0], ColumnValue::FormattedValue("10.40".to_string()));
+        assert_eq!(data[0][1], ColumnValue::FormattedValue("10.40".to_string()));
+        assert_eq!(data[0][2], ColumnValue::FormattedValue("13.30".to_string()));
+    });
 
-    // Get the table state and ensure that the backend returns the sort keys
-    let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetStateReply(state) => {
-            assert_eq!(state.display_name, display_name);
-            assert_eq!(state.sort_keys, mpg_sort_keys);
-        }
-    );
-
-    // Get the first three rows of data from the sorted data set.
-    let req = get_data_values_request(0, 3, vec![0, 1], default_format_options());
-
-    // Check that sorted values were correctly returned.
-    assert_match!(socket_rpc(&socket, req),
-                DataExplorerBackendReply::GetDataValuesReply(data) => {
-                    // The first three sorted rows should be 10.4, 10.4, and 13.3.
-                    assert_eq!(data.columns.len(), 2);
-                    assert_eq!(data.columns[0].len(), 3);
-                    assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("10.40".to_string()));
-                    assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("10.40".to_string()));
-                    assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("13.30".to_string()));
-        }
-    );
-
-    // Row labels should be sorted as well.
+    // Row labels should be sorted as well
     if has_row_names {
-        let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
-            selection: ArraySelection::SelectIndices(DataSelectionIndices {
-                indices: vec![0, 1, 2],
-            }),
-            format_options: default_format_options(),
-        });
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
-                let labels = row_labels.row_labels;
+        TestAssertions::assert_row_labels(
+            &socket,
+            SelectionBuilder::indices(vec![0, 1, 2]),
+            |labels| {
                 assert_eq!(labels[0][0], "Cadillac Fleetwood");
                 assert_eq!(labels[0][1], "Lincoln Continental");
                 assert_eq!(labels[0][2], "Camaro Z28");
-            }
+            },
         );
     }
 
-    // A more complicated sort: sort by 'cyl' in descending order, then by 'mpg'
-    // also in descending order.
+    // More complex sort: by 'cyl' descending, then by 'mpg' descending
     let descending_sort_keys = vec![
-        ColumnSortKey {
-            column_index: 1,
-            ascending: false,
-        },
-        ColumnSortKey {
-            column_index: 0,
-            ascending: false,
-        },
+        SelectionBuilder::column_sort_key(1, false),
+        SelectionBuilder::column_sort_key(0, false),
     ];
+    TestAssertions::assert_sort_columns_applied(&socket, descending_sort_keys);
 
-    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-        sort_keys: descending_sort_keys.clone(),
+    // Check the complex sorted values
+    TestAssertions::assert_data_values(&socket, 0, 3, vec![0, 1], |data| {
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0][0], ColumnValue::FormattedValue("19.20".to_string()));
+        assert_eq!(data[0][1], ColumnValue::FormattedValue("18.70".to_string()));
+        assert_eq!(data[0][2], ColumnValue::FormattedValue("17.30".to_string()));
     });
-
-    // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req),
-DataExplorerBackendReply::SetSortColumnsReply() => {});
-
-    // Get the first three rows of data from the sorted data set.
-    let req = get_data_values_request(0, 3, vec![0, 1], default_format_options());
-
-    // Check that sorted values were correctly returned.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetDataValuesReply(data) => {
-            assert_eq!(data.columns.len(), 2);
-            assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("19.20".to_string()));
-            assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("18.70".to_string()));
-            assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("17.30".to_string()));
-        }
-    );
 }
 
 #[test]
 fn test_basic_mtcars() {
     let _lock = r_test_lock();
-
-    // --- mtcars ---
-
-    // Test with the regular mtcars data set.
-    test_mtcars_sort(
-        open_data_explorer(String::from("mtcars")),
-        true,
-        String::from("mtcars"),
-    );
+    let setup = TestSetup::new("mtcars");
+    test_mtcars_sort(setup.socket, true, String::from("mtcars"));
 }
 
 #[test]
@@ -387,11 +860,8 @@ fn test_tibble_support() {
         return;
     }
 
-    test_mtcars_sort(
-        open_data_explorer(String::from("mtcars_tib")),
-        false,
-        String::from("mtcars_tib"),
-    );
+    let setup = TestSetup::new("mtcars_tib");
+    test_mtcars_sort(setup.socket, false, String::from("mtcars_tib"));
 
     r_task(|| {
         harp::parse_eval_global("rm(mtcars_tib)").unwrap();
@@ -401,188 +871,91 @@ fn test_tibble_support() {
 #[test]
 fn test_women_dataset() {
     let _lock = r_test_lock();
+    let setup = TestSetup::new("women");
+    let socket = setup.socket();
 
-    // --- women ---
-
-    // Open the women data set in the data explorer.
-    let socket = open_data_explorer(String::from("women"));
-
-    // Get 2 rows of data from the beginning of the test data set.
-    let req = get_data_values_request(0, 2, vec![0, 1], default_format_options());
-
-    // Spot check the data values.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetDataValuesReply(data) => {
-            assert_eq!(data.columns.len(), 2);
-            assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("58.00".to_string()));
-            assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("59.00".to_string()));
-        }
-    );
-
-    // Also check row names
-    let req = DataExplorerBackendRequest::GetRowLabels(GetRowLabelsParams {
-        selection: ArraySelection::SelectIndices(DataSelectionIndices {
-            indices: vec![0, 1, 2],
-        }),
-        format_options: default_format_options(),
-    });
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
-            let labels = row_labels.row_labels;
-            assert_eq!(labels[0][0], "1");
-            assert_eq!(labels[0][1], "2");
-            assert_eq!(labels[0][2], "3");
-        }
-    );
-
-    // Apply a sort to the data set. We'll sort the first field (height) in
-    // descending order.
-    let sort_keys = vec![ColumnSortKey {
-        column_index: 0,
-        ascending: false,
-    }];
-    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-        sort_keys: sort_keys.clone(),
+    // Check initial data values (first 2 rows)
+    TestAssertions::assert_data_values(socket, 0, 2, vec![0, 1], |data| {
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0][0], ColumnValue::FormattedValue("58.00".to_string()));
+        assert_eq!(data[0][1], ColumnValue::FormattedValue("59.00".to_string()));
     });
 
-    // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
-
-    // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0, 1],
+    // Check row names
+    TestAssertions::assert_row_labels(socket, SelectionBuilder::indices(vec![0, 1, 2]), |labels| {
+        assert_eq!(labels[0][0], "1");
+        assert_eq!(labels[0][1], "2");
+        assert_eq!(labels[0][2], "3");
     });
 
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
+    // Sort by height (descending)
+    let sort_keys = vec![SelectionBuilder::column_sort_key(0, false)];
+    TestAssertions::assert_sort_columns_applied(socket, sort_keys);
+
+    // Get schema to use for filtering
+    let req = RequestBuilder::get_schema(vec![0, 1]);
+    let schema = match socket_rpc(socket, req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
+        _ => panic!("Expected schema reply"),
     };
 
-    // Next, apply a filter to the data set. We'll filter out all rows where
-    // the first field (height) is less than 60.
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![RowFilter {
-            column_schema: schema.columns[0].clone(),
-            filter_type: RowFilterType::Compare,
-            params: Some(RowFilterParams::Comparison(FilterComparison {
-                op: FilterComparisonOp::Lt,
-                value: "60".to_string(),
-            })),
-            filter_id: "A11876D6-7CF3-435F-874D-E96892B25C9A".to_string(),
-            error_message: None,
-            condition: RowFilterCondition::And,
-            is_valid: None,
-        }],
+    // Apply filter: height < 60
+    let filters = vec![RowFilterBuilder::comparison(
+        schema.columns[0].clone(),
+        FilterComparisonOp::Lt,
+        "60",
+    )];
+    TestAssertions::assert_row_filters_applied(socket, filters, 2, Some(false));
+
+    // Check filtered and sorted data
+    TestAssertions::assert_data_values(socket, 0, 2, vec![0, 1], |data| {
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0][0], ColumnValue::FormattedValue("59.00".to_string()));
+        assert_eq!(data[0][1], ColumnValue::FormattedValue("58.00".to_string()));
     });
-
-    // We should get a SetRowFiltersReply back. There are 2 rows where the
-    // height is less than 60.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 2);
-    });
-
-    // Get 2 rows of data. These rows should be both sorted and filtered
-    // since we have applied both a sort and a filter.
-    let req = get_data_values_request(0, 2, vec![0, 1], default_format_options());
-
-    // Spot check the data values.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetDataValuesReply(data) => {
-            // The first column (height) should contain the only two rows
-            // where the height is less than 60.
-            assert_eq!(data.columns.len(), 2);
-            assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("59.00".to_string()));
-            assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("58.00".to_string()));
-        }
-    );
 }
 
 #[test]
 fn test_matrix_support() {
     let _lock = r_test_lock();
+    let setup = TestSetup::new("volcano");
+    let socket = setup.socket();
 
-    // --- volcano (a matrix) ---
+    // Verify volcano matrix has 61 columns
+    TestAssertions::assert_schema_columns(socket, (0..61).collect_vec(), 61);
 
-    // Open the volcano data set in the data explorer. This data set is a matrix.
-    let socket = open_data_explorer(String::from("volcano"));
-
-    // Get the schema for the test data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: (0..61).collect_vec(),
-    });
-
-    // Check that we got the right number of columns.
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
+    // Get schema for filtering
+    let req = RequestBuilder::get_schema((0..61).collect_vec());
+    let schema = match socket_rpc(socket, req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
+        _ => panic!("Expected schema reply"),
     };
-    assert_eq!(schema.columns.len(), 61);
 
-    // Create a request to sort the matrix by the first column.
-    let volcano_sort_keys = vec![ColumnSortKey {
-        column_index: 0,
-        ascending: true,
-    }];
+    // Sort by first column (ascending)
+    let sort_keys = vec![SelectionBuilder::column_sort_key(0, true)];
+    TestAssertions::assert_sort_columns_applied(socket, sort_keys);
 
-    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-        sort_keys: volcano_sort_keys.clone(),
+    // Check sorted data values (first 4 rows, 2 columns)
+    TestAssertions::assert_data_values(socket, 0, 4, vec![0, 1], |data| {
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0][0], ColumnValue::FormattedValue("97.00".to_string()));
+        assert_eq!(data[0][1], ColumnValue::FormattedValue("97.00".to_string()));
+        assert_eq!(data[0][2], ColumnValue::FormattedValue("98.00".to_string()));
+        assert_eq!(data[0][3], ColumnValue::FormattedValue("98.00".to_string()));
     });
 
-    // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::SetSortColumnsReply() => {});
-
-    // Get the first three rows of data from the sorted matrix.
-    let req = get_data_values_request(0, 4, vec![0, 1], default_format_options());
-
-    // Check the data values.
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetDataValuesReply(data) => {
-            assert_eq!(data.columns.len(), 2);
-            assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("97.00".to_string()));
-            assert_eq!(data.columns[0][1], ColumnValue::FormattedValue("97.00".to_string()));
-            assert_eq!(data.columns[0][2], ColumnValue::FormattedValue("98.00".to_string()));
-            assert_eq!(data.columns[0][3], ColumnValue::FormattedValue("98.00".to_string()));
-        }
-    );
-
-    // Next, apply a filter to the data set. We'll filter out all rows where
-    // the first column is less than 100.
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![RowFilter {
-            column_schema: schema.columns[0].clone(),
-            filter_type: RowFilterType::Compare,
-            params: Some(RowFilterParams::Comparison(FilterComparison {
-                op: FilterComparisonOp::Lt,
-                value: "100".to_string(),
-            })),
-            filter_id: "F5D5FE28-04D9-4010-8C77-84094D9B8E2C".to_string(),
-            condition: RowFilterCondition::And,
-            error_message: None,
-            is_valid: None,
-        }],
-    });
-
-    // We should get a SetRowFiltersReply back. There are 8 rows where the
-    // first column of the matrix is less than 100.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 8);
-    });
+    // Apply filter: first column < 100
+    let filters = vec![RowFilterBuilder::comparison(
+        schema.columns[0].clone(),
+        FilterComparisonOp::Lt,
+        "100",
+    )];
+    TestAssertions::assert_row_filters_applied(socket, filters, 8, Some(false));
 }
 
 #[test]
 fn test_data_table_support() {
     let _lock = r_test_lock();
-
-    // --- mtcars (as a data.table) ---
 
     let has_data_table =
         r_task(|| harp::parse_eval_global("mtcars_dt <- data.table::data.table(mtcars)").is_ok());
@@ -590,11 +963,8 @@ fn test_data_table_support() {
         return;
     }
 
-    test_mtcars_sort(
-        open_data_explorer(String::from("mtcars_dt")),
-        false,
-        String::from("mtcars_dt"),
-    );
+    let setup = TestSetup::new("mtcars_dt");
+    test_mtcars_sort(setup.socket, false, String::from("mtcars_dt"));
 
     r_task(|| {
         harp::parse_eval_global("rm(mtcars_dt)").unwrap();
@@ -604,151 +974,75 @@ fn test_data_table_support() {
 #[test]
 fn test_null_counts() {
     let _lock = r_test_lock();
-    // --- null count ---
-
-    // Create a data frame with the Fibonacci sequence, including some NA values
-    // where a number in the sequence has been omitted.
-    let socket = open_data_explorer_from_expression(
+    let setup = TestSetup::from_expression(
         "fibo <- data.frame(col = c(1, NA, 2, 3, 5, NA, 13, 21, NA))",
         None,
     )
     .unwrap();
+    let socket = setup.socket();
 
-    // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
+    // Get schema for filtering
+    let req = RequestBuilder::get_schema(vec![0]);
+    let schema = match socket_rpc(socket, req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
+        _ => panic!("Expected schema reply"),
     };
 
-    // Ask for a count of nulls in the first column.
-    let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-        callback_id: String::from("id"),
-        profiles: vec![ColumnProfileRequest {
-            column_index: 0,
-            profiles: vec![ColumnProfileSpec {
-                profile_type: ColumnProfileType::NullCount,
-                params: None,
-            }],
-        }],
-        format_options: default_format_options(),
-    });
-
-    expect_column_profile_results(&socket, req, |data| {
-        assert!(data.len() == 1);
+    // Check null count (should be 3)
+    let req =
+        RequestBuilder::get_column_profiles(String::from("id"), vec![ProfileBuilder::null_count(
+            0,
+        )]);
+    expect_column_profile_results(socket, req, |data| {
+        assert_eq!(data.len(), 1);
         assert_eq!(data[0].null_count, Some(3));
     });
 
-    // Next, apply a filter to the data set. Filter out all empty rows.
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![RowFilter {
-            column_schema: schema.columns[0].clone(),
-            filter_type: RowFilterType::NotNull,
-            filter_id: "048D4D03-A7B5-4825-BEB1-769B70DE38A6".to_string(),
-            condition: RowFilterCondition::And,
-            is_valid: None,
-            error_message: None,
-            params: None,
-        }],
-    });
+    // Filter out null values (NotNull filter)
+    let filters = vec![RowFilterBuilder::not_null(schema.columns[0].clone())];
+    TestAssertions::assert_row_filters_applied(socket, filters, 6, Some(false));
 
-    // We should get a SetRowFiltersReply back. There are 6 rows where the
-    // first column is not NA.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
-    ) => {
-        assert_eq!(num_rows, 6);
-    });
-
-    // Ask for a count of nulls in the first column again. Since a filter
-    // has been applied, the null count should be 0.
-    let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-        callback_id: String::from("id"),
-        profiles: vec![ColumnProfileRequest {
-            column_index: 0,
-            profiles: vec![ColumnProfileSpec {
-                profile_type: ColumnProfileType::NullCount,
-                params: None,
-            }],
-        }],
-        format_options: default_format_options(),
-    });
-
-    expect_column_profile_results(&socket, req, |data| {
-        // We asked for the null count of the first column, which has no
-        // NA values after the filter.
-        assert!(data.len() == 1);
+    // Null count should now be 0 (after filtering out nulls)
+    let req =
+        RequestBuilder::get_column_profiles(String::from("id2"), vec![ProfileBuilder::null_count(
+            0,
+        )]);
+    expect_column_profile_results(socket, req, |data| {
+        assert_eq!(data.len(), 1);
         assert_eq!(data[0].null_count, Some(0));
     });
 
-    // Let's look at JUST the empty rows.
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![RowFilter {
-            column_schema: schema.columns[0].clone(),
-            filter_type: RowFilterType::IsNull,
-            filter_id: "87E2E016-C853-4928-8914-8774125E3C87".to_string(),
-            condition: RowFilterCondition::And,
-            is_valid: None,
-            params: None,
-            error_message: None,
-        }],
-    });
-
-    // We should get a SetRowFiltersReply back. There are 3 rows where the
-    // first field has a missing value.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 3);
-    });
+    // Filter to show ONLY null values (IsNull filter)
+    let filters = vec![RowFilterBuilder::is_null(schema.columns[0].clone())];
+    TestAssertions::assert_row_filters_applied(socket, filters, 3, Some(false));
 }
 
 #[test]
 fn test_summary_stats() {
     let _lock = r_test_lock();
-    // --- summary stats ---
 
-    // Create a data frame with some numbers, characters and booleans to test
-    // summary statistics.
+    // Create test data with mixed types for summary statistics
     r_task(|| {
         harp::parse_eval_global(
-            "df <- data.frame(num = c(1, 2, 3, NA), char = c('a', 'a', '', NA), bool = c(TRUE, TRUE, FALSE, NA))")
-        .unwrap();
+            "df <- data.frame(num = c(1, 2, 3, NA), char = c('a', 'a', '', NA), bool = c(TRUE, TRUE, FALSE, NA))"
+        ).unwrap();
     });
 
-    // Open the fibo data set in the data explorer.
-    let socket = open_data_explorer(String::from("df"));
+    let setup = TestSetup::new("df");
+    let socket = setup.socket();
 
-    // Ask for summary stats for the columns
-    let req = DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-        callback_id: String::from("id"),
-        profiles: (0..3)
-            .map(|i| ColumnProfileRequest {
-                column_index: i,
-                profiles: vec![ColumnProfileSpec {
-                    profile_type: ColumnProfileType::SummaryStats,
-                    params: None,
-                }],
-            })
-            .collect(),
-        format_options: default_format_options(),
-    });
+    // Request summary stats for all 3 columns
+    let req = RequestBuilder::get_column_profiles(
+        String::from("id"),
+        (0..3).map(|i| ProfileBuilder::summary_stats(i)).collect(),
+    );
 
-    expect_column_profile_results(&socket, req, |data| {
-        // We asked for summary stats for all 3 columns
-        assert!(data.len() == 3);
+    expect_column_profile_results(socket, req, |data| {
+        assert_eq!(data.len(), 3);
 
-        // The first column is numeric and has 3 non-NA values.
+        // First column: numeric stats
         assert!(data[0].summary_stats.is_some());
-        let number_stats = data[0].summary_stats.clone().unwrap().number_stats;
-        assert!(number_stats.is_some());
-        let number_stats = number_stats.unwrap();
+        let number_stats = data[0].summary_stats.clone().unwrap().number_stats.unwrap();
         assert_eq!(number_stats, SummaryStatsNumber {
             min_value: Some(String::from("1.00")),
             max_value: Some(String::from("3.00")),
@@ -757,21 +1051,22 @@ fn test_summary_stats() {
             stdev: Some(String::from("1.00")),
         });
 
-        // The second column is a character column
+        // Second column: character stats
         assert!(data[1].summary_stats.is_some());
-        let string_stats = data[1].summary_stats.clone().unwrap().string_stats;
-        assert!(string_stats.is_some());
-        let string_stats = string_stats.unwrap();
+        let string_stats = data[1].summary_stats.clone().unwrap().string_stats.unwrap();
         assert_eq!(string_stats, SummaryStatsString {
             num_empty: 1,
             num_unique: 3, // NA's are counted as unique values
         });
 
-        // The third column is boolean
+        // Third column: boolean stats
         assert!(data[2].summary_stats.is_some());
-        let boolean_stats = data[2].summary_stats.clone().unwrap().boolean_stats;
-        assert!(boolean_stats.is_some());
-        let boolean_stats = boolean_stats.unwrap();
+        let boolean_stats = data[2]
+            .summary_stats
+            .clone()
+            .unwrap()
+            .boolean_stats
+            .unwrap();
         assert_eq!(boolean_stats, SummaryStatsBoolean {
             true_count: 2,
             false_count: 1,
@@ -782,9 +1077,8 @@ fn test_summary_stats() {
 #[test]
 fn test_search_filters() {
     let _lock = r_test_lock();
-    // --- search filters ---
 
-    // Create a data frame with a bunch of words to use for regex testing.
+    // Create test data with various text patterns
     r_task(|| {
         harp::parse_eval_global(
             r#"words <- data.frame(text = c(
@@ -800,109 +1094,49 @@ fn test_search_filters() {
         .unwrap();
     });
 
-    // Open the words data set in the data explorer.
-    let socket = open_data_explorer(String::from("words"));
+    let setup = TestSetup::new("words");
+    let socket = setup.socket();
 
-    // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
+    // Get schema for filtering
+    let req = RequestBuilder::get_schema(vec![0]);
+    let schema = match socket_rpc(socket, req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
+        _ => panic!("Expected schema reply"),
     };
 
-    // Next, apply a filter to the data set. Check for rows that contain the
-    // text ".".
-    let dot_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::Search,
-        filter_id: "A58A4497-29E0-4407-BC25-67FEF73F6224".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: Some(RowFilterParams::TextSearch(FilterTextSearch {
-            case_sensitive: false,
-            search_type: TextSearchType::Contains,
-            term: ".".to_string(),
-        })),
-        error_message: None,
-    };
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![dot_filter.clone()],
-    });
-
-    // We should get a SetRowFiltersReply back. There are 2 rows where
-    // the text contains ".".
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 2);
-    });
-
-    // Combine this with an OR filter that checks for rows that end in
-    // 'ent'.
-    let ent_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::Search,
-        filter_id: "4BA46699-EF41-4FA8-A927-C8CD88520D6E".to_string(),
-        condition: RowFilterCondition::Or,
-        is_valid: None,
-        params: Some(RowFilterParams::TextSearch(FilterTextSearch {
-            case_sensitive: false,
-            search_type: TextSearchType::EndsWith,
-            term: "ent".to_string(),
-        })),
-        error_message: None,
-    };
-
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![dot_filter, ent_filter],
-    });
-
-    // We should get a SetRowFiltersReply back. There are 4 rows where
-    // the text either contains "." OR ends in "ent".
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
-    ) => {
-        assert_eq!(num_rows, 4);
-    });
-
-    // Create a filter for empty values.
-    let empty_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::IsEmpty,
-        filter_id: "3F032747-4667-40CB-9013-AA659AE37F1C".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: None,
-        error_message: None,
-    };
-
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![empty_filter],
-    });
-
-    // We should get a SetRowFiltersReply back. There's 1 row with an empty
-    // value.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
-    ) => {
-        assert_eq!(num_rows, 1);
-    });
-
-    // Check the table state; at this point we should have 1 row from 7 total.
-    let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetStateReply(state) => {
-            assert_eq!(state.table_shape.num_rows, 1);
-            assert_eq!(state.table_unfiltered_shape.num_rows, 7);
-        }
+    // Filter for text containing "." (matches 2 rows)
+    let dot_filter = RowFilterBuilder::text_search(
+        schema.columns[0].clone(),
+        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        ".",
+        false,
     );
+    TestAssertions::assert_row_filters_applied(socket, vec![dot_filter.clone()], 2, Some(false));
+
+    // Combine filters: contains "." OR ends with "ent" (matches 4 rows)
+    let mut ent_filter = RowFilterBuilder::text_search(
+        schema.columns[0].clone(),
+        amalthea::comm::data_explorer_comm::TextSearchType::EndsWith,
+        "ent",
+        false,
+    );
+    ent_filter.condition = RowFilterCondition::Or;
+    TestAssertions::assert_row_filters_applied(
+        socket,
+        vec![dot_filter, ent_filter],
+        4,
+        Some(false),
+    );
+
+    // Filter for empty values (matches 1 row)
+    let empty_filter = RowFilterBuilder::is_empty(schema.columns[0].clone());
+    TestAssertions::assert_row_filters_applied(socket, vec![empty_filter], 1, Some(false));
+
+    // Check table state: 1 row visible out of 7 total
+    TestAssertions::assert_state(socket, |state| {
+        assert_eq!(state.table_shape.num_rows, 1);
+        assert_eq!(state.table_unfiltered_shape.num_rows, 7);
+    });
 
     // --- invalid filters ---
 
@@ -922,15 +1156,7 @@ fn test_search_filters() {
     let socket = open_data_explorer(String::from("test_dates"));
 
     // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
+    let schema = TestAssertions::get_column_schema(&socket, vec![0]);
 
     // Next, apply a filter to the data set. Check for rows that are greater than
     // "marshmallows". This is an invalid filter because the column is a date.
@@ -946,9 +1172,7 @@ fn test_search_filters() {
         })),
         error_message: None,
     };
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![year_filter.clone()],
-    });
+    let req = RequestBuilder::set_row_filters(vec![year_filter.clone()]);
 
     // We should get a SetRowFiltersReply back. Because the filter is invalid,
     // the number of selected rows should be 3 (all the rows in the data set)
@@ -970,11 +1194,8 @@ fn test_search_filters() {
     );
 
     // --- boolean filters ---
-
-    // Create a data frame with a series of boolean values.
-    r_task(|| {
-        harp::parse_eval_global(
-            r#"test_bools <- data.frame(bool = c(
+    let bools_setup = TestSetup::from_expression(
+        r#"test_bools <- data.frame(bool = c(
                     TRUE,
                     TRUE,
                     FALSE,
@@ -982,48 +1203,20 @@ fn test_search_filters() {
                     TRUE,
                     FALSE
             ))"#,
-        )
-        .unwrap();
-    });
+        Some("test_bools"),
+    )
+    .unwrap();
+    let bools_socket = bools_setup.socket();
+    let bools_schema = TestAssertions::get_column_schema(&bools_socket, vec![0]);
 
-    // Open the data set in the data explorer.
-    let socket = open_data_explorer(String::from("test_bools"));
+    // Apply boolean filter: check for TRUE values
+    let true_filter = RowFilterBuilder::is_true(bools_schema.columns[0].clone());
+    TestAssertions::assert_row_filters_applied(bools_socket, vec![true_filter], 3, Some(false));
 
-    // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
+    // Apply boolean filter: check for FALSE values
+    let false_filter = RowFilterBuilder::is_false(bools_schema.columns[0].clone());
+    TestAssertions::assert_row_filters_applied(bools_socket, vec![false_filter], 2, Some(false));
 
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
-
-    // Next, apply a filter to the data set. Check for rows that are TRUE.
-    let true_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::IsTrue,
-        filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: None,
-        error_message: None,
-    };
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![true_filter.clone()],
-    });
-
-    // We should get a SetRowFiltersReply back. There are 3 rows where the
-    // value is TRUE.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 3);
-    });
-
-    // ---- formatting of list columns ----
     let has_tibble = r_task(|| {
         harp::parse_eval_global(
             r#"list_cols <- tibble::tibble(
@@ -1184,131 +1377,6 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     );
 }
 
-#[test]
-fn test_boolean_filters() {
-    let _lock = r_test_lock();
-
-    // --- boolean filters ---
-
-    // Create a data frame with a series of boolean values.
-    r_task(|| {
-        harp::parse_eval_global(
-            r#"test_bools <- data.frame(bool = c(
-                    TRUE,
-                    TRUE,
-                    FALSE,
-                    NA,
-                    TRUE,
-                    FALSE
-            ))"#,
-        )
-        .unwrap();
-    });
-
-    // Open the data set in the data explorer.
-    let socket = open_data_explorer(String::from("test_bools"));
-
-    // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
-
-    // Next, apply a filter to the data set. Check for rows that are TRUE.
-    let true_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::IsTrue,
-        filter_id: "16B3E3E7-44D0-4003-B6BD-46EE0629F067".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: None,
-        error_message: None,
-    };
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![true_filter.clone()],
-    });
-
-    // We should get a SetRowFiltersReply back. There are 3 rows where the
-    // value is TRUE.
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 3);
-    });
-}
-
-#[test]
-fn test_invalid_filters() {
-    let _lock = r_test_lock();
-
-    // --- invalid filters ---
-
-    // Create a data frame with a bunch of dates.
-    let socket = open_data_explorer_from_expression(
-        r#"test_dates <- data.frame(date = as.POSIXct(c(
-                    "2024-01-01 01:00:00",
-                    "2024-01-02 02:00:00",
-                    "2024-01-03 03:00:00"))
-                    )"#,
-        None,
-    )
-    .unwrap();
-
-    // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
-
-    // Next, apply a filter to the data set. Check for rows that are greater than
-    // "marshmallows". This is an invalid filter because the column is a date.
-    let year_filter = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::Compare,
-        filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: Some(RowFilterParams::Comparison(FilterComparison {
-            op: FilterComparisonOp::Gt,
-            value: "marshmallows".to_string(),
-        })),
-        error_message: None,
-    };
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![year_filter.clone()],
-    });
-
-    // We should get a SetRowFiltersReply back. Because the filter is invalid,
-    // the number of selected rows should be 3 (all the rows in the data set)
-    assert_match!(socket_rpc(&socket, req),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(true)}
-    ) => {
-        assert_eq!(num_rows, 3);
-    });
-
-    // We also want to make sure that invalid filters are marked along with their
-    // error messages.
-    let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
-        DataExplorerBackendReply::GetStateReply(state) => {
-            assert_eq!(state.row_filters[0].is_valid, Some(false));
-            assert!(state.row_filters[0].error_message.is_some());
-        }
-    );
-}
-
 // Tests that invalid filters are preserved after a live update that removes the column
 // Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
 #[test]
@@ -1321,15 +1389,7 @@ fn test_invalid_filters_preserved() {
     .unwrap();
 
     // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
+    let schema = TestAssertions::get_column_schema(&socket, vec![0]);
 
     // Next, apply a filter to the data set. Check for rows that are greater than
     // "marshmallows". This is an invalid filter because the column is a date.
@@ -1343,9 +1403,7 @@ fn test_invalid_filters_preserved() {
         error_message: None,
     };
 
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![x_is_empty.clone()],
-    });
+    let req = RequestBuilder::set_row_filters(vec![x_is_empty.clone()]);
 
     // We should get a SetRowFiltersReply back and we should get a single row
     assert_match!(socket_rpc(&socket, req),
@@ -1497,79 +1555,57 @@ fn test_data_explorer_special_values() {
 fn test_export_data() {
     let _lock = r_test_lock();
     let socket = open_data_explorer_from_expression(
-        r#"
-            data.frame(
+        r#"data.frame(
                 a = c(1, 3, 2),
                 b = c('a', 'b', 'c'),
                 c = c(TRUE, FALSE, TRUE)
-            )
-        "#,
+            )"#,
         None,
     )
     .unwrap();
 
-    let selection_req =
-        DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
-            format: ExportFormat::Csv,
-            selection: TableSelection {
-                kind: TableSelectionKind::SingleCell,
-                selection: Selection::SingleCell(DataSelectionSingleCell {
-                    row_index: 1,
-                    column_index: 1,
-                }),
-            },
-        });
+    let single_cell_selection = SelectionBuilder::single_cell(1, 1);
 
-    assert_match!(socket_rpc(&socket, selection_req.clone()),
-        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData {format, data}) => {
-            assert_eq!(data, "b".to_string());
-            assert_eq!(format, ExportFormat::Csv);
-        }
+    // Test initial export: should get "b" (row 1, col 1)
+    TestAssertions::assert_export_data(
+        &socket,
+        ExportFormat::Csv,
+        single_cell_selection.clone(),
+        |exported| {
+            assert_eq!(exported.data, "b".to_string());
+            assert_eq!(exported.format, ExportFormat::Csv);
+        },
     );
 
-    // sort the data frame
-    let sort_req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-        sort_keys: vec![ColumnSortKey {
-            column_index: 0,
-            ascending: false,
-        }],
-    });
-    socket_rpc(&socket, sort_req);
+    // Sort descending by column 0, then test export: should get "c"
+    let req = RequestBuilder::set_sort_columns(vec![ColumnSortKey {
+        column_index: 0,
+        ascending: false,
+    }]);
+    socket_rpc(&socket, req);
 
-    assert_match!(socket_rpc(&socket, selection_req.clone()),
-        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData {format, data}) => {
-            assert_eq!(data, "c".to_string());
-            assert_eq!(format, ExportFormat::Csv);
-        }
+    TestAssertions::assert_export_data(
+        &socket,
+        ExportFormat::Csv,
+        single_cell_selection.clone(),
+        |exported| {
+            assert_eq!(exported.data, "c".to_string());
+        },
     );
 
-    // now filter the data frame
-    let schemas_req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0, 1, 2],
-    });
-    let schema = match socket_rpc(&socket, schemas_req) {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply"),
-    };
+    // Filter to show only TRUE values in boolean column, then test export: should get "a"
+    let schema = TestAssertions::get_column_schema(&socket, vec![0, 1, 2]);
+    let filter = RowFilterBuilder::is_true(schema.columns[2].clone());
+    let req = RequestBuilder::set_row_filters(vec![filter]);
+    socket_rpc(&socket, req);
 
-    let filter_req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![RowFilter {
-            column_schema: schema.columns[2].clone(),
-            filter_type: RowFilterType::IsTrue,
-            filter_id: "1".to_string(),
-            condition: RowFilterCondition::And,
-            is_valid: None,
-            params: None,
-            error_message: None,
-        }],
-    });
-    socket_rpc(&socket, filter_req);
-
-    assert_match!(socket_rpc(&socket, selection_req.clone()),
-        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData {format, data}) => {
-            assert_eq!(data, "a".to_string());
-            assert_eq!(format, ExportFormat::Csv);
-        }
+    TestAssertions::assert_export_data(
+        &socket,
+        ExportFormat::Csv,
+        single_cell_selection,
+        |exported| {
+            assert_eq!(exported.data, "a".to_string());
+        },
     );
 }
 
@@ -1591,65 +1627,28 @@ fn test_update_data_filters_reapplied() {
     .unwrap();
 
     // Get the schema of the data set.
-    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
-        column_indices: vec![0],
-    });
-
-    let schema_reply = socket_rpc(&socket, req);
-    let schema = match schema_reply {
-        DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-        _ => panic!("Unexpected reply: {:?}", schema_reply),
-    };
+    let schema = TestAssertions::get_column_schema(&socket, vec![0]);
 
     // Apply filter by the `a` columns. Expecting to get 3 rows larger than 1.
-    let x_gt_1 = RowFilter {
-        column_schema: schema.columns[0].clone(),
-        filter_type: RowFilterType::Compare,
-        filter_id: "0DB2F23D-B299-4068-B8D5-A2B513A93330".to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: Some(RowFilterParams::Comparison(FilterComparison {
-            op: FilterComparisonOp::Gt,
-            value: "1".to_string(),
-        })),
-        error_message: None,
-    };
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![x_gt_1.clone()],
-    });
-    // Set filters should display 3 rows that are greater than 1.
-    assert_match!(socket_rpc(&socket, req.clone()),
-    DataExplorerBackendReply::SetRowFiltersReply(
-        FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
-    ) => {
-        assert_eq!(num_rows, 3);
-    });
+    let x_gt_1 =
+        RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Gt, "1");
+    TestAssertions::assert_row_filters_applied(&socket, vec![x_gt_1.clone()], 3, Some(false));
 
     // Also add a sorting to check that data will be sorted in the correct way
     // after the data update.
-    // Create a request to sort the data set by the 'mpg' column.
-    let sort_keys = vec![ColumnSortKey {
+    // Sort by column 0 ascending
+    let req = RequestBuilder::set_sort_columns(vec![ColumnSortKey {
         column_index: 0,
         ascending: true,
-    }];
-    let req = DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
-        sort_keys: sort_keys.clone(),
-    });
-    // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::SetSortColumnsReply() => {});
+    }]);
+    socket_rpc(&socket, req);
 
     // Check the number of rows when using the GetData method
     let expect_get_data_rows = |n, values| {
-        // Getting data out of the data explorer should have the filters applied
-        let req = get_data_values_request(0, 5, vec![0, 1], default_format_options());
-
-        // Check that we got the right columns and row labels.
-        assert_match!(socket_rpc(&socket, req),
-            DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns[0].len(), n);
-                assert_eq!(data.columns[1], values);
-            }
-        );
+        TestAssertions::assert_data_values(&socket, 0, 5, vec![0, 1], |data| {
+            assert_eq!(data[0].len(), n);
+            assert_eq!(data[1], values);
+        });
     };
 
     // GetData should also display 2 rows only
@@ -1686,25 +1685,6 @@ fn test_update_data_filters_reapplied() {
     ]);
 }
 
-fn create_set_membership_filter(
-    column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
-    values: Vec<String>,
-    inclusive: bool,
-    filter_id: &str,
-) -> RowFilter {
-    RowFilter {
-        column_schema,
-        filter_type: RowFilterType::SetMembership,
-        filter_id: filter_id.to_string(),
-        condition: RowFilterCondition::And,
-        is_valid: None,
-        params: Some(RowFilterParams::SetMembership(
-            amalthea::comm::data_explorer_comm::FilterSetMembership { values, inclusive },
-        )),
-        error_message: None,
-    }
-}
-
 /// Helper function to test set membership filters for both inclusive and exclusive modes
 fn test_set_membership_helper(
     data_frame_name: &str,
@@ -1726,16 +1706,13 @@ fn test_set_membership_helper(
 
     let string_values: Vec<String> = filter_values.iter().map(|s| s.to_string()).collect();
 
-    let inclusive_filter = create_set_membership_filter(
+    let inclusive_filter = RowFilterBuilder::set_membership(
         schema.columns[0].clone(),
         string_values.clone(),
         true, // inclusive
-        "inclusive-filter-id",
     );
 
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![inclusive_filter],
-    });
+    let req = RequestBuilder::set_row_filters(vec![inclusive_filter]);
 
     assert_match!(socket_rpc(&socket, req),
     DataExplorerBackendReply::SetRowFiltersReply(
@@ -1746,16 +1723,13 @@ fn test_set_membership_helper(
                  data_frame_name, filter_values, num_rows, expected_inclusive_count);
     });
 
-    let exclusive_filter = create_set_membership_filter(
+    let exclusive_filter = RowFilterBuilder::set_membership(
         schema.columns[0].clone(),
         string_values,
         false, // exclusive
-        "exclusive-filter-id",
     );
 
-    let req = DataExplorerBackendRequest::SetRowFilters(SetRowFiltersParams {
-        filters: vec![exclusive_filter],
-    });
+    let req = RequestBuilder::set_row_filters(vec![exclusive_filter]);
 
     assert_match!(socket_rpc(&socket, req),
     DataExplorerBackendReply::SetRowFiltersReply(
@@ -1950,26 +1924,9 @@ fn test_histogram() {
     let socket =
         open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
 
-    let make_histogram_req = |id, column_index, method, num_bins, quantiles| {
-        DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-            callback_id: id,
-            profiles: vec![ColumnProfileRequest {
-                column_index,
-                profiles: vec![ColumnProfileSpec {
-                    profile_type: ColumnProfileType::SmallHistogram,
-                    params: Some(ColumnProfileParams::SmallHistogram(ColumnHistogramParams {
-                        method,
-                        num_bins,
-                        quantiles,
-                    })),
-                }],
-            }],
-            format_options: default_format_options(),
-        })
-    };
-
-    let id = String::from("histogram_req");
-    let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 10, None);
+    let histogram_req =
+        ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
+    let req = RequestBuilder::get_column_profiles("histogram_req".to_string(), vec![histogram_req]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
@@ -1992,26 +1949,11 @@ fn test_histogram_single_bin_same_values() {
 
     let socket = open_data_explorer_from_expression("data.frame(x = rep(5, 10))", None).unwrap();
 
-    let make_histogram_req = |id, column_index, method, num_bins, quantiles| {
-        DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-            callback_id: id,
-            profiles: vec![ColumnProfileRequest {
-                column_index,
-                profiles: vec![ColumnProfileSpec {
-                    profile_type: ColumnProfileType::SmallHistogram,
-                    params: Some(ColumnProfileParams::SmallHistogram(ColumnHistogramParams {
-                        method,
-                        num_bins,
-                        quantiles,
-                    })),
-                }],
-            }],
-            format_options: default_format_options(),
-        })
-    };
-
-    let id = String::from("histogram_same_values");
-    let req = make_histogram_req(id.clone(), 0, ColumnHistogramParamsMethod::Fixed, 5, None);
+    let histogram_req =
+        ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 5, None);
+    let req = RequestBuilder::get_column_profiles("histogram_same_values".to_string(), vec![
+        histogram_req,
+    ]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
@@ -2039,24 +1981,8 @@ fn test_frequency_table() {
         open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
             .unwrap();
 
-    let make_freq_table_req = |id, column_index, limit| {
-        DataExplorerBackendRequest::GetColumnProfiles(GetColumnProfilesParams {
-            callback_id: id,
-            profiles: vec![ColumnProfileRequest {
-                column_index,
-                profiles: vec![ColumnProfileSpec {
-                    profile_type: ColumnProfileType::SmallFrequencyTable,
-                    params: Some(ColumnProfileParams::SmallFrequencyTable(
-                        ColumnFrequencyTableParams { limit },
-                    )),
-                }],
-            }],
-            format_options: default_format_options(),
-        })
-    };
-
-    let id = String::from("freq_table");
-    let req = make_freq_table_req(id.clone(), 0, 5);
+    let freq_table_req = ProfileBuilder::small_frequency_table(0, 5);
+    let req = RequestBuilder::get_column_profiles("freq_table".to_string(), vec![freq_table_req]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
@@ -2151,4 +2077,150 @@ fn test_schema_identification() {
             }
         }
     );
+}
+
+#[test]
+fn test_search_schema_text_filters() {
+    let _lock = r_test_lock();
+    let setup = TestDataBuilder::create_search_test_dataframe().unwrap();
+    let socket = setup.socket();
+
+    // Test text search: contains 'user'
+    let req = RequestBuilder::search_schema_text(
+        "user",
+        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1]);
+
+    // Test text search: starts with 'email'
+    let req = RequestBuilder::search_schema_text(
+        "email",
+        amalthea::comm::data_explorer_comm::TextSearchType::StartsWith,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![2]);
+
+    // Test text search: ends with 'active'
+    let req = RequestBuilder::search_schema_text(
+        "active",
+        amalthea::comm::data_explorer_comm::TextSearchType::EndsWith,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![4]);
+
+    // Test case sensitivity
+    let req = RequestBuilder::search_schema_text(
+        "USER",
+        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        true,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
+}
+
+#[test]
+fn test_search_schema_data_type_filters() {
+    let _lock = r_test_lock();
+    let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
+    let socket = setup.socket();
+
+    // Test filter for numeric columns
+    let req = RequestBuilder::search_schema_data_types(
+        vec![ColumnDisplayType::Number],
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![1, 2]);
+
+    // Test filter for string columns
+    let req = RequestBuilder::search_schema_data_types(
+        vec![ColumnDisplayType::String],
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0]);
+
+    // Test filter for boolean columns
+    let req = RequestBuilder::search_schema_data_types(
+        vec![ColumnDisplayType::Boolean],
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![3]);
+
+    // Test filter for multiple data types
+    let req = RequestBuilder::search_schema_data_types(
+        vec![ColumnDisplayType::String, ColumnDisplayType::Boolean],
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 3]);
+}
+
+#[test]
+fn test_search_schema_sort_orders() {
+    let _lock = r_test_lock();
+    let setup = TestDataBuilder::create_sort_order_test_dataframe().unwrap();
+    let socket = setup.socket();
+
+    // Test original sort order (no filters)
+    let req = RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::Original);
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]);
+
+    // Test ascending sort order
+    let req = RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::Ascending);
+    TestAssertions::assert_search_matches(socket, req, vec![1, 2, 0]); // apple, banana, zebra
+
+    // Test descending sort order
+    let req = RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::Descending);
+    TestAssertions::assert_search_matches(socket, req, vec![0, 2, 1]); // zebra, banana, apple
+}
+
+#[test]
+fn test_search_schema_combined_filters() {
+    let _lock = r_test_lock();
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            user_name = c('Alice', 'Bob'),
+            user_age = c(25, 30),
+            admin_name = c('Admin1', 'Admin2'),
+            score = c(95.5, 87.2)
+        )",
+        None,
+    )
+    .unwrap();
+    let socket = setup.socket();
+
+    // Test combined filters: text contains 'user' AND data type is string
+    let filters = vec![
+        FilterBuilder::text_contains("user", false),
+        FilterBuilder::match_data_types(vec![ColumnDisplayType::String]),
+    ];
+    let req = RequestBuilder::search_schema_with_filters(filters, SearchSchemaSortOrder::Original);
+    TestAssertions::assert_search_matches(socket, req, vec![0]); // Only user_name matches both
+
+    // Test text contains 'name' sorted descending
+    let filters = vec![FilterBuilder::text_contains("name", false)];
+    let req =
+        RequestBuilder::search_schema_with_filters(filters, SearchSchemaSortOrder::Descending);
+    TestAssertions::assert_search_matches(socket, req, vec![0, 2]); // user_name, admin_name
+}
+
+#[test]
+fn test_search_schema_no_matches() {
+    let _lock = r_test_lock();
+    let setup = TestSetup::from_expression(
+        "data.frame(name = c('Alice', 'Bob'), age = c(25, 30))",
+        None,
+    )
+    .unwrap();
+
+    // Test search with no matches
+    let req = RequestBuilder::search_schema_text(
+        "nonexistent",
+        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(setup.socket(), req, vec![] as Vec<i64>);
 }

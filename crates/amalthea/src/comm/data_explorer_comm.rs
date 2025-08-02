@@ -21,11 +21,9 @@ pub struct OpenDatasetResult {
 /// Result in Methods
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaResult {
-	/// A schema containing matching columns up to the max_results limit
-	pub matches: TableSchema,
-
-	/// The total number of columns matching the filter
-	pub total_num_matches: i64
+	/// The column indices of the matching column indices in the indicated
+	/// sort order
+	pub matches: Vec<i64>
 }
 
 /// Exported result
@@ -691,6 +689,22 @@ pub struct ColumnSelection {
 	pub spec: ArraySelection
 }
 
+/// Possible values for SortOrder in SearchSchema
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+pub enum SearchSchemaSortOrder {
+	#[serde(rename = "original")]
+	#[strum(to_string = "original")]
+	Original,
+
+	#[serde(rename = "ascending")]
+	#[strum(to_string = "ascending")]
+	Ascending,
+
+	#[serde(rename = "descending")]
+	#[strum(to_string = "descending")]
+	Descending
+}
+
 /// Possible values for ColumnDisplayType
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
 pub enum ColumnDisplayType {
@@ -1059,15 +1073,12 @@ pub struct GetSchemaParams {
 /// Parameters for the SearchSchema method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaParams {
-	/// Column filters to apply when searching
+	/// Column filters to apply when searching, can be empty
 	pub filters: Vec<ColumnFilter>,
 
-	/// Index (starting from zero) of first result to fetch (for paging)
-	pub start_index: i64,
-
-	/// Maximum number of resulting column schemas to fetch from the start
-	/// index
-	pub max_results: i64,
+	/// How to sort results: original in-schema order, alphabetical ascending
+	/// or descending
+	pub sort_order: SearchSchemaSortOrder,
 }
 
 /// Parameters for the GetDataValues method.
@@ -1181,10 +1192,9 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_schema")]
 	GetSchema(GetSchemaParams),
 
-	/// Search full, unfiltered table schema with column filters
+	/// Search table schema with column filters, optionally sort results
 	///
-	/// Search full, unfiltered table schema for column names matching one or
-	/// more column filters
+	/// Search table schema with column filters, optionally sort results
 	#[serde(rename = "search_schema")]
 	SearchSchema(SearchSchemaParams),
 

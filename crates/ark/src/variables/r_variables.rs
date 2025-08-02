@@ -294,6 +294,11 @@ impl RVariables {
                 let viewer_id = self.view(&params.path)?;
                 Ok(VariablesBackendReply::ViewReply(viewer_id))
             },
+            VariablesBackendRequest::QueryTableSummary(_) => {
+                return Err(anyhow::anyhow!(
+                    "Variables: QueryTableSummary not yet supported"
+                ));
+            },
         }
     }
 

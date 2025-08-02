@@ -44,6 +44,22 @@ pub struct FormattedVariable {
 	pub content: String
 }
 
+/// Result of the summarize operation
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct QueryTableSummaryResult {
+	/// The total number of rows in the table.
+	pub num_rows: i64,
+
+	/// The total number of columns in the table.
+	pub num_columns: i64,
+
+	/// The column schemas in the table.
+	pub column_schemas: Vec<String>,
+
+	/// The column profiles in the table.
+	pub column_profiles: Vec<String>
+}
+
 /// A single variable in the runtime.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Variable {
@@ -196,6 +212,16 @@ pub struct ViewParams {
 	pub path: Vec<String>,
 }
 
+/// Parameters for the QueryTableSummary method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct QueryTableSummaryParams {
+	/// The path to the table to summarize, as an array of access keys.
+	pub path: Vec<String>,
+
+	/// A list of query types.
+	pub query_types: Vec<String>,
+}
+
 /// Parameters for the Update method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UpdateParams {
@@ -271,6 +297,12 @@ pub enum VariablesBackendRequest {
 	#[serde(rename = "view")]
 	View(ViewParams),
 
+	/// Query table summary
+	///
+	/// Request a data summary for a table variable.
+	#[serde(rename = "query_table_summary")]
+	QueryTableSummary(QueryTableSummaryParams),
+
 }
 
 /**
@@ -296,6 +328,9 @@ pub enum VariablesBackendReply {
 
 	/// The ID of the viewer that was opened.
 	ViewReply(Option<String>),
+
+	/// Result of the summarize operation
+	QueryTableSummaryReply(QueryTableSummaryResult),
 
 }
 

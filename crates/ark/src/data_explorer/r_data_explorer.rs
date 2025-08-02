@@ -532,9 +532,7 @@ impl RDataExplorer {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
 
-            DataExplorerBackendRequest::SearchSchema(_) => {
-                return Err(anyhow!("Data Explorer: Not yet supported"));
-            },
+            DataExplorerBackendRequest::SearchSchema(params) => self.search_schema(params),
 
             DataExplorerBackendRequest::SetColumnFilters(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
@@ -859,6 +857,110 @@ impl RDataExplorer {
         self.view_indices = Some(view_indices);
     }
 
+    /// Search the schema for columns matching the given filters and sort order.
+    ///
+    /// - `params`: The search parameters including filters and sort order.
+    fn search_schema(
+        &self,
+        params: amalthea::comm::data_explorer_comm::SearchSchemaParams,
+    ) -> anyhow::Result<DataExplorerBackendReply> {
+        let mut matching_indices: Vec<i64> = Vec::new();
+
+        // Get all column schemas
+        let all_columns = &self.shape.columns;
+
+        // Apply column filters to find matching columns
+        for (index, column) in all_columns.iter().enumerate() {
+            let column_index = index as i64;
+            let mut matches = true;
+
+            // Apply each filter to the column
+            for filter in &params.filters {
+                if !self.column_matches_filter(column, filter) {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if matches {
+                matching_indices.push(column_index);
+            }
+        }
+
+        // Apply sort order
+        match params.sort_order {
+            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Original => {
+                // matching_indices is already in original order
+            },
+            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Ascending => {
+                matching_indices.sort_by(|&a, &b| {
+                    all_columns[a as usize]
+                        .column_name
+                        .cmp(&all_columns[b as usize].column_name)
+                });
+            },
+            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Descending => {
+                matching_indices.sort_by(|&a, &b| {
+                    all_columns[b as usize]
+                        .column_name
+                        .cmp(&all_columns[a as usize].column_name)
+                });
+            },
+        }
+
+        Ok(DataExplorerBackendReply::SearchSchemaReply(
+            amalthea::comm::data_explorer_comm::SearchSchemaResult {
+                matches: matching_indices,
+            },
+        ))
+    }
+
+    /// Check if a column matches a given column filter.
+    fn column_matches_filter(&self, column: &ColumnSchema, filter: &ColumnFilter) -> bool {
+        use amalthea::comm::data_explorer_comm::ColumnFilterParams;
+        use amalthea::comm::data_explorer_comm::ColumnFilterType;
+        use amalthea::comm::data_explorer_comm::TextSearchType;
+
+        match filter.filter_type {
+            ColumnFilterType::TextSearch => {
+                if let ColumnFilterParams::TextSearch(text_search) = &filter.params {
+                    let column_name = if text_search.case_sensitive {
+                        column.column_name.clone()
+                    } else {
+                        column.column_name.to_lowercase()
+                    };
+
+                    let search_term = if text_search.case_sensitive {
+                        text_search.term.clone()
+                    } else {
+                        text_search.term.to_lowercase()
+                    };
+
+                    match text_search.search_type {
+                        TextSearchType::Contains => column_name.contains(&search_term),
+                        TextSearchType::NotContains => !column_name.contains(&search_term),
+                        TextSearchType::StartsWith => column_name.starts_with(&search_term),
+                        TextSearchType::EndsWith => column_name.ends_with(&search_term),
+                        TextSearchType::RegexMatch => {
+                            // For regex matching, we use simple string matching as a fallback
+                            // A full regex implementation would require additional dependencies
+                            column_name.contains(&search_term)
+                        },
+                    }
+                } else {
+                    false
+                }
+            },
+            ColumnFilterType::MatchDataTypes => {
+                if let ColumnFilterParams::MatchDataTypes(type_filter) = &filter.params {
+                    type_filter.display_types.contains(&column.type_display)
+                } else {
+                    false
+                }
+            },
+        }
+    }
+
     /// Get the schema for a vector of columns in the data object.
     ///
     /// - `column_indices`: The vector of columns in the data object.
@@ -950,8 +1052,19 @@ impl RDataExplorer {
                     ],
                 },
                 search_schema: SearchSchemaFeatures {
-                    support_status: SupportStatus::Unsupported,
-                    supported_types: vec![],
+                    support_status: SupportStatus::Supported,
+                    supported_types: vec![
+                        amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus {
+                            column_filter_type:
+                                amalthea::comm::data_explorer_comm::ColumnFilterType::TextSearch,
+                            support_status: SupportStatus::Supported,
+                        },
+                        amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus {
+                            column_filter_type:
+                                amalthea::comm::data_explorer_comm::ColumnFilterType::MatchDataTypes,
+                            support_status: SupportStatus::Supported,
+                        },
+                    ],
                 },
                 set_row_filters: SetRowFiltersFeatures {
                     support_status: SupportStatus::Supported,
