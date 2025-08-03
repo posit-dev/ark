@@ -14,6 +14,8 @@ use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::CodeSyntaxName;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnFilterType;
+use amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
@@ -1054,14 +1056,12 @@ impl RDataExplorer {
                 search_schema: SearchSchemaFeatures {
                     support_status: SupportStatus::Supported,
                     supported_types: vec![
-                        amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus {
-                            column_filter_type:
-                                amalthea::comm::data_explorer_comm::ColumnFilterType::TextSearch,
+                        ColumnFilterTypeSupportStatus {
+                            column_filter_type: ColumnFilterType::TextSearch,
                             support_status: SupportStatus::Supported,
                         },
-                        amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus {
-                            column_filter_type:
-                                amalthea::comm::data_explorer_comm::ColumnFilterType::MatchDataTypes,
+                        ColumnFilterTypeSupportStatus {
+                            column_filter_type: ColumnFilterType::MatchDataTypes,
                             support_status: SupportStatus::Supported,
                         },
                     ],
