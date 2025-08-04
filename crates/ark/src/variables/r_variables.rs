@@ -18,6 +18,7 @@ use amalthea::comm::variables_comm::VariablesBackendReply;
 use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
+use anyhow::anyhow;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
@@ -295,9 +296,7 @@ impl RVariables {
                 Ok(VariablesBackendReply::ViewReply(viewer_id))
             },
             VariablesBackendRequest::QueryTableSummary(_) => {
-                return Err(anyhow::anyhow!(
-                    "Variables: QueryTableSummary not yet supported"
-                ));
+                return Err(anyhow!("Variables: QueryTableSummary not yet supported"));
             },
         }
     }
