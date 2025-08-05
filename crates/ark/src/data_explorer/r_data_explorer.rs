@@ -14,6 +14,7 @@ use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::CodeSyntaxName;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnFilterParams;
 use amalthea::comm::data_explorer_comm::ColumnFilterType;
 use amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
@@ -55,6 +56,7 @@ use amalthea::comm::data_explorer_comm::TableRowLabels;
 use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableShape;
+use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -866,28 +868,28 @@ impl RDataExplorer {
         &self,
         params: amalthea::comm::data_explorer_comm::SearchSchemaParams,
     ) -> anyhow::Result<DataExplorerBackendReply> {
-        let mut matching_indices: Vec<i64> = Vec::new();
-
-        // Get all column schemas
         let all_columns = &self.shape.columns;
 
-        // Apply column filters to find matching columns
-        for (index, column) in all_columns.iter().enumerate() {
-            let column_index = index as i64;
-            let mut matches = true;
+        // Apply column filters to find matching columns using iterator chaining
+        let mut matching_indices: Vec<i64> = all_columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, column)| {
+                let column_index = index as i64;
 
-            // Apply each filter to the column
-            for filter in &params.filters {
-                if !self.column_matches_filter(column, filter) {
-                    matches = false;
-                    break;
+                // Check if column matches all filters
+                let matches = params
+                    .filters
+                    .iter()
+                    .all(|filter| self.column_matches_filter(column, filter));
+
+                if matches {
+                    Some(column_index)
+                } else {
+                    None
                 }
-            }
-
-            if matches {
-                matching_indices.push(column_index);
-            }
-        }
+            })
+            .collect();
 
         // Apply sort order
         match params.sort_order {
@@ -919,21 +921,17 @@ impl RDataExplorer {
 
     /// Check if a column matches a given column filter.
     fn column_matches_filter(&self, column: &ColumnSchema, filter: &ColumnFilter) -> bool {
-        use amalthea::comm::data_explorer_comm::ColumnFilterParams;
-        use amalthea::comm::data_explorer_comm::ColumnFilterType;
-        use amalthea::comm::data_explorer_comm::TextSearchType;
-
         match filter.filter_type {
             ColumnFilterType::TextSearch => {
                 if let ColumnFilterParams::TextSearch(text_search) = &filter.params {
                     let column_name = if text_search.case_sensitive {
-                        column.column_name.clone()
+                        column.column_name.to_owned()
                     } else {
                         column.column_name.to_lowercase()
                     };
 
                     let search_term = if text_search.case_sensitive {
-                        text_search.term.clone()
+                        text_search.term.to_owned()
                     } else {
                         text_search.term.to_lowercase()
                     };

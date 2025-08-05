@@ -58,6 +58,7 @@ use amalthea::comm::data_explorer_comm::SummaryStatsString;
 use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableSelectionKind;
+use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
 use amalthea::socket::comm::CommSocket;
@@ -198,7 +199,7 @@ impl RequestBuilder {
 
     fn search_schema_text(
         term: &str,
-        search_type: amalthea::comm::data_explorer_comm::TextSearchType,
+        search_type: TextSearchType,
         case_sensitive: bool,
         sort_order: SearchSchemaSortOrder,
     ) -> DataExplorerBackendRequest {
@@ -279,7 +280,7 @@ impl RequestBuilder {
     }
 }
 
-/// Assertion helpers to reduce repetitive assertion patterns
+/// Test assertion helpers with enhanced error reporting
 struct TestAssertions;
 
 impl TestAssertions {
@@ -288,10 +289,12 @@ impl TestAssertions {
         column_indices: Vec<i64>,
         expected_count: usize,
     ) {
-        let req = RequestBuilder::get_schema(column_indices);
+        let req = RequestBuilder::get_schema(column_indices.clone());
         assert_match!(socket_rpc(socket, req),
             DataExplorerBackendReply::GetSchemaReply(schema) => {
-                assert_eq!(schema.columns.len(), expected_count);
+                assert_eq!(schema.columns.len(), expected_count,
+                    "Schema column count mismatch for indices {:?}: expected {}, got {}",
+                    column_indices, expected_count, schema.columns.len());
             }
         );
     }
@@ -303,7 +306,8 @@ impl TestAssertions {
     ) {
         assert_match!(socket_rpc(socket, req),
             DataExplorerBackendReply::SearchSchemaReply(SearchSchemaResult { matches }) => {
-                assert_eq!(matches, expected_matches);
+                assert_eq!(matches, expected_matches,
+                    "Search results mismatch: expected {:?}, got {:?}", expected_matches, matches);
             }
         );
     }
@@ -316,12 +320,16 @@ impl TestAssertions {
         expected_column_count: usize,
         expected_row_count: usize,
     ) {
-        let req = RequestBuilder::get_data_values(row_start, num_rows, columns);
+        let req = RequestBuilder::get_data_values(row_start, num_rows, columns.clone());
         assert_match!(socket_rpc(socket, req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
-                assert_eq!(data.columns.len(), expected_column_count);
+                assert_eq!(data.columns.len(), expected_column_count,
+                    "Data values column count mismatch for request ({}, {}, {:?}): expected {}, got {}",
+                    row_start, num_rows, columns, expected_column_count, data.columns.len());
                 if expected_column_count > 0 {
-                    assert_eq!(data.columns[0].len(), expected_row_count);
+                    assert_eq!(data.columns[0].len(), expected_row_count,
+                        "Data values row count mismatch for request ({}, {}, {:?}): expected {}, got {}",
+                        row_start, num_rows, columns, expected_row_count, data.columns[0].len());
                 }
             }
         );
@@ -331,9 +339,11 @@ impl TestAssertions {
         socket: &socket::comm::CommSocket,
         sort_keys: Vec<ColumnSortKey>,
     ) {
-        let req = RequestBuilder::set_sort_columns(sort_keys);
+        let req = RequestBuilder::set_sort_columns(sort_keys.clone());
         assert_match!(socket_rpc(socket, req),
-            DataExplorerBackendReply::SetSortColumnsReply() => {}
+            DataExplorerBackendReply::SetSortColumnsReply() => {
+                // Success - sort keys {:?} were applied
+            }
         );
     }
 
@@ -384,14 +394,18 @@ impl TestAssertions {
         expected_rows: i64,
         had_errors: Option<bool>,
     ) {
-        let req = RequestBuilder::set_row_filters(filters);
+        let req = RequestBuilder::set_row_filters(filters.clone());
         assert_match!(socket_rpc(socket, req),
             DataExplorerBackendReply::SetRowFiltersReply(FilterResult {
                 selected_num_rows,
                 had_errors: actual_had_errors
             }) => {
-                assert_eq!(selected_num_rows, expected_rows);
-                assert_eq!(actual_had_errors, had_errors);
+                assert_eq!(selected_num_rows, expected_rows,
+                    "Row filter result mismatch for filters {:?}: expected {} selected rows, got {}",
+                    filters, expected_rows, selected_num_rows);
+                assert_eq!(actual_had_errors, had_errors,
+                    "Row filter error state mismatch for filters {:?}: expected had_errors {:?}, got {:?}",
+                    filters, had_errors, actual_had_errors);
             }
         );
     }
@@ -416,10 +430,13 @@ impl TestAssertions {
         socket: &socket::comm::CommSocket,
         column_indices: Vec<i64>,
     ) -> TableSchema {
-        let req = RequestBuilder::get_schema(column_indices);
+        let req = RequestBuilder::get_schema(column_indices.clone());
         match socket_rpc(socket, req) {
             DataExplorerBackendReply::GetSchemaReply(schema) => schema,
-            _ => panic!("Expected GetSchemaReply"),
+            reply => panic!(
+                "Expected GetSchemaReply for indices {:?}, got {:?}",
+                column_indices, reply
+            ),
         }
     }
 }
@@ -517,7 +534,7 @@ impl RowFilterBuilder {
 
     fn text_search(
         column_schema: amalthea::comm::data_explorer_comm::ColumnSchema,
-        search_type: amalthea::comm::data_explorer_comm::TextSearchType,
+        search_type: TextSearchType,
         term: &str,
         case_sensitive: bool,
     ) -> RowFilter {
@@ -623,7 +640,7 @@ impl FilterBuilder {
         ColumnFilter {
             filter_type: ColumnFilterType::TextSearch,
             params: ColumnFilterParams::TextSearch(FilterTextSearch {
-                search_type: amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+                search_type: TextSearchType::Contains,
                 term: term.to_string(),
                 case_sensitive,
             }),
@@ -1107,7 +1124,7 @@ fn test_search_filters() {
     // Filter for text containing "." (matches 2 rows)
     let dot_filter = RowFilterBuilder::text_search(
         schema.columns[0].clone(),
-        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        TextSearchType::Contains,
         ".",
         false,
     );
@@ -1116,7 +1133,7 @@ fn test_search_filters() {
     // Combine filters: contains "." OR ends with "ent" (matches 4 rows)
     let mut ent_filter = RowFilterBuilder::text_search(
         schema.columns[0].clone(),
-        amalthea::comm::data_explorer_comm::TextSearchType::EndsWith,
+        TextSearchType::EndsWith,
         "ent",
         false,
     );
@@ -2088,7 +2105,7 @@ fn test_search_schema_text_filters() {
     // Test text search: contains 'user'
     let req = RequestBuilder::search_schema_text(
         "user",
-        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        TextSearchType::Contains,
         false,
         SearchSchemaSortOrder::Original,
     );
@@ -2097,7 +2114,7 @@ fn test_search_schema_text_filters() {
     // Test text search: starts with 'email'
     let req = RequestBuilder::search_schema_text(
         "email",
-        amalthea::comm::data_explorer_comm::TextSearchType::StartsWith,
+        TextSearchType::StartsWith,
         false,
         SearchSchemaSortOrder::Original,
     );
@@ -2106,7 +2123,7 @@ fn test_search_schema_text_filters() {
     // Test text search: ends with 'active'
     let req = RequestBuilder::search_schema_text(
         "active",
-        amalthea::comm::data_explorer_comm::TextSearchType::EndsWith,
+        TextSearchType::EndsWith,
         false,
         SearchSchemaSortOrder::Original,
     );
@@ -2115,7 +2132,7 @@ fn test_search_schema_text_filters() {
     // Test case sensitivity
     let req = RequestBuilder::search_schema_text(
         "USER",
-        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        TextSearchType::Contains,
         true,
         SearchSchemaSortOrder::Original,
     );
@@ -2218,7 +2235,7 @@ fn test_search_schema_no_matches() {
     // Test search with no matches
     let req = RequestBuilder::search_schema_text(
         "nonexistent",
-        amalthea::comm::data_explorer_comm::TextSearchType::Contains,
+        TextSearchType::Contains,
         false,
         SearchSchemaSortOrder::Original,
     );
