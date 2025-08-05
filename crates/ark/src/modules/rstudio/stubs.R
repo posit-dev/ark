@@ -41,7 +41,9 @@
     # TODO: support followup `command` argument
     stopifnot(command == "")
 
-    invisible(.ps.ui.executeCommand('workbench.action.languageRuntime.restart'))
+    invisible(.ps.ui.executeCommand(
+        'workbench.action.language.runtime.restartActiveSession'
+    ))
 }
 
 #' @export
