@@ -14,6 +14,9 @@ use amalthea::comm::data_explorer_comm::BackendState;
 use amalthea::comm::data_explorer_comm::CodeSyntaxName;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
 use amalthea::comm::data_explorer_comm::ColumnFilter;
+use amalthea::comm::data_explorer_comm::ColumnFilterParams;
+use amalthea::comm::data_explorer_comm::ColumnFilterType;
+use amalthea::comm::data_explorer_comm::ColumnFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnProfileType;
 use amalthea::comm::data_explorer_comm::ColumnProfileTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::ColumnSchema;
@@ -53,6 +56,7 @@ use amalthea::comm::data_explorer_comm::TableRowLabels;
 use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableShape;
+use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
@@ -532,9 +536,7 @@ impl RDataExplorer {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
 
-            DataExplorerBackendRequest::SearchSchema(_) => {
-                return Err(anyhow!("Data Explorer: Not yet supported"));
-            },
+            DataExplorerBackendRequest::SearchSchema(params) => self.search_schema(params),
 
             DataExplorerBackendRequest::SetColumnFilters(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
@@ -859,6 +861,104 @@ impl RDataExplorer {
         self.view_indices = Some(view_indices);
     }
 
+    /// Search the schema for columns matching the given filters and sort order.
+    ///
+    /// - `params`: The search parameters including filters and sort order.
+    fn search_schema(
+        &self,
+        params: amalthea::comm::data_explorer_comm::SearchSchemaParams,
+    ) -> anyhow::Result<DataExplorerBackendReply> {
+        let all_columns = &self.shape.columns;
+
+        // Apply column filters to find matching columns using iterator chaining
+        let mut matching_indices: Vec<i64> = all_columns
+            .iter()
+            .enumerate()
+            .filter_map(|(index, column)| {
+                let column_index = index as i64;
+
+                // Check if column matches all filters
+                let matches = params
+                    .filters
+                    .iter()
+                    .all(|filter| self.column_matches_filter(column, filter));
+
+                if matches {
+                    Some(column_index)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Apply sort order
+        match params.sort_order {
+            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Original => {
+                // matching_indices is already in original order
+            },
+            order => {
+                let ascending = matches!(
+                    order,
+                    amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Ascending
+                );
+                matching_indices.sort_by(|&a, &b| {
+                    let ord = all_columns[a as usize]
+                        .column_name
+                        .cmp(&all_columns[b as usize].column_name);
+                    if ascending { ord } else { ord.reverse() }
+                });
+            }
+        }
+
+        Ok(DataExplorerBackendReply::SearchSchemaReply(
+            amalthea::comm::data_explorer_comm::SearchSchemaResult {
+                matches: matching_indices,
+            },
+        ))
+    }
+
+    /// Check if a column matches a given column filter.
+    fn column_matches_filter(&self, column: &ColumnSchema, filter: &ColumnFilter) -> bool {
+        match filter.filter_type {
+            ColumnFilterType::TextSearch => {
+                if let ColumnFilterParams::TextSearch(text_search) = &filter.params {
+                    let column_name = if text_search.case_sensitive {
+                        column.column_name.to_owned()
+                    } else {
+                        column.column_name.to_lowercase()
+                    };
+
+                    let search_term = if text_search.case_sensitive {
+                        text_search.term.to_owned()
+                    } else {
+                        text_search.term.to_lowercase()
+                    };
+
+                    match text_search.search_type {
+                        TextSearchType::Contains => column_name.contains(&search_term),
+                        TextSearchType::NotContains => !column_name.contains(&search_term),
+                        TextSearchType::StartsWith => column_name.starts_with(&search_term),
+                        TextSearchType::EndsWith => column_name.ends_with(&search_term),
+                        TextSearchType::RegexMatch => {
+                            // For regex matching, we use simple string matching as a fallback
+                            // A full regex implementation would require additional dependencies
+                            column_name.contains(&search_term)
+                        },
+                    }
+                } else {
+                    false
+                }
+            },
+            ColumnFilterType::MatchDataTypes => {
+                if let ColumnFilterParams::MatchDataTypes(type_filter) = &filter.params {
+                    type_filter.display_types.contains(&column.type_display)
+                } else {
+                    false
+                }
+            },
+        }
+    }
+
     /// Get the schema for a vector of columns in the data object.
     ///
     /// - `column_indices`: The vector of columns in the data object.
@@ -950,8 +1050,17 @@ impl RDataExplorer {
                     ],
                 },
                 search_schema: SearchSchemaFeatures {
-                    support_status: SupportStatus::Unsupported,
-                    supported_types: vec![],
+                    support_status: SupportStatus::Supported,
+                    supported_types: vec![
+                        ColumnFilterTypeSupportStatus {
+                            column_filter_type: ColumnFilterType::TextSearch,
+                            support_status: SupportStatus::Supported,
+                        },
+                        ColumnFilterTypeSupportStatus {
+                            column_filter_type: ColumnFilterType::MatchDataTypes,
+                            support_status: SupportStatus::Supported,
+                        },
+                    ],
                 },
                 set_row_filters: SetRowFiltersFeatures {
                     support_status: SupportStatus::Supported,

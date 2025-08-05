@@ -18,6 +18,7 @@ use amalthea::comm::variables_comm::VariablesBackendReply;
 use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
+use anyhow::anyhow;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
@@ -293,6 +294,9 @@ impl RVariables {
             VariablesBackendRequest::View(params) => {
                 let viewer_id = self.view(&params.path)?;
                 Ok(VariablesBackendReply::ViewReply(viewer_id))
+            },
+            VariablesBackendRequest::QueryTableSummary(_) => {
+                return Err(anyhow!("Variables: QueryTableSummary not yet supported"));
             },
         }
     }
