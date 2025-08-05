@@ -896,20 +896,18 @@ impl RDataExplorer {
             amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Original => {
                 // matching_indices is already in original order
             },
-            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Ascending => {
+            order => {
+                let ascending = matches!(
+                    order,
+                    amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Ascending
+                );
                 matching_indices.sort_by(|&a, &b| {
-                    all_columns[a as usize]
+                    let ord = all_columns[a as usize]
                         .column_name
-                        .cmp(&all_columns[b as usize].column_name)
+                        .cmp(&all_columns[b as usize].column_name);
+                    if ascending { ord } else { ord.reverse() }
                 });
-            },
-            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Descending => {
-                matching_indices.sort_by(|&a, &b| {
-                    all_columns[b as usize]
-                        .column_name
-                        .cmp(&all_columns[a as usize].column_name)
-                });
-            },
+            }
         }
 
         Ok(DataExplorerBackendReply::SearchSchemaReply(
