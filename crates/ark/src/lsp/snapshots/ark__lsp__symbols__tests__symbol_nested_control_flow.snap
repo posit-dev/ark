@@ -1,0 +1,160 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\n            # top level section ----\n            if (TRUE) {\n              # section in if ----\n              for (i in 1:10) {\n                # nested section in for ----\n                while (j < i) {\n                  # deeply nested section ----\n                  j <- j + 1\n                }\n              }\n            }\n            \")"
+---
+[
+    DocumentSymbol {
+        name: "top level section",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 1,
+                character: 12,
+            },
+            end: Position {
+                line: 11,
+                character: 13,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 1,
+                character: 12,
+            },
+            end: Position {
+                line: 11,
+                character: 13,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "section in if",
+                    detail: None,
+                    kind: String,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 10,
+                            character: 15,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 10,
+                            character: 15,
+                        },
+                    },
+                    children: Some(
+                        [
+                            DocumentSymbol {
+                                name: "nested section in for",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 5,
+                                        character: 16,
+                                    },
+                                    end: Position {
+                                        line: 9,
+                                        character: 17,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 5,
+                                        character: 16,
+                                    },
+                                    end: Position {
+                                        line: 9,
+                                        character: 17,
+                                    },
+                                },
+                                children: Some(
+                                    [
+                                        DocumentSymbol {
+                                            name: "deeply nested section",
+                                            detail: None,
+                                            kind: String,
+                                            tags: None,
+                                            deprecated: None,
+                                            range: Range {
+                                                start: Position {
+                                                    line: 7,
+                                                    character: 18,
+                                                },
+                                                end: Position {
+                                                    line: 8,
+                                                    character: 28,
+                                                },
+                                            },
+                                            selection_range: Range {
+                                                start: Position {
+                                                    line: 7,
+                                                    character: 18,
+                                                },
+                                                end: Position {
+                                                    line: 8,
+                                                    character: 28,
+                                                },
+                                            },
+                                            children: Some(
+                                                [
+                                                    DocumentSymbol {
+                                                        name: "j",
+                                                        detail: None,
+                                                        kind: Variable,
+                                                        tags: None,
+                                                        deprecated: None,
+                                                        range: Range {
+                                                            start: Position {
+                                                                line: 8,
+                                                                character: 18,
+                                                            },
+                                                            end: Position {
+                                                                line: 8,
+                                                                character: 28,
+                                                            },
+                                                        },
+                                                        selection_range: Range {
+                                                            start: Position {
+                                                                line: 8,
+                                                                character: 18,
+                                                            },
+                                                            end: Position {
+                                                                line: 8,
+                                                                character: 28,
+                                                            },
+                                                        },
+                                                        children: Some(
+                                                            [],
+                                                        ),
+                                                    },
+                                                ],
+                                            ),
+                                        },
+                                    ],
+                                ),
+                            },
+                        ],
+                    ),
+                },
+            ],
+        ),
+    },
+]

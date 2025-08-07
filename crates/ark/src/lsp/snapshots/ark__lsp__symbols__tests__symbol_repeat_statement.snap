@@ -1,0 +1,97 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\n            repeat {\n              # section in repeat ----\n              x <- i\n              if (TRUE) {\n                y <- i\n              }\n            }\n            \")"
+---
+[
+    DocumentSymbol {
+        name: "section in repeat",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 2,
+                character: 14,
+            },
+            end: Position {
+                line: 6,
+                character: 15,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 2,
+                character: 14,
+            },
+            end: Position {
+                line: 6,
+                character: 15,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "x",
+                    detail: None,
+                    kind: Variable,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 3,
+                            character: 20,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 3,
+                            character: 20,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+                DocumentSymbol {
+                    name: "y",
+                    detail: None,
+                    kind: Variable,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 5,
+                            character: 16,
+                        },
+                        end: Position {
+                            line: 5,
+                            character: 22,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 5,
+                            character: 16,
+                        },
+                        end: Position {
+                            line: 5,
+                            character: 22,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+]
