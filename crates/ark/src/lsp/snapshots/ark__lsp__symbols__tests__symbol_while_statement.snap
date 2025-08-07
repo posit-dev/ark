@@ -1,0 +1,67 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\n            while (i < 10) {\n              # section in while ----\n              x <- i\n            }\n            \")"
+---
+[
+    DocumentSymbol {
+        name: "section in while",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 2,
+                character: 14,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 2,
+                character: 14,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "x",
+                    detail: None,
+                    kind: Variable,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 3,
+                            character: 20,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 3,
+                            character: 20,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+]
