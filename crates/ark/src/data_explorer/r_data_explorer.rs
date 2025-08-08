@@ -44,6 +44,9 @@ use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::RowFilterTypeSupportStatus;
 use amalthea::comm::data_explorer_comm::SearchSchemaFeatures;
+use amalthea::comm::data_explorer_comm::SearchSchemaParams;
+use amalthea::comm::data_explorer_comm::SearchSchemaResult;
+use amalthea::comm::data_explorer_comm::SearchSchemaSortOrder;
 use amalthea::comm::data_explorer_comm::SetColumnFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersFeatures;
 use amalthea::comm::data_explorer_comm::SetRowFiltersParams;
@@ -866,7 +869,7 @@ impl RDataExplorer {
     /// - `params`: The search parameters including filters and sort order.
     fn search_schema(
         &self,
-        params: amalthea::comm::data_explorer_comm::SearchSchemaParams,
+        params: SearchSchemaParams,
     ) -> anyhow::Result<DataExplorerBackendReply> {
         let all_columns = &self.shape.columns;
 
@@ -893,25 +896,43 @@ impl RDataExplorer {
 
         // Apply sort order
         match params.sort_order {
-            amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Original => {
+            SearchSchemaSortOrder::Original => {
                 // matching_indices is already in original order
             },
-            order => {
-                let ascending = matches!(
-                    order,
-                    amalthea::comm::data_explorer_comm::SearchSchemaSortOrder::Ascending
-                );
+            SearchSchemaSortOrder::AscendingName => {
                 matching_indices.sort_by(|&a, &b| {
-                    let ord = all_columns[a as usize]
+                    all_columns[a as usize]
                         .column_name
-                        .cmp(&all_columns[b as usize].column_name);
-                    if ascending { ord } else { ord.reverse() }
+                        .cmp(&all_columns[b as usize].column_name)
                 });
-            }
+            },
+            SearchSchemaSortOrder::DescendingName => {
+                matching_indices.sort_by(|&a, &b| {
+                    all_columns[b as usize]
+                        .column_name
+                        .cmp(&all_columns[a as usize].column_name)
+                });
+            },
+            SearchSchemaSortOrder::AscendingType => {
+                matching_indices.sort_by(|&a, &b| {
+                    all_columns[a as usize]
+                        .type_name
+                        .to_lowercase()
+                        .cmp(&all_columns[b as usize].type_name.to_lowercase())
+                });
+            },
+            SearchSchemaSortOrder::DescendingType => {
+                matching_indices.sort_by(|&a, &b| {
+                    all_columns[b as usize]
+                        .type_name
+                        .to_lowercase()
+                        .cmp(&all_columns[a as usize].type_name.to_lowercase())
+                });
+            },
         }
 
         Ok(DataExplorerBackendReply::SearchSchemaReply(
-            amalthea::comm::data_explorer_comm::SearchSchemaResult {
+            SearchSchemaResult {
                 matches: matching_indices,
             },
         ))
