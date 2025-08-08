@@ -2108,7 +2108,10 @@ fn test_search_schema_text_filters() {
     let setup = TestDataBuilder::create_search_test_dataframe().unwrap();
     let socket = setup.socket();
 
-    // Test text search: contains 'user' - should match user_name, user_age, user_id
+    // Schema: user_name(0), user_age(1), user_id(2), email_address(3), admin_email(4),
+    //         score(5), bonus_score(6), is_active(7), is_premium(8), registration_date(9), last_login(10)
+
+    // Test contains search: 'user' should match user_name, user_age, user_id
     let req = RequestBuilder::search_schema_text(
         "user",
         TextSearchType::Contains,
@@ -2117,7 +2120,7 @@ fn test_search_schema_text_filters() {
     );
     TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]);
 
-    // Test text search: starts with 'email' - should match email_address
+    // Test starts_with search: 'email' should match email_address only (not admin_email)
     let req = RequestBuilder::search_schema_text(
         "email",
         TextSearchType::StartsWith,
@@ -2126,7 +2129,7 @@ fn test_search_schema_text_filters() {
     );
     TestAssertions::assert_search_matches(socket, req, vec![3]);
 
-    // Test text search: ends with 'active' - should match is_active
+    // Test ends_with search: 'active' should match is_active only (not is_premium)
     let req = RequestBuilder::search_schema_text(
         "active",
         TextSearchType::EndsWith,
@@ -2135,7 +2138,25 @@ fn test_search_schema_text_filters() {
     );
     TestAssertions::assert_search_matches(socket, req, vec![7]);
 
-    // Test case sensitivity
+    // Test ends_with search: 'email' should match admin_email only (email_address ends with 'address')
+    let req = RequestBuilder::search_schema_text(
+        "email",
+        TextSearchType::EndsWith,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![4]); // admin_email only
+
+    // Test ends_with search for multiple matches: columns ending with 'e'
+    let req = RequestBuilder::search_schema_text(
+        "e",
+        TextSearchType::EndsWith,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 5, 6, 7, 9]); // user_name, user_age, score, bonus_score, is_active, registration_date
+
+    // Test case sensitivity: uppercase 'USER' with case_sensitive=true should match nothing
     let req = RequestBuilder::search_schema_text(
         "USER",
         TextSearchType::Contains,
@@ -2143,6 +2164,33 @@ fn test_search_schema_text_filters() {
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
+
+    // Test case sensitivity: uppercase 'USER' with case_sensitive=false should match user columns
+    let req = RequestBuilder::search_schema_text(
+        "USER",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]);
+
+    // Test not_contains search: columns that don't contain 'user'
+    let req = RequestBuilder::search_schema_text(
+        "user",
+        TextSearchType::NotContains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![3, 4, 5, 6, 7, 8, 9, 10]); // all except user_* columns
+
+    // Test search with special characters: 'score' should match score and bonus_score
+    let req = RequestBuilder::search_schema_text(
+        "score",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![5, 6]); // score, bonus_score
 }
 
 #[test]
@@ -2151,33 +2199,53 @@ fn test_search_schema_data_type_filters() {
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
     let socket = setup.socket();
 
-    // Test filter for numeric columns
+    // Schema: name(0 - str), age(1 - int), score(2 - dbl), is_active(3 - lgl), date_joined(4 - Date)
+
+    // Test filter for numeric columns: should match age (int) and score (dbl)
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::Number],
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![1, 2]);
 
-    // Test filter for string columns
+    // Test filter for string columns: should match name only
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::String],
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![0]);
 
-    // Test filter for boolean columns
+    // Test filter for boolean columns: should match is_active only
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::Boolean],
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![3]);
 
-    // Test filter for multiple data types
+    // Test filter for date columns: should match date_joined only
+    let req = RequestBuilder::search_schema_data_types(
+        vec![ColumnDisplayType::Date],
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![4]);
+
+    // Test filter for multiple data types: string and boolean
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::String, ColumnDisplayType::Boolean],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 3]);
+    TestAssertions::assert_search_matches(socket, req, vec![0, 3]); // name, is_active
+
+    // Test filter for all numeric-like types: Number and Date
+    let req = RequestBuilder::search_schema_data_types(
+        vec![ColumnDisplayType::Number, ColumnDisplayType::Date],
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![1, 2, 4]); // age, score, date_joined
+
+    // Test empty filter (should match nothing when no types specified)
+    let req = RequestBuilder::search_schema_data_types(vec![], SearchSchemaSortOrder::Original);
+    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
 }
 
 #[test]
@@ -2254,24 +2322,15 @@ fn test_search_schema_no_matches() {
 fn test_search_schema_type_sort_orders() {
     let _lock = r_test_lock();
 
-    // Create a dataframe with multiple columns of different types for comprehensive type sorting tests
+    // Create a simpler dataframe with multiple columns of different types for type sorting tests
     let setup = TestSetup::from_expression(
         "data.frame(
-            name = c('Alice', 'Bob', 'Charlie'),
-            is_active = c(TRUE, FALSE, TRUE),
-            age = c(25L, 30L, 35L),
-            height = c(170.5, 180.2, 175.8),
-            category = factor(c('A', 'B', 'C')),
-            description = c('desc1', 'desc2', 'desc3'),
-            enabled = c(FALSE, TRUE, FALSE),
-            count = c(10L, 20L, 30L),
-            weight = c(65.2, 75.8, 80.1),
-            status = factor(c('active', 'inactive', 'pending')),
-            notes = c('note1', 'note2', 'note3'),
-            verified = c(TRUE, TRUE, FALSE),
-            score = c(100L, 95L, 88L),
-            rating = c(4.5, 3.8, 4.2),
-            grade = factor(c('A+', 'A', 'B+'))
+            name = c('Alice', 'Bob'),           # str(0)
+            is_active = c(TRUE, FALSE),         # lgl(1)
+            age = c(25L, 30L),                 # int(2)
+            height = c(170.5, 180.2),          # dbl(3)
+            category = factor(c('A', 'B')),    # fct(4)
+            description = c('desc1', 'desc2')  # str(5)
         )",
         None,
     )
@@ -2279,21 +2338,17 @@ fn test_search_schema_type_sort_orders() {
     let socket = setup.socket();
 
     // Test ascending type sort order - should sort by lowercase type name
-    // Schema has: str(0,5,10), lgl(1,6,11), int(2,7,12), dbl(3,8,13), fct(4,9,14)
+    // Schema has: str(0,5), lgl(1), int(2), dbl(3), fct(4)
     // Expected order: dbl columns, fct columns, int columns, lgl columns, str columns
     let req =
         RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::AscendingType);
-    TestAssertions::assert_search_matches(socket, req, vec![
-        3, 8, 13, 4, 9, 14, 2, 7, 12, 1, 6, 11, 0, 5, 10,
-    ]);
+    TestAssertions::assert_search_matches(socket, req, vec![3, 4, 2, 1, 0, 5]);
 
     // Test descending type sort order - should sort by lowercase type name in reverse
     // Expected order: str columns, lgl columns, int columns, fct columns, dbl columns
     let req =
         RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::DescendingType);
-    TestAssertions::assert_search_matches(socket, req, vec![
-        0, 5, 10, 1, 6, 11, 2, 7, 12, 4, 9, 14, 3, 8, 13,
-    ]);
+    TestAssertions::assert_search_matches(socket, req, vec![0, 5, 1, 2, 4, 3]);
 
     // Test type sorting with filters - only numeric types (int, dbl)
     let filters = vec![FilterBuilder::match_data_types(vec![
@@ -2305,11 +2360,179 @@ fn test_search_schema_type_sort_orders() {
         filters.clone(),
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![3, 8, 13, 2, 7, 12]); // dbl columns, then int columns
+    TestAssertions::assert_search_matches(socket, req, vec![3, 2]); // height (dbl), age (int)
 
     // Descending type sort with filter: int first, then dbl
     let req =
         RequestBuilder::search_schema_with_filters(filters, SearchSchemaSortOrder::DescendingType);
-    TestAssertions::assert_search_matches(socket, req, vec![2, 7, 12, 3, 8, 13]);
-    // int columns, then dbl columns
+    TestAssertions::assert_search_matches(socket, req, vec![2, 3]); // age (int), height (dbl)
+
+    // Test type sorting with boolean filter - single boolean column
+    let bool_filters = vec![FilterBuilder::match_data_types(vec![
+        ColumnDisplayType::Boolean,
+    ])];
+
+    let req = RequestBuilder::search_schema_with_filters(
+        bool_filters,
+        SearchSchemaSortOrder::AscendingType,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![1]); // is_active
+
+    // Test edge case: type sorting with no matches
+    let no_match_filters = vec![FilterBuilder::match_data_types(vec![
+        ColumnDisplayType::Datetime,
+    ])];
+
+    let req = RequestBuilder::search_schema_with_filters(
+        no_match_filters,
+        SearchSchemaSortOrder::AscendingType,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>); // No datetime columns
+
+    // Test combined text and type filters with type sorting
+    let combined_filters = vec![
+        FilterBuilder::text_contains("a", false), // Contains letter 'a'
+        FilterBuilder::match_data_types(vec![ColumnDisplayType::String]),
+    ];
+
+    let req = RequestBuilder::search_schema_with_filters(
+        combined_filters,
+        SearchSchemaSortOrder::AscendingType,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![4, 0]); // category, name (both str type and contain 'a')
+}
+
+#[test]
+fn test_search_schema_text_with_sort_orders() {
+    let _lock = r_test_lock();
+
+    // Create a schema specifically for testing text search with sorting
+    let setup = TestSetup::from_expression(
+        "data.frame(
+            zebra_name = c('z1', 'z2'),
+            apple_name = c('a1', 'a2'),
+            banana_score = c(1.0, 2.0),
+            cherry_id = c(10L, 20L),
+            date_value = c(100.5, 200.5)
+        )",
+        None,
+    )
+    .unwrap();
+    let socket = setup.socket();
+
+    // Schema: zebra_name(0), apple_name(1), banana_score(2), cherry_id(3), date_value(4)
+
+    // Test text search with original order: 'name' should match zebra_name, apple_name
+    let req = RequestBuilder::search_schema_text(
+        "name",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1]); // original order
+
+    // Test text search with ascending name sort: apple_name, zebra_name
+    let req = RequestBuilder::search_schema_text(
+        "name",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::AscendingName,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![1, 0]); // apple_name first
+
+    // Test text search with descending name sort: zebra_name, apple_name
+    let req = RequestBuilder::search_schema_text(
+        "name",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::DescendingName,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1]); // zebra_name first
+
+    // Test text search with type sort: both name columns are strings, so maintains relative order
+    let req = RequestBuilder::search_schema_text(
+        "name",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::AscendingType,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1]); // both str type, original relative order
+
+    // Test broader search with type sorting: search for anything containing 'a'
+    let req = RequestBuilder::search_schema_text(
+        "a",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::AscendingType,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![2, 4, 0, 1]); // banana_score(dbl), date_value(dbl), zebra_name(str), apple_name(str)
+}
+
+#[test]
+fn test_search_schema_edge_cases() {
+    let _lock = r_test_lock();
+    let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
+    let socket = setup.socket();
+
+    // Test empty search term
+    let req = RequestBuilder::search_schema_text(
+        "",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2, 3, 4]); // Empty string matches all columns
+
+    // Test search term that matches nothing
+    let req = RequestBuilder::search_schema_text(
+        "xyz_nonexistent",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
+
+    // Test single character search
+    let req = RequestBuilder::search_schema_text(
+        "e",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2, 3, 4]); // name, age, score, is_active, date_joined
+
+    // Test underscore search (common separator)
+    let req = RequestBuilder::search_schema_text(
+        "_",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![3, 4]); // is_active, date_joined
+
+    // Test case sensitivity with mixed case
+    let setup = TestSetup::from_expression(
+        "data.frame(UserName = c('test'), userName = c('test'), username = c('test'))",
+        None,
+    )
+    .unwrap();
+    let socket = setup.socket();
+
+    // Case sensitive search: exact 'UserName' should match first column only
+    let req = RequestBuilder::search_schema_text(
+        "UserName",
+        TextSearchType::Contains,
+        true,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0]); // Only exact case match
+
+    // Case insensitive search should match all variations
+    let req = RequestBuilder::search_schema_text(
+        "username",
+        TextSearchType::Contains,
+        false,
+        SearchSchemaSortOrder::Original,
+    );
+    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]); // All variations
 }
