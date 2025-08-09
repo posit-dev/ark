@@ -9,6 +9,7 @@
             "name": "Attach: ark",
             "type": "lldb",
             "request": "attach",
+            "program": "ark",
             "osx": {
                 "program": "ark"
             },
