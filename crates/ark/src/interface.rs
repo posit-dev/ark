@@ -513,6 +513,16 @@ impl RMain {
             startup::source_user_r_profile();
         }
 
+        // Initialise graphics device so `grDevices::dev.interactive()` returns `TRUE`.
+        // See https://github.com/posit-dev/positron/issues/7681.
+        // Needs to happen _after_ sourcing R profiles so users can override the
+        // graphics device in Rprofile.
+        unsafe {
+            if let Err(err) = graphics_device::ps_graphics_device_impl() {
+                log::warn!("Can't initialize graphics device: {err:?}");
+            }
+        }
+
         // Start the REPL. Does not return!
         crate::sys::interface::run_r();
     }

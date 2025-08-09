@@ -899,7 +899,7 @@ unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
     });
 }
 
-unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
+pub(crate) unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     // TODO: Don't allow creation of more than one graphics device.
 
     // Create the graphics device.
