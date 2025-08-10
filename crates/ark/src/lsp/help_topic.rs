@@ -64,7 +64,7 @@ pub(crate) fn help_topic(
     Ok(Some(response))
 }
 
-fn locate_help_node(tree: &Tree, point: Point) -> Option<Node> {
+fn locate_help_node(tree: &Tree, point: Point) -> Option<Node<'_>> {
     let root = tree.root_node();
 
     let Some(mut node) = root.find_closest_node_to_point(point) else {

@@ -129,7 +129,7 @@ impl RHtmlHelp {
     }
 
     #[allow(unused)]
-    pub fn section(&self, name: &str) -> Option<Vec<ElementRef>> {
+    pub fn section(&self, name: &str) -> Option<Vec<ElementRef<'_>>> {
         // find all h3 headers in the document
         let selector = Selector::parse("h3").unwrap();
         let mut headers = self.html.select(&selector);

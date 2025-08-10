@@ -665,7 +665,7 @@ pub(crate) fn publish_diagnostics(uri: Url, diagnostics: Vec<Diagnostic>, versio
 }
 
 impl KernelNotification {
-    pub(crate) fn trace(&self) -> TraceKernelNotification {
+    pub(crate) fn trace(&self) -> TraceKernelNotification<'_> {
         TraceKernelNotification { inner: self }
     }
 }
