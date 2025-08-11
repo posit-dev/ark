@@ -21,8 +21,8 @@ pub struct OpenDatasetResult {
 /// Result in Methods
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SearchSchemaResult {
-	/// The column indices of the matching column indices in the indicated
-	/// sort order
+	/// The column indices that match the search parameters in the indicated
+	/// sort order.
 	pub matches: Vec<i64>
 }
 
@@ -696,13 +696,21 @@ pub enum SearchSchemaSortOrder {
 	#[strum(to_string = "original")]
 	Original,
 
-	#[serde(rename = "ascending")]
-	#[strum(to_string = "ascending")]
-	Ascending,
+	#[serde(rename = "ascending_name")]
+	#[strum(to_string = "ascending_name")]
+	AscendingName,
 
-	#[serde(rename = "descending")]
-	#[strum(to_string = "descending")]
-	Descending
+	#[serde(rename = "descending_name")]
+	#[strum(to_string = "descending_name")]
+	DescendingName,
+
+	#[serde(rename = "ascending_type")]
+	#[strum(to_string = "ascending_type")]
+	AscendingType,
+
+	#[serde(rename = "descending_type")]
+	#[strum(to_string = "descending_type")]
+	DescendingType
 }
 
 /// Possible values for ColumnDisplayType
