@@ -113,6 +113,13 @@ pub struct RenderParams {
 	pub format: PlotRenderFormat,
 }
 
+/// Parameters for the Update method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct UpdateParams {
+	/// Optional pre-rendering data for immediate display
+	pub pre_render: Option<PlotResult>,
+}
+
 /**
  * Backend RPC request types for the plot comm
  */
@@ -172,7 +179,7 @@ pub enum PlotFrontendReply {
 #[serde(tag = "method", content = "params")]
 pub enum PlotFrontendEvent {
 	#[serde(rename = "update")]
-	Update,
+	Update(UpdateParams),
 
 	#[serde(rename = "show")]
 	Show,

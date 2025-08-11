@@ -23,6 +23,7 @@ use amalthea::comm::plot_comm::PlotRenderFormat;
 use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
+use amalthea::comm::plot_comm::UpdateParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -585,9 +586,31 @@ impl DeviceContext {
             return;
         });
 
-        let value = serde_json::to_value(PlotFrontendEvent::Update).unwrap();
+        // Create a pre-rendering of the updated plot
+        let settings = self.prerender_settings.get();
+        let update_params = match self.render_plot(id, &settings) {
+            Ok(pre_render) => {
+                let mime_type = Self::get_mime_type(&settings.format);
 
-        // Tell Positron we have an updated plot that it should request a rerender for
+                let pre_render = PlotResult {
+                    data: pre_render.to_string(),
+                    mime_type: mime_type.to_string(),
+                    settings: Some(settings),
+                };
+
+                UpdateParams {
+                    pre_render: Some(pre_render),
+                }
+            },
+            Err(err) => {
+                log::warn!("Can't pre-render plot update: {err:?}");
+                UpdateParams { pre_render: None }
+            },
+        };
+
+        let value = serde_json::to_value(PlotFrontendEvent::Update(update_params)).unwrap();
+
+        // Tell Positron we have an updated plot with optional pre-rendering
         socket
             .outgoing_tx
             .send(CommMsg::Data(value))
