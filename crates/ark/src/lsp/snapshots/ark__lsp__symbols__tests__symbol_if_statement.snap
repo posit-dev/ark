@@ -1,0 +1,128 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\n            if (TRUE) {\n              # section in if ----\n              x <- 1\n            } else {\n              # section in else ----\n              y <- 2\n            }\n            \")"
+---
+[
+    DocumentSymbol {
+        name: "section in if",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 2,
+                character: 14,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 2,
+                character: 14,
+            },
+            end: Position {
+                line: 3,
+                character: 20,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "x",
+                    detail: None,
+                    kind: Variable,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 3,
+                            character: 20,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 3,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 3,
+                            character: 20,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+    DocumentSymbol {
+        name: "section in else",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 5,
+                character: 14,
+            },
+            end: Position {
+                line: 6,
+                character: 20,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 5,
+                character: 14,
+            },
+            end: Position {
+                line: 6,
+                character: 20,
+            },
+        },
+        children: Some(
+            [
+                DocumentSymbol {
+                    name: "y",
+                    detail: None,
+                    kind: Variable,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 6,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 6,
+                            character: 20,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 6,
+                            character: 14,
+                        },
+                        end: Position {
+                            line: 6,
+                            character: 20,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+            ],
+        ),
+    },
+]

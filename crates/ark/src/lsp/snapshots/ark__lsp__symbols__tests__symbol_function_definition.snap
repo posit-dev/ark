@@ -1,0 +1,66 @@
+---
+source: crates/ark/src/lsp/symbols.rs
+expression: "test_symbol(\"\nfunction(\n  X,\n  # Section in parameters ----\n  y\n) {\n  # Section in body ----\n  x <- 1\n}\n\")"
+---
+[
+    DocumentSymbol {
+        name: "Section in parameters",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 3,
+                character: 2,
+            },
+            end: Position {
+                line: 4,
+                character: 3,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 3,
+                character: 2,
+            },
+            end: Position {
+                line: 4,
+                character: 3,
+            },
+        },
+        children: Some(
+            [],
+        ),
+    },
+    DocumentSymbol {
+        name: "Section in body",
+        detail: None,
+        kind: String,
+        tags: None,
+        deprecated: None,
+        range: Range {
+            start: Position {
+                line: 6,
+                character: 2,
+            },
+            end: Position {
+                line: 7,
+                character: 8,
+            },
+        },
+        selection_range: Range {
+            start: Position {
+                line: 6,
+                character: 2,
+            },
+            end: Position {
+                line: 7,
+                character: 8,
+            },
+        },
+        children: Some(
+            [],
+        ),
+    },
+]
