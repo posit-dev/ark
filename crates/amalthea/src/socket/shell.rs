@@ -6,6 +6,7 @@
  */
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -60,11 +61,8 @@ pub struct Shell {
     /// Language-provided shell handler object
     shell_handler: RefCell<Box<dyn ShellHandler>>,
 
-    /// Language-provided LSP handler object
-    lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
-
-    /// Language-provided DAP handler object
-    dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+    /// Map of server handler target names to their handlers
+    server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 
     /// Channel used to deliver comm events to the comm manager
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -78,14 +76,13 @@ impl Shell {
     /// * `comm_manager_tx` - A channel that delivers messages to the comm manager thread
     /// * `comm_changed_rx` - A channel that receives messages from the comm manager thread
     /// * `shell_handler` - The language's shell channel handler
-    /// * `lsp_handler` - The language's LSP handler, if it supports LSP
+    /// * `server_handlers` - A map of server handler target names to their handlers
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
         shell_handler: Box<dyn ShellHandler>,
-        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
-        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
         // Need a RefCell to allow handler methods to be mutable.
         // We only run one handler at a time so this is safe.
@@ -94,8 +91,7 @@ impl Shell {
             socket,
             iopub_tx,
             shell_handler,
-            lsp_handler,
-            dap_handler,
+            server_handlers,
             comm_manager_tx,
         }
     }
@@ -375,28 +371,35 @@ impl Shell {
         // internal ID or a reference to the IOPub channel.
 
         let opened = match comm {
-            // If this is the special LSP or DAP comms, start the server and create
-            // a comm that wraps it
-            Comm::Dap => {
-                server_started_rx = Some(Self::start_server_comm(
-                    msg,
-                    self.dap_handler.clone(),
-                    &comm_socket,
-                )?);
-                true
-            },
+            // If this is an old-style server comm (only the LSP as of now),
+            // start the server and create a comm that wraps it
             Comm::Lsp => {
-                server_started_rx = Some(Self::start_server_comm(
-                    msg,
-                    self.lsp_handler.clone(),
-                    &comm_socket,
-                )?);
+                // Extract the target name (strip "positron." prefix if present)
+                let target_key = if msg.target_name.starts_with("positron.") {
+                    &msg.target_name[9..]
+                } else {
+                    &msg.target_name
+                };
+
+                let handler = self.server_handlers.get(target_key).cloned();
+                server_started_rx = Some(Self::start_server_comm(msg, handler, &comm_socket)?);
                 true
             },
 
-            // Only the LSP and DAP comms are handled by the Amalthea
-            // kernel framework itself; all other comms are passed through
-            // to the shell handler.
+            Comm::Other(_) => {
+                // This might be a server comm or a regular comm
+                if let Some(handler) = self.server_handlers.get(&msg.target_name).cloned() {
+                    // We have a server handler for this target
+                    server_started_rx =
+                        Some(Self::start_server_comm(msg, Some(handler), &comm_socket)?);
+                    true
+                } else {
+                    // No server handler found, pass through to shell handler
+                    block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
+                }
+            },
+
+            // All comms tied to known Positron clients are passed through to the shell handler
             _ => {
                 // Call the shell handler to open the comm
                 block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
@@ -422,10 +425,10 @@ impl Shell {
         // to send or receive this notification is a critical failure for this comm.
         if let Some(server_started_rx) = server_started_rx {
             match server_started_rx.recv() {
-                Ok(server_started) => {
+                Ok(params) => {
                     let message = CommMsg::Data(json!({
-                        "msg_type": "server_started",
-                        "content": server_started
+                        "method": "server_started",
+                        "params": params
                     }));
 
                     if let Err(error) = comm_socket.outgoing_tx.send(message) {
@@ -471,7 +474,8 @@ impl Shell {
         } else {
             // If we don't have the corresponding handler, return an error
             log::error!(
-                "Client attempted to start LSP or DAP, but no handler was provided by kernel."
+                "Client attempted to start '{}', but no handler was provided by kernel.",
+                msg.target_name
             );
             Err(Error::UnknownCommName(msg.target_name.clone()))
         }

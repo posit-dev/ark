@@ -1,11 +1,11 @@
 /*
  * kernel.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2025 Posit Software, PBC. All rights reserved.
  *
  */
 
-use core::panic;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -63,8 +63,7 @@ pub fn connect(
     registration_file: Option<RegistrationFile>,
     shell_handler: Box<dyn ShellHandler>,
     control_handler: Arc<Mutex<dyn ControlHandler>>,
-    lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
-    dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+    server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
     stream_behavior: StreamBehavior,
     iopub_tx: Sender<IOPubMessage>,
     iopub_rx: Receiver<IOPubMessage>,
@@ -111,8 +110,7 @@ pub fn connect(
             iopub_tx_clone,
             comm_manager_tx,
             shell_handler,
-            lsp_handler,
-            dap_handler,
+            server_handlers,
         )
     });
 
@@ -357,16 +355,14 @@ fn shell_thread(
     iopub_tx: Sender<IOPubMessage>,
     comm_manager_tx: Sender<CommManagerEvent>,
     shell_handler: Box<dyn ShellHandler>,
-    lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
-    dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+    server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 ) -> Result<(), Error> {
     let mut shell = Shell::new(
         socket,
         iopub_tx.clone(),
         comm_manager_tx,
         shell_handler,
-        lsp_handler,
-        dap_handler,
+        server_handlers,
     );
     shell.listen();
     Ok(())
