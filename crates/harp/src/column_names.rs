@@ -54,4 +54,15 @@ impl ColumnNames {
         }
         None
     }
+
+    pub fn get(&self, index: isize) -> anyhow::Result<Option<String>> {
+        if let Some(names) = &self.names {
+            if let Some(name) = names.get(index)? {
+                if name.len() > 0 {
+                    return Ok(Some(name));
+                }
+            }
+        }
+        Ok(None)
+    }
 }
