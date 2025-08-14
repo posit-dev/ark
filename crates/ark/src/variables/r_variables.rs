@@ -119,7 +119,7 @@ impl RVariables {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             log::warn!(
-                "Environment: Attempt to monitor or list non-environment object {env:?} ({err:?})"
+                "Variables: Attempt to monitor or list non-environment object {env:?} ({err:?})"
             );
         }
 
@@ -191,17 +191,17 @@ impl RVariables {
                             // appropriate. Retrying is likely to just lead to a busy
                             // loop.
                             log::error!(
-                                "Environment: Error receiving message from frontend: {err:?}"
+                                "Variables: Error receiving message from frontend: {err:?}"
                             );
 
                             break;
                         },
                     };
-                    log::info!("Environment: Received message from frontend: {msg:?}");
+                    log::info!("Variables: Received message from frontend: {msg:?}");
 
                     // Break out of the loop if the frontend has closed the channel
                     if let CommMsg::Close = msg {
-                        log::info!("Environment: Closing down after receiving comm_close from frontend.");
+                        log::info!("Variables: Closing down after receiving comm_close from frontend.");
 
                         // Remember that the user initiated the close so that we can
                         // avoid sending a duplicate close message from the back end
@@ -415,7 +415,7 @@ impl RVariables {
                 self.comm.outgoing_tx.send(comm_msg).unwrap()
             },
             Err(err) => {
-                log::error!("Environment: Failed to serialize environment data: {err}");
+                log::error!("Variables: Failed to serialize environment data: {err}");
             },
         }
     }
@@ -449,7 +449,7 @@ impl RVariables {
                 Err(err) => {
                     // This isn't a critical error but would also be very
                     // unexpected.
-                    log::error!("Environment: Could not evaluate .Last.value ({err:?})");
+                    log::error!("Variables: Could not evaluate .Last.value ({err:?})");
                     None
                 },
             }
