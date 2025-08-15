@@ -17,14 +17,27 @@ use amalthea::comm::data_explorer_comm::ConvertedCode;
 /// # Arguments
 ///
 /// * `params` - Parameters for the code conversion including filters and sort keys
+/// * `object_name` - Optional name of the data object in the R environment
 ///
 /// # Returns
 ///
 /// A `ConvertedCode` containing lines of code implementing the filters and sort keys
-pub fn convert_to_code(_params: ConvertToCodeParams) -> ConvertedCode {
-    // For now, just return a simple stub message
+pub fn convert_to_code(_params: ConvertToCodeParams, object_name: Option<&str>) -> ConvertedCode {
+    // Create a library statement for dplyr
+    let library_statement = "library(dplyr)".to_string();
+
+    // Use a default placeholder if no object name is provided
+    let object_ref = match object_name {
+        Some(name) => name.to_string(),
+        None => "dat".to_string(), // Default placeholder if no object name
+    };
+
+    // Create a simple pipe expression to slice the first 3 rows
+    let pipe_expression = format!("{} |>\n  slice(1:3)", object_ref);
+
+    // Combine the code lines
     ConvertedCode {
-        converted_code: vec!["here's some dplyr code".to_string()],
+        converted_code: vec![library_statement, "".to_string(), pipe_expression],
     }
 }
 

@@ -1274,9 +1274,11 @@ impl RDataExplorer {
     /// Takes the current filters, sort keys, and other parameters and converts them
     /// to executable code that can reproduce the current data view.
     fn convert_to_code(&self, params: ConvertToCodeParams) -> ConvertedCode {
-        // Call the conversion function in the module, passing only the params for now
-        // As we develop the feature, we can add more parameters as needed
-        convert_to_code::convert_to_code(params)
+        // Get object name if available
+        let object_name = self.binding.as_ref().map(|b| b.name.as_str());
+
+        // Call the conversion function in the module, passing only what's needed
+        convert_to_code::convert_to_code(params, object_name)
     }
 }
 
