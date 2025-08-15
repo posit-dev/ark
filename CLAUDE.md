@@ -73,3 +73,9 @@ When debugging R code, note that breakpoint support is currently missing, but yo
 ## Issue Reporting
 
 Report bugs and feature requests in the Positron repository issue tracker: https://github.com/posit-dev/positron/issues
+
+## Generated code
+
+Some of the files below `crates/amalthea/src/comm/` are automatically generated from comms specified in the Positron front end.
+Such files always have `// @generated` at the top and SHOULD NEVER be edited "by hand".
+If changes are needed in these files, that must happen in the separate Positron source repository and the comms for R and Python must be regenerated.
