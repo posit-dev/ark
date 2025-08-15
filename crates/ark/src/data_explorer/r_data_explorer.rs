@@ -24,6 +24,7 @@ use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::ConvertToCodeFeatures;
+use amalthea::comm::data_explorer_comm::ConvertToCodeParams;
 use amalthea::comm::data_explorer_comm::ConvertedCode;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
@@ -566,15 +567,11 @@ impl RDataExplorer {
                     format,
                 },
             )),
-            DataExplorerBackendRequest::ConvertToCode(_) => Ok(
-                DataExplorerBackendReply::ConvertToCodeReply(ConvertedCode {
-                    converted_code: vec!["not yet implemented".to_string()],
-                }),
+            DataExplorerBackendRequest::ConvertToCode(params) => Ok(
+                DataExplorerBackendReply::ConvertToCodeReply(self.convert_to_code(params)),
             ),
             DataExplorerBackendRequest::SuggestCodeSyntax => Ok(
-                DataExplorerBackendReply::SuggestCodeSyntaxReply(CodeSyntaxName {
-                    code_syntax_name: "base".into(),
-                }),
+                DataExplorerBackendReply::SuggestCodeSyntaxReply(self.suggest_code_syntax()),
             ),
         }
     }
@@ -1262,6 +1259,27 @@ impl RDataExplorer {
                 format,
             )
         })
+    }
+
+    /// Suggest code syntax for code conversion
+    ///
+    /// Returns the preferred code syntax for converting data explorer operations to code.
+    /// Currently always returns "dplyr" as the syntax.
+    fn suggest_code_syntax(&self) -> CodeSyntaxName {
+        CodeSyntaxName {
+            code_syntax_name: "dplyr".into(),
+        }
+    }
+
+    /// Convert the current data view state to code
+    ///
+    /// Takes the current filters, sort keys, and other parameters and converts them
+    /// to executable code that can reproduce the current data view.
+    /// Currently returns a simple stub message.
+    fn convert_to_code(&self, _params: ConvertToCodeParams) -> ConvertedCode {
+        ConvertedCode {
+            converted_code: vec!["here's some dplyr code".to_string()],
+        }
     }
 }
 
