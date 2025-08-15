@@ -92,6 +92,7 @@ use uuid::Uuid;
 
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
 use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
+use crate::data_explorer::convert_to_code;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
@@ -1264,22 +1265,18 @@ impl RDataExplorer {
     /// Suggest code syntax for code conversion
     ///
     /// Returns the preferred code syntax for converting data explorer operations to code.
-    /// Currently always returns "dplyr" as the syntax.
     fn suggest_code_syntax(&self) -> CodeSyntaxName {
-        CodeSyntaxName {
-            code_syntax_name: "dplyr".into(),
-        }
+        convert_to_code::suggest_code_syntax()
     }
 
     /// Convert the current data view state to code
     ///
     /// Takes the current filters, sort keys, and other parameters and converts them
     /// to executable code that can reproduce the current data view.
-    /// Currently returns a simple stub message.
-    fn convert_to_code(&self, _params: ConvertToCodeParams) -> ConvertedCode {
-        ConvertedCode {
-            converted_code: vec!["here's some dplyr code".to_string()],
-        }
+    fn convert_to_code(&self, params: ConvertToCodeParams) -> ConvertedCode {
+        // Call the conversion function in the module, passing only the params for now
+        // As we develop the feature, we can add more parameters as needed
+        convert_to_code::convert_to_code(params)
     }
 }
 
