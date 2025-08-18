@@ -15,7 +15,6 @@ use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
-use serde_json::json;
 use stdext::log_error;
 use stdext::spawn;
 
@@ -141,10 +140,7 @@ impl Dap {
             if let Some(tx) = &self.comm_tx {
                 // Ask frontend to connect to the DAP
                 log::trace!("DAP: Sending `start_debug` event");
-                let msg = CommMsg::Data(json!({
-                    "msg_type": "start_debug",
-                    "content": {}
-                }));
+                let msg = amalthea::comm_rpc_message!("start_debug");
                 log_error!(tx.send(msg));
             }
 
