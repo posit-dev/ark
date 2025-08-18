@@ -14,9 +14,9 @@ use std::sync::Mutex;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
-use serde_json::json;
 use stdext::result::ResultOrLog;
 
+use crate::comm::comm_channel::comm_rpc_message;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
@@ -424,24 +424,19 @@ impl Shell {
         // accept connections. This also sends back the port number to connect on. Failing
         // to send or receive this notification is a critical failure for this comm.
         if let Some(server_started_rx) = server_started_rx {
-            match server_started_rx.recv() {
-                Ok(params) => {
-                    let message = CommMsg::Data(json!({
-                        "method": "server_started",
-                        "params": params
-                    }));
+            let result = (|| -> anyhow::Result<()> {
+                let params = server_started_rx.recv()?;
 
-                    if let Err(error) = comm_socket.outgoing_tx.send(message) {
-                        log::error!(
-                            "For '{comm_name}', failed to send a `server_started` message: {error}"
-                        );
-                        return Err(Error::SendError(format!("{error}")));
-                    }
-                },
-                Err(error) => {
-                    log::error!("For '{comm_name}', failed to receive a `server_started_rx` message: {error}");
-                    return Err(Error::ReceiveError(format!("{error}")));
-                },
+                let message = comm_rpc_message("server_started", serde_json::to_value(params)?);
+                comm_socket.outgoing_tx.send(message)?;
+
+                Ok(())
+            })();
+
+            if let Err(err) = result {
+                let msg = format!("With comm '{comm_name}': {err}");
+                log::error!("{msg}");
+                return Err(Error::SendError(msg));
             }
         }
 

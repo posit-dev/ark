@@ -60,3 +60,39 @@ impl MessageType for UiFrontendRequest {
         String::from("rpc_request")
     }
 }
+
+/// Create an RPC message nested in a comm message
+/// Creates a `CommMsg::Data` with `method` and `params` fields.
+///
+/// Example usage:
+///
+/// ```
+/// comm_rpc_message!("my_method")
+/// comm_rpc_message!("my_method", foo = 1, bar = my_value)
+/// ```
+#[macro_export]
+macro_rules! comm_rpc_message {
+    ($method:expr) => {
+        CommMsg::Data(serde_json::json!({
+            "method": $method,
+            "params": {}
+        }))
+    };
+    ($method:expr, $($param_key:ident = $param_value:expr),+ $(,)?) => {
+        CommMsg::Data(serde_json::json!({
+            "method": $method,
+            "params": {
+                $(
+                    stringify!($param_key): $param_value
+                ),*
+            }
+        }))
+    };
+}
+
+pub fn comm_rpc_message(method: &str, params: Value) -> CommMsg {
+    CommMsg::Data(serde_json::json!({
+        "method": method,
+        "params": params
+    }))
+}
