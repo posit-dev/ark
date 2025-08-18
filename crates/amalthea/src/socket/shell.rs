@@ -370,10 +370,14 @@ impl Shell {
         // deliver messages to the frontend without having to store its own
         // internal ID or a reference to the IOPub channel.
 
+        let mut lsp_comm = false;
+
         let opened = match comm {
-            // If this is an old-style server comm (only the LSP as of now),
-            // start the server and create a comm that wraps it
             Comm::Lsp => {
+                // If this is an old-style server comm (only the LSP as of now),
+                // start the server and create a comm that wraps it
+                lsp_comm = true;
+
                 // Extract the target name (strip "positron." prefix if present)
                 let target_key = if msg.target_name.starts_with("positron.") {
                     &msg.target_name[9..]
@@ -389,7 +393,6 @@ impl Shell {
             Comm::Other(_) => {
                 // This might be a server comm or a regular comm
                 if let Some(handler) = self.server_handlers.get(&msg.target_name).cloned() {
-                    // We have a server handler for this target
                     server_started_rx =
                         Some(Self::start_server_comm(msg, Some(handler), &comm_socket)?);
                     true
@@ -427,7 +430,18 @@ impl Shell {
             let result = (|| -> anyhow::Result<()> {
                 let params = server_started_rx.recv()?;
 
-                let message = comm_rpc_message("server_started", serde_json::to_value(params)?);
+                let message = if lsp_comm {
+                    // If this is the LSP comm, use the legacy message structure.
+                    // TODO: Switch LSP comms to new message structure once we've
+                    // kicked the tyres enough with the DAP comm.
+                    CommMsg::Data(serde_json::json!({
+                        "msg_type": "server_started",
+                        "content": params
+                    }))
+                } else {
+                    comm_rpc_message("server_started", serde_json::to_value(params)?)
+                };
+
                 comm_socket.outgoing_tx.send(message)?;
 
                 Ok(())
