@@ -1125,7 +1125,7 @@ impl RDataExplorer {
                     ],
                 },
                 convert_to_code: ConvertToCodeFeatures {
-                    support_status: SupportStatus::Supported,
+                    support_status: SupportStatus::Unsupported,
                     code_syntaxes: Some(vec![
                         CodeSyntaxName {
                             code_syntax_name: "base".into(),
