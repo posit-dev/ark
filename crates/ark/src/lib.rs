@@ -6,6 +6,7 @@
 //
 
 pub mod analysis;
+pub mod ark_comm;
 pub mod browser;
 pub mod connections;
 pub mod control;

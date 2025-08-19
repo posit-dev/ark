@@ -39,6 +39,7 @@ use serde_json::json;
 use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
+use crate::ark_comm::ArkComm;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::interface::KernelInfo;
@@ -235,6 +236,7 @@ impl ShellHandler for Shell {
                 self.graphics_device_tx.clone(),
             ),
             Comm::Help => handle_comm_open_help(comm),
+            Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
             _ => Ok(false),
         }
     }

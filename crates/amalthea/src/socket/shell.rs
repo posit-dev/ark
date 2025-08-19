@@ -302,16 +302,32 @@ impl Shell {
     /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
     fn handle_comm_msg(&self, header: JupyterHeader, msg: &CommWireMsg) -> crate::Result<()> {
-        // Store this message as a pending RPC request so that when the comm
-        // responds, we can match it up
-        self.comm_manager_tx
-            .send(CommManagerEvent::PendingRpc(header.clone()))
-            .unwrap();
+        // If there is a `jsonrpc` field, we treat the presence of `id` as a
+        // request rather than a notification. If there is no such field, we
+        // have a regular message from one of the regular Positron client comms.
+        // In the future we should only support proper JSON-RPC messages, see
+        // https://github.com/posit-dev/positron/issues/7448
+        let request = msg.data.get("jsonrpc").is_none() || msg.data.get("id").is_some();
+
+        let comm_msg = if request {
+            // We don't consider the JSON-RPC `id` field which must exactly
+            // match the one in the Jupyter header
+            let request_id = header.msg_id.clone();
+
+            // Store this message as a pending RPC request so that when the comm
+            // responds, we can match it up
+            self.comm_manager_tx
+                .send(CommManagerEvent::PendingRpc(header))
+                .unwrap();
+
+            CommMsg::Rpc(request_id, msg.data.clone())
+        } else {
+            CommMsg::Data(msg.data.clone())
+        };
 
         // Send the message to the comm
-        let rpc = CommMsg::Rpc(header.msg_id.clone(), msg.data.clone());
         self.comm_manager_tx
-            .send(CommManagerEvent::Message(msg.comm_id.clone(), rpc))
+            .send(CommManagerEvent::Message(msg.comm_id.clone(), comm_msg))
             .unwrap();
 
         Ok(())
