@@ -46,7 +46,7 @@ use libr::Rf_xlength;
  * 5. Ensures that the environment list contains the new variable
  */
 #[test]
-fn test_environment_list() {
+fn test_variables_list() {
     let _lock = r_test_lock();
     // Create a new environment for the test. We use a new, empty environment
     // (with the empty environment as its parent) so that each test in this
@@ -305,7 +305,7 @@ fn test_environment_list() {
  *
  */
 #[test]
-fn test_environment_last_value_enabled() {
+fn test_variables_last_value_enabled() {
     let _lock = r_test_lock();
 
     // Create a new environment for the test
@@ -442,7 +442,7 @@ fn test_environment_last_value_enabled() {
  *
  */
 #[test]
-fn test_environment_last_value_disabled() {
+fn test_variables_last_value_disabled() {
     // Create a new environment for the test
     let test_env = r_task(|| unsafe {
         let env = RFunction::new("base", "new.env")
