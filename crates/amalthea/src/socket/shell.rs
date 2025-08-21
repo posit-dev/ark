@@ -302,16 +302,11 @@ impl Shell {
     /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
     fn handle_comm_msg(&self, header: JupyterHeader, msg: &CommWireMsg) -> crate::Result<()> {
-        // If there is a `jsonrpc` field, we treat the presence of `id` as a
-        // request rather than a notification. If there is no such field, we
-        // have a regular message from one of the regular Positron client comms.
-        // In the future we should only support proper JSON-RPC messages, see
+        // The presence of an `id` field means this is a request, not a notification
         // https://github.com/posit-dev/positron/issues/7448
-        let request = msg.data.get("jsonrpc").is_none() || msg.data.get("id").is_some();
-
-        let comm_msg = if request {
-            // We don't consider the JSON-RPC `id` field which must exactly
-            // match the one in the Jupyter header
+        let comm_msg = if msg.data.get("id").is_some() {
+            // Note that the JSON-RPC `id` field must exactly match the one in
+            // the Jupyter header
             let request_id = header.msg_id.clone();
 
             // Store this message as a pending RPC request so that when the comm
