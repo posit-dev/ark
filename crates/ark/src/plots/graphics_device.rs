@@ -65,13 +65,19 @@ thread_local! {
 
 const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 
-// Expose thread initialization via function so we can keep the structs private
+// Expose thread initialization via function so we can keep the structs private.
+// Must be called from the main R thread.
 pub(crate) fn init_graphics_device(
     comm_manager_tx: Sender<CommManagerEvent>,
     iopub_tx: Sender<IOPubMessage>,
     graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
 ) {
     DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx));
+
+    // Declare our graphics device as interactive
+    if let Err(err) = RFunction::from(".ps.graphics.register_as_interactive").call() {
+        log::error!("Failed to register Ark graphics device as interactive: {err:?}");
+    };
 
     // Launch an R thread task to process messages from the frontend
     r_task::spawn_interrupt(|| async move { process_notifications(graphics_device_rx).await });

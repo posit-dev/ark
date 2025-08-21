@@ -5,6 +5,14 @@
 #
 #
 
+# The Ark graphics device name
+ARK_GRAPHICS_DEVICE_NAME <- ".ark.graphics.device"
+
+# Declare the function name that `dev.new()` and `GECurrentDevice()`
+# go looking for to create a new graphics device when the current one
+# is `"null device"` and a new plot is requested
+options(device = ARK_GRAPHICS_DEVICE_NAME)
+
 # Set up "before plot new" hooks. This is our cue for
 # saving up the state of a plot before it gets wiped out.
 setHook("before.plot.new", action = "replace", function(...) {
@@ -14,42 +22,30 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     .ps.Call("ps_graphics_before_plot_new", "before.grid.newpage")
 })
 
-# A persistent list mapping plot `id`s to their display list recording.
-# Used for replaying recordings under a new device or new width/height/resolution.
-RECORDINGS <- list()
-
-# Retrieves a recording by its `id`
-#
-# Returns `NULL` if no recording exists
-get_recording <- function(id) {
-    RECORDINGS[[id]]
-}
-
-add_recording <- function(id, recording) {
-    RECORDINGS[[id]] <<- recording
-}
-
-# Called when a plot comm is closed by the frontend
-remove_recording <- function(id) {
-    RECORDINGS[[id]] <<- NULL
-}
-
-render_directory <- function() {
-    directory <- file.path(tempdir(), "positron-plot-renderings")
-    ensure_directory(directory)
-    directory
-}
-
-render_path <- function(id, format) {
-    directory <- render_directory()
-    file <- paste0("render-", id, ".", format)
-    file.path(directory, file)
+#' Ark's graphics device creation entry point
+#'
+#' It is critical that this function:
+#' - Be findable by `get0(".ark.graphics.device", globalenv(), inherits = TRUE)`
+#' - Match the name of `ARK_GRAPHICS_DEVICE_NAME`
+#' - Match the name we set in `options(device = ARK_GRAPHICS_DEVICE_NAME)`
+#'
+#' That teaches `dev.new()` and `GECurrentDevice()` (used by grid, among other
+#' things) how to create a new Ark graphics device when the first plot opens.
+#'
+#' `options(device =)` also takes a function, but in a fresh session if
+#' `grDevices::dev.interactive(orNone = TRUE)` is called when the device is
+#' `"null device"` and `getOption("device")` returns a function, then it can't
+#' determine if the device that function would create is interactive or not, and
+#' we incorrectly look non-interactive, so we don't use that feature, and
+#' neither does RStudio (posit-dev/positron#7681).
+#'
+#' @export
+.ark.graphics.device <- function() {
+    .ps.Call("ps_graphics_device")
 }
 
 #' @export
 .ps.graphics.create_device <- function() {
-    name <- "Ark Graphics Device"
-
     # Create the graphics device that we are going to shadow.
     # Creating a graphics device mutates global state, we don't need to capture
     # the return value.
@@ -58,7 +54,7 @@ render_path <- function(id, format) {
     # Update the device name + description in the base environment.
     index <- grDevices::dev.cur()
     old_device <- .Devices[[index]]
-    new_device <- name
+    new_device <- ARK_GRAPHICS_DEVICE_NAME
 
     # Copy device attributes. Usually, this is just the file path.
     attributes(new_device) <- attributes(old_device)
@@ -70,11 +66,18 @@ render_path <- function(id, format) {
     env_bind_force(baseenv(), ".Devices", .Devices)
     env_bind_force(baseenv(), ".Device", new_device)
 
-    # Also set ourselves as a known interactive device.
+    # Now return back to Rust to modify the wrapped callbacks directly
+}
+
+#' @export
+.ps.graphics.register_as_interactive <- function() {
+    # Set ourselves as a known interactive device.
     # Used by `dev.interactive()`, which is used in `stats:::plot.lm()`
     # to determine if `devAskNewPage(TRUE)` should be set to prompt before
-    # each new plot is drawn.
-    grDevices::deviceIsInteractive(name)
+    # each new plot is drawn. We set this on startup rather than on creation
+    # of the first graphics device because that is sometimes too late
+    # (posit-dev/positron#7681).
+    grDevices::deviceIsInteractive(ARK_GRAPHICS_DEVICE_NAME)
 }
 
 # Create a recording of the current plot.
@@ -477,4 +480,36 @@ default_device_type_linux <- function() {
 
 stop_no_plotting_capabilities <- function() {
     stop("This version of R wasn't built with plotting capabilities")
+}
+
+# A persistent list mapping plot `id`s to their display list recording.
+# Used for replaying recordings under a new device or new width/height/resolution.
+RECORDINGS <- list()
+
+# Retrieves a recording by its `id`
+#
+# Returns `NULL` if no recording exists
+get_recording <- function(id) {
+    RECORDINGS[[id]]
+}
+
+add_recording <- function(id, recording) {
+    RECORDINGS[[id]] <<- recording
+}
+
+# Called when a plot comm is closed by the frontend
+remove_recording <- function(id) {
+    RECORDINGS[[id]] <<- NULL
+}
+
+render_directory <- function() {
+    directory <- file.path(tempdir(), "positron-plot-renderings")
+    ensure_directory(directory)
+    directory
+}
+
+render_path <- function(id, format) {
+    directory <- render_directory()
+    file <- paste0("render-", id, ".", format)
+    file.path(directory, file)
 }

@@ -50,19 +50,33 @@ For pure Jupyter settings outside of Positron, we don't have "dynamic" plots. In
 
 # Ark graphics device
 
-Ark creates a "shadow" graphics device that manages other graphics devices. We technically wrap a `grDevices::png()` and inherit all of the default hooks and behaviors that come with that, and then we inject our own hooks on top of specific png hooks. For example, when the `newPage` hook is called we call the png device's `newPage` hook manually and then also layer in our own `newPage` behavior. This is how we learn when changes have occurred, when to record a plot, when we are deactivated, etc.
+Ark creates a "shadow" graphics device that manages other graphics devices. We technically wrap `grDevices::png()` or `ragg::agg_record()` and inherit all of the default hooks and behaviors that come with that, and then we inject our own hooks on top of specific png hooks. For example, when the `newPage` hook is called we call the device's `newPage` hook manually and then also layer in our own `newPage` behavior. This is how we learn when changes have occurred, when to record a plot, when we are deactivated, etc.
+
+We prefer using the ragg device if it is available, as it is cheaper and has better behavior with some features that surprisingly do still use the underlying device, like rendering of Chinese text in a plot.
 
 # Device interactivity
 
-Certain plotting functions like `stats:::plot.lm()` will draw multiple plots in a row, pausing for the user to hit enter before advancing to the next page. This requires a few things to work properly:
+Certain plotting functions like `stats:::plot.lm()` or `demo(graphics)` will draw multiple plots in a row, pausing for the user to hit enter before advancing to the next page. This requires a few things to work properly:
 
--   `grDevices::deviceIsInteractive(name)` must be called during Ark graphics device initialization with `name` set to our Ark graphics device name to "register" ourselves as a known interactive graphics device.
+-   Internally, `ARK_GRAPHICS_DEVICE_NAME` is set to `"ark.graphics.device"`, which matches the name of a function we expose named `ark.graphics.device()`, which is in charge of creating a new Ark graphics device and is findable by `get0("ark.graphics.device", globalenv(), inherits = TRUE)`.
 
--   `grDevices::dev.interactive()` should then return `TRUE`, and this is used in the default value of the `ask` argument of `stats:::plot.lm()`.
+-   `grDevices::deviceIsInteractive(ARK_GRAPHICS_DEVICE_NAME)` must be called during startup to "register" ourselves as a known interactive graphics device.
 
--   We must be able to render plots (i.e. replay plot recordings) at any time. In particular, we must be able to handle a render request from Positron at interrupt time. We currently wait until the next idle time, which happens after the user has hit enter and advanced through all the plots - at which point we actually render them all at once, which is a suboptimal experience. We've been actively avoiding doing much at interrupt time because it is rather unsafe to do so, and here we'd have to change graphics devices at interrupt time, which feels very unsafe.
+-   `options(device = ARK_GRAPHICS_DEVICE_NAME)` must be called during startup so that:
 
-    -   One way we could possibly improve on this is to render an initial version of each plot in the opening notification we send to Positron using some default dimensions and device type. Positron could also supply us these defaults to use during the startup procedure.
+    -   `dev.new()` and `GECurrentDevice()` know the function name to look up to create a new device when the current is `"null device"`.
+
+    -   `grDevices::dev.interactive(orNone = TRUE)` has a name to look up in the list returned from `deviceIsInteractive()` in a fresh session where the device is otherwise still `"null device"`. This is used by `demo(graphics)`.
+
+-   When we send Positron a notification about a new plot, we *also* send along an initial version of that plot to show the user. Even if our dimensions are wrong, this allows Positron to show the user a plot after each `Enter` keypress, where ark is otherwise paused waiting for the user to do something and cannot handle a render request.
+
+With all of that in place:
+
+-   `grDevices::dev.interactive(orNone = TRUE)` should always return `TRUE`, even in a fresh session when the current device is technically `"null device"`.
+
+-   `grDevices::dev.interactive()` should return `TRUE` after you've created your first plot (before then, the device is `"null device"` and this returns `FALSE`, this matches RStudio).
+
+    -   This is used in the default value of the `ask` argument of `stats:::plot.lm()` and by the time `ask` is evaluated our device has been created so this returns `TRUE` there as intended.
 
 # Structures and terminology
 
