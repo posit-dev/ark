@@ -124,7 +124,7 @@ fn main() -> anyhow::Result<()> {
             },
             "--version" => {
                 println!("Ark {}", env!("CARGO_PKG_VERSION"));
-                has_action = true;
+                return Ok(());
             },
             "--install" => {
                 install_kernel_spec()?;
@@ -132,7 +132,7 @@ fn main() -> anyhow::Result<()> {
             },
             "--help" => {
                 print_usage();
-                has_action = true;
+                return Ok(());
             },
             "--no-capture-streams" => capture_streams = false,
             "--default-repos" => {
