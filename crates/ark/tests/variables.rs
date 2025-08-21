@@ -1,5 +1,5 @@
 //
-// environment.rs
+// variables.rs
 //
 // Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 //
