@@ -173,7 +173,7 @@ pub(crate) fn document_symbols(
     ctx.include_assignments_in_blocks = state.config.symbols.include_assignments_in_blocks;
 
     // Extract and process all symbols from the AST
-    if let Err(err) = collect_symbols(&mut ctx, &root_node, contents, 0, &mut result) {
+    if let Err(err) = collect_symbols(&mut ctx, &root_node, contents, &mut result) {
         log::error!("Failed to collect symbols: {err:?}");
         return Ok(Vec::new());
     }
@@ -186,16 +186,15 @@ fn collect_symbols(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     match node.node_type() {
         NodeType::Program => {
-            collect_list_sections(ctx, node, contents, current_level, symbols)?;
+            collect_list_sections(ctx, node, contents, symbols)?;
         },
 
         NodeType::BracedExpression => {
-            collect_list_sections(ctx, node, contents, current_level, symbols)?;
+            collect_list_sections(ctx, node, contents, symbols)?;
         },
 
         NodeType::IfStatement => {
@@ -205,7 +204,7 @@ fn collect_symbols(
             // } else {
             //   x <- top_level_assignment
             // }
-            collect_if_statement(ctx, node, contents, current_level, symbols)?;
+            collect_if_statement(ctx, node, contents, symbols)?;
         },
 
         NodeType::BinaryOperator(BinaryOperatorType::LeftAssignment) |
@@ -214,15 +213,15 @@ fn collect_symbols(
         },
 
         NodeType::ForStatement => {
-            collect_for_statement(ctx, node, contents, current_level, symbols)?;
+            collect_for_statement(ctx, node, contents, symbols)?;
         },
 
         NodeType::WhileStatement => {
-            collect_while_statement(ctx, node, contents, current_level, symbols)?;
+            collect_while_statement(ctx, node, contents, symbols)?;
         },
 
         NodeType::RepeatStatement => {
-            collect_repeat_statement(ctx, node, contents, current_level, symbols)?;
+            collect_repeat_statement(ctx, node, contents, symbols)?;
         },
 
         NodeType::Call => {
@@ -235,7 +234,7 @@ fn collect_symbols(
         NodeType::FunctionDefinition => {
             let old = ctx.top_level;
             ctx.top_level = false;
-            collect_function(ctx, node, contents, current_level, symbols)?;
+            collect_function(ctx, node, contents, symbols)?;
             ctx.top_level = old;
         },
 
@@ -250,17 +249,16 @@ fn collect_if_statement(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(condition) = node.child_by_field_name("condition") {
-        collect_symbols(ctx, &condition, contents, current_level, symbols)?;
+        collect_symbols(ctx, &condition, contents, symbols)?;
     }
     if let Some(consequent) = node.child_by_field_name("consequence") {
-        collect_symbols(ctx, &consequent, contents, current_level, symbols)?;
+        collect_symbols(ctx, &consequent, contents, symbols)?;
     }
     if let Some(alternative) = node.child_by_field_name("alternative") {
-        collect_symbols(ctx, &alternative, contents, current_level, symbols)?;
+        collect_symbols(ctx, &alternative, contents, symbols)?;
     }
 
     Ok(())
@@ -270,17 +268,16 @@ fn collect_for_statement(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(variable) = node.child_by_field_name("variable") {
-        collect_symbols(ctx, &variable, contents, current_level, symbols)?;
+        collect_symbols(ctx, &variable, contents, symbols)?;
     }
     if let Some(iterator) = node.child_by_field_name("iterator") {
-        collect_symbols(ctx, &iterator, contents, current_level, symbols)?;
+        collect_symbols(ctx, &iterator, contents, symbols)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, contents, current_level, symbols)?;
+        collect_symbols(ctx, &body, contents, symbols)?;
     }
 
     Ok(())
@@ -290,14 +287,13 @@ fn collect_while_statement(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(condition) = node.child_by_field_name("condition") {
-        collect_symbols(ctx, &condition, contents, current_level, symbols)?;
+        collect_symbols(ctx, &condition, contents, symbols)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, contents, current_level, symbols)?;
+        collect_symbols(ctx, &body, contents, symbols)?;
     }
 
     Ok(())
@@ -307,11 +303,10 @@ fn collect_repeat_statement(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, contents, current_level, symbols)?;
+        collect_symbols(ctx, &body, contents, symbols)?;
     }
 
     Ok(())
@@ -321,14 +316,13 @@ fn collect_function(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     if let Some(parameters) = node.child_by_field_name("parameters") {
         collect_function_parameters(ctx, &parameters, contents, symbols)?;
     }
     if let Some(body) = node.child_by_field_name("body") {
-        collect_symbols(ctx, &body, contents, current_level, symbols)?;
+        collect_symbols(ctx, &body, contents, symbols)?;
     }
 
     Ok(())
@@ -383,7 +377,6 @@ fn collect_sections<F>(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
     mut handle_child: F,
 ) -> anyhow::Result<()>
@@ -404,11 +397,8 @@ where
 
             // If we have a section comment, add it to our stack and close any sections if needed
             if let Some((level, title)) = parse_comment_as_section(&comment_text) {
-                let absolute_level = current_level + level;
-
                 // Close any sections with equal or higher level
-                while !active_sections.is_empty() &&
-                    active_sections.last().unwrap().level >= absolute_level
+                while !active_sections.is_empty() && active_sections.last().unwrap().level >= level
                 {
                     // Set end position for the section being closed
                     if let Some(section) = active_sections.last_mut() {
@@ -420,7 +410,7 @@ where
 
                 let section = Section {
                     title,
-                    level: absolute_level,
+                    level,
                     start_position: child.start_position(),
                     end_position: None,
                     children: Vec::new(),
@@ -473,18 +463,14 @@ fn collect_list_sections(
     ctx: &mut CollectContext,
     node: &Node,
     contents: &Rope,
-    current_level: usize,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
     collect_sections(
         ctx,
         node,
         contents,
-        current_level,
         symbols,
-        |ctx, child, contents, symbols| {
-            collect_symbols(ctx, child, contents, current_level, symbols)
-        },
+        |ctx, child, contents, symbols| collect_symbols(ctx, child, contents, symbols),
     )
 }
 
@@ -525,7 +511,6 @@ fn collect_call_arguments(
         ctx,
         &arguments,
         contents,
-        0,
         symbols,
         |ctx, child, contents, symbols| {
             let Some(arg_value) = child.child_by_field_name("value") else {
@@ -541,7 +526,7 @@ fn collect_call_arguments(
                 // else fallthrough
             }
 
-            collect_symbols(ctx, &arg_value, contents, 0, symbols)?;
+            collect_symbols(ctx, &arg_value, contents, symbols)?;
 
             Ok(())
         },
@@ -558,7 +543,6 @@ fn collect_function_parameters(
         ctx,
         &node,
         contents,
-        0,
         symbols,
         |_ctx, _child, _contents, _symbols| {
             // Only collect sections
@@ -583,7 +567,7 @@ fn collect_method(
     let end = convert_point_to_position(contents, arg_value.end_position());
 
     let mut children = vec![];
-    collect_symbols(ctx, arg_value, contents, 0, &mut children)?;
+    collect_symbols(ctx, arg_value, contents, &mut children)?;
 
     let mut symbol = new_symbol_node(
         arg_name_str,
@@ -631,7 +615,7 @@ fn collect_call_test_that(
     let mut cursor = arguments.walk();
     for child in arguments.children_by_field_name("argument", &mut cursor) {
         if let Some(value) = child.child_by_field_name("value") {
-            collect_symbols(ctx, &value, contents, 0, &mut children)?;
+            collect_symbols(ctx, &value, contents, &mut children)?;
         }
     }
 
@@ -683,13 +667,13 @@ fn collect_assignment(
 
         // Now recurse into RHS
         let mut children = Vec::new();
-        collect_symbols(ctx, &rhs, contents, 0, &mut children)?;
+        collect_symbols(ctx, &rhs, contents, &mut children)?;
 
         let symbol = new_symbol_node(name, SymbolKind::VARIABLE, Range { start, end }, children);
         symbols.push(symbol);
     } else {
         // Recurse into RHS
-        collect_symbols(ctx, &rhs, contents, 0, symbols)?;
+        collect_symbols(ctx, &rhs, contents, symbols)?;
     }
 
     Ok(())
@@ -726,7 +710,7 @@ fn collect_assignment_with_function(
 
     // Process the function body to extract child symbols
     let mut children = Vec::new();
-    collect_symbols(ctx, &rhs, contents, 0, &mut children)?;
+    collect_symbols(ctx, &rhs, contents, &mut children)?;
 
     let mut symbol = new_symbol_node(name, SymbolKind::FUNCTION, range, children);
     symbol.detail = Some(detail);
@@ -801,7 +785,6 @@ mod tests {
             &mut CollectContext::new(),
             &node,
             &doc.contents,
-            0,
             &mut symbols,
         )
         .unwrap();
@@ -1172,7 +1155,7 @@ outer <- 4
         ctx.include_assignments_in_blocks = true;
 
         let mut symbols = Vec::new();
-        collect_symbols(ctx, &node, &doc.contents, 0, &mut symbols).unwrap();
+        collect_symbols(ctx, &node, &doc.contents, &mut symbols).unwrap();
 
         insta::assert_debug_snapshot!(symbols);
     }
