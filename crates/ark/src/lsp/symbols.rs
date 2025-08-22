@@ -545,7 +545,7 @@ fn collect_function_parameters(
         contents,
         symbols,
         |_ctx, _child, _contents, _symbols| {
-            // Only collect sections
+            // We only collect sections and don't recurse inside parameters
             return Ok(());
         },
     )
