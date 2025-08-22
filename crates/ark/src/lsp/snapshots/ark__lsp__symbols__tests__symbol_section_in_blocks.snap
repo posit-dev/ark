@@ -1,6 +1,6 @@
 ---
 source: crates/ark/src/lsp/symbols.rs
-expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 ## bar ----\n  3\n  4\n  ## baz ----\n})\n\n## level 2 ----\n\nlist({\n  # foo ----\n  1\n  2 # bar ----\n  3\n  4\n  # baz ----\n})\n\")"
+expression: "test_symbol(\"\n# level 1 ----\n\n{\n  ## foo ----\n  1\n  2 ## bar ----\n  3\n  4\n  {\n    ## qux ----\n    5\n  }\n  ## baz ----\n}\n\nlist({\n  ## foo ----\n  1\n  2 ## bar ----\n  3\n  4\n  {\n    ## qux ----\n    5\n  }\n  ## baz ----\n})\n\n## level 2 ----\n\n{\n  # foo ----\n  1\n  2 # bar ----\n  3\n  4\n  {\n    # qux ----\n    5\n  }\n  # baz ----\n}\n\nlist({\n  # foo ----\n  1\n  2 # bar ----\n  3\n  4\n  {\n    # qux ----\n    5\n  }\n  # baz ----\n})\n\")"
 ---
 [
     DocumentSymbol {
@@ -15,7 +15,7 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                 character: 0,
             },
             end: Position {
-                line: 21,
+                line: 55,
                 character: 2,
             },
         },
@@ -25,7 +25,7 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                 character: 0,
             },
             end: Position {
-                line: 21,
+                line: 55,
                 character: 2,
             },
         },
@@ -73,7 +73,7 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                             character: 4,
                         },
                         end: Position {
-                            line: 8,
+                            line: 12,
                             character: 3,
                         },
                     },
@@ -83,12 +83,43 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                             character: 4,
                         },
                         end: Position {
-                            line: 8,
+                            line: 12,
                             character: 3,
                         },
                     },
                     children: Some(
-                        [],
+                        [
+                            DocumentSymbol {
+                                name: "qux",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 10,
+                                        character: 4,
+                                    },
+                                    end: Position {
+                                        line: 11,
+                                        character: 5,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 10,
+                                        character: 4,
+                                    },
+                                    end: Position {
+                                        line: 11,
+                                        character: 5,
+                                    },
+                                },
+                                children: Some(
+                                    [],
+                                ),
+                            },
+                        ],
                     ),
                 },
                 DocumentSymbol {
@@ -99,21 +130,142 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                     deprecated: None,
                     range: Range {
                         start: Position {
-                            line: 9,
+                            line: 13,
                             character: 2,
                         },
                         end: Position {
-                            line: 9,
+                            line: 13,
                             character: 13,
                         },
                     },
                     selection_range: Range {
                         start: Position {
-                            line: 9,
+                            line: 13,
                             character: 2,
                         },
                         end: Position {
-                            line: 9,
+                            line: 13,
+                            character: 13,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+                DocumentSymbol {
+                    name: "foo",
+                    detail: None,
+                    kind: String,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 17,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 18,
+                            character: 3,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 17,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 18,
+                            character: 3,
+                        },
+                    },
+                    children: Some(
+                        [],
+                    ),
+                },
+                DocumentSymbol {
+                    name: "bar",
+                    detail: None,
+                    kind: String,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 19,
+                            character: 4,
+                        },
+                        end: Position {
+                            line: 25,
+                            character: 3,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 19,
+                            character: 4,
+                        },
+                        end: Position {
+                            line: 25,
+                            character: 3,
+                        },
+                    },
+                    children: Some(
+                        [
+                            DocumentSymbol {
+                                name: "qux",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 23,
+                                        character: 4,
+                                    },
+                                    end: Position {
+                                        line: 24,
+                                        character: 5,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 23,
+                                        character: 4,
+                                    },
+                                    end: Position {
+                                        line: 24,
+                                        character: 5,
+                                    },
+                                },
+                                children: Some(
+                                    [],
+                                ),
+                            },
+                        ],
+                    ),
+                },
+                DocumentSymbol {
+                    name: "baz",
+                    detail: None,
+                    kind: String,
+                    tags: None,
+                    deprecated: None,
+                    range: Range {
+                        start: Position {
+                            line: 26,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 26,
+                            character: 13,
+                        },
+                    },
+                    selection_range: Range {
+                        start: Position {
+                            line: 26,
+                            character: 2,
+                        },
+                        end: Position {
+                            line: 26,
                             character: 13,
                         },
                     },
@@ -129,21 +281,21 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                     deprecated: None,
                     range: Range {
                         start: Position {
-                            line: 12,
+                            line: 29,
                             character: 0,
                         },
                         end: Position {
-                            line: 21,
+                            line: 55,
                             character: 2,
                         },
                     },
                     selection_range: Range {
                         start: Position {
-                            line: 12,
+                            line: 29,
                             character: 0,
                         },
                         end: Position {
-                            line: 21,
+                            line: 55,
                             character: 2,
                         },
                     },
@@ -157,21 +309,21 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                                 deprecated: None,
                                 range: Range {
                                     start: Position {
-                                        line: 15,
+                                        line: 32,
                                         character: 2,
                                     },
                                     end: Position {
-                                        line: 16,
+                                        line: 33,
                                         character: 3,
                                     },
                                 },
                                 selection_range: Range {
                                     start: Position {
-                                        line: 15,
+                                        line: 32,
                                         character: 2,
                                     },
                                     end: Position {
-                                        line: 16,
+                                        line: 33,
                                         character: 3,
                                     },
                                 },
@@ -187,26 +339,57 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                                 deprecated: None,
                                 range: Range {
                                     start: Position {
-                                        line: 17,
+                                        line: 34,
                                         character: 4,
                                     },
                                     end: Position {
-                                        line: 19,
+                                        line: 40,
                                         character: 3,
                                     },
                                 },
                                 selection_range: Range {
                                     start: Position {
-                                        line: 17,
+                                        line: 34,
                                         character: 4,
                                     },
                                     end: Position {
-                                        line: 19,
+                                        line: 40,
                                         character: 3,
                                     },
                                 },
                                 children: Some(
-                                    [],
+                                    [
+                                        DocumentSymbol {
+                                            name: "qux",
+                                            detail: None,
+                                            kind: String,
+                                            tags: None,
+                                            deprecated: None,
+                                            range: Range {
+                                                start: Position {
+                                                    line: 38,
+                                                    character: 4,
+                                                },
+                                                end: Position {
+                                                    line: 39,
+                                                    character: 5,
+                                                },
+                                            },
+                                            selection_range: Range {
+                                                start: Position {
+                                                    line: 38,
+                                                    character: 4,
+                                                },
+                                                end: Position {
+                                                    line: 39,
+                                                    character: 5,
+                                                },
+                                            },
+                                            children: Some(
+                                                [],
+                                            ),
+                                        },
+                                    ],
                                 ),
                             },
                             DocumentSymbol {
@@ -217,21 +400,142 @@ expression: "test_symbol(\"\n# level 1 ----\n\nlist({\n  ## foo ----\n  1\n  2 #
                                 deprecated: None,
                                 range: Range {
                                     start: Position {
-                                        line: 20,
+                                        line: 41,
                                         character: 2,
                                     },
                                     end: Position {
-                                        line: 20,
+                                        line: 41,
                                         character: 12,
                                     },
                                 },
                                 selection_range: Range {
                                     start: Position {
-                                        line: 20,
+                                        line: 41,
                                         character: 2,
                                     },
                                     end: Position {
-                                        line: 20,
+                                        line: 41,
+                                        character: 12,
+                                    },
+                                },
+                                children: Some(
+                                    [],
+                                ),
+                            },
+                            DocumentSymbol {
+                                name: "foo",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 45,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 46,
+                                        character: 3,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 45,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 46,
+                                        character: 3,
+                                    },
+                                },
+                                children: Some(
+                                    [],
+                                ),
+                            },
+                            DocumentSymbol {
+                                name: "bar",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 47,
+                                        character: 4,
+                                    },
+                                    end: Position {
+                                        line: 53,
+                                        character: 3,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 47,
+                                        character: 4,
+                                    },
+                                    end: Position {
+                                        line: 53,
+                                        character: 3,
+                                    },
+                                },
+                                children: Some(
+                                    [
+                                        DocumentSymbol {
+                                            name: "qux",
+                                            detail: None,
+                                            kind: String,
+                                            tags: None,
+                                            deprecated: None,
+                                            range: Range {
+                                                start: Position {
+                                                    line: 51,
+                                                    character: 4,
+                                                },
+                                                end: Position {
+                                                    line: 52,
+                                                    character: 5,
+                                                },
+                                            },
+                                            selection_range: Range {
+                                                start: Position {
+                                                    line: 51,
+                                                    character: 4,
+                                                },
+                                                end: Position {
+                                                    line: 52,
+                                                    character: 5,
+                                                },
+                                            },
+                                            children: Some(
+                                                [],
+                                            ),
+                                        },
+                                    ],
+                                ),
+                            },
+                            DocumentSymbol {
+                                name: "baz",
+                                detail: None,
+                                kind: String,
+                                tags: None,
+                                deprecated: None,
+                                range: Range {
+                                    start: Position {
+                                        line: 54,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 54,
+                                        character: 12,
+                                    },
+                                },
+                                selection_range: Range {
+                                    start: Position {
+                                        line: 54,
+                                        character: 2,
+                                    },
+                                    end: Position {
+                                        line: 54,
                                         character: 12,
                                     },
                                 },
