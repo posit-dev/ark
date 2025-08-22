@@ -416,7 +416,7 @@ impl RVariables {
     ) -> anyhow::Result<QueryTableSummaryResult> {
         r_task(|| {
             let env = self.env.get().clone();
-            let table = PositronVariable::resolve_data_object(env.clone(), &path)?;
+            let table = PositronVariable::resolve_data_object(env, &path)?;
 
             let kind = if harp::utils::r_is_data_frame(table.sexp) {
                 harp::TableKind::Dataframe
