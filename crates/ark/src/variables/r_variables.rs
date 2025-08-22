@@ -6,7 +6,6 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::data_explorer_comm::ColumnSchema;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::FormattedVariable;
@@ -35,7 +34,6 @@ use harp::utils::r_assert_type;
 use harp::utils::r_is_function;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
-use harp::ColumnNames;
 use libr::R_GlobalEnv;
 use libr::Rf_ScalarLogical;
 use libr::ENVSXP;
@@ -44,12 +42,10 @@ use stdext::spawn;
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::summary_stats::summary_stats;
-use crate::data_explorer::utils::display_type;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::PositronVariable;
-use crate::variables::variable::WorkspaceVariableDisplayType;
 use crate::view::view;
 
 /// Enumeration of treatments for the .Last.value variable
@@ -420,11 +416,11 @@ impl RVariables {
     ) -> anyhow::Result<QueryTableSummaryResult> {
         r_task(|| {
             let env = self.env.get().clone();
-            let obj = PositronVariable::resolve_data_object(env.clone(), &path)?;
+            let table = PositronVariable::resolve_data_object(env.clone(), &path)?;
 
-            let kind = if harp::utils::r_is_data_frame(obj.sexp) {
+            let kind = if harp::utils::r_is_data_frame(table.sexp) {
                 harp::TableKind::Dataframe
-            } else if harp::utils::r_is_matrix(obj.sexp) {
+            } else if harp::utils::r_is_matrix(table.sexp) {
                 harp::TableKind::Matrix
             } else {
                 return Err(anyhow!(
@@ -432,94 +428,66 @@ impl RVariables {
                 ));
             };
 
-            let (num_rows, num_cols) = match kind {
+            let num_cols = match kind {
                 harp::TableKind::Dataframe => {
-                    let nrow = harp::DataFrame::n_row(obj.sexp)?;
-                    let ncol = harp::DataFrame::n_col(obj.sexp)?;
-                    (nrow as i64, ncol as i64)
+                    let ncol = harp::DataFrame::n_col(table.sexp)?;
+                    ncol as i64
                 },
                 harp::TableKind::Matrix => {
-                    let (nrow, ncol) = harp::Matrix::dim(obj.sexp)?;
-                    (nrow as i64, ncol as i64)
+                    let (_nrow, ncol) = harp::Matrix::dim(table.sexp)?;
+                    ncol as i64
                 },
             };
 
-            let column_names = match kind {
-                harp::TableKind::Dataframe => ColumnNames::from_data_frame(obj.sexp)?,
-                harp::TableKind::Matrix => ColumnNames::from_matrix(obj.sexp)?,
-            };
+            let shapes = RDataExplorer::r_get_shape(table.clone())?;
 
-            // Generate column schemas
-            let mut column_schemas = Vec::new();
-            for i in 0..num_cols {
-                let column_name = match column_names.get(i as isize) {
-                    Ok(Some(name)) => name,
-                    Ok(None) | Err(_) => format!("V{}", i + 1),
-                };
+            let column_schemas: Vec<String> = shapes
+                .columns
+                .iter()
+                .map(|schema| serde_json::to_string(schema))
+                .collect::<Result<Vec<_>, _>>()?;
 
-                // Get column type information
-                let column = harp::tbl_get_column(obj.sexp, i as i32, kind)?;
-                let display_type = display_type(column.sexp);
-                let type_name = WorkspaceVariableDisplayType::from(column.sexp, false).display_type;
+            let mut column_profiles: Vec<String> = vec![];
 
-                let schema = ColumnSchema {
-                    column_name,
-                    column_index: i,
-                    type_name: type_name.to_string(),
-                    type_display: display_type,
-                    description: None,
-                    children: None,
-                    precision: None,
-                    scale: None,
-                    timezone: None,
-                    type_size: None,
-                };
-                column_schemas.push(serde_json::to_string(&schema)?);
-            }
-
-            // Generate column profiles if requested
-            let mut column_profiles = Vec::new();
             if query_types.contains(&"summary_stats".to_string()) {
-                let format_options = amalthea::comm::data_explorer_comm::FormatOptions {
-                    large_num_digits: 4,
-                    small_num_digits: 6,
-                    max_integral_digits: 7,
-                    max_value_length: 1000,
-                    thousands_sep: None,
-                };
+                let profiles: Vec<String> = shapes
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, schema)| -> anyhow::Result<String> {
+                        let column = harp::tbl_get_column(table.sexp, i as i32, kind)?;
 
-                for i in 0..num_cols {
-                    let column = harp::tbl_get_column(obj.sexp, i as i32, kind)?;
-                    let display_type = display_type(column.sexp);
-
-                    let summary_stats =
-                        match summary_stats(column.sexp, display_type, &format_options) {
-                            Ok(stats) => Some(stats),
-                            Err(err) => {
-                                log::warn!(
-                                    "Failed to generate summary stats for column {i}: {err}"
-                                );
-                                None
-                            },
+                        let format_options = amalthea::comm::data_explorer_comm::FormatOptions {
+                            large_num_digits: 4,
+                            small_num_digits: 6,
+                            max_integral_digits: 7,
+                            max_value_length: 1000,
+                            thousands_sep: None,
                         };
 
-                    let column_name = match column_names.get(i as isize) {
-                        Ok(Some(name)) => name,
-                        Ok(None) | Err(_) => format!("V{}", i + 1),
-                    };
+                        let summary_stats =
+                            summary_stats(column.sexp, schema.type_display, &format_options).map(
+                                |stats| {
+                                    serde_json::to_value(stats).unwrap_or(serde_json::Value::Null)
+                                },
+                            )?;
 
-                    let profile = serde_json::json!({
-                        "column_name": column_name,
-                        "type_display": format!("{:?}", display_type).to_lowercase(),
-                        "summary_stats": summary_stats
-                    });
+                        let profile = serde_json::json!({
+                            "column_name": schema.column_name,
+                            "type_display": format!("{:?}", schema.type_display).to_lowercase(),
+                            "summary_stats": summary_stats,
+                        })
+                        .to_string();
 
-                    column_profiles.push(serde_json::to_string(&profile)?);
-                }
+                        Ok(profile)
+                    })
+                    .collect::<anyhow::Result<Vec<String>>>()?;
+
+                column_profiles.extend(profiles);
             }
 
             Ok(QueryTableSummaryResult {
-                num_rows,
+                num_rows: shapes.num_rows as i64,
                 num_columns: num_cols,
                 column_schemas,
                 column_profiles,
