@@ -10,6 +10,7 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::FormattedVariable;
 use amalthea::comm::variables_comm::InspectedVariable;
+use amalthea::comm::variables_comm::QueryTableSummaryResult;
 use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
 use amalthea::comm::variables_comm::Variable;
@@ -40,6 +41,7 @@ use stdext::spawn;
 
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
@@ -119,7 +121,7 @@ impl RVariables {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             log::warn!(
-                "Environment: Attempt to monitor or list non-environment object {env:?} ({err:?})"
+                "Variables: Attempt to monitor or list non-environment object {env:?} ({err:?})"
             );
         }
 
@@ -191,17 +193,17 @@ impl RVariables {
                             // appropriate. Retrying is likely to just lead to a busy
                             // loop.
                             log::error!(
-                                "Environment: Error receiving message from frontend: {err:?}"
+                                "Variables: Error receiving message from frontend: {err:?}"
                             );
 
                             break;
                         },
                     };
-                    log::info!("Environment: Received message from frontend: {msg:?}");
+                    log::info!("Variables: Received message from frontend: {msg:?}");
 
                     // Break out of the loop if the frontend has closed the channel
                     if let CommMsg::Close = msg {
-                        log::info!("Environment: Closing down after receiving comm_close from frontend.");
+                        log::info!("Variables: Closing down after receiving comm_close from frontend.");
 
                         // Remember that the user initiated the close so that we can
                         // avoid sending a duplicate close message from the back end
@@ -295,8 +297,9 @@ impl RVariables {
                 let viewer_id = self.view(&params.path)?;
                 Ok(VariablesBackendReply::ViewReply(viewer_id))
             },
-            VariablesBackendRequest::QueryTableSummary(_) => {
-                return Err(anyhow!("Variables: QueryTableSummary not yet supported"));
+            VariablesBackendRequest::QueryTableSummary(params) => {
+                let result = self.query_table_summary(&params.path, &params.query_types)?;
+                Ok(VariablesBackendReply::QueryTableSummaryReply(result))
             },
         }
     }
@@ -400,6 +403,98 @@ impl RVariables {
         })
     }
 
+    /// Query table summary for the given variable.
+    ///
+    /// - `path`: The path to the variable to summarize, as an array of access keys
+    /// - `query_types`: A list of query types (e.g. "summary_stats")
+    ///
+    /// Returns summary information about the table including schemas and profiles.
+    fn query_table_summary(
+        &mut self,
+        path: &Vec<String>,
+        query_types: &Vec<String>,
+    ) -> anyhow::Result<QueryTableSummaryResult> {
+        r_task(|| {
+            let env = self.env.get().clone();
+            let table = PositronVariable::resolve_data_object(env, &path)?;
+
+            let kind = if harp::utils::r_is_data_frame(table.sexp) {
+                harp::TableKind::Dataframe
+            } else if harp::utils::r_is_matrix(table.sexp) {
+                harp::TableKind::Matrix
+            } else {
+                return Err(anyhow!(
+                    "Object is not a supported table type (data.frame or matrix)"
+                ));
+            };
+
+            let num_cols = match kind {
+                harp::TableKind::Dataframe => {
+                    let ncol = harp::DataFrame::n_col(table.sexp)?;
+                    ncol as i64
+                },
+                harp::TableKind::Matrix => {
+                    let (_nrow, ncol) = harp::Matrix::dim(table.sexp)?;
+                    ncol as i64
+                },
+            };
+
+            let shapes = RDataExplorer::r_get_shape(table.clone())?;
+
+            let column_schemas: Vec<String> = shapes
+                .columns
+                .iter()
+                .map(|schema| serde_json::to_string(schema))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            let mut column_profiles: Vec<String> = vec![];
+
+            if query_types.contains(&"summary_stats".to_string()) {
+                let profiles: Vec<String> = shapes
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .map(|(i, schema)| -> anyhow::Result<String> {
+                        let column = harp::tbl_get_column(table.sexp, i as i32, kind)?;
+
+                        let format_options = amalthea::comm::data_explorer_comm::FormatOptions {
+                            large_num_digits: 4,
+                            small_num_digits: 6,
+                            max_integral_digits: 7,
+                            max_value_length: 1000,
+                            thousands_sep: None,
+                        };
+
+                        let summary_stats =
+                            summary_stats(column.sexp, schema.type_display, &format_options).map(
+                                |stats| {
+                                    serde_json::to_value(stats).unwrap_or(serde_json::Value::Null)
+                                },
+                            )?;
+
+                        let profile = serde_json::json!({
+                            "column_name": schema.column_name,
+                            "type_display": format!("{:?}", schema.type_display).to_lowercase(),
+                            "summary_stats": summary_stats,
+                        })
+                        .to_string();
+
+                        Ok(profile)
+                    })
+                    .collect::<anyhow::Result<Vec<String>>>()?;
+
+                column_profiles.extend(profiles);
+            }
+
+            Ok(QueryTableSummaryResult {
+                num_rows: shapes.num_rows as i64,
+                num_columns: num_cols,
+                column_schemas,
+                column_profiles,
+            })
+        })
+    }
+
     fn send_event(&mut self, message: VariablesFrontendEvent, request_id: Option<String>) {
         let data = serde_json::to_value(message);
 
@@ -415,7 +510,7 @@ impl RVariables {
                 self.comm.outgoing_tx.send(comm_msg).unwrap()
             },
             Err(err) => {
-                log::error!("Environment: Failed to serialize environment data: {err}");
+                log::error!("Variables: Failed to serialize environment data: {err}");
             },
         }
     }
@@ -449,7 +544,7 @@ impl RVariables {
                 Err(err) => {
                     // This isn't a critical error but would also be very
                     // unexpected.
-                    log::error!("Environment: Could not evaluate .Last.value ({err:?})");
+                    log::error!("Variables: Could not evaluate .Last.value ({err:?})");
                     None
                 },
             }

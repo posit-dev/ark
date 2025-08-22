@@ -112,7 +112,7 @@ pub struct DataObjectEnvInfo {
     pub env: RThreadSafe<RObject>,
 }
 
-struct DataObjectShape {
+pub(crate) struct DataObjectShape {
     pub columns: Vec<ColumnSchema>,
     pub num_rows: i32,
     pub kind: TableKind,
@@ -580,7 +580,7 @@ impl RDataExplorer {
 
 // Methods that must be run on the main R thread
 impl RDataExplorer {
-    fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
+    pub(crate) fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
         unsafe {
             let table = table.clone();
 

@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use libr::*;
 
 use crate::exec::RFunction;
@@ -46,12 +47,15 @@ impl ColumnNames {
 
     pub fn get_unchecked(&self, index: isize) -> Option<String> {
         if let Some(names) = &self.names {
-            if let Some(name) = names.get_unchecked(index) {
-                if name.len() > 0 {
-                    return Some(name);
-                }
-            }
+            return names.get_unchecked(index);
         }
         None
+    }
+
+    pub fn get(&self, index: isize) -> anyhow::Result<Option<String>> {
+        if let Some(names) = &self.names {
+            return names.get(index).map_err(|err| anyhow!("{err:?}"));
+        }
+        Ok(None)
     }
 }
