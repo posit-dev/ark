@@ -37,9 +37,11 @@ pub enum DefaultRepos {
     /// Set the repository to the default CRAN repository, `cran.rstudio.com`
     RStudio,
 
-    /// Use Posit's Public Package Manager; this is a Posit-hosted service that hosts built
-    /// binaries for many operating systems.
-    PositPPM,
+    /// Use a Posit Package Manager instance with this URL. When the URL is
+    /// `None`, default to the latest CRAN repository on Posit Public Package
+    /// Manager, a Posit-hosted service that hosts built binaries for many
+    /// operating systems.
+    PositPackageManager(Option<url::Url>),
 
     /// Use the repositories specified in the given configuration file.
     ConfFile(PathBuf),
@@ -80,10 +82,19 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
                 apply_default_repos(DefaultRepos::Auto)
             }
         },
-        DefaultRepos::PositPPM => {
+        DefaultRepos::PositPackageManager(None) => {
             log::info!("Setting default repositories to Posit's Public Package Manager");
             let mut repos = HashMap::new();
-            repos.insert("CRAN".to_string(), get_p3m_binary_package_repo());
+            repos.insert("CRAN".to_string(), get_ppm_binary_package_repo(None));
+            apply_repos(repos)
+        },
+        DefaultRepos::PositPackageManager(Some(url)) => {
+            log::info!(
+                "Setting default repositories to custom Package Manager repo: {}",
+                url
+            );
+            let mut repos = HashMap::new();
+            repos.insert("CRAN".to_string(), get_ppm_binary_package_repo(Some(url)));
             apply_repos(repos)
         },
     }
@@ -198,7 +209,12 @@ pub fn apply_repos_conf(path: PathBuf) -> anyhow::Result<()> {
 
 /// Checks the Linux distribution name and version to determine the appropriate P3M repository URL.
 #[cfg(target_os = "linux")]
-fn get_p3m_linux_repo(linux_name: String) -> String {
+fn get_ppm_linux_repo(repo_url: Option<url::Url>, linux_name: String) -> anyhow::Result<String> {
+    let generic_url = match repo_url {
+        Some(url) => url,
+        None => url::Url::parse(GENERIC_P3M_REPO).unwrap(),
+    };
+
     // The following Linux names have 1:1 mappings to a P3M repository URL
     let repo_names = [
         String::from("bookworm"),
@@ -211,26 +227,28 @@ fn get_p3m_linux_repo(linux_name: String) -> String {
         String::from("rhel9"),
     ];
 
-    // First check for an empty name, and default to the generic P3M repo in that case.
-    // Then handle Linux names with a 1:1 mapping to a P3M repo.
-    // Then handle the special cases which map to different P3M repos.
-    // Otherwise, default to the generic P3M repo.
-    if linux_name.is_empty() {
-        return GENERIC_P3M_REPO.to_string();
-    } else if repo_names.contains(&linux_name) {
-        return format!(
-            "https://packagemanager.posit.co/cran/__linux__/{}/latest",
-            linux_name
-        );
+    // Handle special cases which map to different P3M repos.
+    let distro = if repo_names.contains(&linux_name) {
+        &linux_name
     } else if linux_name == "rhel8" {
-        return "https://packagemanager.posit.co/cran/__linux__/centos8/latest".to_string();
+        "centos8"
     } else if linux_name == "sles155" {
-        return "https://packagemanager.posit.co/cran/__linux__/opensuse155/latest".to_string();
+        "opensuse155"
     } else if linux_name == "sles156" {
-        return "https://packagemanager.posit.co/cran/__linux__/opensuse156/latest".to_string();
+        "opensuse156"
     } else {
-        return GENERIC_P3M_REPO.to_string();
+        return Ok(generic_url.to_string());
+    };
+
+    let mut distro_url = generic_url.clone();
+    if let Some(segments) = distro_url.path_segments() {
+        let parts: Vec<&str> = segments.collect();
+        if parts.len() == 2 {
+            distro_url.set_path(&format!("{}/__linux__/{}/{}", parts[0], distro, parts[1]));
+            return Ok(distro_url.to_string());
+        }
     }
+    anyhow::bail!("Invalid Package Manager repository URL: {}", distro_url);
 }
 
 #[cfg(target_os = "linux")]
@@ -262,7 +280,12 @@ fn get_p3m_linux_codename(id: String, version: String, version_codename: String)
     }
 }
 
-fn get_p3m_binary_package_repo() -> String {
+fn get_ppm_binary_package_repo(repo_url: Option<url::Url>) -> String {
+    let generic_url = match repo_url {
+        Some(ref url) => url.clone().to_string(),
+        None => GENERIC_P3M_REPO.to_string(),
+    };
+
     #[cfg(target_os = "linux")]
     {
         // For Linux, we want a distro-specific URL if possible
@@ -285,14 +308,140 @@ fn get_p3m_binary_package_repo() -> String {
                     version = line[version_id_key.len()..].to_string();
                 }
             }
+        } else {
+            log::error!(
+                "Error opening /etc/os-release, falling back to generic URL: {generic_url}",
+            );
+            return generic_url;
         }
 
-        get_p3m_linux_repo(get_p3m_linux_codename(id, version, version_codename))
+        let codename = get_p3m_linux_codename(id, version, version_codename);
+        match get_ppm_linux_repo(repo_url, codename) {
+            Ok(url) => url,
+            Err(e) => {
+                log::error!(
+                    "Error determining Linux binary repository URL, falling back to generic URL '{generic_url}': {e}",
+                );
+                generic_url
+            },
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        // For non-Linux, we can use the generic P3M URL
-        GENERIC_P3M_REPO.to_string()
+        // For non-Linux, we can use the generic URL
+        generic_url
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_ppm_linux_repo() {
+        let test_cases = vec![
+            // Supported distros.
+            (
+                "bookworm",
+                "https://packagemanager.posit.co/cran/__linux__/bookworm/latest",
+            ),
+            (
+                "bullseye",
+                "https://packagemanager.posit.co/cran/__linux__/bullseye/latest",
+            ),
+            (
+                "focal",
+                "https://packagemanager.posit.co/cran/__linux__/focal/latest",
+            ),
+            (
+                "jammy",
+                "https://packagemanager.posit.co/cran/__linux__/jammy/latest",
+            ),
+            (
+                "noble",
+                "https://packagemanager.posit.co/cran/__linux__/noble/latest",
+            ),
+            (
+                "opensuse155",
+                "https://packagemanager.posit.co/cran/__linux__/opensuse155/latest",
+            ),
+            (
+                "opensuse156",
+                "https://packagemanager.posit.co/cran/__linux__/opensuse156/latest",
+            ),
+            (
+                "rhel9",
+                "https://packagemanager.posit.co/cran/__linux__/rhel9/latest",
+            ),
+            // Special cases.
+            (
+                "rhel8",
+                "https://packagemanager.posit.co/cran/__linux__/centos8/latest",
+            ),
+            (
+                "sles155",
+                "https://packagemanager.posit.co/cran/__linux__/opensuse155/latest",
+            ),
+            (
+                "sles156",
+                "https://packagemanager.posit.co/cran/__linux__/opensuse156/latest",
+            ),
+            // Unsupported distros fall back to the generic URL.
+            ("centos7", GENERIC_P3M_REPO),
+            ("arch", GENERIC_P3M_REPO),
+            ("", GENERIC_P3M_REPO),
+        ];
+
+        for (distro, expected) in test_cases {
+            let result = get_ppm_linux_repo(None, distro.to_string()).unwrap();
+            assert_eq!(result, expected);
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_get_custom_ppm_linux_repo() {
+        let test_cases = vec![
+            (
+                "jammy",
+                "https://ppm.internal/approved/__linux__/jammy/2025-03-02",
+            ),
+            (
+                "rhel8",
+                "https://ppm.internal/approved/__linux__/centos8/2025-03-02",
+            ),
+            ("arch", "https://ppm.internal/approved/2025-03-02"),
+            ("", "https://ppm.internal/approved/2025-03-02"),
+        ];
+
+        let custom_url = url::Url::parse("https://ppm.internal/approved/2025-03-02").unwrap();
+        for (distro, expected) in test_cases {
+            let result = get_ppm_linux_repo(Some(custom_url.clone()), distro.to_string()).unwrap();
+            assert_eq!(result, expected);
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_invalid_ppm_url() {
+        let custom_url = url::Url::parse("https://ppm.internal/not/a/repo").unwrap();
+        let result = get_ppm_linux_repo(Some(custom_url), "jammy".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn test_custom_ppm_url_for_non_linux() {
+        let custom_url = url::Url::parse("https://ppm.internal/approved/2025-03-02").unwrap();
+        let result = get_ppm_binary_package_repo(Some(custom_url));
+        assert_eq!(result, "https://ppm.internal/approved/2025-03-02");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn test_generic_ppm_url_for_non_linux() {
+        assert_eq!(get_ppm_binary_package_repo(None), GENERIC_P3M_REPO);
     }
 }
