@@ -213,6 +213,12 @@ pub(crate) fn did_open(
 ) -> anyhow::Result<()> {
     let contents = params.text_document.text.as_str();
     let uri = params.text_document.uri;
+
+    if !is_lsp_uri(&uri) {
+        tracing::trace!("Skipping non-file URI in did_open: {uri}");
+        return Ok(());
+    }
+
     let version = params.text_document.version;
 
     let mut parser = Parser::new();
@@ -240,6 +246,12 @@ pub(crate) fn did_change(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = &params.text_document.uri;
+
+    if !is_lsp_uri(uri) {
+        tracing::trace!("Skipping non-file URI in did_change: {uri}");
+        return Ok(());
+    }
+
     let document = state.get_document_mut(uri)?;
 
     let mut parser = lsp_state
@@ -261,6 +273,11 @@ pub(crate) fn did_close(
     state: &mut WorldState,
 ) -> anyhow::Result<()> {
     let uri = params.text_document.uri;
+
+    if !is_lsp_uri(&uri) {
+        tracing::trace!("Skipping non-file URI in did_close: {uri}");
+        return Ok(());
+    }
 
     // Publish empty set of diagnostics to clear them
     lsp::publish_diagnostics(uri.clone(), Vec::new(), None);
@@ -364,6 +381,11 @@ pub(crate) fn did_change_formatting_options(
     opts: &FormattingOptions,
     state: &mut WorldState,
 ) {
+    if !is_lsp_uri(uri) {
+        tracing::trace!("Skipping non-file URI in did_change_formatting_options: {uri}");
+        return;
+    }
+
     let Ok(doc) = state.get_document_mut(uri) else {
         return;
     };
@@ -505,4 +527,11 @@ pub(crate) fn did_close_virtual_document(
 ) -> anyhow::Result<()> {
     state.virtual_documents.remove(&params.uri);
     Ok(())
+}
+
+/// Can a URI be opened by the LSP?
+/// Discards e.g. `inmemory:` URIs.
+/// https://github.com/posit-dev/positron/issues/8790
+pub(crate) fn is_lsp_uri(uri: &url::Url) -> bool {
+    uri.scheme() == "file" || uri.scheme() == "ark"
 }
