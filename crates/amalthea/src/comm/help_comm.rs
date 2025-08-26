@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 /// Possible values for Kind in ShowHelp
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ShowHelpKind {
 	#[serde(rename = "html")]
 	#[strum(to_string = "html")]

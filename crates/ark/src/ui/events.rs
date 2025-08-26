@@ -5,6 +5,9 @@
 //
 //
 
+use std::str::FromStr;
+
+use amalthea::comm::ui_comm::OpenEditorKind;
 use amalthea::comm::ui_comm::OpenEditorParams;
 use amalthea::comm::ui_comm::OpenWithSystemParams;
 use amalthea::comm::ui_comm::OpenWorkspaceParams;
@@ -63,11 +66,16 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
     file: SEXP,
     line: SEXP,
     column: SEXP,
+    uri: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let kind: String = RObject::view(uri).try_into()?;
+    let kind = OpenEditorKind::from_str(&kind)?;
+
     let params = OpenEditorParams {
         file: RObject::view(file).try_into()?,
         line: RObject::view(line).try_into()?,
         column: RObject::view(column).try_into()?,
+        kind,
     };
 
     let event = UiFrontendEvent::OpenEditor(params);

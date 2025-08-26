@@ -64,7 +64,7 @@ pub struct PlotRenderSettings {
 }
 
 /// Possible values for PlotUnit
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum PlotUnit {
 	#[serde(rename = "pixels")]
 	#[strum(to_string = "pixels")]
@@ -76,7 +76,7 @@ pub enum PlotUnit {
 }
 
 /// Possible values for PlotRenderFormat
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum PlotRenderFormat {
 	#[serde(rename = "png")]
 	#[strum(to_string = "png")]
