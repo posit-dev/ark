@@ -58,7 +58,7 @@ We prefer using the ragg device if it is available, as it is cheaper and has bet
 
 Certain plotting functions like `stats:::plot.lm()` or `demo(graphics)` will draw multiple plots in a row, pausing for the user to hit enter before advancing to the next page. This requires a few things to work properly:
 
--   Internally, `ARK_GRAPHICS_DEVICE_NAME` is set to `"ark.graphics.device"`, which matches the name of a function we expose named `ark.graphics.device()`, which is in charge of creating a new Ark graphics device and is findable by `get0("ark.graphics.device", globalenv(), inherits = TRUE)`.
+-   Internally, `ARK_GRAPHICS_DEVICE_NAME` is set to `".ark.graphics.device"`, which matches the name of a function we expose named `.ark.graphics.device()`, which is in charge of creating a new Ark graphics device and is findable by `get0(".ark.graphics.device", globalenv(), inherits = TRUE)`.
 
 -   `grDevices::deviceIsInteractive(ARK_GRAPHICS_DEVICE_NAME)` must be called during startup to "register" ourselves as a known interactive graphics device.
 
@@ -77,6 +77,8 @@ With all of that in place:
 -   `grDevices::dev.interactive()` should return `TRUE` after you've created your first plot (before then, the device is `"null device"` and this returns `FALSE`, this matches RStudio).
 
     -   This is used in the default value of the `ask` argument of `stats:::plot.lm()` and by the time `ask` is evaluated our device has been created so this returns `TRUE` there as intended.
+
+Note that with this approach, a motivated user can still set `options(device = "quartz")` in their `.Rprofile` if they'd like to use their own default graphics device rather than the one that comes with ark / Positron.
 
 # Structures and terminology
 
