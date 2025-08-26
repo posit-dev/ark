@@ -39,7 +39,7 @@
     column = 0L
 ) {
     # Don't normalize if that's an `ark:` URI
-    if (grepl("^ark:", file)) {
+    if (is_ark_uri(file)) {
         kind <- "uri"
     } else {
         kind <- "path"
