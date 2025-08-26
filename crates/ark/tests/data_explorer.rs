@@ -2536,3 +2536,98 @@ fn test_search_schema_edge_cases() {
     );
     TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]); // All variations
 }
+
+#[test]
+fn test_column_labels() {
+    let _lock = r_test_lock();
+
+    // Create a data frame with column labels
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            df_with_labels <- data.frame(
+                age = c(25, 30, 35),
+                income = c(50000, 60000, 70000),
+                score = c(85.5, 92.0, 88.5)
+            )
+            attr(df_with_labels$age, "label") <- "Age in years"
+            attr(df_with_labels$income, "label") <- "Annual income (USD)"
+            attr(df_with_labels$score, "label") <- "Test score percentage"
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_with_labels");
+    let socket = setup.socket();
+
+    // Get schema and verify column labels are present
+    let req = RequestBuilder::get_schema(vec![0, 1, 2]);
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 3);
+
+            // Check first column
+            assert_eq!(schema.columns[0].column_name, "age");
+            assert_eq!(schema.columns[0].column_label, Some("Age in years".to_string()));
+
+            // Check second column
+            assert_eq!(schema.columns[1].column_name, "income");
+            assert_eq!(schema.columns[1].column_label, Some("Annual income (USD)".to_string()));
+
+            // Check third column
+            assert_eq!(schema.columns[2].column_name, "score");
+            assert_eq!(schema.columns[2].column_label, Some("Test score percentage".to_string()));
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_with_labels)").unwrap();
+    });
+}
+
+#[test]
+fn test_column_labels_missing() {
+    let _lock = r_test_lock();
+
+    // Create a data frame without column labels
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            df_no_labels <- data.frame(
+                x = 1:3,
+                y = 4:6,
+                z = 7:9
+            )
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_no_labels");
+    let socket = setup.socket();
+
+    // Get schema and verify column labels are None
+    let req = RequestBuilder::get_schema(vec![0, 1, 2]);
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 3);
+
+            // All columns should have no labels
+            assert_eq!(schema.columns[0].column_name, "x");
+            assert_eq!(schema.columns[0].column_label, None);
+
+            assert_eq!(schema.columns[1].column_name, "y");
+            assert_eq!(schema.columns[1].column_label, None);
+
+            assert_eq!(schema.columns[2].column_name, "z");
+            assert_eq!(schema.columns[2].column_label, None);
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_no_labels)").unwrap();
+    });
+}
