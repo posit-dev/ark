@@ -74,6 +74,8 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::table_kind;
 use harp::tbl_get_column;
+use harp::vector::CharacterVector;
+use harp::vector::Vector;
 use harp::ColumnNames;
 use harp::TableKind;
 use itertools::Itertools;
@@ -619,8 +621,32 @@ impl RDataExplorer {
                 let type_name = WorkspaceVariableDisplayType::from(col, false).display_type;
                 let type_display = display_type(col);
 
+                // Get the label attribute if present (for data frames only)
+                let column_label = match kind {
+                    harp::TableKind::Dataframe => {
+                        let col_obj = harp::RObject::view(col);
+                        col_obj.get_attribute("label").and_then(|label_obj| {
+                            // CharacterVector::new() already checks if it's a STRSXP
+                            CharacterVector::new(label_obj.sexp)
+                                .ok()
+                                .filter(|cv| cv.len() > 0) // Only proceed if non-empty
+                                .and_then(|cv| cv.get_unchecked(0))
+                                .and_then(|label| {
+                                    // Filter out empty strings - treat them as no label
+                                    if label.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(label.to_string())
+                                    }
+                                })
+                        })
+                    },
+                    _ => None,
+                };
+
                 column_schemas.push(ColumnSchema {
                     column_name,
+                    column_label,
                     column_index: i as i64,
                     type_name,
                     type_display,

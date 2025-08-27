@@ -103,6 +103,9 @@ pub struct ColumnSchema {
 	/// Name of column as UTF-8 string
 	pub column_name: String,
 
+	/// Display label for column (e.g., from R's label attribute)
+	pub column_label: Option<String>,
+
 	/// The position of the column within the table without any column filters
 	pub column_index: i64,
 
@@ -690,7 +693,7 @@ pub struct ColumnSelection {
 }
 
 /// Possible values for SortOrder in SearchSchema
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum SearchSchemaSortOrder {
 	#[serde(rename = "original")]
 	#[strum(to_string = "original")]

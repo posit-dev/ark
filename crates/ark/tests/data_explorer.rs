@@ -2536,3 +2536,228 @@ fn test_search_schema_edge_cases() {
     );
     TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]); // All variations
 }
+
+#[test]
+fn test_column_labels() {
+    let _lock = r_test_lock();
+
+    // Create a data frame with column labels
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            df_with_labels <- data.frame(
+                age = c(25, 30, 35),
+                income = c(50000, 60000, 70000),
+                score = c(85.5, 92.0, 88.5)
+            )
+            attr(df_with_labels$age, "label") <- "Age in years"
+            attr(df_with_labels$income, "label") <- "Annual income (USD)"
+            attr(df_with_labels$score, "label") <- "Test score percentage"
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_with_labels");
+    let socket = setup.socket();
+
+    // Get schema and verify column labels are present
+    let req = RequestBuilder::get_schema(vec![0, 1, 2]);
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 3);
+
+            // Check first column
+            assert_eq!(schema.columns[0].column_name, "age");
+            assert_eq!(schema.columns[0].column_label, Some("Age in years".to_string()));
+
+            // Check second column
+            assert_eq!(schema.columns[1].column_name, "income");
+            assert_eq!(schema.columns[1].column_label, Some("Annual income (USD)".to_string()));
+
+            // Check third column
+            assert_eq!(schema.columns[2].column_name, "score");
+            assert_eq!(schema.columns[2].column_label, Some("Test score percentage".to_string()));
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_with_labels)").unwrap();
+    });
+}
+
+#[test]
+fn test_column_labels_missing() {
+    let _lock = r_test_lock();
+
+    // Create a data frame without column labels
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            df_no_labels <- data.frame(
+                x = 1:3,
+                y = 4:6,
+                z = 7:9
+            )
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_no_labels");
+    let socket = setup.socket();
+
+    // Get schema and verify column labels are None
+    let req = RequestBuilder::get_schema(vec![0, 1, 2]);
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 3);
+
+            // All columns should have no labels
+            assert_eq!(schema.columns[0].column_name, "x");
+            assert_eq!(schema.columns[0].column_label, None);
+
+            assert_eq!(schema.columns[1].column_name, "y");
+            assert_eq!(schema.columns[1].column_label, None);
+
+            assert_eq!(schema.columns[2].column_name, "z");
+            assert_eq!(schema.columns[2].column_label, None);
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_no_labels)").unwrap();
+    });
+}
+
+#[test]
+fn test_column_labels_haven_compatibility() {
+    let _lock = r_test_lock();
+
+    // Test with haven::labelled vectors if haven is available
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            # Try to load haven; skip if not available
+            if (require(haven, quietly = TRUE)) {
+                df_haven <- data.frame(
+                    basic = 1:3,
+                    labelled_var = haven::labelled(c(1, 2, 3), label = "Labelled numeric variable")
+                )
+                # Also add a regular label attribute for comparison
+                attr(df_haven$basic, "label") <- "Basic variable with regular label"
+                haven_available <- TRUE
+            } else {
+                # Fallback: create a data frame that simulates haven::labelled behavior
+                df_haven <- data.frame(
+                    basic = 1:3,
+                    labelled_var = c(1, 2, 3)
+                )
+                attr(df_haven$basic, "label") <- "Basic variable with regular label"
+                attr(df_haven$labelled_var, "label") <- "Labelled numeric variable"
+                class(df_haven$labelled_var) <- c("haven_labelled", "vctrs_vctr", "double")
+                haven_available <- FALSE
+            }
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_haven");
+    let socket = setup.socket();
+
+    // Get schema and verify column labels work with both regular and haven labelled columns
+    let req = RequestBuilder::get_schema(vec![0, 1]);
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 2);
+
+            // Check basic column with regular label
+            assert_eq!(schema.columns[0].column_name, "basic");
+            assert_eq!(schema.columns[0].column_label, Some("Basic variable with regular label".to_string()));
+
+            // Check haven::labelled column
+            assert_eq!(schema.columns[1].column_name, "labelled_var");
+            assert_eq!(schema.columns[1].column_label, Some("Labelled numeric variable".to_string()));
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_haven, haven_available)").unwrap();
+    });
+}
+
+#[test]
+fn test_column_labels_edge_cases() {
+    let _lock = r_test_lock();
+
+    // Test edge cases: empty labels, non-character labels, multiple labels, etc.
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            df_edge_cases <- data.frame(
+                normal = c(1, 2, 3),
+                empty_label = c(4, 5, 6),
+                numeric_label = c(7, 8, 9),
+                multiple_labels = c(10, 11, 12),
+                null_label = c(13, 14, 15)
+            )
+            
+            # Normal case
+            attr(df_edge_cases$normal, "label") <- "Normal label"
+            
+            # Empty string label
+            attr(df_edge_cases$empty_label, "label") <- ""
+            
+            # Numeric label (should be ignored/converted safely)
+            attr(df_edge_cases$numeric_label, "label") <- 42
+            
+            # Multiple character labels (should take first one)
+            attr(df_edge_cases$multiple_labels, "label") <- c("First label", "Second label")
+            
+            # NULL label (should result in None)
+            attr(df_edge_cases$null_label, "label") <- NULL
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_edge_cases");
+    let socket = setup.socket();
+
+    // Get schema and verify edge cases are handled correctly
+    let req = RequestBuilder::get_schema(vec![0, 1, 2, 3, 4]);
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 5);
+
+            // Normal case
+            assert_eq!(schema.columns[0].column_name, "normal");
+            assert_eq!(schema.columns[0].column_label, Some("Normal label".to_string()));
+
+            // Empty label should be treated as no label (None)
+            assert_eq!(schema.columns[1].column_name, "empty_label");
+            assert_eq!(schema.columns[1].column_label, None);
+
+            // Numeric label should be ignored (None)
+            assert_eq!(schema.columns[2].column_name, "numeric_label");
+            assert_eq!(schema.columns[2].column_label, None);
+
+            // Multiple labels should take the first one
+            assert_eq!(schema.columns[3].column_name, "multiple_labels");
+            assert_eq!(schema.columns[3].column_label, Some("First label".to_string()));
+
+            // NULL label should be None
+            assert_eq!(schema.columns[4].column_name, "null_label");
+            assert_eq!(schema.columns[4].column_label, None);
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_edge_cases)").unwrap();
+    });
+}
