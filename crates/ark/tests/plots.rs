@@ -101,3 +101,59 @@ par(mfrow = c(1, 1))
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+#[test]
+fn test_graphics_device_initialization() {
+    let frontend = DummyArkFrontend::lock();
+
+    // On startup we are in the interactive list, but not current device
+    let code = "'.ark.graphics.device' %in% grDevices::deviceIsInteractive()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // The current device is `"null device"`
+    let code = ".Device";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"null device\"");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // The current `"null device"` is not interactive
+    let code = "grDevices::dev.interactive()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] FALSE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // But `orNone = TRUE` looks at `options(device =)` in this case, which
+    // we set to us, so this works (and is used by `demo(graphics)`)
+    let code = "grDevices::dev.interactive(orNone = TRUE)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Now simulate the user creating a plot, which makes us the current graphics device
+    let code = "x <- .ark.graphics.device(); grDevices::dev.interactive()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}

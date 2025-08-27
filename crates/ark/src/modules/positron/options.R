@@ -21,11 +21,6 @@ options(browser = function(url) {
     .ps.Call("ps_browse_url", as.character(url))
 })
 
-# Set up graphics device
-options(device = function() {
-    .ps.Call("ps_graphics_device")
-})
-
 # Register our password handler as the generic `askpass` option.
 # Same as RStudio, see `?rstudioapi::askForPassword` for rationale.
 options(askpass = function(prompt) {
