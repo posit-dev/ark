@@ -12,6 +12,7 @@ use std::env;
 
 use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
+use anyhow::Context;
 use ark::interface::SessionMode;
 use ark::logger;
 use ark::repos::DefaultRepos;
@@ -48,6 +49,7 @@ Available options:
                          "none" (do not alter the 'repos' option in any way)
 --repos-conf             Set the default repositories to use from a configuration file
                          containing a list of named repositories (`name = url`)
+--default-ppm-repo       Set the default repositories to a custom Posit Package Manager URL.
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
                          will be used)
@@ -139,12 +141,12 @@ fn main() -> anyhow::Result<()> {
                 if let Some(repos) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
                         return Err(anyhow::anyhow!(
-                            "The default repository options can only be specified once; (found '{repos}, had {default_repos:?}')."
+                            "Only one of `--default-repos`, `--repos-conf`, or `--default-ppm-repo` can be specified."
                         ));
                     }
                     default_repos = match repos.as_str() {
                         "rstudio" => DefaultRepos::RStudio,
-                        "posit-ppm" => DefaultRepos::PositPPM,
+                        "posit-ppm" => DefaultRepos::PositPackageManager(None),
                         "none" => DefaultRepos::None,
                         _ => {
                             return Err(anyhow::anyhow!(
@@ -162,7 +164,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(repos) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
                         return Err(anyhow::anyhow!(
-                            "The default repository options can only be specified once; (found '{repos}, had {default_repos:?}')."
+                            "Only one of `--default-repos`, `--repos-conf`, or `--default-ppm-repo` can be specified."
                         ));
                     }
                     let path = std::path::PathBuf::from(repos.clone());
@@ -177,6 +179,34 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     return Err(anyhow::anyhow!(
                         "A path to a default repository configuration file must follow the --repos-conf option."
+                    ));
+                }
+            },
+            "--default-ppm-repo" => {
+                if let Some(url) = argv.next() {
+                    if default_repos != DefaultRepos::Auto {
+                        return Err(anyhow::anyhow!(
+                            "Only one of `--default-repos`, `--repos-conf`, or `--default-ppm-repo` can be specified."
+                        ));
+                    }
+                    let parsed =
+                        url::Url::parse(&url).context("Failed to parse --default-ppm-repo URL")?;
+                    // The repository must be in the form /<repo>/<snapshot>
+                    // (i.e. /cran/latest) to work correctly. We validate this
+                    // upfront to reduce the number of downstream errors.
+                    let segments = parsed.path_segments().ok_or_else(|| {
+                        anyhow::anyhow!("Invalid Package Manager repository URL: {}", url)
+                    })?;
+                    if segments.count() != 2 {
+                        return Err(anyhow::anyhow!(
+                            "Invalid Package Manager repository URL: {}",
+                            url
+                        ));
+                    }
+                    default_repos = DefaultRepos::PositPackageManager(Some(parsed))
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "The `--default-ppm-repo` option must be followed by a repository URL."
                     ));
                 }
             },
