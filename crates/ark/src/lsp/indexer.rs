@@ -492,7 +492,6 @@ fn index_comment(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
 
     use assert_matches::assert_matches;
     use insta::assert_debug_snapshot;
@@ -500,12 +499,12 @@ mod tests {
 
     use super::*;
     use crate::lsp::documents::Document;
+    use crate::lsp::util::test_path;
 
     macro_rules! test_index {
         ($code:expr) => {
             let doc = Document::new($code, None);
-            let path = PathBuf::from("/path/to/file.R");
-            let uri = Url::from_file_path(&path).unwrap();
+            let uri = test_path("/path/to/file.R");
             let root = doc.ast.root_node();
             let mut cursor = root.walk();
 
