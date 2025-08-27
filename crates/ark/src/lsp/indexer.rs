@@ -261,8 +261,6 @@ pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
     // Only index R files for file URIs. This discards `inmemory` (Console) and
     // `ark` schemes in particular.
 
-    log::error!("=== Creating index for URI: {uri:?}");
-
     if uri.scheme() != "file" {
         return Ok(());
     }
