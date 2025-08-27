@@ -43,7 +43,6 @@ impl FileId {
         Self { uri }
     }
 
-    #[allow(unused)]
     pub fn as_str(&self) -> &str {
         self.uri.as_str()
     }
