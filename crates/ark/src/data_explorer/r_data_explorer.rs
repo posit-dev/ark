@@ -626,14 +626,19 @@ impl RDataExplorer {
                     harp::TableKind::Dataframe => {
                         let col_obj = harp::RObject::view(col);
                         col_obj.get_attribute("label").and_then(|label_obj| {
-                            // Convert to string if it's a character vector
-                            if label_obj.kind() == STRSXP && harp::r_length(label_obj.sexp) > 0 {
-                                CharacterVector::new(label_obj.sexp)
-                                    .ok()
-                                    .and_then(|cv| cv.get_unchecked(0))
-                            } else {
-                                None
-                            }
+                            // CharacterVector::new() already checks if it's a STRSXP
+                            CharacterVector::new(label_obj.sexp)
+                                .ok()
+                                .filter(|cv| cv.len() > 0) // Only proceed if non-empty
+                                .and_then(|cv| cv.get_unchecked(0))
+                                .and_then(|label| {
+                                    // Filter out empty strings - treat them as no label
+                                    if label.trim().is_empty() {
+                                        None
+                                    } else {
+                                        Some(label.to_string())
+                                    }
+                                })
                         })
                     },
                     _ => None,
