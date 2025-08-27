@@ -51,7 +51,7 @@ pub fn goto_definition<'a>(
             indexer::find_in_file(symbol.as_str(), uri).or_else(|| indexer::find(symbol.as_str()));
 
         if let Some((file_id, entry)) = info {
-            let target_uri = file_id.as_url().clone();
+            let target_uri = file_id.as_uri().clone();
             let link = LocationLink {
                 origin_selection_range: None,
                 target_uri,

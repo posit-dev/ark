@@ -35,21 +35,21 @@ use crate::treesitter::TsQuery;
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct FileId {
     /// The URL representing the file
-    url: Url,
+    uri: Url,
 }
 
 impl FileId {
-    pub fn from_uri(uri: &Url) -> Self {
-        Self { url: uri.clone() }
+    pub fn from_uri(uri: Url) -> Self {
+        Self { uri }
     }
 
     #[allow(unused)]
     pub fn as_str(&self) -> &str {
-        self.url.as_str()
+        self.uri.as_str()
     }
 
-    pub fn as_url(&self) -> &Url {
-        &self.url
+    pub fn as_uri(&self) -> &Url {
+        &self.uri
     }
 }
 
@@ -134,7 +134,7 @@ pub fn find(symbol: &str) -> Option<(FileId, IndexEntry)> {
 pub fn find_in_file(symbol: &str, uri: &Url) -> Option<(FileId, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
-    let file_id = FileId::from_uri(uri);
+    let file_id = FileId::from_uri(uri.clone());
 
     if let Some(symbol_index) = index.get(&file_id) {
         if let Some(entry) = symbol_index.get(symbol) {
@@ -149,7 +149,7 @@ pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
     for (file_id, symbol_index) in index.iter() {
-        let uri = file_id.as_url();
+        let uri = file_id.as_uri();
         for (symbol, entry) in symbol_index.iter() {
             callback(uri, symbol, entry);
         }
@@ -165,7 +165,7 @@ pub fn update(document: &Document, uri: &Url) -> anyhow::Result<()> {
 
 fn insert(uri: &Url, entry: IndexEntry) -> anyhow::Result<()> {
     let mut index = WORKSPACE_INDEX.lock().unwrap();
-    let file_id = FileId::from_uri(uri);
+    let file_id = FileId::from_uri(uri.clone());
 
     let file_index = index.entry(file_id).or_default();
     index_insert(file_index, entry);
@@ -191,7 +191,7 @@ fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
 
 #[tracing::instrument(level = "trace")]
 pub(crate) fn delete(uri: &Url) -> anyhow::Result<()> {
-    let file_id = FileId::from_uri(uri);
+    let file_id = FileId::from_uri(uri.clone());
     let mut index = WORKSPACE_INDEX.lock().unwrap();
 
     // Only clears if the key exists
@@ -206,8 +206,8 @@ pub(crate) fn delete(uri: &Url) -> anyhow::Result<()> {
 pub(crate) fn rename(old_uri: &Url, new_uri: &Url) -> anyhow::Result<()> {
     let mut index = WORKSPACE_INDEX.lock().unwrap();
 
-    let old_file_id = FileId::from_uri(old_uri);
-    let new_file_id = FileId::from_uri(new_uri);
+    let old_file_id = FileId::from_uri(old_uri.clone());
+    let new_file_id = FileId::from_uri(new_uri.clone());
 
     if let Some(entries) = index.remove(&old_file_id) {
         index.insert(new_file_id, entries);
