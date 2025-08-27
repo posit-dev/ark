@@ -91,19 +91,17 @@ fn completions_from_workspace(
                 let mut path = uri.as_str().to_owned();
 
                 if uri.scheme() == "file" {
-                    let Ok(file_path) = uri.to_file_path() else {
-                        return;
-                    };
-
-                    for folder in &state.workspace.folders {
-                        let Ok(folder_path) = folder.to_file_path() else {
-                            continue;
-                        };
-                        if let Ok(relative_path) = file_path.strip_prefix(&folder_path) {
-                            path = relative_path.to_string_lossy().to_string();
-                            break;
+                    if let Ok(file_path) = uri.to_file_path() {
+                        for folder in &state.workspace.folders {
+                            let Ok(folder_path) = folder.to_file_path() else {
+                                continue;
+                            };
+                            if let Ok(relative_path) = file_path.strip_prefix(&folder_path) {
+                                path = relative_path.to_string_lossy().to_string();
+                                break;
+                            }
                         }
-                    }
+                    };
                 }
 
                 let value = format!(
