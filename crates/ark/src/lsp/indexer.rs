@@ -6,13 +6,11 @@
 //
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
-use anyhow::anyhow;
 use regex::Regex;
 use ropey::Rope;
 use stdext::unwrap;
@@ -20,6 +18,7 @@ use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 use tree_sitter::Query;
+use url::Url;
 use walkdir::DirEntry;
 use walkdir::WalkDir;
 
@@ -31,6 +30,28 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
+
+/// FileId represents a unique identifier for a file in the workspace index
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct FileId {
+    /// The URL representing the file
+    url: Url,
+}
+
+impl FileId {
+    pub fn from_uri(uri: &Url) -> Self {
+        Self { url: uri.clone() }
+    }
+
+    #[allow(unused)]
+    pub fn as_str(&self) -> &str {
+        self.url.as_str()
+    }
+
+    pub fn as_url(&self) -> &Url {
+        &self.url
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum IndexEntryData {
@@ -58,10 +79,9 @@ pub struct IndexEntry {
     pub data: IndexEntryData,
 }
 
-type DocumentPath = String;
 type DocumentSymbol = String;
 type DocumentSymbolIndex = HashMap<DocumentSymbol, IndexEntry>;
-type WorkspaceIndex = Arc<Mutex<HashMap<DocumentPath, DocumentSymbolIndex>>>;
+type WorkspaceIndex = Arc<Mutex<HashMap<FileId, DocumentSymbolIndex>>>;
 
 static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(|| Default::default());
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
@@ -75,12 +95,18 @@ pub fn start(folders: Vec<String>) {
     for folder in folders {
         let walker = WalkDir::new(folder);
         for entry in walker.into_iter().filter_entry(|e| filter_entry(e)) {
-            if let Ok(entry) = entry {
-                if entry.file_type().is_file() {
-                    if let Err(err) = create(entry.path()) {
-                        lsp::log_error!("Can't index file {:?}: {err:?}", entry.path());
-                    }
-                }
+            let Ok(entry) = entry else {
+                continue;
+            };
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Ok(uri) = Url::from_file_path(entry.path()) else {
+                lsp::log_warn!("Can't convert file path to URI {:?}", entry.path());
+                continue;
+            };
+            if let Err(err) = create(&uri) {
+                lsp::log_error!("Can't index file {:?}: {err:?}", entry.path());
             }
         }
     }
@@ -92,12 +118,12 @@ pub fn start(folders: Vec<String>) {
 }
 
 /// Search the workspace files and return the first symbol match
-pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
+pub fn find(symbol: &str) -> Option<(FileId, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
-    for (path, index) in index.iter() {
+    for (file_id, index) in index.iter() {
         if let Some(entry) = index.get(symbol) {
-            return Some((path.clone(), entry.clone()));
+            return Some((file_id.clone(), entry.clone()));
         }
     }
 
@@ -105,44 +131,44 @@ pub fn find(symbol: &str) -> Option<(String, IndexEntry)> {
 }
 
 /// Search a specific workspace file for a symbol
-pub fn find_in_file(symbol: &str, path: &std::path::Path) -> Option<(String, IndexEntry)> {
+pub fn find_in_file(symbol: &str, uri: &Url) -> Option<(FileId, IndexEntry)> {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
-    if let Ok(path_str) = str_from_path(path) {
-        if let Some(index) = index.get(path_str) {
-            if let Some(entry) = index.get(symbol) {
-                return Some((path_str.to_string(), entry.clone()));
-            }
+    let file_id = FileId::from_uri(uri);
+
+    if let Some(symbol_index) = index.get(&file_id) {
+        if let Some(entry) = symbol_index.get(symbol) {
+            return Some((file_id, entry.clone()));
         }
     }
 
     None
 }
 
-pub fn map(mut callback: impl FnMut(&Path, &String, &IndexEntry)) {
+pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
     let index = WORKSPACE_INDEX.lock().unwrap();
 
-    for (path, index) in index.iter() {
-        for (symbol, entry) in index.iter() {
-            let path = Path::new(path);
-            callback(path, symbol, entry);
+    for (file_id, symbol_index) in index.iter() {
+        let uri = file_id.as_url();
+        for (symbol, entry) in symbol_index.iter() {
+            callback(uri, symbol, entry);
         }
     }
 }
 
-#[tracing::instrument(level = "trace", skip_all, fields(path = ?path))]
-pub fn update(document: &Document, path: &Path) -> anyhow::Result<()> {
-    delete(path)?;
-    index_document(document, path);
+#[tracing::instrument(level = "trace", skip_all, fields(uri = %uri))]
+pub fn update(document: &Document, uri: &Url) -> anyhow::Result<()> {
+    delete(uri)?;
+    index_document(document, uri);
     Ok(())
 }
 
-fn insert(path: &Path, entry: IndexEntry) -> anyhow::Result<()> {
+fn insert(uri: &Url, entry: IndexEntry) -> anyhow::Result<()> {
     let mut index = WORKSPACE_INDEX.lock().unwrap();
-    let path = str_from_path(path)?;
+    let file_id = FileId::from_uri(uri);
 
-    let index = index.entry(path.to_string()).or_default();
-    index_insert(index, entry);
+    let file_index = index.entry(file_id).or_default();
+    index_insert(file_index, entry);
 
     Ok(())
 }
@@ -164,12 +190,12 @@ fn index_insert(index: &mut HashMap<String, IndexEntry>, entry: IndexEntry) {
 }
 
 #[tracing::instrument(level = "trace")]
-pub(crate) fn delete(path: &Path) -> anyhow::Result<()> {
+pub(crate) fn delete(uri: &Url) -> anyhow::Result<()> {
+    let file_id = FileId::from_uri(uri);
     let mut index = WORKSPACE_INDEX.lock().unwrap();
-    let path = str_from_path(path)?;
 
-    // Only clears if the `path` was an existing key
-    index.entry(path.into()).and_modify(|index| {
+    // Only clears if the key exists
+    index.entry(file_id).and_modify(|index| {
         index.clear();
     });
 
@@ -177,13 +203,14 @@ pub(crate) fn delete(path: &Path) -> anyhow::Result<()> {
 }
 
 #[tracing::instrument(level = "trace")]
-pub(crate) fn rename(old: &Path, new: &Path) -> anyhow::Result<()> {
+pub(crate) fn rename(old_uri: &Url, new_uri: &Url) -> anyhow::Result<()> {
     let mut index = WORKSPACE_INDEX.lock().unwrap();
-    let old = str_from_path(old)?;
-    let new = str_from_path(new)?;
 
-    if let Some(entries) = index.remove(old) {
-        index.insert(new.to_string(), entries);
+    let old_file_id = FileId::from_uri(old_uri);
+    let new_file_id = FileId::from_uri(new_uri);
+
+    if let Some(entries) = index.remove(&old_file_id) {
+        index.insert(new_file_id, entries);
     }
 
     Ok(())
@@ -205,13 +232,6 @@ impl Drop for ResetIndexerGuard {
     fn drop(&mut self) {
         indexer_clear();
     }
-}
-
-fn str_from_path(path: &Path) -> anyhow::Result<&str> {
-    path.to_str().ok_or(anyhow!(
-        "Couldn't convert path {} to string",
-        path.to_string_lossy()
-    ))
 }
 
 // TODO: Should we consult the project .gitignore for ignored files?
@@ -238,8 +258,19 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
     true
 }
 
-pub(crate) fn create(path: &Path) -> anyhow::Result<()> {
-    // Only index R files
+pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
+    // Only index R files for file URIs. This discards `inmemory` (Console) and
+    // `ark` schemes in particular.
+
+    log::error!("=== Creating index for URI: {uri:?}");
+
+    if uri.scheme() != "file" {
+        return Ok(());
+    }
+    let Ok(path) = uri.to_file_path() else {
+        return Ok(());
+    };
+
     let ext = path.extension().unwrap_or_default();
     if ext != "r" && ext != "R" {
         return Ok(());
@@ -251,45 +282,44 @@ pub(crate) fn create(path: &Path) -> anyhow::Result<()> {
     let contents = String::from_utf8(contents)?;
     let document = Document::new(contents.as_str(), None);
 
-    index_document(&document, path);
+    index_document(&document, uri);
 
     Ok(())
 }
 
-fn index_document(document: &Document, path: &Path) {
+fn index_document(document: &Document, uri: &Url) {
     let ast = &document.ast;
     let contents = &document.contents;
-
     let root = ast.root_node();
     let mut cursor = root.walk();
     let mut entries = Vec::new();
 
     for node in root.children(&mut cursor) {
-        if let Err(err) = index_node(path, contents, &node, &mut entries) {
+        if let Err(err) = index_node(uri, contents, &node, &mut entries) {
             lsp::log_error!("Can't index document: {err:?}");
         }
     }
 
     for entry in entries {
-        if let Err(err) = insert(path, entry) {
+        if let Err(err) = insert(uri, entry) {
             lsp::log_error!("Can't insert index entry: {err:?}");
         }
     }
 }
 
 fn index_node(
-    path: &Path,
+    uri: &Url,
     contents: &Rope,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
-    index_assignment(path, contents, node, entries)?;
-    index_comment(path, contents, node, entries)?;
+    index_assignment(uri, contents, node, entries)?;
+    index_comment(uri, contents, node, entries)?;
     Ok(())
 }
 
 fn index_assignment(
-    path: &Path,
+    uri: &Url,
     contents: &Rope,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
@@ -314,7 +344,7 @@ fn index_assignment(
     if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
         crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
     {
-        index_r6_class_methods(path, contents, &rhs, entries)?;
+        index_r6_class_methods(uri, contents, &rhs, entries)?;
         // Fallthrough to index the variable to which the R6 class is assigned
     }
 
@@ -372,7 +402,7 @@ fn index_assignment(
 }
 
 fn index_r6_class_methods(
-    _path: &Path,
+    _uri: &Url,
     contents: &Rope,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
@@ -420,7 +450,7 @@ fn index_r6_class_methods(
 }
 
 fn index_comment(
-    _path: &Path,
+    _uri: &Url,
     contents: &Rope,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
@@ -475,12 +505,13 @@ mod tests {
         ($code:expr) => {
             let doc = Document::new($code, None);
             let path = PathBuf::from("/path/to/file.R");
+            let uri = Url::from_file_path(&path).unwrap();
             let root = doc.ast.root_node();
             let mut cursor = root.walk();
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(&path, &doc.contents, &node, &mut entries);
+                let _ = index_node(&uri, &doc.contents, &node, &mut entries);
             }
             assert_debug_snapshot!(entries);
         };

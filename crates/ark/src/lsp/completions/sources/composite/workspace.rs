@@ -71,7 +71,7 @@ fn completions_from_workspace(
     let token = token.as_str();
 
     // get entries from the index
-    indexer::map(|path, symbol, entry| {
+    indexer::map(|uri, symbol, entry| {
         if !symbol.fuzzy_matches(token) {
             return;
         }
@@ -87,15 +87,21 @@ fn completions_from_workspace(
                     return;
                 });
 
-                // add some metadata about where the completion was found
-                let mut path = path.to_str().unwrap_or_default();
-                for folder in &state.workspace.folders {
-                    if let Ok(folder) = folder.to_file_path() {
-                        if let Some(folder) = folder.to_str() {
-                            if path.starts_with(folder) {
-                                path = &path[folder.len() + 1..];
-                                break;
-                            }
+                // Add some metadata about where the completion was found
+                let mut path = uri.as_str().to_owned();
+
+                if uri.scheme() == "file" {
+                    let Ok(file_path) = uri.to_file_path() else {
+                        return;
+                    };
+
+                    for folder in &state.workspace.folders {
+                        let Ok(folder_path) = folder.to_file_path() else {
+                            continue;
+                        };
+                        if let Ok(relative_path) = file_path.strip_prefix(&folder_path) {
+                            path = relative_path.to_string_lossy().to_string();
+                            break;
                         }
                     }
                 }

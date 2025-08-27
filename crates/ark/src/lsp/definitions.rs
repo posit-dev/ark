@@ -10,7 +10,6 @@ use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
 use tower_lsp::lsp_types::Range;
-use tower_lsp::lsp_types::Url;
 
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
@@ -46,19 +45,16 @@ pub fn goto_definition<'a>(
     if node.is_identifier() {
         let symbol = document.contents.node_slice(&node)?.to_string();
 
+        // First search in current file, then in all files
         let uri = &params.text_document_position_params.text_document.uri;
-        let info = if let Ok(preferred_path) = uri.to_file_path() {
-            // First search in current file, then in all files
-            indexer::find_in_file(symbol.as_str(), &preferred_path)
-                .or_else(|| indexer::find(symbol.as_str()))
-        } else {
-            indexer::find(symbol.as_str())
-        };
+        let info =
+            indexer::find_in_file(symbol.as_str(), uri).or_else(|| indexer::find(symbol.as_str()));
 
-        if let Some((path, entry)) = info {
+        if let Some((file_id, entry)) = info {
+            let target_uri = file_id.as_url().clone();
             let link = LocationLink {
                 origin_selection_range: None,
-                target_uri: Url::from_file_path(path).unwrap(),
+                target_uri,
                 target_range: entry.range,
                 target_selection_range: entry.range,
             };
@@ -105,9 +101,9 @@ foo <- 42
 print(foo)
 "#;
         let doc = Document::new(code, None);
-        let (path, uri) = test_path("test.R");
+        let uri = test_path("test.R");
 
-        indexer::update(&doc, &path).unwrap();
+        indexer::update(&doc, &uri).unwrap();
 
         let params = GotoDefinitionParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -142,9 +138,9 @@ foo <- 1
 print(foo)
 "#;
         let doc = Document::new(code, None);
-        let (path, uri) = test_path("test.R");
+        let uri = test_path("test.R");
 
-        indexer::update(&doc, &path).unwrap();
+        indexer::update(&doc, &uri).unwrap();
 
         let params = lsp_types::GotoDefinitionParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -187,11 +183,11 @@ foo
         let doc1 = Document::new(code1, None);
         let doc2 = Document::new(code2, None);
 
-        let (path1, uri1) = test_path("file1.R");
-        let (path2, uri2) = test_path("file2.R");
+        let uri1 = test_path("file1.R");
+        let uri2 = test_path("file2.R");
 
-        indexer::update(&doc1, &path1).unwrap();
-        indexer::update(&doc2, &path2).unwrap();
+        indexer::update(&doc1, &uri1).unwrap();
+        indexer::update(&doc2, &uri2).unwrap();
 
         // Go to definition for foo in file1
         let params1 = GotoDefinitionParams {
@@ -244,11 +240,11 @@ foo
         let doc2 = Document::new(code2, None);
 
         // Use test_path for cross-platform compatibility
-        let (path1, uri1) = crate::lsp::util::test_path("file1.R");
-        let (path2, uri2) = crate::lsp::util::test_path("file2.R");
+        let uri1 = test_path("file1.R");
+        let uri2 = test_path("file2.R");
 
-        indexer::update(&doc1, &path1).unwrap();
-        indexer::update(&doc2, &path2).unwrap();
+        indexer::update(&doc1, &uri1).unwrap();
+        indexer::update(&doc2, &uri2).unwrap();
 
         // Go to definition for foo in file2 (should jump to file1)
         let params2 = GotoDefinitionParams {

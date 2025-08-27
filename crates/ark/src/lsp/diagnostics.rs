@@ -159,7 +159,7 @@ pub(crate) fn generate_diagnostics(
     context.document_symbols.push(HashMap::new());
 
     // Add the current workspace symbols.
-    indexer::map(|_path, _symbol, entry| match &entry.data {
+    indexer::map(|_uri, _symbol, entry| match &entry.data {
         indexer::IndexEntryData::Function { name, arguments: _ } => {
             context.workspace_symbols.insert(name.to_string());
         },
