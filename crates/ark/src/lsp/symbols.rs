@@ -17,7 +17,6 @@ use tower_lsp::lsp_types::Location;
 use tower_lsp::lsp_types::Range;
 use tower_lsp::lsp_types::SymbolInformation;
 use tower_lsp::lsp_types::SymbolKind;
-use tower_lsp::lsp_types::Url;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
@@ -63,7 +62,7 @@ pub(crate) fn symbols(
     let query = &params.query;
     let mut info: Vec<SymbolInformation> = Vec::new();
 
-    indexer::map(|path, symbol, entry| {
+    indexer::map(|uri, symbol, entry| {
         if !symbol.fuzzy_matches(query) {
             return;
         }
@@ -74,7 +73,7 @@ pub(crate) fn symbols(
                     name: name.to_string(),
                     kind: SymbolKind::FUNCTION,
                     location: Location {
-                        uri: Url::from_file_path(path).unwrap(),
+                        uri: uri.clone(),
                         range: entry.range,
                     },
                     tags: None,
@@ -89,7 +88,7 @@ pub(crate) fn symbols(
                         name: title.to_string(),
                         kind: SymbolKind::STRING,
                         location: Location {
-                            uri: Url::from_file_path(path).unwrap(),
+                            uri: uri.clone(),
                             range: entry.range,
                         },
                         tags: None,
@@ -104,7 +103,7 @@ pub(crate) fn symbols(
                     name: name.clone(),
                     kind: SymbolKind::VARIABLE,
                     location: Location {
-                        uri: Url::from_file_path(path).unwrap(),
+                        uri: uri.clone(),
                         range: entry.range,
                     },
                     tags: None,
@@ -118,7 +117,7 @@ pub(crate) fn symbols(
                     name: name.clone(),
                     kind: SymbolKind::METHOD,
                     location: Location {
-                        uri: Url::from_file_path(path).unwrap(),
+                        uri: uri.clone(),
                         range: entry.range,
                     },
                     tags: None,
@@ -1176,8 +1175,8 @@ outer <- 4
 
             // Index the document
             let doc = Document::new(code, None);
-            let (path, _) = test_path("test.R");
-            indexer::update(&doc, &path).unwrap();
+            let uri = test_path("test.R");
+            indexer::update(&doc, &uri).unwrap();
 
             // Query for all symbols
             let params = WorkspaceSymbolParams {

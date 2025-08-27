@@ -808,37 +808,26 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
         summary = summarize_indexer_task(&batch)
     );
 
-    let to_path_buf = |uri: &url::Url| {
-        uri.to_file_path()
-            .map_err(|_| anyhow!("Failed to convert URI '{uri}' to file path"))
-    };
-
     for task in batch {
         let result: anyhow::Result<()> = (|| async {
             match &task {
                 IndexerTask::Create { uri } => {
-                    let path = to_path_buf(uri)?;
-                    indexer::create(&path)?;
+                    indexer::create(uri)?;
                 },
 
                 IndexerTask::Update { uri, document } => {
-                    let path = to_path_buf(uri)?;
-                    indexer::update(&document, &path)?;
+                    indexer::update(&document, uri)?;
                 },
 
                 IndexerTask::Delete { uri } => {
-                    let path = to_path_buf(uri)?;
-                    indexer::delete(&path)?;
+                    indexer::delete(uri)?;
                 },
 
                 IndexerTask::Rename {
                     uri: old_uri,
                     new: new_uri,
                 } => {
-                    let old_path = to_path_buf(old_uri)?;
-                    let new_path = to_path_buf(new_uri)?;
-
-                    indexer::rename(&old_path, &new_path)?;
+                    indexer::rename(old_uri, new_uri)?;
                 },
             }
 
