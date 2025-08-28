@@ -274,21 +274,23 @@ mod tests {
             let html_result =
                 export_selection_helper_with_format(data.clone(), selection, ExportFormat::Html);
 
-            // HTML should contain table elements for multi-cell selections
+            // knitr::kable always generates HTML table structure, even for single cells
+            assert!(
+                html_result.contains("<table"),
+                "HTML should always contain table structure when using knitr::kable"
+            );
+
+            // Multi-cell selections with headers should have <thead>, single cells should not
             if expected_csv.contains('\n') && expected_csv.lines().count() > 1 {
                 assert!(
-                    html_result.contains("<table"),
-                    "HTML should contain table for multi-row selection"
-                );
-                assert!(
                     html_result.contains("<thead"),
-                    "HTML should contain table header"
+                    "HTML should contain table header for multi-row selection"
                 );
             } else {
-                // Single cell selections just return the value
+                // Single cells don't get headers (col.names = NULL), so no <thead>
                 assert!(
-                    !html_result.contains("<table"),
-                    "Single cell HTML should not contain table"
+                    !html_result.contains("<thead"),
+                    "Single cell HTML should not contain table header"
                 );
             }
         }
