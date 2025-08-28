@@ -245,17 +245,19 @@ impl RHelp {
         Ok(found)
     }
 
+    // Must be called in a `r_task` context.
     fn r_help_handler(_topic: String) -> anyhow::Result<Option<bool>> {
         unsafe {
-            let mut env = R_GlobalEnv;
-
-            #[cfg(not(test))]
-            {
-                if let Some(debug_env) = &RMain::get().debug_env() {
-                    // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
-                    env = debug_env.sexp;
+            let env = (|| {
+                #[cfg(not(test))]
+                {
+                    if let Some(debug_env) = &RMain::get().debug_env() {
+                        // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+                        return debug_env.sexp;
+                    }
                 }
-            }
+                R_GlobalEnv
+            })();
 
             let obj = harp::parse_eval0(_topic.as_str(), env)?;
             let handler: Option<RObject> =
