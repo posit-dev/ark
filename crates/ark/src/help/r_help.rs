@@ -250,10 +250,13 @@ impl RHelp {
         unsafe {
             let env = (|| {
                 #[cfg(not(test))]
-                if let Some(debug_env) = &RMain::get().debug_env() {
-                    // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
-                    return debug_env.sexp;
+                if RMain::is_initialized() {
+                    if let Some(debug_env) = &RMain::get().debug_env() {
+                        // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+                        return debug_env.sexp;
+                    }
                 }
+
                 R_GlobalEnv
             })();
 
