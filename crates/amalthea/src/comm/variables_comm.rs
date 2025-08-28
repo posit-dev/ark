@@ -107,7 +107,7 @@ pub struct Variable {
 }
 
 /// Possible values for Format in ClipboardFormat
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ClipboardFormatFormat {
 	#[serde(rename = "text/html")]
 	#[strum(to_string = "text/html")]
@@ -119,7 +119,7 @@ pub enum ClipboardFormatFormat {
 }
 
 /// Possible values for Kind in Variable
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum VariableKind {
 	#[serde(rename = "boolean")]
 	#[strum(to_string = "boolean")]
