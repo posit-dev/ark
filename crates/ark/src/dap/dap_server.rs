@@ -28,7 +28,6 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
-use serde_json::json;
 use stdext::result::ResultOrLog;
 use stdext::spawn;
 
@@ -320,7 +319,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // If connected to Positron, forward the restart command to the
         // frontend. Otherwise ignore it.
         if let Some(tx) = &self.comm_tx {
-            let msg = CommMsg::Data(json!({ "msg_type": "restart" }));
+            let msg = amalthea::comm_rpc_message!("restart");
             tx.send(msg).unwrap();
         }
 
@@ -506,12 +505,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
             // writing) we are connected to Positron or similar. Send
             // control events so that the IDE can execute these as if they
             // were sent by the user. This ensures prompts are updated.
-            let msg = CommMsg::Data(json!({
-                "msg_type": "execute",
-                "content": {
-                    "command": debug_request_command(cmd)
-                }
-            }));
+            let msg = amalthea::comm_rpc_message!("execute", command = debug_request_command(cmd));
+
             tx.send(msg).unwrap();
         } else {
             // Otherwise, send command to R's `ReadConsole()` frontend method

@@ -5,6 +5,7 @@
  *
  */
 
+use std::collections::HashMap;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -76,14 +77,14 @@ impl DummyAmaltheaFrontend {
             let comm_manager_tx = comm_manager_tx.clone();
 
             move || {
+                let server_handlers = HashMap::new();
                 if let Err(err) = kernel::connect(
                     "amalthea",
                     connection_file,
                     Some(registration_file),
                     shell,
                     control,
-                    None,
-                    None,
+                    server_handlers,
                     StreamBehavior::None,
                     iopub_tx,
                     iopub_rx,
