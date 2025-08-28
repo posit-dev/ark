@@ -254,7 +254,7 @@ fn get_ppm_linux_repo(repo_url: Option<url::Url>, linux_name: String) -> anyhow:
 #[cfg(target_os = "linux")]
 fn get_p3m_linux_codename(id: String, version: String, version_codename: String) -> String {
     // For Debian and Ubuntu, we can just use the codename
-    if id == "debian" || id == "ubuntu" {
+    if id == "debian" || id == "ubuntu" || id == "pop" {
         return version_codename.to_string();
     } else if id == "rhel" {
         // For RHEL, we use the id and major version number
