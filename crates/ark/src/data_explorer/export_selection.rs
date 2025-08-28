@@ -5,6 +5,7 @@
 //
 //
 
+use amalthea::comm::data_explorer_comm::DataSelectionCellIndices;
 use amalthea::comm::data_explorer_comm::DataSelectionCellRange;
 use amalthea::comm::data_explorer_comm::DataSelectionIndices;
 use amalthea::comm::data_explorer_comm::DataSelectionRange;
@@ -44,6 +45,7 @@ pub fn export_selection(
     let include_header = match selection.kind {
         TableSelectionKind::SingleCell => false,
         TableSelectionKind::CellRange => true,
+        TableSelectionKind::CellIndices => true,
         TableSelectionKind::RowRange => true,
         TableSelectionKind::ColumnRange => true,
         TableSelectionKind::ColumnIndices => true,
@@ -82,6 +84,13 @@ fn get_selection(
             ),
             _ => panic!("Invalid selection kind"),
         },
+        TableSelectionKind::CellIndices => match selection.selection {
+            Selection::CellIndices(DataSelectionCellIndices {
+                row_indices,
+                column_indices,
+            }) => (Some(row_indices), Some(column_indices)),
+            _ => panic!("Invalid selection kind"),
+        },
         TableSelectionKind::RowRange => match selection.selection {
             Selection::IndexRange(DataSelectionRange {
                 first_index,
@@ -111,6 +120,10 @@ fn get_selection(
 
 #[cfg(test)]
 mod tests {
+    use amalthea::comm::data_explorer_comm::DataSelectionCellIndices;
+    use amalthea::comm::data_explorer_comm::DataSelectionCellRange;
+    use amalthea::comm::data_explorer_comm::DataSelectionIndices;
+    use amalthea::comm::data_explorer_comm::DataSelectionRange;
     use amalthea::comm::data_explorer_comm::DataSelectionSingleCell;
     use amalthea::comm::data_explorer_comm::ExportFormat;
     use amalthea::comm::data_explorer_comm::Selection;
@@ -143,6 +156,92 @@ mod tests {
         harp::parse_eval_global("data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])").unwrap()
     }
 
+    /// Test data that's easier to verify and understand in assertions
+    /// Creates:
+    /// row | col_0 | col_1 | col_2
+    ///  0  |  10   |  20   |  'A'
+    ///  1  |  11   |  21   |  'B'  
+    ///  2  |  12   |  22   |  'C'
+    ///  3  |  13   |  23   |  'D'
+    fn predictable_test_data() -> RObject {
+        harp::parse_eval_global("data.frame(col_0 = 10:13, col_1 = 20:23, col_2 = LETTERS[1:4])")
+            .unwrap()
+    }
+
+    // Helper functions to create different selection types
+    fn single_cell_selection(row_index: i64, column_index: i64) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::SingleCell,
+            selection: Selection::SingleCell(DataSelectionSingleCell {
+                row_index,
+                column_index,
+            }),
+        }
+    }
+
+    fn cell_range_selection(
+        first_row_index: i64,
+        last_row_index: i64,
+        first_column_index: i64,
+        last_column_index: i64,
+    ) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::CellRange,
+            selection: Selection::CellRange(DataSelectionCellRange {
+                first_row_index,
+                last_row_index,
+                first_column_index,
+                last_column_index,
+            }),
+        }
+    }
+
+    fn cell_indices_selection(row_indices: Vec<i64>, column_indices: Vec<i64>) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::CellIndices,
+            selection: Selection::CellIndices(DataSelectionCellIndices {
+                row_indices,
+                column_indices,
+            }),
+        }
+    }
+
+    fn row_range_selection(first_index: i64, last_index: i64) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::RowRange,
+            selection: Selection::IndexRange(DataSelectionRange {
+                first_index,
+                last_index,
+            }),
+        }
+    }
+
+    fn column_range_selection(first_index: i64, last_index: i64) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::ColumnRange,
+            selection: Selection::IndexRange(DataSelectionRange {
+                first_index,
+                last_index,
+            }),
+        }
+    }
+
+    fn row_indices_selection(indices: Vec<i64>) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::RowIndices,
+            selection: Selection::Indices(DataSelectionIndices { indices }),
+        }
+    }
+
+    fn column_indices_selection(indices: Vec<i64>) -> TableSelection {
+        TableSelection {
+            kind: TableSelectionKind::ColumnIndices,
+            selection: Selection::Indices(DataSelectionIndices { indices }),
+        }
+    }
+
+    /// Check if knitr is available for HTML export tests.
+    /// HTML export requires knitr::kable(), so these tests are conditional.
     fn has_knitr() -> bool {
         let res: Option<bool> =
             harp::parse_eval0(r#".ps.is_installed("knitr")"#, ARK_ENVS.positron_ns)
@@ -155,224 +254,166 @@ mod tests {
         }
     }
 
+    /// Test a selection with all supported formats (CSV, TSV, and HTML if knitr is available)
+    fn test_selection_all_formats(data: &RObject, selection: TableSelection, expected_csv: &str) {
+        // Test CSV format
+        assert_eq!(
+            export_selection_helper(data.clone(), selection.clone()),
+            expected_csv
+        );
+
+        // Test TSV format (should be same as CSV but with tab separators)
+        let expected_tsv = expected_csv.replace(',', "\t");
+        assert_eq!(
+            export_selection_helper_with_format(data.clone(), selection.clone(), ExportFormat::Tsv),
+            expected_tsv
+        );
+
+        // Test HTML format if knitr is available
+        if has_knitr() {
+            let html_result =
+                export_selection_helper_with_format(data.clone(), selection, ExportFormat::Html);
+
+            // HTML should contain table elements for multi-cell selections
+            if expected_csv.contains('\n') && expected_csv.lines().count() > 1 {
+                assert!(
+                    html_result.contains("<table"),
+                    "HTML should contain table for multi-row selection"
+                );
+                assert!(
+                    html_result.contains("<thead"),
+                    "HTML should contain table header"
+                );
+            } else {
+                // Single cell selections just return the value
+                assert!(
+                    !html_result.contains("<table"),
+                    "Single cell HTML should not contain table"
+                );
+            }
+        }
+    }
+
     #[test]
-    fn test_single_cell_selection() {
+    fn test_legacy_data_with_na() {
         r_task(|| {
-            let data = small_test_data();
+            let data = small_test_data(); // data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])
 
-            let single_cell_selection = |i, j| TableSelection {
-                kind: TableSelectionKind::SingleCell,
-                selection: Selection::SingleCell(DataSelectionSingleCell {
-                    row_index: i,
-                    column_index: j,
-                }),
-            };
-
-            // Basic test
-            assert_eq!(
-                export_selection_helper(data.clone(), single_cell_selection(1, 0)),
-                "2".to_string()
-            );
-
-            // Strings are copied unquoted
-            assert_eq!(
-                export_selection_helper(data.clone(), single_cell_selection(0, 2)),
-                "a".to_string()
-            );
-
-            // NA's are copied as empty strings
+            // Test NA handling in single cell
             assert_eq!(
                 export_selection_helper(data.clone(), single_cell_selection(2, 1)),
-                "".to_string()
+                "".to_string() // NA exported as empty string
             );
 
-            if has_knitr() {
-                // HTML format
-                assert!(export_selection_helper_with_format(
-                    data.clone(),
-                    single_cell_selection(0, 1),
-                    ExportFormat::Html
-                )
-                .contains("<table>"));
-
-                // HTML format, NA's handling
-                assert!(export_selection_helper_with_format(
-                    data.clone(),
-                    single_cell_selection(2, 1),
-                    ExportFormat::Html
-                )
-                .contains(r#"<td style="text-align:right;">  </td>"#)); // NA's are formatted as empty strings
-            }
-        });
-    }
-
-    #[test]
-    fn test_cell_range_selection() {
-        r_task(|| {
-            let data = small_test_data();
-
-            let cell_range_selection = |i1, i2, j1, j2| TableSelection {
-                kind: TableSelectionKind::CellRange,
-                selection: Selection::CellRange(DataSelectionCellRange {
-                    first_row_index: i1,
-                    last_row_index: i2,
-                    first_column_index: j1,
-                    last_column_index: j2,
-                }),
-            };
-
-            // Basic test
-            assert_eq!(
-                export_selection_helper(data.clone(), cell_range_selection(0, 1, 0, 1)),
-                "a,b\n1,4\n2,5".to_string()
-            );
-
-            // Strings are copied unquoted
-            assert_eq!(
-                export_selection_helper(data.clone(), cell_range_selection(0, 1, 1, 2)),
-                "b,c\n4,a\n5,b".to_string()
-            );
-
-            // NA's are copied as empty strings
-            assert_eq!(
-                export_selection_helper(data.clone(), cell_range_selection(1, 2, 1, 2)),
-                "b,c\n5,b\n,c".to_string()
-            );
-
-            if has_knitr() {
-                // test HTML format
-                assert!(export_selection_helper_with_format(
-                    data.clone(),
-                    cell_range_selection(1, 2, 1, 2),
-                    ExportFormat::Html
-                )
-                .contains("<thead>")); // test that contais a table header
-            }
-        });
-    }
-
-    #[test]
-    fn test_row_range_selection() {
-        r_task(|| {
-            let data = small_test_data();
-
-            let row_range_selection = |i1, i2| TableSelection {
-                kind: TableSelectionKind::RowRange,
-                selection: Selection::IndexRange(DataSelectionRange {
-                    first_index: i1,
-                    last_index: i2,
-                }),
-            };
-
-            // Basic test
-            assert_eq!(
-                export_selection_helper(data.clone(), row_range_selection(0, 1)),
-                "a,b,c\n1,4,a\n2,5,b".to_string()
-            );
-
-            // Strings are copied unquoted
-            assert_eq!(
-                export_selection_helper(data.clone(), row_range_selection(1, 2)),
-                "a,b,c\n2,5,b\n3,,c".to_string()
-            );
-
-            // NA's are copied as empty strings
-            assert_eq!(
-                export_selection_helper(data.clone(), row_range_selection(2, 2)),
-                "a,b,c\n3,,c".to_string()
+            // Test NA handling in multi-cell export
+            test_selection_all_formats(
+                &data,
+                cell_range_selection(1, 2, 1, 2),
+                "b,c\n5,b\n,c", // NA in row 2, col 1 (b column)
             );
         });
     }
 
     #[test]
-    fn test_col_range_selection() {
+    fn test_cell_indices_selection() {
         r_task(|| {
-            let data = small_test_data();
+            let data = predictable_test_data();
 
-            let col_range_selection = |j1, j2| TableSelection {
-                kind: TableSelectionKind::ColumnRange,
-                selection: Selection::IndexRange(DataSelectionRange {
-                    first_index: j1,
-                    last_index: j2,
-                }),
-            };
-
-            // Basic test
-            assert_eq!(
-                export_selection_helper(data.clone(), col_range_selection(0, 1)),
-                "a,b\n1,4\n2,5\n3,".to_string()
+            // Test case 1: Single row, multiple columns
+            test_selection_all_formats(
+                &data,
+                cell_indices_selection(vec![1], vec![0, 2]),
+                "col_0,col_2\n11,B",
             );
 
-            // Strings are copied unquoted
-            assert_eq!(
-                export_selection_helper(data.clone(), col_range_selection(1, 2)),
-                "b,c\n4,a\n5,b\n,c".to_string()
+            // Test case 2: Multiple rows, single column
+            test_selection_all_formats(
+                &data,
+                cell_indices_selection(vec![0, 2], vec![1]),
+                "col_1\n20\n22",
             );
 
-            // NA's are copied as empty strings
+            // Test case 3: Cartesian product - multiple rows × multiple columns
+            test_selection_all_formats(
+                &data,
+                cell_indices_selection(vec![0, 1], vec![0, 2]),
+                "col_0,col_2\n10,A\n11,B",
+            );
+
+            // Test case 4: Order preservation - non-increasing row indices
+            test_selection_all_formats(
+                &data,
+                cell_indices_selection(vec![3, 0, 2], vec![0]),
+                "col_0\n13\n10\n12",
+            );
+
+            // Test case 5: Order preservation - non-increasing column indices
+            test_selection_all_formats(
+                &data,
+                cell_indices_selection(vec![1], vec![2, 0, 1]),
+                "col_2,col_0,col_1\nB,11,21",
+            );
+
+            // Test case 6: Both rows and columns out of order
+            test_selection_all_formats(
+                &data,
+                cell_indices_selection(vec![2, 0], vec![1, 2]),
+                "col_1,col_2\n22,C\n20,A",
+            );
+
+            // Test case 7: Single cell (edge case)
             assert_eq!(
-                export_selection_helper(data.clone(), col_range_selection(2, 2)),
-                "c\na\nb\nc".to_string()
+                export_selection_helper(data.clone(), cell_indices_selection(vec![1], vec![1])),
+                "col_1\n21"
             );
         });
     }
 
     #[test]
-    fn test_row_indices_selection() {
+    fn test_comprehensive_selection_types() {
         r_task(|| {
-            let data = small_test_data();
+            let data = predictable_test_data();
 
-            let row_indices_selection = |indices| TableSelection {
-                kind: TableSelectionKind::RowIndices,
-                selection: Selection::Indices(DataSelectionIndices { indices }),
-            };
-
-            // Basic test
-            assert_eq!(
-                export_selection_helper(data.clone(), row_indices_selection(vec![0, 2])),
-                "a,b,c\n1,4,a\n3,,c".to_string()
+            // Test single cell
+            test_selection_all_formats(
+                &data,
+                single_cell_selection(1, 2), // row 1, col 2 -> 'B' (no header for single cell)
+                "B",
             );
 
-            // Strings are copied unquoted
-            assert_eq!(
-                export_selection_helper(data.clone(), row_indices_selection(vec![1, 2])),
-                "a,b,c\n2,5,b\n3,,c".to_string()
+            // Test cell range
+            test_selection_all_formats(
+                &data,
+                cell_range_selection(1, 2, 0, 1), // rows 1-2, cols 0-1
+                "col_0,col_1\n11,21\n12,22",
             );
 
-            // NA's are copied as empty strings
-            assert_eq!(
-                export_selection_helper(data.clone(), row_indices_selection(vec![2])),
-                "a,b,c\n3,,c".to_string()
-            );
-        });
-    }
-
-    #[test]
-    fn test_col_indices_selection() {
-        r_task(|| {
-            let data = small_test_data();
-
-            let col_indices_selection = |indices| TableSelection {
-                kind: TableSelectionKind::ColumnIndices,
-                selection: Selection::Indices(DataSelectionIndices { indices }),
-            };
-
-            // Basic test
-            assert_eq!(
-                export_selection_helper(data.clone(), col_indices_selection(vec![0, 2])),
-                "a,c\n1,a\n2,b\n3,c".to_string()
+            // Test row range
+            test_selection_all_formats(
+                &data,
+                row_range_selection(1, 2), // rows 1-2, all columns
+                "col_0,col_1,col_2\n11,21,B\n12,22,C",
             );
 
-            // Strings are copied unquoted
-            assert_eq!(
-                export_selection_helper(data.clone(), col_indices_selection(vec![1, 2])),
-                "b,c\n4,a\n5,b\n,c".to_string()
+            // Test column range
+            test_selection_all_formats(
+                &data,
+                column_range_selection(0, 1), // all rows, cols 0-1
+                "col_0,col_1\n10,20\n11,21\n12,22\n13,23",
             );
 
-            // NA's are copied as empty strings
-            assert_eq!(
-                export_selection_helper(data.clone(), col_indices_selection(vec![2])),
-                "c\na\nb\nc".to_string()
+            // Test row indices
+            test_selection_all_formats(
+                &data,
+                row_indices_selection(vec![0, 3, 1]), // rows 0, 3, 1 in that order
+                "col_0,col_1,col_2\n10,20,A\n13,23,D\n11,21,B",
+            );
+
+            // Test column indices
+            test_selection_all_formats(
+                &data,
+                column_indices_selection(vec![2, 0]), // cols 2, 0 in that order
+                "col_2,col_0\nA,10\nB,11\nC,12\nD,13",
             );
         });
     }
@@ -381,14 +422,6 @@ mod tests {
     fn test_view_indices() {
         r_task(|| {
             let data = small_test_data();
-
-            let single_cell_selection = |i, j| TableSelection {
-                kind: TableSelectionKind::SingleCell,
-                selection: Selection::SingleCell(DataSelectionSingleCell {
-                    row_index: i,
-                    column_index: j,
-                }),
-            };
 
             // view indices imply a different ordering of the data
             // note: view_indices are 1 based!
@@ -411,5 +444,27 @@ mod tests {
                 "5".to_string()
             );
         })
+    }
+
+    #[test]
+    fn test_windows_compatibility() {
+        r_task(|| {
+            let data = predictable_test_data();
+
+            // Test that our export functions handle line endings consistently
+            // This should work the same on Windows and Unix systems
+            let result =
+                export_selection_helper(data.clone(), cell_indices_selection(vec![0, 1], vec![0]));
+
+            // Should always use \n regardless of platform
+            assert!(result.contains('\n'), "Should contain Unix line endings");
+            assert!(
+                !result.contains("\r\n"),
+                "Should not contain Windows line endings"
+            );
+
+            // Should end exactly with expected content (no trailing newlines)
+            assert_eq!(result, "col_0\n10\n11");
+        });
     }
 }

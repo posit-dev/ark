@@ -665,6 +665,17 @@ pub struct DataSelectionCellRange {
 	pub last_column_index: i64
 }
 
+/// A rectangular cell selection defined by arrays of row and column
+/// indices
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DataSelectionCellIndices {
+	/// The selected row indices
+	pub row_indices: Vec<i64>,
+
+	/// The selected column indices
+	pub column_indices: Vec<i64>
+}
+
 /// A contiguous selection bounded by inclusive start and end indices
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DataSelectionRange {
@@ -961,7 +972,11 @@ pub enum TableSelectionKind {
 
 	#[serde(rename = "row_indices")]
 	#[strum(to_string = "row_indices")]
-	RowIndices
+	RowIndices,
+
+	#[serde(rename = "cell_indices")]
+	#[strum(to_string = "cell_indices")]
+	CellIndices
 }
 
 /// Possible values for ExportFormat
@@ -1050,6 +1065,8 @@ pub enum Selection {
 	SingleCell(DataSelectionSingleCell),
 
 	CellRange(DataSelectionCellRange),
+
+	CellIndices(DataSelectionCellIndices),
 
 	IndexRange(DataSelectionRange),
 
