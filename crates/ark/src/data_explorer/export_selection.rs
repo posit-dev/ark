@@ -295,27 +295,27 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_data_with_na() {
+    fn test_na_value_handling() {
         r_task(|| {
             let data = small_test_data(); // data.frame(a = 1:3, b = c(4,5,NA), c = letters[1:3])
 
-            // Test NA handling in single cell
+            // Test NA handling in single cell - NA should export as empty string
             assert_eq!(
                 export_selection_helper(data.clone(), single_cell_selection(2, 1)),
                 "".to_string() // NA exported as empty string
             );
 
-            // Test NA handling in multi-cell export
+            // Test NA handling in multi-cell export - NA should appear as empty in CSV
             test_selection_all_formats(
                 &data,
                 cell_range_selection(1, 2, 1, 2),
-                "b,c\n5,b\n,c", // NA in row 2, col 1 (b column)
+                "b,c\n5,b\n,c", // NA in row 2, col 1 (b column) appears as empty
             );
         });
     }
 
     #[test]
-    fn test_cell_indices_selection() {
+    fn test_cell_indices_order_preservation() {
         r_task(|| {
             let data = predictable_test_data();
 
@@ -370,46 +370,46 @@ mod tests {
     }
 
     #[test]
-    fn test_comprehensive_selection_types() {
+    fn test_all_selection_types() {
         r_task(|| {
             let data = predictable_test_data();
 
-            // Test single cell
+            // Test single cell selection - exports just the cell value without headers
             test_selection_all_formats(
                 &data,
                 single_cell_selection(1, 2), // row 1, col 2 -> 'B' (no header for single cell)
                 "B",
             );
 
-            // Test cell range
+            // Test cell range - rectangular selection with headers
             test_selection_all_formats(
                 &data,
                 cell_range_selection(1, 2, 0, 1), // rows 1-2, cols 0-1
                 "col_0,col_1\n11,21\n12,22",
             );
 
-            // Test row range
+            // Test row range - full rows from first to last index
             test_selection_all_formats(
                 &data,
                 row_range_selection(1, 2), // rows 1-2, all columns
                 "col_0,col_1,col_2\n11,21,B\n12,22,C",
             );
 
-            // Test column range
+            // Test column range - full columns from first to last index
             test_selection_all_formats(
                 &data,
                 column_range_selection(0, 1), // all rows, cols 0-1
                 "col_0,col_1\n10,20\n11,21\n12,22\n13,23",
             );
 
-            // Test row indices
+            // Test row indices - specific rows in given order (non-contiguous)
             test_selection_all_formats(
                 &data,
                 row_indices_selection(vec![0, 3, 1]), // rows 0, 3, 1 in that order
                 "col_0,col_1,col_2\n10,20,A\n13,23,D\n11,21,B",
             );
 
-            // Test column indices
+            // Test column indices - specific columns in given order (non-contiguous)
             test_selection_all_formats(
                 &data,
                 column_indices_selection(vec![2, 0]), // cols 2, 0 in that order
@@ -419,12 +419,12 @@ mod tests {
     }
 
     #[test]
-    fn test_view_indices() {
+    fn test_view_indices_filtering() {
         r_task(|| {
             let data = small_test_data();
 
-            // view indices imply a different ordering of the data
-            // note: view_indices are 1 based!
+            // View indices allow reordering and filtering of rows before selection
+            // Note: view_indices are 1-based in R!
             assert_eq!(
                 export_selection_helper_with_view_indices(
                     data.clone(),
@@ -447,23 +447,23 @@ mod tests {
     }
 
     #[test]
-    fn test_windows_compatibility() {
+    fn test_cross_platform_line_endings() {
         r_task(|| {
             let data = predictable_test_data();
 
-            // Test that our export functions handle line endings consistently
-            // This should work the same on Windows and Unix systems
+            // Ensure consistent line ending behavior across Windows and Unix
+            // R's write functions should produce \n regardless of platform
             let result =
                 export_selection_helper(data.clone(), cell_indices_selection(vec![0, 1], vec![0]));
 
-            // Should always use \n regardless of platform
+            // Should always use Unix line endings for consistency
             assert!(result.contains('\n'), "Should contain Unix line endings");
             assert!(
                 !result.contains("\r\n"),
-                "Should not contain Windows line endings"
+                "Should not contain Windows CRLF line endings"
             );
 
-            // Should end exactly with expected content (no trailing newlines)
+            // Verify exact content with no trailing newlines
             assert_eq!(result, "col_0\n10\n11");
         });
     }
