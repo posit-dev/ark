@@ -19,6 +19,7 @@ use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::RObject;
+use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::SEXP;
 use log::info;
@@ -30,6 +31,7 @@ use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
 use crate::interface::RMain;
+use crate::methods::ArkGenerics;
 use crate::r_task;
 
 /**
@@ -231,12 +233,49 @@ impl RHelp {
     #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
         let found = r_task(|| unsafe {
+            if let Ok(Some(result)) = Self::r_help_handler(topic.clone()) {
+                return Ok(result);
+            }
+
             RFunction::from(".ps.help.showHelpTopic")
                 .add(topic)
                 .call()?
                 .to::<bool>()
         })?;
         Ok(found)
+    }
+
+    fn r_help_handler(_topic: String) -> anyhow::Result<Option<bool>> {
+        unsafe {
+            let mut env = R_GlobalEnv;
+
+            #[cfg(not(test))]
+            {
+                if let Some(debug_env) = &RMain::get().debug_env() {
+                    // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+                    env = debug_env.sexp;
+                }
+            }
+
+            let obj = harp::parse_eval0(_topic.as_str(), env)?;
+            let handler: Option<RObject> =
+                ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
+
+            if let Some(handler) = handler {
+                let mut fun = RFunction::new_inlined(handler);
+                match fun.call_in(env) {
+                    Err(err) => {
+                        log::error!("Error calling help handler: {:?}", err);
+                        return Err(anyhow!("Error calling help handler: {:?}", err));
+                    },
+                    Ok(result) => {
+                        return Ok(Some(result.try_into()?));
+                    },
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn r_start_or_reconnect_to_help_server() -> harp::Result<u16> {
