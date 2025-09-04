@@ -28,3 +28,7 @@ class_collapsed <- function(x) {
 harp_subset_vec <- function(x, indices) {
     x[indices]
 }
+
+harp_length_vec <- function(x, ...) {
+    base::length(x, ...)
+}

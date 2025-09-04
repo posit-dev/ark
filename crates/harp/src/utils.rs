@@ -764,6 +764,16 @@ pub fn r_subset_vec(x: SEXP, indices: Vec<i64>) -> Result<SEXP> {
     Ok(out.sexp)
 }
 
+pub fn r_length_vec(x: SEXP) -> anyhow::Result<i32> {
+    unsafe {
+        let out = RFunction::new("", "harp_length_vec")
+            .add(x)
+            .call()?
+            .to::<i32>()?;
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use libr::STRING_ELT;
