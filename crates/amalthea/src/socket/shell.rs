@@ -6,6 +6,7 @@
  */
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -13,9 +14,9 @@ use std::sync::Mutex;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
-use serde_json::json;
 use stdext::result::ResultOrLog;
 
+use crate::comm::comm_channel::comm_rpc_message;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
@@ -60,11 +61,8 @@ pub struct Shell {
     /// Language-provided shell handler object
     shell_handler: RefCell<Box<dyn ShellHandler>>,
 
-    /// Language-provided LSP handler object
-    lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
-
-    /// Language-provided DAP handler object
-    dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+    /// Map of server handler target names to their handlers
+    server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 
     /// Channel used to deliver comm events to the comm manager
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -78,14 +76,13 @@ impl Shell {
     /// * `comm_manager_tx` - A channel that delivers messages to the comm manager thread
     /// * `comm_changed_rx` - A channel that receives messages from the comm manager thread
     /// * `shell_handler` - The language's shell channel handler
-    /// * `lsp_handler` - The language's LSP handler, if it supports LSP
+    /// * `server_handlers` - A map of server handler target names to their handlers
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_manager_tx: Sender<CommManagerEvent>,
         shell_handler: Box<dyn ShellHandler>,
-        lsp_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
-        dap_handler: Option<Arc<Mutex<dyn ServerHandler>>>,
+        server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
         // Need a RefCell to allow handler methods to be mutable.
         // We only run one handler at a time so this is safe.
@@ -94,8 +91,7 @@ impl Shell {
             socket,
             iopub_tx,
             shell_handler,
-            lsp_handler,
-            dap_handler,
+            server_handlers,
             comm_manager_tx,
         }
     }
@@ -306,16 +302,27 @@ impl Shell {
     /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
     fn handle_comm_msg(&self, header: JupyterHeader, msg: &CommWireMsg) -> crate::Result<()> {
-        // Store this message as a pending RPC request so that when the comm
-        // responds, we can match it up
-        self.comm_manager_tx
-            .send(CommManagerEvent::PendingRpc(header.clone()))
-            .unwrap();
+        // The presence of an `id` field means this is a request, not a notification
+        // https://github.com/posit-dev/positron/issues/7448
+        let comm_msg = if msg.data.get("id").is_some() {
+            // Note that the JSON-RPC `id` field must exactly match the one in
+            // the Jupyter header
+            let request_id = header.msg_id.clone();
+
+            // Store this message as a pending RPC request so that when the comm
+            // responds, we can match it up
+            self.comm_manager_tx
+                .send(CommManagerEvent::PendingRpc(header))
+                .unwrap();
+
+            CommMsg::Rpc(request_id, msg.data.clone())
+        } else {
+            CommMsg::Data(msg.data.clone())
+        };
 
         // Send the message to the comm
-        let rpc = CommMsg::Rpc(header.msg_id.clone(), msg.data.clone());
         self.comm_manager_tx
-            .send(CommManagerEvent::Message(msg.comm_id.clone(), rpc))
+            .send(CommManagerEvent::Message(msg.comm_id.clone(), comm_msg))
             .unwrap();
 
         Ok(())
@@ -374,29 +381,39 @@ impl Shell {
         // deliver messages to the frontend without having to store its own
         // internal ID or a reference to the IOPub channel.
 
+        let mut lsp_comm = false;
+
         let opened = match comm {
-            // If this is the special LSP or DAP comms, start the server and create
-            // a comm that wraps it
-            Comm::Dap => {
-                server_started_rx = Some(Self::start_server_comm(
-                    msg,
-                    self.dap_handler.clone(),
-                    &comm_socket,
-                )?);
-                true
-            },
             Comm::Lsp => {
-                server_started_rx = Some(Self::start_server_comm(
-                    msg,
-                    self.lsp_handler.clone(),
-                    &comm_socket,
-                )?);
+                // If this is an old-style server comm (only the LSP as of now),
+                // start the server and create a comm that wraps it
+                lsp_comm = true;
+
+                // Extract the target name (strip "positron." prefix if present)
+                let target_key = if msg.target_name.starts_with("positron.") {
+                    &msg.target_name[9..]
+                } else {
+                    &msg.target_name
+                };
+
+                let handler = self.server_handlers.get(target_key).cloned();
+                server_started_rx = Some(Self::start_server_comm(msg, handler, &comm_socket)?);
                 true
             },
 
-            // Only the LSP and DAP comms are handled by the Amalthea
-            // kernel framework itself; all other comms are passed through
-            // to the shell handler.
+            Comm::Other(_) => {
+                // This might be a server comm or a regular comm
+                if let Some(handler) = self.server_handlers.get(&msg.target_name).cloned() {
+                    server_started_rx =
+                        Some(Self::start_server_comm(msg, Some(handler), &comm_socket)?);
+                    true
+                } else {
+                    // No server handler found, pass through to shell handler
+                    block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
+                }
+            },
+
+            // All comms tied to known Positron clients are passed through to the shell handler
             _ => {
                 // Call the shell handler to open the comm
                 block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
@@ -421,24 +438,30 @@ impl Shell {
         // accept connections. This also sends back the port number to connect on. Failing
         // to send or receive this notification is a critical failure for this comm.
         if let Some(server_started_rx) = server_started_rx {
-            match server_started_rx.recv() {
-                Ok(server_started) => {
-                    let message = CommMsg::Data(json!({
-                        "msg_type": "server_started",
-                        "content": server_started
-                    }));
+            let result = (|| -> anyhow::Result<()> {
+                let params = server_started_rx.recv()?;
 
-                    if let Err(error) = comm_socket.outgoing_tx.send(message) {
-                        log::error!(
-                            "For '{comm_name}', failed to send a `server_started` message: {error}"
-                        );
-                        return Err(Error::SendError(format!("{error}")));
-                    }
-                },
-                Err(error) => {
-                    log::error!("For '{comm_name}', failed to receive a `server_started_rx` message: {error}");
-                    return Err(Error::ReceiveError(format!("{error}")));
-                },
+                let message = if lsp_comm {
+                    // If this is the LSP comm, use the legacy message structure.
+                    // TODO: Switch LSP comms to new message structure once we've
+                    // kicked the tyres enough with the DAP comm.
+                    CommMsg::Data(serde_json::json!({
+                        "msg_type": "server_started",
+                        "content": params
+                    }))
+                } else {
+                    comm_rpc_message("server_started", serde_json::to_value(params)?)
+                };
+
+                comm_socket.outgoing_tx.send(message)?;
+
+                Ok(())
+            })();
+
+            if let Err(err) = result {
+                let msg = format!("With comm '{comm_name}': {err}");
+                log::error!("{msg}");
+                return Err(Error::SendError(msg));
             }
         }
 
@@ -471,7 +494,8 @@ impl Shell {
         } else {
             // If we don't have the corresponding handler, return an error
             log::error!(
-                "Client attempted to start LSP or DAP, but no handler was provided by kernel."
+                "Client attempted to start '{}', but no handler was provided by kernel.",
+                msg.target_name
             );
             Err(Error::UnknownCommName(msg.target_name.clone()))
         }

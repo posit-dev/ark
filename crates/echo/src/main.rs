@@ -8,6 +8,7 @@
 mod control;
 mod shell;
 
+use std::collections::HashMap;
 use std::env;
 use std::io::stdin;
 use std::sync::Arc;
@@ -43,6 +44,8 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
     ));
     let control = Arc::new(Mutex::new(Control {}));
 
+    let server_handlers = HashMap::new();
+
     // TODO: Is this working right? Probably not?
     // If we run the echo CLI and provide a `connection_file` that
     // implements handshakes, then this definitely won't work right
@@ -52,8 +55,7 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
         registration_file,
         shell,
         control,
-        None,
-        None,
+        server_handlers,
         StreamBehavior::None,
         iopub_tx,
         iopub_rx,
