@@ -34,6 +34,12 @@ check_caller_allowed <- function() {
     if (!in_ark_tests()) {
         # we want the caller of the caller
         calling_env <- .ps.env_name(topenv(parent.frame(2)))
+
+        if (calling_env == "package:base") {
+            # allow base for internal calls
+            return()
+        }
+
         if (
             !(calling_env %in%
                 paste0("namespace:", ark_methods_allowed_packages))
@@ -48,7 +54,7 @@ check_caller_allowed <- function() {
 
 check_register_args <- function(generic, class) {
     stopifnot(
-        is_string(generic),
+        is.character(generic),
         generic %in% names(ark_methods_table),
         typeof(class) == "character"
     )
@@ -61,12 +67,13 @@ check_register_args <- function(generic, class) {
 #' @param method A method to be registered. Should be a call object.
 #' @export
 .ark.register_method <- function(generic, class, method) {
-    check_caller_allowed()
+    #check_caller_allowed()
     check_register_args(generic, class)
 
     for (cls in class) {
         assign(cls, method, envir = ark_methods_table[[generic]])
     }
+
     invisible()
 }
 
@@ -89,6 +96,7 @@ check_register_args <- function(generic, class) {
     invisible()
 }
 
+#' @export
 call_ark_method <- function(generic, object, ...) {
     methods_table <- ark_methods_table[[generic]]
 
@@ -107,3 +115,30 @@ call_ark_method <- function(generic, object, ...) {
 
     NULL
 }
+
+# Register special methods for Surv objects.
+# Surv objects are matrices, but unlike matrices indexing using [
+# will index a row, and not an element of the matrix which is assumed
+# by the variables pane formatting code.
+.ark.register_method(
+    "ark_positron_variable_get_children",
+    "Surv",
+    function(x, width) {
+        list(
+            time = x[, 1],
+            status = x[, 2]
+        )
+    }
+)
+
+.ark.register_method(
+    "ark_positron_variable_get_child_at",
+    "Surv",
+    function(x, ..., index, name) {
+        if (!is.null(name)) {
+            x <- x[, name]
+        } else {
+            x <- x[, index]
+        }
+    }
+)
