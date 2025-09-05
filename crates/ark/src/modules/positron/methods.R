@@ -54,7 +54,7 @@ check_caller_allowed <- function() {
 
 check_register_args <- function(generic, class) {
     stopifnot(
-        is.character(generic) && length(generic) == 1 && !is.na(generic),
+        is_string(generic),
         generic %in% names(ark_methods_table),
         typeof(class) == "character"
     )
