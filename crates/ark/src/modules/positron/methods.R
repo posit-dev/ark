@@ -54,7 +54,7 @@ check_caller_allowed <- function() {
 
 check_register_args <- function(generic, class) {
     stopifnot(
-        is.character(generic),
+        is.character(generic) && length(generic) == 1 && !is.na(generic),
         generic %in% names(ark_methods_table),
         typeof(class) == "character"
     )
@@ -67,13 +67,12 @@ check_register_args <- function(generic, class) {
 #' @param method A method to be registered. Should be a call object.
 #' @export
 .ark.register_method <- function(generic, class, method) {
-    #check_caller_allowed()
+    check_caller_allowed()
     check_register_args(generic, class)
 
     for (cls in class) {
         assign(cls, method, envir = ark_methods_table[[generic]])
     }
-
     invisible()
 }
 
@@ -96,7 +95,6 @@ check_register_args <- function(generic, class) {
     invisible()
 }
 
-#' @export
 call_ark_method <- function(generic, object, ...) {
     methods_table <- ark_methods_table[[generic]]
 
