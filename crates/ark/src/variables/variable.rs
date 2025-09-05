@@ -1690,6 +1690,7 @@ mod tests {
     use harp;
 
     use super::*;
+    use crate::fixtures::package_is_installed;
     use crate::r_task;
 
     #[test]
@@ -1868,10 +1869,7 @@ mod tests {
     fn test_inspect_r6() {
         r_task(|| {
             // Skip test if R6 is not installed
-            if let Ok(false) = harp::parse_eval_global(r#".ps.is_installed("R6")"#)
-                .unwrap()
-                .try_into()
-            {
+            if !package_is_installed("R6") {
                 return;
             }
 
@@ -2243,6 +2241,38 @@ mod tests {
             let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value, "[1 row x 1 column] <foo>");
+        })
+    }
+
+    #[test]
+    fn test_surv_objects() {
+        // Surv objects from the survival package are kind of an edge case:
+        // They are matrices with a `Surv` class. What makes them special is that:
+        // - format(x) returns a length(nrows(x)) character vector
+        // - the `[]` operator when subsetting with a single integer vector eg. x[indices],
+        // returns a matrix with length(indices) rows.
+
+        r_task(|| {
+            // Skip test if survival is not installed
+            if !package_is_installed("survival") {
+                return;
+            }
+
+            let env = harp::parse_eval_global("new.env()").unwrap();
+
+            harp::parse_eval0(
+                r#"x <- survival::Surv(survival::lung$time[1:5], survival::lung$status[1:5])"#,
+                env.clone(),
+            )
+            .unwrap();
+
+            let path = vec![String::from("x")];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), 2);
+
+            let path = vec![String::from("x"), String::from("1")];
+            let vars = PositronVariable::inspect(env.clone(), &path).unwrap();
+            assert_eq!(vars.len(), 5); // 5 is the length of the Surv object
         })
     }
 }

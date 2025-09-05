@@ -34,6 +34,12 @@ check_caller_allowed <- function() {
     if (!in_ark_tests()) {
         # we want the caller of the caller
         calling_env <- .ps.env_name(topenv(parent.frame(2)))
+
+        if (calling_env == "package:base") {
+            # allow base for internal calls
+            return()
+        }
+
         if (
             !(calling_env %in%
                 paste0("namespace:", ark_methods_allowed_packages))

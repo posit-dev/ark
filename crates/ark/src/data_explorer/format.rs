@@ -441,6 +441,7 @@ impl Into<String> for FormattedValue {
 mod tests {
     use super::*;
     use crate::r_task;
+    use crate::fixtures::package_is_installed;
 
     fn default_options() -> FormatOptions {
         FormatOptions {
@@ -669,6 +670,26 @@ mod tests {
                 FormattedValue::NA.into(),
                 ColumnValue::FormattedValue("d".to_string()),
                 ColumnValue::FormattedValue("e".to_string())
+            ]);
+        })
+    }
+
+    #[test]
+    fn test_s3_formatting() {
+        r_task(|| {
+            if !package_is_installed("survival") {
+                return;
+            }
+
+            let data =
+                harp::parse_eval_global("survival::Surv(survival::lung$time[1:5], survival::lung$status[1:5])").unwrap();
+            let formatted = format_column(data.sexp, &default_options());
+            assert_eq!(formatted, vec![
+                ColumnValue::FormattedValue("306".to_string()),
+                ColumnValue::FormattedValue("455".to_string()),
+                ColumnValue::FormattedValue("1010+".to_string()),
+                ColumnValue::FormattedValue("210".to_string()),
+                ColumnValue::FormattedValue("883".to_string())
             ]);
         })
     }

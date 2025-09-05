@@ -35,17 +35,6 @@ format_oo <- function(x, ...) {
         return(format_fallback(x, ...))
     }
 
-    # Try to recover if dimensions don't agree (for example `format.Surv()`
-    # doesn't preserve dimensions, see https://github.com/posit-dev/positron/issues/1862)
-    if (!identical(dim(x), dim(out))) {
-        log_trace(sprintf(
-            "`format()` method for <%s> should return conforming dimensions.",
-            class_collapsed(x)
-        ))
-
-        dim(out) <- dim(x)
-    }
-
     out
 }
 

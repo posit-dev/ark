@@ -65,6 +65,7 @@ jobs:
             tibble
             haven
             R6
+            survival
 
       - name: Set LD_LIBRARY_PATH
         run: |
