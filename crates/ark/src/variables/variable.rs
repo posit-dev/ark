@@ -1869,10 +1869,7 @@ mod tests {
     fn test_inspect_r6() {
         r_task(|| {
             // Skip test if R6 is not installed
-            if let Ok(false) = harp::parse_eval_global(r#".ps.is_installed("R6")"#)
-                .unwrap()
-                .try_into()
-            {
+            if !package_is_installed("R6") {
                 return;
             }
 
