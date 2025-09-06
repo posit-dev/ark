@@ -13,6 +13,7 @@ use amalthea::comm::ui_comm::ExecuteCommandParams;
 use amalthea::comm::ui_comm::ModifyEditorSelectionsParams;
 use amalthea::comm::ui_comm::NewDocumentParams;
 use amalthea::comm::ui_comm::ShowDialogParams;
+use amalthea::comm::ui_comm::ShowPromptParams;
 use amalthea::comm::ui_comm::ShowQuestionParams;
 use amalthea::comm::ui_comm::UiFrontendRequest;
 use harp::object::RObject;
@@ -94,6 +95,25 @@ pub unsafe extern "C-unwind" fn ps_ui_show_question(
 
     let main = RMain::get();
     let out = main.call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
+    Ok(out.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_ui_show_prompt(
+    title: SEXP,
+    message: SEXP,
+    default: SEXP,
+    timeout: SEXP,
+) -> anyhow::Result<SEXP> {
+    let params = ShowPromptParams {
+        title: RObject::view(title).try_into()?,
+        message: RObject::view(message).try_into()?,
+        default: RObject::view(default).try_into()?,
+        timeout: RObject::view(timeout).try_into()?,
+    };
+
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ShowPrompt(params))?;
     Ok(out.sexp)
 }
 

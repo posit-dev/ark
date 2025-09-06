@@ -197,9 +197,19 @@ pub struct ShowDialogParams {
 /// Parameters for the ShowPrompt method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ShowPromptParams {
-	/// The prompt, such as 'What is the airspeed velocity of an unladen
-	/// swallow?'
-	pub prompt: String,
+	/// The title of the prompt dialog, such as 'Enter Swallow Velocity'
+	pub title: String,
+
+	/// The message prompting the user for text, such as 'What is the airspeed
+	/// velocity of an unladen swallow?
+	pub message: String,
+
+	/// The value to return if the user does not enter one, such as 'African
+	/// or European?'
+	pub default: String,
+
+	/// The number of seconds to wait for the user to reply before giving up.
+	pub timeout: i64,
 }
 
 /// Parameters for the AskForPassword method.
