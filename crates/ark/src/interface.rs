@@ -2131,7 +2131,22 @@ impl RMain {
     }
 
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
-        log::trace!("Calling frontend method {request:?}");
+        match self.call_frontend_method_with_timeout(request, None)? {
+            Some(result) => Ok(result),
+            None => unreachable!("Should never get None when no timeout is specified"),
+        }
+    }
+
+    pub fn call_frontend_method_with_timeout(
+        &self,
+        request: UiFrontendRequest,
+        timeout: Option<std::time::Duration>,
+    ) -> anyhow::Result<Option<RObject>> {
+        let timeout_desc = match timeout {
+            Some(duration) => format!(" with timeout {}s", duration.as_secs()),
+            None => String::new(),
+        };
+        log::trace!("Calling frontend method{timeout_desc}: {request:?}");
 
         let ui_comm_tx = self.get_ui_comm_tx().ok_or_else(|| {
             anyhow::anyhow!("UI comm is not connected. Can't execute request {request:?}")
@@ -2152,8 +2167,25 @@ impl RMain {
             request: request.clone(),
         });
 
-        // Block for reply
-        let reply = reply_rx.recv().unwrap();
+        // Block for reply, with or without timeout
+        let reply = match timeout {
+            Some(duration) => match reply_rx.recv_timeout(duration) {
+                Ok(reply) => reply,
+                Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                    log::trace!(
+                        "Frontend method timed out after {}s: {request:?}",
+                        duration.as_secs()
+                    );
+                    return Ok(None);
+                },
+                Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
+                    return Err(anyhow::anyhow!(
+                        "UI comm disconnected while waiting for reply"
+                    ));
+                },
+            },
+            None => reply_rx.recv().unwrap(),
+        };
 
         log::trace!("Got reply from frontend method: {reply:?}");
 
@@ -2169,7 +2201,7 @@ impl RMain {
                     }
 
                     // Now deserialize to an R object
-                    Ok(RObject::try_from(reply.result)?)
+                    Ok(Some(RObject::try_from(reply.result)?))
                 },
                 JsonRpcReply::Error(reply) => {
                     let message = reply.error.message;
@@ -2183,7 +2215,7 @@ impl RMain {
             // If an interrupt was signalled, return `NULL`. This should not be
             // visible to the caller since `r_unwrap()` (called e.g. by
             // `harp::register`) will trigger an interrupt jump right away.
-            StdInRpcReply::Interrupt => Ok(RObject::null()),
+            StdInRpcReply::Interrupt => Ok(Some(RObject::null())),
         }
     }
 

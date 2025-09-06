@@ -99,22 +99,33 @@ pub unsafe extern "C-unwind" fn ps_ui_show_question(
 }
 
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_ui_show_prompt(
-    title: SEXP,
+pub extern "C-unwind" fn ps_ui_show_prompt(
     message: SEXP,
     default: SEXP,
     timeout: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let message: String = RObject::view(message).try_into()?;
+    let default: String = RObject::view(default).try_into()?;
+    let timeout_secs: i64 = RObject::view(timeout).try_into()?;
+
     let params = ShowPromptParams {
-        title: RObject::view(title).try_into()?,
-        message: RObject::view(message).try_into()?,
-        default: RObject::view(default).try_into()?,
-        timeout: RObject::view(timeout).try_into()?,
+        title: message.clone(),
+        message,
+        default: default.clone(),
+        timeout: timeout_secs,
     };
 
-    let main = RMain::get();
-    let out = main.call_frontend_method(UiFrontendRequest::ShowPrompt(params))?;
-    Ok(out.sexp)
+    let request = UiFrontendRequest::ShowPrompt(params);
+    
+    let timeout_duration = std::time::Duration::from_secs(timeout_secs as u64);
+    match RMain::get().call_frontend_method_with_timeout(request, Some(timeout_duration))? {
+        Some(result) => Ok(result.sexp),
+        None => {
+            // Timeout occurred, return the default value
+            let default_obj = RObject::try_from(default)?;
+            Ok(default_obj.sexp)
+        }
+    }
 }
 
 #[harp::register]
