@@ -194,6 +194,14 @@ pub struct ShowDialogParams {
 	pub message: String,
 }
 
+/// Parameters for the ShowPrompt method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ShowPromptParams {
+	/// The prompt, such as 'What is the airspeed velocity of an unladen
+	/// swallow?'
+	pub prompt: String,
+}
+
 /// Parameters for the AskForPassword method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct AskForPasswordParams {
@@ -379,6 +387,12 @@ pub enum UiFrontendRequest {
 	#[serde(rename = "show_dialog")]
 	ShowDialog(ShowDialogParams),
 
+	/// Show a prompt
+	///
+	/// Use this for an input box where user can input any string
+	#[serde(rename = "show_prompt")]
+	ShowPrompt(ShowPromptParams),
+
 	/// Ask the user for a password
 	///
 	/// Use this for an input box where the user can input a password
@@ -446,6 +460,9 @@ pub enum UiFrontendReply {
 
 	/// Reply for the show_dialog method (no result)
 	ShowDialogReply(),
+
+	/// The input from the user
+	ShowPromptReply(Option<String>),
 
 	/// The input from the user
 	AskForPasswordReply(Option<String>),
@@ -548,6 +565,7 @@ pub fn ui_frontend_reply_from_value(
 		UiFrontendRequest::NewDocument(_) => Ok(UiFrontendReply::NewDocumentReply()),
 		UiFrontendRequest::ShowQuestion(_) => Ok(UiFrontendReply::ShowQuestionReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::ShowDialog(_) => Ok(UiFrontendReply::ShowDialogReply()),
+		UiFrontendRequest::ShowPrompt(_) => Ok(UiFrontendReply::ShowPromptReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::AskForPassword(_) => Ok(UiFrontendReply::AskForPasswordReply(serde_json::from_value(reply)?)),
 		UiFrontendRequest::DebugSleep(_) => Ok(UiFrontendReply::DebugSleepReply()),
 		UiFrontendRequest::ExecuteCommand(_) => Ok(UiFrontendReply::ExecuteCommandReply()),
