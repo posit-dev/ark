@@ -155,7 +155,8 @@ fn test_amalthea_comms() {
 
     let comm_req_id = frontend.send_shell(CommWireMsg {
         comm_id: comm_id.to_string(),
-        data: serde_json::Value::Null,
+        // Include `id` field to signal this is a request
+        data: serde_json::json!({ "id": "foo" }),
     });
 
     frontend.recv_iopub_busy();

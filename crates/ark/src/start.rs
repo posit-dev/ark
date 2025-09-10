@@ -5,12 +5,14 @@
 //
 //
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel;
+use amalthea::language::server_handler::ServerHandler;
 use amalthea::registration_file::RegistrationFile;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
@@ -98,14 +100,19 @@ pub fn start_kernel(
 
     let (stdin_reply_tx, stdin_reply_rx) = unbounded();
 
+    // Create the list of server handlers that Ark supports. Amalthea handles
+    // the handshake part on startup.
+    let mut server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>> = HashMap::new();
+    server_handlers.insert("lsp".to_string(), lsp);
+    server_handlers.insert("ark_dap".to_string(), dap.clone());
+
     let res = kernel::connect(
         "ark",
         connection_file,
         registration_file,
         shell,
         control,
-        Some(lsp),
-        Some(dap.clone()),
+        server_handlers,
         stream_behavior,
         iopub_tx.clone(),
         iopub_rx,
