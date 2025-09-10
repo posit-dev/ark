@@ -100,31 +100,33 @@ pub unsafe extern "C-unwind" fn ps_ui_show_question(
 
 #[harp::register]
 pub extern "C-unwind" fn ps_ui_show_prompt(
+    title: SEXP,
     message: SEXP,
     default: SEXP,
     timeout: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let title: String = RObject::view(title).try_into()?;
     let message: String = RObject::view(message).try_into()?;
     let default: String = RObject::view(default).try_into()?;
     let timeout_secs: i64 = RObject::view(timeout).try_into()?;
 
     let params = ShowPromptParams {
-        title: message.clone(),
+        title,
         message,
-        default: default.clone(),
+        default,
         timeout: timeout_secs,
     };
 
     let request = UiFrontendRequest::ShowPrompt(params);
-    
+
     let timeout_duration = std::time::Duration::from_secs(timeout_secs as u64);
     match RMain::get().call_frontend_method_with_timeout(request, Some(timeout_duration))? {
         Some(result) => Ok(result.sexp),
         None => {
-            // Timeout occurred, return the default value
-            let default_obj = RObject::try_from(default)?;
+            // Timeout occurred, return null
+            let default_obj = RObject::null();
             Ok(default_obj.sexp)
-        }
+        },
     }
 }
 

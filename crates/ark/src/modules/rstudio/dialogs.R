@@ -11,3 +11,9 @@
 .rs.api.showQuestion <- function(title, message, ok = NULL, cancel = NULL) {
     .ps.ui.showQuestion(title, message, ok, cancel)
 }
+
+
+#' @export
+.rs.api.showPrompt <- function(title, message, default, timeout = 60L) {
+    .ps.ui.showPrompt(title, message, default, timeout)
+}
