@@ -36,15 +36,11 @@
 #' @export
 .ps.viewer.addOverrides <- function() {
     add_s3_override("print.htmlwidget", .ps.view_html_widget)
-    add_s3_override("print.shiny.tag", .ps.view_html_widget)
-    add_s3_override("print.shiny.tag.list", .ps.view_html_widget)
 }
 
 #' @export
 .ps.viewer.removeOverrides <- function() {
     remove_s3_override("print.htmlwidget")
-    remove_s3_override("print.shiny.tag")
-    remove_s3_override("print.shiny.tag.list")
 }
 
 # When the htmlwidgets package is loaded, inject/overlay our print method.
@@ -69,15 +65,17 @@ setHook(
 # Validate the height argument for the viewer function; returns an
 # integer or stops with an error.
 .ps.validate.viewer.height <- function(height) {
-    if (identical(height, "maximize"))
+    if (identical(height, "maximize")) {
         # The height of the viewer pane is set to -1 to maximize it.
         height <- -1L
-    if (!is.null(height) && (!is.numeric(height) || (length(height) != 1)))
+    }
+    if (!is.null(height) && (!is.numeric(height) || (length(height) != 1))) {
         stop(
             "Invalid height: ",
             height,
             "Must be a single element numeric vector or 'maximize'."
         )
+    }
     if (is.null(height)) {
         # The height of the viewer pane is set to 0 to signal that
         # no specific height is requested.
