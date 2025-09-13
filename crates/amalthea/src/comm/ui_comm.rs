@@ -201,7 +201,7 @@ pub struct ShowPromptParams {
 	pub title: String,
 
 	/// The message prompting the user for text, such as 'What is the airspeed
-	/// velocity of an unladen swallow?
+	/// velocity of an unladen swallow?'
 	pub message: String,
 
 	/// The value to return if the user does not enter one, such as 'African
