@@ -88,6 +88,11 @@
 }
 
 #' @export
+.ps.ui.showPrompt <- function(title, message, default, timeout) {
+    .ps.Call("ps_ui_show_prompt", title, message, default, timeout)
+}
+
+#' @export
 .ps.ui.askForPassword <- function(prompt) {
     .ps.Call("ps_ui_ask_for_password", prompt)
 }
