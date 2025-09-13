@@ -204,8 +204,8 @@ pub struct ShowPromptParams {
 	/// velocity of an unladen swallow?'
 	pub message: String,
 
-	/// The value to return if the user does not enter one, such as 'African
-	/// or European?'
+	/// The default value with which to pre-populate the text input box, such
+	/// as 'African or European?'
 	pub default: String,
 
 	/// The number of seconds to wait for the user to reply before giving up.
