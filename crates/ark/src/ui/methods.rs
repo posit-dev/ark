@@ -117,17 +117,9 @@ pub extern "C-unwind" fn ps_ui_show_prompt(
         timeout: timeout_secs,
     };
 
-    let request = UiFrontendRequest::ShowPrompt(params);
-
-    let timeout_duration = std::time::Duration::from_secs(timeout_secs as u64);
-    match RMain::get().call_frontend_method_with_timeout(request, Some(timeout_duration))? {
-        Some(result) => Ok(result.sexp),
-        None => {
-            // Timeout occurred, return null
-            let default_obj = RObject::null();
-            Ok(default_obj.sexp)
-        },
-    }
+    let main = RMain::get();
+    let out = main.call_frontend_method(UiFrontendRequest::ShowPrompt(params))?;
+    Ok(out.sexp)
 }
 
 #[harp::register]
