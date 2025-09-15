@@ -18,5 +18,18 @@
     # rstudioapi doesn't pass the timeout directly but sets it as
     # `rstudioapi.remote.timeout` option
     timeout <- getOption('rstudioapi.remote.timeout', 60L)
-    .ps.ui.showPrompt(title, message, default, timeout)
+
+    # validate args
+    if (!nzchar(title)) {
+        stop("Title must be a non-empty string")
+    }
+    if (!nzchar(message)) {
+        stop("Message must be a non-empty string")
+    }
+    .ps.ui.showPrompt(
+        as.character(title),
+        as.character(message),
+        default,
+        as.integer(timeout)
+    )
 }

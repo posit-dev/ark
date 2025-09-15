@@ -107,9 +107,16 @@ pub extern "C-unwind" fn ps_ui_show_prompt(
 ) -> anyhow::Result<SEXP> {
     let title: String = RObject::view(title).try_into()?;
     let message: String = RObject::view(message).try_into()?;
-    let default: String = RObject::view(default).try_into()?;
-    let timeout_secs: i64 = RObject::view(timeout).try_into()?;
-
+    let default: String = if r_is_null(default) {
+        String::new()
+    } else {
+        RObject::view(default).try_into()?
+    };
+    let timeout_secs: i64 = if r_is_null(timeout) {
+        60
+    } else {
+        RObject::view(timeout).try_into()?
+    };
     let params = ShowPromptParams {
         title,
         message,
