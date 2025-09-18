@@ -1038,7 +1038,7 @@ fn check_invalid_na_comparison(
 
         if matches!(contents, "NA" | "NaN" | "NULL") {
             let message = match contents {
-                "NA" => "Consider using `is.na()` to check `NA` values",
+                "NA" => "Consider using `is.na()` to check `NA` values.",
                 "NaN" => "Consider using `is.nan()` to check `NaN` values.",
                 "NULL" => "Consider using `is.null()` to check `NULL` values.",
                 _ => continue,
