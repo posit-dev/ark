@@ -1,6 +1,6 @@
 [package]
 name = "ark"
-version = "0.1.209"
+version = "0.1.210"
 description = """
 Ark, an R Kernel.
 """
