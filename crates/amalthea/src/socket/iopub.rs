@@ -71,6 +71,7 @@ pub struct IOPub {
 
 /// Enumeration of possible channels that an IOPub message can be associated
 /// with.
+#[derive(Debug)]
 pub enum IOPubContextChannel {
     Shell,
     Control,
@@ -79,6 +80,7 @@ pub enum IOPubContextChannel {
 /// Enumeration of all messages that can be delivered from the IOPub XPUB/SUB
 /// socket. These messages generally are created on other threads and then sent
 /// via a channel to the IOPub thread.
+#[derive(Debug)]
 pub enum IOPubMessage {
     Status(JupyterHeader, IOPubContextChannel, KernelStatus),
     ExecuteResult(ExecuteResult),
@@ -96,6 +98,7 @@ pub enum IOPubMessage {
 
 /// A special IOPub message used to block the sender until the IOPub queue has
 /// forwarded all messages before this one on to the frontend.
+#[derive(Debug)]
 pub struct Wait {
     pub wait_tx: Sender<()>,
 }

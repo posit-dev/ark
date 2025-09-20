@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm_rpc_message;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use crossbeam::channel::Sender;
@@ -128,12 +129,7 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
         let outgoing_tx_guard = RETICULATE_OUTGOING_TX.lock().unwrap();
         if let Some(outgoing_tx) = outgoing_tx_guard.deref() {
             // There's a comm_id registered, we just send the focus event
-            outgoing_tx.send(CommMsg::Data(json!({
-                "method": "focus",
-                "params": {
-                    "input": input_code
-                }
-            })))?;
+            outgoing_tx.send(comm_rpc_message!("focus", input = input_code))?;
             return Ok(R_NilValue);
         }
     }
