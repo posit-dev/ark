@@ -147,10 +147,11 @@ quoted <- function(args) {
 
 #' Get the path to the pandoc executable
 pandoc <- function() {
-    file.path(
-        find_pandoc()$dir,
-        "pandoc"
-    )
+    pandoc_info <- find_pandoc()
+    if (is.null(pandoc_info$dir)) {
+        return(NULL)
+    }
+    build_pandoc_path(pandoc_info$dir)
 }
 
 #' Test if a directory exists
@@ -195,6 +196,15 @@ find_pandoc <- function(dir = NULL, version = NULL) {
         dir = found_src,
         version = found_ver
     )
+}
+
+# Build the full path to the pandoc executable, handling Windows .exe suffix
+build_pandoc_path <- function(pandoc_dir) {
+    path <- file.path(pandoc_dir, "pandoc")
+    if (identical(.Platform$OS.type, "windows")) {
+        path <- paste0(path, ".exe")
+    }
+    path
 }
 
 # Find a program within the PATH. On OSX we need to explictly call
@@ -283,10 +293,7 @@ with_pandoc_safe_environment <- function(code) {
 
 # Get an S3 numeric_version for the pandoc utility at the specified path
 get_pandoc_version <- function(pandoc_dir) {
-    path <- file.path(pandoc_dir, "pandoc")
-    if (identical(.Platform$OS.type, "windows")) {
-        path <- paste0(path, ".exe")
-    }
+    path <- build_pandoc_path(pandoc_dir)
     if (!utils::file_test("-x", path)) {
         return(numeric_version("0"))
     }
