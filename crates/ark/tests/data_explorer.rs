@@ -2761,3 +2761,157 @@ fn test_column_labels_edge_cases() {
         harp::parse_eval_global("rm(df_edge_cases)").unwrap();
     });
 }
+
+#[test]
+fn test_export_with_sort_order() {
+    // Create test data
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+            df_sort_test <- data.frame(
+                id = c(3, 1, 4, 2),
+                value = c(30, 10, 40, 20),
+                name = c("Charlie", "Alice", "David", "Bob")
+            )
+        "#,
+        )
+        .unwrap();
+    });
+
+    let setup = TestSetup::new("df_sort_test");
+    let socket = setup.socket();
+
+    // First, apply a sort by the 'value' column in ascending order
+    let req = RequestBuilder::set_sort_columns(vec![ColumnSortKey {
+        column_index: 1, // 'value' column
+        ascending: true,
+    }]);
+    assert_match!(
+        socket_rpc(socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply()
+    );
+
+    // Test 1: Export a single column (ColumnRange) - should respect sort order
+    let req = DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+        selection: TableSelection {
+            kind: TableSelectionKind::ColumnRange,
+            selection: Selection::IndexRange(DataSelectionRange {
+                first_index: 0,
+                last_index: 0,
+            }),
+        },
+        format: ExportFormat::Csv,
+    });
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
+            assert_eq!(format, ExportFormat::Csv);
+            // After sorting by value ascending, the id column should be: 1, 2, 3, 4
+            assert_eq!(data, "id\n1\n2\n3\n4");
+        }
+    );
+
+    // Test 2: Export multiple columns (ColumnIndices) - should respect sort order
+    let req = DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+        selection: TableSelection {
+            kind: TableSelectionKind::ColumnIndices,
+            selection: Selection::Indices(DataSelectionIndices {
+                indices: vec![0, 2], // id and name columns
+            }),
+        },
+        format: ExportFormat::Csv,
+    });
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
+            assert_eq!(format, ExportFormat::Csv);
+            // After sorting by value ascending, should be: Alice, Bob, Charlie, David
+            assert_eq!(data, "id,name\n1,Alice\n2,Bob\n3,Charlie\n4,David");
+        }
+    );
+
+    // Test 3: Export all columns (ColumnRange) - should respect sort order
+    let req = DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+        selection: TableSelection {
+            kind: TableSelectionKind::ColumnRange,
+            selection: Selection::IndexRange(DataSelectionRange {
+                first_index: 0,
+                last_index: 2,
+            }),
+        },
+        format: ExportFormat::Csv,
+    });
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
+            assert_eq!(format, ExportFormat::Csv);
+            // After sorting by value ascending
+            assert_eq!(data, "id,value,name\n1,10,Alice\n2,20,Bob\n3,30,Charlie\n4,40,David");
+        }
+    );
+
+    // Now change to descending sort
+    let req = RequestBuilder::set_sort_columns(vec![ColumnSortKey {
+        column_index: 1, // 'value' column
+        ascending: false,
+    }]);
+    assert_match!(
+        socket_rpc(socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply()
+    );
+
+    // Test 4: Export with descending sort - should respect new sort order
+    let req = DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+        selection: TableSelection {
+            kind: TableSelectionKind::ColumnRange,
+            selection: Selection::IndexRange(DataSelectionRange {
+                first_index: 0,
+                last_index: 0,
+            }),
+        },
+        format: ExportFormat::Csv,
+    });
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
+            assert_eq!(format, ExportFormat::Csv);
+            // After sorting by value descending, the id column should be: 4, 3, 2, 1
+            assert_eq!(data, "id\n4\n3\n2\n1");
+        }
+    );
+
+    // Test 5: Apply multiple sort columns
+    let req = RequestBuilder::set_sort_columns(vec![
+        ColumnSortKey {
+            column_index: 0, // 'id' column
+            ascending: true,
+        },
+        ColumnSortKey {
+            column_index: 2, // 'name' column as secondary sort
+            ascending: false,
+        },
+    ]);
+    assert_match!(
+        socket_rpc(socket, req),
+        DataExplorerBackendReply::SetSortColumnsReply()
+    );
+
+    // Test 6: Export with multiple sort columns
+    let req = DataExplorerBackendRequest::ExportDataSelection(ExportDataSelectionParams {
+        selection: TableSelection {
+            kind: TableSelectionKind::ColumnIndices,
+            selection: Selection::Indices(DataSelectionIndices {
+                indices: vec![0, 2], // id and name columns
+            }),
+        },
+        format: ExportFormat::Tsv, // Also test TSV format
+    });
+    assert_match!(socket_rpc(socket, req),
+        DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
+            assert_eq!(format, ExportFormat::Tsv);
+            // After sorting by id ascending (primary sort)
+            assert_eq!(data, "id\tname\n1\tAlice\n2\tBob\n3\tCharlie\n4\tDavid");
+        }
+    );
+
+    // Clean up
+    r_task(|| {
+        harp::parse_eval_global("rm(df_sort_test)").unwrap();
+    });
+}

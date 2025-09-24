@@ -64,6 +64,23 @@ fn get_selection(
     view_indices: &Option<Vec<i32>>,
     selection: TableSelection,
 ) -> anyhow::Result<RObject> {
+    // Helper function to get all row indices when selecting whole columns
+    // This ensures sort order is preserved when exporting columns
+    let get_all_row_indices = |view_indices: &Option<Vec<i32>>| -> Option<Vec<i64>> {
+        match view_indices {
+            Some(indices) => {
+                // When there are view indices (sorted/filtered), we need to select all rows
+                // in the order specified by view_indices
+                Some((0..indices.len() as i64).collect())
+            },
+            None => {
+                // When there are no view indices, we don't need to specify row indices
+                // (None means select all rows in their natural order)
+                None
+            },
+        }
+    };
+
     let (i, j) = match selection.kind {
         TableSelectionKind::SingleCell => match selection.selection {
             Selection::SingleCell(DataSelectionSingleCell {
@@ -102,11 +119,19 @@ fn get_selection(
             Selection::IndexRange(DataSelectionRange {
                 first_index,
                 last_index,
-            }) => (None, Some((first_index..=last_index).collect())),
+            }) => (
+                // For column selections, we need to include all rows to respect sort order
+                get_all_row_indices(view_indices),
+                Some((first_index..=last_index).collect()),
+            ),
             _ => panic!("Invalid selection kind"),
         },
         TableSelectionKind::ColumnIndices => match selection.selection {
-            Selection::Indices(DataSelectionIndices { indices }) => (None, Some(indices)),
+            Selection::Indices(DataSelectionIndices { indices }) => (
+                // For column selections, we need to include all rows to respect sort order
+                get_all_row_indices(view_indices),
+                Some(indices),
+            ),
             _ => panic!("Invalid selection kind"),
         },
         TableSelectionKind::RowIndices => match selection.selection {
@@ -446,6 +471,116 @@ mod tests {
                 "5".to_string()
             );
         })
+    }
+
+    #[test]
+    fn test_sort_order_with_column_selection() {
+        r_task(|| {
+            let data = predictable_test_data(); // col_0 = 10:13, col_1 = 20:23, col_2 = LETTERS[1:4]
+
+            // Test 1: Column range with reversed sort order
+            // View indices [4, 3, 2, 1] reverse the row order (1-based indexing)
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    vec![4, 3, 2, 1],             // Reversed order (rows 3, 2, 1, 0)
+                    column_range_selection(0, 1), // Select columns 0-1
+                ),
+                "col_0,col_1\n13,23\n12,22\n11,21\n10,20"
+            );
+
+            // Test 2: Column indices with custom sort order
+            // View indices [2, 4, 1, 3] reorder rows to [1, 3, 0, 2]
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    vec![2, 4, 1, 3],                     // Custom order
+                    column_indices_selection(vec![2, 0]), // Select columns 2 and 0
+                ),
+                "col_2,col_0\nB,11\nD,13\nA,10\nC,12"
+            );
+
+            // Test 3: Single column with sort order
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    vec![3, 1, 4, 2],             // rows 2, 0, 3, 1
+                    column_range_selection(1, 1), // Select only column 1
+                ),
+                "col_1\n22\n20\n23\n21"
+            );
+
+            // Test 4: All columns with filtered and sorted rows
+            // Only select rows 1 and 3, in reverse order
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    vec![4, 2], // Select rows 3 and 1 (0-based: rows 3 and 1)
+                    column_range_selection(0, 2), // All columns
+                ),
+                "col_0,col_1,col_2\n13,23,D\n11,21,B"
+            );
+        });
+    }
+
+    #[test]
+    fn test_sort_order_preserved_in_different_selection_types() {
+        r_task(|| {
+            let data = predictable_test_data();
+            let sorted_view = vec![3, 1, 4, 2]; // Specific sort order
+
+            // Test that all selection types respect the same sort order
+
+            // Row range selection (should respect sort)
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    sorted_view.clone(),
+                    row_range_selection(0, 2), // First 3 rows in sorted order
+                ),
+                "col_0,col_1,col_2\n12,22,C\n10,20,A\n13,23,D"
+            );
+
+            // Column range selection (should respect sort)
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    sorted_view.clone(),
+                    column_range_selection(0, 1), // First 2 columns, all rows in sorted order
+                ),
+                "col_0,col_1\n12,22\n10,20\n13,23\n11,21"
+            );
+
+            // Cell range selection (should respect sort for included rows)
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    sorted_view.clone(),
+                    cell_range_selection(1, 2, 0, 1), // Rows 1-2 in sorted view
+                ),
+                "col_0,col_1\n10,20\n13,23"
+            );
+
+            // Row indices selection (should respect sort)
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    sorted_view.clone(),
+                    row_indices_selection(vec![0, 3]), // Rows 0 and 3 in sorted view
+                ),
+                "col_0,col_1,col_2\n12,22,C\n11,21,B"
+            );
+
+            // Column indices selection (should respect sort)
+            assert_eq!(
+                export_selection_helper_with_view_indices(
+                    data.clone(),
+                    sorted_view.clone(),
+                    column_indices_selection(vec![1]), // Just column 1, all rows in sorted order
+                ),
+                "col_1\n22\n20\n23\n21"
+            );
+        });
     }
 
     #[test]
