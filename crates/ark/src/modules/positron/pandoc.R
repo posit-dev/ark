@@ -85,8 +85,8 @@ pandoc_convert <- function(
     args <- c(args, options)
 
     # ensure pandoc is available
-    pandoc_info <- find_pandoc()
-    if (is.null(pandoc_info$dir) || !utils::file_test("-x", pandoc())) {
+    pandoc_path <- pandoc()
+    if (is.null(pandoc_path) || !utils::file_test("-x", pandoc_path)) {
         stop(
             "pandoc is not available. Please install pandoc or set the ",
             "RSTUDIO_PANDOC environment variable to the directory containing ",
@@ -96,7 +96,7 @@ pandoc_convert <- function(
 
     # build the conversion command
     command <- paste(
-        quoted(file.path(pandoc_info$dir, "pandoc")),
+        quoted(pandoc_path),
         paste(quoted(args), collapse = " ")
     )
 
