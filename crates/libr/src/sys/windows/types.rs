@@ -213,8 +213,8 @@ impl structRstart {
     }
     #[inline]
     pub fn set_RstartVersion(&mut self, val: ::std::os::raw::c_int) {
-        let val: u32 = i32::cast_unsigned(val);
-        self._bitfield_1.set(16usize, 16u8, val as u64)
+        self._bitfield_1
+            .set(16usize, 16u8, i32::cast_unsigned(val) as u64)
     }
     #[inline]
     pub fn new_bitfield_1(
@@ -226,10 +226,7 @@ impl structRstart {
             let NoRenviron: u32 = unsafe { ::std::mem::transmute(NoRenviron) };
             NoRenviron as u64
         });
-        __bindgen_bitfield_unit.set(16usize, 16u8, {
-            let RstartVersion: u32 = i32::cast_unsigned(RstartVersion);
-            RstartVersion as u64
-        });
+        __bindgen_bitfield_unit.set(16usize, 16u8, i32::cast_unsigned(RstartVersion) as u64);
         __bindgen_bitfield_unit
     }
 }
