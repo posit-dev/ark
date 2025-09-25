@@ -51,12 +51,20 @@ fn test_plot_with_graphics_device_swap() {
 plot(1:5)
 
 # Swap devices, "deactivating" our ark graphics device
-grDevices::png()
+# Specify a tempfile() so we can clean it up later
+temp_file <- tempfile(fileext = ".png")
+grDevices::png(temp_file)
+
 # Turn the png device back off, "activating" our ark graphics device
 # Returns the new current device
 capture <- dev.off()
 
 plot(6:10)
+
+# Clean up the temporary file and suppress any output
+if (file.exists(temp_file)) {
+    invisible(file.remove(temp_file))
+}
 "#;
 
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
