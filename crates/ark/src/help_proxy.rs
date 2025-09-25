@@ -148,8 +148,18 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
     };
 
     // Set up reqwest client with 3 retries (posit-dev/positron#3753).
+    // Disable proxy since we're connecting to localhost; otherwise HTTP_PROXY
+    // and other env vars can cause the request to get incorrectly routed to a
+    // proxy.
     let retry_policy = ExponentialBackoff::builder().build_with_max_retries(3);
-    let client = ClientBuilder::new(Client::new())
+    let reqwest_client = match Client::builder().no_proxy().build() {
+        Ok(client) => client,
+        Err(error) => {
+            log::error!("Failed to create reqwest client: {error}");
+            return HttpResponse::InternalServerError().finish();
+        },
+    };
+    let client = ClientBuilder::new(reqwest_client)
         .with(RetryTransientMiddleware::new_with_policy(retry_policy))
         .build();
 
