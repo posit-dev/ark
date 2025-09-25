@@ -73,4 +73,5 @@ On CI we use the nextest profile found in `.config/nextest.toml`.
 
 We use [just](https://github.com/casey/just) as a simple command runner, and the shortcuts live in `justfile`.
 On macOS, install just with `brew install just`.
-For other platforms, see the just README.
+On Windows, we've used `cargo install just` with success.
+For more installation tips, see the just README.
