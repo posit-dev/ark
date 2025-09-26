@@ -1004,11 +1004,7 @@ pub enum SupportStatus {
 
 	#[serde(rename = "supported")]
 	#[strum(to_string = "supported")]
-	Supported,
-
-	#[serde(rename = "experimental")]
-	#[strum(to_string = "experimental")]
-	Experimental
+	Supported
 }
 
 /// Union type ColumnValue
