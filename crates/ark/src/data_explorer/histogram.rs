@@ -664,4 +664,47 @@ mod tests {
             });
         })
     }
+
+    #[test]
+    fn test_single_value() {
+        // Test histogram computation for data frames with single values (1-row case)
+        r_task(|| {
+            // Test single numeric value - should always result in single bin with both edges the same
+            test_histogram("c(5.0)", 10, vec!["5.00", "5.00"], vec![1]);
+            test_histogram("c(42.0)", 5, vec!["42.00", "42.00"], vec![1]);
+
+            // Test single integer value
+            test_histogram("c(1L)", 4, vec!["1", "1"], vec![1]);
+
+            // Test with different methods - all should handle single values gracefully
+            test_histogram_method("c(7.5)", "sturges", vec!["7.50", "7.50"], vec![1]);
+            test_histogram_method("c(10.0)", "fd", vec!["10.00", "10.00"], vec![1]);
+            test_histogram_method("c(3.14)", "scott", vec!["3.14", "3.14"], vec![1]);
+        })
+    }
+
+    #[test]
+    fn test_empty_data() {
+        // Test histogram computation for empty data (0-row case)
+        r_task(|| {
+            let column = harp::parse_eval_global("numeric(0)").unwrap();
+
+            let hist = profile_histogram(
+                column.sexp,
+                &ColumnHistogramParams {
+                    method: ColumnHistogramParamsMethod::Fixed,
+                    num_bins: 10,
+                    quantiles: Some(vec![0.25, 0.5, 0.75]),
+                },
+                &default_options(),
+            )
+            .unwrap();
+
+            assert_eq!(hist.bin_edges, Vec::<String>::new());
+            assert_eq!(hist.bin_counts, Vec::<i64>::new());
+            assert_eq!(hist.quantiles.len(), 3);
+            // All quantiles should be NA for empty data
+            assert!(hist.quantiles.iter().all(|q| q.value == "NA"));
+        })
+    }
 }
