@@ -52,8 +52,6 @@ pub fn convert_to_code(params: ConvertToCodeParams, object_name: Option<&str>) -
         }
     }
 
-    // Always add the slice operation for now
-    pipe_parts.push("slice(1:3)".to_string());
 
     // Join the parts with the pipe operator
     let pipe_expression = pipe_parts.join(" |>\n  ");
