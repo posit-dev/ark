@@ -348,6 +348,349 @@ fn escape_regex(s: &str) -> String {
         .replace("\\", "\\\\")
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use amalthea::comm::data_explorer_comm::ColumnSchema;
+    use amalthea::comm::data_explorer_comm::FilterBetween;
+    use amalthea::comm::data_explorer_comm::FilterComparison;
+    use amalthea::comm::data_explorer_comm::FilterTextSearch;
+    use amalthea::comm::data_explorer_comm::RowFilterCondition;
+
+    /// Helper to create a test ColumnSchema
+    fn test_column_schema(name: &str, display_type: ColumnDisplayType) -> ColumnSchema {
+        ColumnSchema {
+            column_name: name.to_string(),
+            column_label: None,
+            column_index: 0,
+            type_name: "test".to_string(),
+            type_display: display_type,
+            description: None,
+            children: None,
+            precision: None,
+            scale: None,
+            timezone: None,
+            type_size: None,
+        }
+    }
+
+    /// Helper to create a comparison filter
+    fn comparison_filter(
+        column_name: &str,
+        op: FilterComparisonOp,
+        value: &str,
+        display_type: ColumnDisplayType,
+    ) -> RowFilter {
+        RowFilter {
+            filter_id: "test".to_string(),
+            column_schema: test_column_schema(column_name, display_type),
+            filter_type: RowFilterType::Compare,
+            condition: RowFilterCondition::And,
+            params: Some(RowFilterParams::Comparison(FilterComparison {
+                op,
+                value: value.to_string(),
+            })),
+            is_valid: Some(true),
+            error_message: None,
+        }
+    }
+
+    /// Helper to create a between filter
+    fn between_filter(
+        column_name: &str,
+        left: &str,
+        right: &str,
+        display_type: ColumnDisplayType,
+    ) -> RowFilter {
+        RowFilter {
+            filter_id: "test".to_string(),
+            column_schema: test_column_schema(column_name, display_type),
+            filter_type: RowFilterType::Between,
+            condition: RowFilterCondition::And,
+            params: Some(RowFilterParams::Between(FilterBetween {
+                left_value: left.to_string(),
+                right_value: right.to_string(),
+            })),
+            is_valid: Some(true),
+            error_message: None,
+        }
+    }
+
+    /// Helper to create a text search filter
+    fn text_search_filter(
+        column_name: &str,
+        term: &str,
+        search_type: TextSearchType,
+        case_sensitive: bool,
+    ) -> RowFilter {
+        RowFilter {
+            filter_id: "test".to_string(),
+            column_schema: test_column_schema(column_name, ColumnDisplayType::String),
+            filter_type: RowFilterType::Search,
+            condition: RowFilterCondition::And,
+            params: Some(RowFilterParams::TextSearch(FilterTextSearch {
+                search_type,
+                term: term.to_string(),
+                case_sensitive,
+            })),
+            is_valid: Some(true),
+            error_message: None,
+        }
+    }
+
+    #[test]
+    fn test_pipe_builder_empty() {
+        let builder = PipeBuilder::new("data".to_string());
+        let result = builder.build(vec!["library(dplyr)".to_string()]);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "data".to_string()
+        ]);
+    }
+
+    #[test]
+    fn test_pipe_builder_with_operations() {
+        let mut builder = PipeBuilder::new("data".to_string());
+        builder.add_operation("filter(x > 1)".to_string());
+        builder.add_operation("arrange(y)".to_string());
+
+        let result = builder.build(vec!["library(dplyr)".to_string()]);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "data |>\n  filter(x > 1) |>\n  arrange(y)".to_string()
+        ]);
+    }
+
+    #[test]
+    fn test_resolved_sort_key_single() {
+        let sort_handler = DplyrSortHandler;
+        let sort_keys = vec![ResolvedSortKey {
+            column_name: "price".to_string(),
+            ascending: true,
+        }];
+
+        let result = sort_handler.convert_sorts(&sort_keys);
+        assert_eq!(result, Some("arrange(price)".to_string()));
+    }
+
+    #[test]
+    fn test_resolved_sort_key_descending() {
+        let sort_handler = DplyrSortHandler;
+        let sort_keys = vec![ResolvedSortKey {
+            column_name: "sales".to_string(),
+            ascending: false,
+        }];
+
+        let result = sort_handler.convert_sorts(&sort_keys);
+        assert_eq!(result, Some("arrange(desc(sales))".to_string()));
+    }
+
+    #[test]
+    fn test_resolved_sort_key_multiple() {
+        let sort_handler = DplyrSortHandler;
+        let sort_keys = vec![
+            ResolvedSortKey {
+                column_name: "sales".to_string(),
+                ascending: false,
+            },
+            ResolvedSortKey {
+                column_name: "region".to_string(),
+                ascending: true,
+            },
+            ResolvedSortKey {
+                column_name: "date".to_string(),
+                ascending: false,
+            },
+        ];
+
+        let result = sort_handler.convert_sorts(&sort_keys);
+        assert_eq!(result, Some("arrange(desc(sales), region, desc(date))".to_string()));
+    }
+
+    #[test]
+    fn test_filter_comparison_operators() {
+        let filter_handler = DplyrFilterHandler;
+
+        let test_cases = vec![
+            (FilterComparisonOp::Eq, "=="),
+            (FilterComparisonOp::NotEq, "!="),
+            (FilterComparisonOp::Lt, "<"),
+            (FilterComparisonOp::LtEq, "<="),
+            (FilterComparisonOp::Gt, ">"),
+            (FilterComparisonOp::GtEq, ">="),
+        ];
+
+        for (op, expected_op) in test_cases {
+            let filter = comparison_filter("price", op, "100", ColumnDisplayType::Number);
+            let result = filter_handler.convert_filter(&filter);
+            assert_eq!(result, Some(format!("price {} 100", expected_op)));
+        }
+    }
+
+    #[test]
+    fn test_filter_string_values() {
+        let filter_handler = DplyrFilterHandler;
+        let filter = comparison_filter("category", FilterComparisonOp::Eq, "Electronics", ColumnDisplayType::String);
+
+        let result = filter_handler.convert_filter(&filter);
+        assert_eq!(result, Some("category == \"Electronics\"".to_string()));
+    }
+
+    #[test]
+    fn test_filter_boolean_values() {
+        let filter_handler = DplyrFilterHandler;
+
+        let filter_true = comparison_filter("active", FilterComparisonOp::Eq, "true", ColumnDisplayType::Boolean);
+        let result_true = filter_handler.convert_filter(&filter_true);
+        assert_eq!(result_true, Some("active == TRUE".to_string()));
+
+        let filter_false = comparison_filter("active", FilterComparisonOp::Eq, "false", ColumnDisplayType::Boolean);
+        let result_false = filter_handler.convert_filter(&filter_false);
+        assert_eq!(result_false, Some("active == FALSE".to_string()));
+    }
+
+    #[test]
+    fn test_filter_between() {
+        let filter_handler = DplyrFilterHandler;
+        let filter = between_filter("price", "100", "500", ColumnDisplayType::Number);
+
+        let result = filter_handler.convert_filter(&filter);
+        assert_eq!(result, Some("price >= 100 & price <= 500".to_string()));
+    }
+
+    #[test]
+    fn test_filter_text_search() {
+        let filter_handler = DplyrFilterHandler;
+
+        // Test contains
+        let contains_filter = text_search_filter("name", "john", TextSearchType::Contains, true);
+        let result = filter_handler.convert_filter(&contains_filter);
+        assert_eq!(result, Some("grepl(\"john\", name, fixed = TRUE)".to_string()));
+
+        // Test starts with
+        let starts_filter = text_search_filter("name", "Mr", TextSearchType::StartsWith, true);
+        let result = filter_handler.convert_filter(&starts_filter);
+        assert_eq!(result, Some("grepl(\"^Mr\", name, fixed = TRUE)".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_filters() {
+        let filter_handler = DplyrFilterHandler;
+        let filters = vec![
+            comparison_filter("price", FilterComparisonOp::Gt, "100", ColumnDisplayType::Number),
+            comparison_filter("category", FilterComparisonOp::Eq, "Electronics", ColumnDisplayType::String),
+        ];
+
+        let result = filter_handler.convert_filters(&filters);
+        assert_eq!(result, Some("filter(\n    price > 100,\n    category == \"Electronics\"\n  )".to_string()));
+    }
+
+    #[test]
+    fn test_complete_conversion_filters_only() {
+        let params = ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters: vec![
+                comparison_filter("price", FilterComparisonOp::Gt, "100", ColumnDisplayType::Number),
+            ],
+            sort_keys: vec![],
+            code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        };
+
+        let result = convert_to_code(params, Some("my_data"), &[]);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "my_data |>\n  filter(\n    price > 100\n  )".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_complete_conversion_sorts_only() {
+        let params = ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters: vec![],
+            sort_keys: vec![], // Note: sort_keys in params are ignored, we use resolved_sort_keys
+            code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        };
+
+        let resolved_sorts = vec![ResolvedSortKey {
+            column_name: "date".to_string(),
+            ascending: false,
+        }];
+
+        let result = convert_to_code(params, Some("my_data"), &resolved_sorts);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "my_data |>\n  arrange(desc(date))".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_complete_conversion_filters_and_sorts() {
+        let params = ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters: vec![
+                comparison_filter("price", FilterComparisonOp::Gt, "100", ColumnDisplayType::Number),
+                comparison_filter("category", FilterComparisonOp::Eq, "Electronics", ColumnDisplayType::String),
+            ],
+            sort_keys: vec![],
+            code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        };
+
+        let resolved_sorts = vec![
+            ResolvedSortKey {
+                column_name: "sales".to_string(),
+                ascending: false,
+            },
+            ResolvedSortKey {
+                column_name: "region".to_string(),
+                ascending: true,
+            },
+        ];
+
+        let result = convert_to_code(params, Some("my_data"), &resolved_sorts);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "my_data |>\n  filter(\n    price > 100,\n    category == \"Electronics\"\n  ) |>\n  arrange(desc(sales), region)".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_default_object_name() {
+        let params = ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters: vec![],
+            sort_keys: vec![],
+            code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        };
+
+        let result = convert_to_code(params, None, &[]);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "dat".to_string(),
+        ]);
+    }
+}
+
 /// Suggest a code syntax based on available options
 ///
 /// Currently always returns "dplyr" as the preferred syntax
