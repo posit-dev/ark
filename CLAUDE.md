@@ -58,6 +58,7 @@ cargo test -p ark
 
 The following R packages are required for tests:
 - data.table
+- dplyr
 - rstudioapi
 - tibble
 - haven

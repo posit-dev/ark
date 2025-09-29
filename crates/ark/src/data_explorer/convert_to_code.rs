@@ -696,3 +696,127 @@ pub fn suggest_code_syntax() -> CodeSyntaxName {
         code_syntax_name: "dplyr".into(),
     }
 }
+
+#[cfg(test)]
+mod execution_tests {
+    use super::*;
+    use crate::fixtures::r_test_lock;
+    use crate::r_task::r_task;
+    use amalthea::comm::data_explorer_comm::CodeSyntaxName;
+    use amalthea::comm::data_explorer_comm::ColumnDisplayType;
+    use amalthea::comm::data_explorer_comm::ColumnSchema;
+    use amalthea::comm::data_explorer_comm::ConvertToCodeParams;
+    use amalthea::comm::data_explorer_comm::FilterComparison;
+    use amalthea::comm::data_explorer_comm::FilterComparisonOp;
+    use amalthea::comm::data_explorer_comm::RowFilter;
+    use amalthea::comm::data_explorer_comm::RowFilterCondition;
+    use amalthea::comm::data_explorer_comm::RowFilterParams;
+    use amalthea::comm::data_explorer_comm::RowFilterType;
+    use harp::DataFrame;
+
+    /// Helper function to execute generated convert-to-code output and assign the
+    /// result
+    fn execute_generated_code_and_assign_result(
+        mut code_lines: Vec<String>,
+        result_name: &str,
+    ) -> anyhow::Result<()> {
+        r_task(|| -> anyhow::Result<()> {
+            let last_line = code_lines.pop().unwrap();
+            code_lines.push(format!("{} <- {}", result_name, last_line));
+
+            let full_code = code_lines.join("\n");
+            harp::parse_eval_global(&full_code)?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_convert_to_code_execution_basic_filter() {
+        let _r_lock = r_test_lock();
+
+        // Check if dplyr is available, skip test if not
+        let has_dplyr = r_task(|| harp::parse_eval_global("library(dplyr)").is_ok());
+        if !has_dplyr {
+            eprintln!("Skipping test: dplyr not available");
+            return;
+        }
+
+        // Create a simple test dataset
+        r_task(|| {
+            harp::parse_eval_global(
+                r#"
+            test_people <- data.frame(
+                name = c("Alice", "Bob", "Charlie", "David"),
+                age = c(25, 30, 35, 22),
+                active = c(TRUE, FALSE, TRUE, FALSE)
+            )
+            "#,
+            )
+            .unwrap();
+        });
+
+        // Create a filter: age > 25
+        let age_schema = ColumnSchema {
+            column_name: "age".to_string(),
+            column_label: None,
+            column_index: 1,
+            type_name: "numeric".to_string(),
+            type_display: ColumnDisplayType::Number,
+            description: None,
+            children: None,
+            precision: None,
+            scale: None,
+            timezone: None,
+            type_size: None,
+        };
+
+        let row_filter = RowFilter {
+            filter_id: "test_filter".to_string(),
+            column_schema: age_schema,
+            filter_type: RowFilterType::Compare,
+            condition: RowFilterCondition::And,
+            params: Some(RowFilterParams::Comparison(FilterComparison {
+                op: FilterComparisonOp::Gt,
+                value: "25".to_string(),
+            })),
+            is_valid: Some(true),
+            error_message: None,
+        };
+
+        // Create convert_to_code request
+        let params = ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters: vec![row_filter],
+            sort_keys: vec![],
+            code_syntax_name: CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        };
+
+        let generated_code = convert_to_code(params, Some("test_people"), &[]);
+
+        execute_generated_code_and_assign_result(generated_code.converted_code, "filtered_people")
+            .expect("Failed to execute generated code");
+
+        r_task(|| {
+            let exists = harp::parse_eval_global("exists('filtered_people')").unwrap();
+            assert_eq!(harp::r_lgl_get(exists.sexp, 0), 1);
+
+            // Check that result has 2 rows (Bob: 30, Charlie: 35)
+            let nrows =
+                DataFrame::n_row(harp::parse_eval_global("filtered_people").unwrap().sexp)
+                    .unwrap();
+            assert_eq!(nrows, 2);
+
+            // Check that the filtered data contains exactly Bob and Charlie
+            let names_check = harp::parse_eval_global("setequal(filtered_people$name, c('Bob', 'Charlie'))").unwrap();
+            assert_eq!(harp::r_lgl_get(names_check.sexp, 0), 1);
+        });
+
+        // Clean up
+        r_task(|| {
+            harp::parse_eval_global("rm(test_people, filtered_people)").unwrap();
+        });
+    }
+}
