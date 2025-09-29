@@ -540,17 +540,37 @@ profile_frequency_table <- function(x, limit) {
 }
 
 histogram_num_bins <- function(x, method, fixed_num_bins) {
+    # Special case for single value: default to 1 bin regardless of method
+    if (length(unique(x)) == 1) {
+        return(1L)
+    }
+
     num_bins <- if (method == "sturges") {
         grDevices::nclass.Sturges(x)
     } else if (method == "fd") {
         # FD calls into signif, which is not implemented for Dates
-        grDevices::nclass.FD(unclass(x))
+        result <- grDevices::nclass.FD(unclass(x))
+        # Handle case where FD returns NA or non-finite for edge cases
+        if (!is.finite(result) || is.na(result)) {
+            result <- 1L
+        }
+        result
     } else if (method == "scott") {
-        grDevices::nclass.scott(x)
+        result <- grDevices::nclass.scott(x)
+        # Handle case where scott returns NA or non-finite for edge cases
+        if (!is.finite(result) || is.na(result)) {
+            result <- 1L
+        }
+        result
     } else if (method == "fixed") {
         fixed_num_bins
     } else {
         stop("Unknow method :", method)
+    }
+
+    # Ensure num_bins is finite and positive
+    if (!is.finite(num_bins) || is.na(num_bins) || num_bins < 1) {
+        num_bins <- 1L
     }
 
     if (is.integer(x) || inherits(x, "POSIXct")) {
