@@ -280,19 +280,19 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                         column_name
                     )),
                     TextSearchType::NotContains => Some(format!(
-                        "!grepl({}, {}, fixed = TRUE)",
+                        "grepl({}, {}, fixed = TRUE, invert = TRUE)",
                         quote_string(&search.term),
                         column_name
                     )),
                     TextSearchType::StartsWith => Some(format!(
-                        "grepl({}, {}, fixed = TRUE)",
-                        quote_string(&format!("^{}", escape_regex(&search.term))),
-                        column_name
+                        "startsWith({}, {})",
+                        column_name,
+                        quote_string(&search.term)
                     )),
                     TextSearchType::EndsWith => Some(format!(
-                        "grepl({}, {}, fixed = TRUE)",
-                        quote_string(&format!("{}$", escape_regex(&search.term))),
-                        column_name
+                        "endsWith({}, {})",
+                        column_name,
+                        quote_string(&search.term)
                     )),
                     TextSearchType::RegexMatch => Some(format!(
                         "grepl({}, {})",
@@ -330,23 +330,6 @@ fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace("\"", "\\\""))
 }
 
-/// Escapes special characters in regex patterns
-fn escape_regex(s: &str) -> String {
-    s.replace(".", "\\.")
-        .replace("*", "\\*")
-        .replace("+", "\\+")
-        .replace("?", "\\?")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace("(", "\\(")
-        .replace(")", "\\)")
-        .replace("{", "\\{")
-        .replace("}", "\\}")
-        .replace("^", "\\^")
-        .replace("$", "\\$")
-        .replace("|", "\\|")
-        .replace("\\", "\\\\")
-}
 
 #[cfg(test)]
 mod tests {
@@ -571,10 +554,20 @@ mod tests {
         let result = filter_handler.convert_filter(&contains_filter);
         assert_eq!(result, Some("grepl(\"john\", name, fixed = TRUE)".to_string()));
 
+        // Test not contains
+        let not_contains_filter = text_search_filter("name", "john", TextSearchType::NotContains, true);
+        let result = filter_handler.convert_filter(&not_contains_filter);
+        assert_eq!(result, Some("grepl(\"john\", name, fixed = TRUE, invert = TRUE)".to_string()));
+
         // Test starts with
         let starts_filter = text_search_filter("name", "Mr", TextSearchType::StartsWith, true);
         let result = filter_handler.convert_filter(&starts_filter);
-        assert_eq!(result, Some("grepl(\"^Mr\", name, fixed = TRUE)".to_string()));
+        assert_eq!(result, Some("startsWith(name, \"Mr\")".to_string()));
+
+        // Test ends with
+        let ends_filter = text_search_filter("name", "Jr", TextSearchType::EndsWith, true);
+        let result = filter_handler.convert_filter(&ends_filter);
+        assert_eq!(result, Some("endsWith(name, \"Jr\")".to_string()));
     }
 
     #[test]
