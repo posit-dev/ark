@@ -74,13 +74,11 @@ After building, you can install the Jupyter kernel specification with:
 ./target/release/ark --install
 ```
 
-## Debugging
+## Generated code
 
-When debugging R code, note that breakpoint support is currently missing, but you can use `debug()`, `debugonce()`, or `browser()` to drop into the debugger.
-
-## Issue Reporting
-
-Report bugs and feature requests in the Positron repository issue tracker: https://github.com/posit-dev/positron/issues
+Some of the files below `crates/amalthea/src/comm/` are automatically generated from comms specified in the Positron front end.
+Such files always have `// @generated` at the top and SHOULD NEVER be edited "by hand".
+If changes are needed in these files, that must happen in the separate Positron source repository and the comms for R and Python must be regenerated.
 
 ## Current Work in Progress
 
@@ -89,13 +87,13 @@ Report bugs and feature requests in the Positron repository issue tracker: https
 **Feature**: Backend implementation of "convert to code" for Positron's data explorer in R, allowing users to generate R code (dplyr syntax) that replicates their UI-based data manipulations (filters, sorting).
 
 **Status**:
-- Core feature is implemented and working with dplyr syntax
-- Comprehensive unit tests exist but only validate string output
-- Completed comparison with Python implementation - R implementation is architecturally solid and feature-complete
-- Current focus: Adding execution validation tests (generate code → execute → verify results)
+- ✅ R implementation has been created with awareness of the Python implementation
+- ✅ Core feature is implemented and working with dplyr syntax
+- ✅ Unit tests exist for string output validation
+- ✅ An MVP exists of a test that validates the result of executing generated code
 
 **Key files in R implementation**:
-- `crates/ark/src/data_explorer/convert_to_code.rs` - Core conversion logic with traits and handlers
+- `crates/ark/src/data_explorer/convert_to_code.rs` - Core conversion logic with traits and handlers + tests
 - `crates/ark/src/data_explorer/r_data_explorer.rs` - Data explorer integration
 - `crates/ark/tests/data_explorer.rs` - Integration tests for data explorer
 
@@ -108,14 +106,11 @@ Report bugs and feature requests in the Positron repository issue tracker: https
 - Both R and Python use similar trait/abstract class patterns for extensibility
 - R uses `PipeBuilder` for clean pipe chain generation; Python uses `MethodChainBuilder`
 - Both have comprehensive filter/sort handlers with type-aware value formatting
-- **Key difference**: Python tests actually execute generated code and validate results; R tests only check string output
 
-**Next steps**:
-1. Design and implement execution validation tests for R (execute generated dplyr code and verify DataFrame results)
-2. Future work will support multiple R syntaxes beyond dplyr
-
-## Generated code
-
-Some of the files below `crates/amalthea/src/comm/` are automatically generated from comms specified in the Positron front end.
-Such files always have `// @generated` at the top and SHOULD NEVER be edited "by hand".
-If changes are needed in these files, that must happen in the separate Positron source repository and the comms for R and Python must be regenerated.
+**Possible next steps**:
+1. Add more execution tests, e.g. for sorting, or combined filtering and sorting
+1. Consider a "tidyverse" syntax instead of or in addition to "dplyr", where
+   we would use stringr function for text search filters
+1. Dig in to non-syntactic column names
+1. Dig in to filtering for date and datetime columns
+1. Handle "base" and "data.table" syntaxes
