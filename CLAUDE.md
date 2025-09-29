@@ -81,6 +81,38 @@ When debugging R code, note that breakpoint support is currently missing, but yo
 
 Report bugs and feature requests in the Positron repository issue tracker: https://github.com/posit-dev/positron/issues
 
+## Current Work in Progress
+
+### Convert to Code Feature for Data Explorer
+
+**Feature**: Backend implementation of "convert to code" for Positron's data explorer in R, allowing users to generate R code (dplyr syntax) that replicates their UI-based data manipulations (filters, sorting).
+
+**Status**:
+- Core feature is implemented and working with dplyr syntax
+- Comprehensive unit tests exist but only validate string output
+- Completed comparison with Python implementation - R implementation is architecturally solid and feature-complete
+- Current focus: Adding execution validation tests (generate code → execute → verify results)
+
+**Key files in R implementation**:
+- `crates/ark/src/data_explorer/convert_to_code.rs` - Core conversion logic with traits and handlers
+- `crates/ark/src/data_explorer/r_data_explorer.rs` - Data explorer integration
+- `crates/ark/tests/data_explorer.rs` - Integration tests for data explorer
+
+**Key files in Python implementation** (for reference):
+- `../positron/extensions/positron-python/python_files/posit/positron/convert.py` - Core conversion logic
+- `../positron/extensions/positron-python/python_files/posit/positron/data_explorer.py` - Main data explorer (see `convert_to_code` methods around lines 1408, 2297)
+- `../positron/extensions/positron-python/python_files/posit/positron/tests/test_convert.py` - Execution validation tests
+
+**Architecture comparison**:
+- Both R and Python use similar trait/abstract class patterns for extensibility
+- R uses `PipeBuilder` for clean pipe chain generation; Python uses `MethodChainBuilder`
+- Both have comprehensive filter/sort handlers with type-aware value formatting
+- **Key difference**: Python tests actually execute generated code and validate results; R tests only check string output
+
+**Next steps**:
+1. Design and implement execution validation tests for R (execute generated dplyr code and verify DataFrame results)
+2. Future work will support multiple R syntaxes beyond dplyr
+
 ## Generated code
 
 Some of the files below `crates/amalthea/src/comm/` are automatically generated from comms specified in the Positron front end.
