@@ -1274,8 +1274,10 @@ impl RDataExplorer {
     /// Takes the current filters, sort keys, and other parameters and converts them
     /// to executable code that can reproduce the current data view.
     fn convert_to_code(&self, params: ConvertToCodeParams) -> ConvertedCode {
-        // Get object name if available
-        let object_name = self.binding.as_ref().map(|b| b.name.as_str());
+        // Get object name if available, fallback to title
+        let object_name = self.binding.as_ref()
+            .map(|b| b.name.as_str())
+            .or_else(|| Some(self.title.as_str()));
 
         // Resolve column names for sort keys using the same pattern as r_sort_rows()
         let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params.sort_keys
