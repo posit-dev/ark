@@ -32,6 +32,13 @@ cargo build
 
 # Build in release mode
 cargo build --release
+
+# On Windows: If Positron is running with a debug build of ark,
+# Windows file locking prevents overwriting ark.exe. For interim "progress"
+# checks during development, just check the specific crate you're working on
+# instead:
+cargo check --package ark
+# You'll have to quit Positron to do `cargo build`, though, on Windows.
 ```
 
 ### Running Tests

@@ -1277,8 +1277,26 @@ impl RDataExplorer {
         // Get object name if available
         let object_name = self.binding.as_ref().map(|b| b.name.as_str());
 
-        // Call the conversion function in the module, passing only what's needed
-        convert_to_code::convert_to_code(params, object_name)
+        // Resolve column names for sort keys using the same pattern as r_sort_rows()
+        let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params.sort_keys
+            .iter()
+            .filter_map(|sort_key| {
+                // Get column schema from index, similar to existing sort implementation
+                let column_index = sort_key.column_index as usize;
+                if column_index < self.shape.columns.len() {
+                    Some(convert_to_code::ResolvedSortKey {
+                        column_name: self.shape.columns[column_index].column_name.clone(),
+                        ascending: sort_key.ascending,
+                    })
+                } else {
+                    // Invalid column index - skip this sort key
+                    None
+                }
+            })
+            .collect();
+
+        // Call the conversion function with resolved sort keys
+        convert_to_code::convert_to_code(params, object_name, &resolved_sort_keys)
     }
 }
 

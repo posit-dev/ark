@@ -15,6 +15,148 @@ use amalthea::comm::data_explorer_comm::RowFilterParams;
 use amalthea::comm::data_explorer_comm::RowFilterType;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 
+/// Sort key with resolved column name
+#[derive(Clone, Debug)]
+pub struct ResolvedSortKey {
+    pub column_name: String,
+    pub ascending: bool,
+}
+
+/// Base trait for handling row filter conversion to code
+trait FilterHandler {
+    fn convert_filter(&self, filter: &RowFilter) -> Option<String>;
+}
+
+/// Base trait for handling sort key conversion to code
+trait SortHandler {
+    fn convert_sorts(&self, sort_keys: &[ResolvedSortKey]) -> Option<String>;
+}
+
+/// Base trait for code converters that generate final code output
+trait CodeConverter {
+    fn build_code(&self, params: ConvertToCodeParams, object_name: Option<&str>, resolved_sort_keys: &[ResolvedSortKey]) -> ConvertedCode;
+}
+
+/// Helper for building pipe chains with library imports
+struct PipeBuilder {
+    table_name: String,
+    operations: Vec<String>,
+}
+
+impl PipeBuilder {
+    fn new(table_name: String) -> Self {
+        Self {
+            table_name,
+            operations: Vec::new(),
+        }
+    }
+
+    fn add_operation(&mut self, operation: String) {
+        self.operations.push(operation);
+    }
+
+    fn build(self, library_imports: Vec<String>) -> ConvertedCode {
+        let mut code_lines = library_imports;
+
+        if !code_lines.is_empty() {
+            code_lines.push("".to_string()); // Empty line after imports
+        }
+
+        // Build the pipe expression
+        if self.operations.is_empty() {
+            code_lines.push(self.table_name);
+        } else {
+            let mut pipe_parts = vec![self.table_name];
+            pipe_parts.extend(self.operations);
+            code_lines.push(pipe_parts.join(" |>\n  "));
+        }
+
+        ConvertedCode {
+            converted_code: code_lines,
+        }
+    }
+}
+
+/// Dplyr-specific filter handler
+struct DplyrFilterHandler;
+
+impl FilterHandler for DplyrFilterHandler {
+    fn convert_filter(&self, filter: &RowFilter) -> Option<String> {
+        row_filter_to_dplyr(filter)
+    }
+}
+
+impl DplyrFilterHandler {
+    fn convert_filters(&self, filters: &[RowFilter]) -> Option<String> {
+        if filters.is_empty() {
+            return None;
+        }
+
+        let filter_expressions: Vec<String> = filters
+            .iter()
+            .filter_map(|filter| self.convert_filter(filter))
+            .collect();
+
+        if filter_expressions.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "filter(\n    {}\n  )",
+                filter_expressions.join(",\n    ")
+            ))
+        }
+    }
+}
+
+/// Dplyr-specific sort handler
+struct DplyrSortHandler;
+
+impl SortHandler for DplyrSortHandler {
+    fn convert_sorts(&self, sort_keys: &[ResolvedSortKey]) -> Option<String> {
+        if sort_keys.is_empty() {
+            return None;
+        }
+
+        let sort_expressions: Vec<String> = sort_keys
+            .iter()
+            .map(|sort_key| {
+                if sort_key.ascending {
+                    sort_key.column_name.clone()
+                } else {
+                    format!("desc({})", sort_key.column_name)
+                }
+            })
+            .collect();
+
+        Some(format!("arrange({})", sort_expressions.join(", ")))
+    }
+}
+
+/// Dplyr-specific code converter
+struct DplyrCodeConverter;
+
+impl CodeConverter for DplyrCodeConverter {
+    fn build_code(&self, params: ConvertToCodeParams, object_name: Option<&str>, resolved_sort_keys: &[ResolvedSortKey]) -> ConvertedCode {
+        let table_name = object_name.unwrap_or("dat").to_string();
+        let mut builder = PipeBuilder::new(table_name);
+
+        let filter_handler = DplyrFilterHandler;
+        let sort_handler = DplyrSortHandler;
+
+        // Add filter operations
+        if let Some(filter_op) = filter_handler.convert_filters(&params.row_filters) {
+            builder.add_operation(filter_op);
+        }
+
+        // Add sort operations using resolved sort keys
+        if let Some(sort_op) = sort_handler.convert_sorts(resolved_sort_keys) {
+            builder.add_operation(sort_op);
+        }
+
+        builder.build(vec!["library(dplyr)".to_string()])
+    }
+}
+
 /// Convert the current data explorer view to executable code
 ///
 /// Takes filters, sort keys, and other parameters and generates code that
@@ -24,56 +166,18 @@ use amalthea::comm::data_explorer_comm::TextSearchType;
 ///
 /// * `params` - Parameters for the code conversion including filters and sort keys
 /// * `object_name` - Optional name of the data object in the R environment
+/// * `resolved_sort_keys` - Sort keys with resolved column names
 ///
 /// # Returns
 ///
 /// A `ConvertedCode` containing lines of code implementing the filters and sort keys
-pub fn convert_to_code(params: ConvertToCodeParams, object_name: Option<&str>) -> ConvertedCode {
-    // Create a library statement for dplyr
-    let library_statement = "library(dplyr)".to_string();
-
-    // Use a default placeholder if no object name is provided
-    let object_ref = match object_name {
-        Some(name) => name.to_string(),
-        None => "dat".to_string(), // Default placeholder if no object name
-    };
-
-    // Start with the object reference
-    let mut pipe_parts = vec![object_ref.clone()];
-
-    // Add filter operations if there are any row filters
-    if !params.row_filters.is_empty() {
-        let filter_expressions = build_filter_expressions(&params.row_filters);
-        if !filter_expressions.is_empty() {
-            pipe_parts.push(format!(
-                "filter(\n    {}\n  )",
-                filter_expressions.join(",\n    ")
-            ));
-        }
-    }
-
-
-    // Join the parts with the pipe operator
-    let pipe_expression = pipe_parts.join(" |>\n  ");
-
-    // Combine the code lines
-    ConvertedCode {
-        converted_code: vec![library_statement, "".to_string(), pipe_expression],
-    }
+pub fn convert_to_code(params: ConvertToCodeParams, object_name: Option<&str>, resolved_sort_keys: &[ResolvedSortKey]) -> ConvertedCode {
+    // For now, default to dplyr syntax
+    // TODO: Use params.code_syntax_name to choose the appropriate converter
+    let converter = DplyrCodeConverter;
+    converter.build_code(params, object_name, resolved_sort_keys)
 }
 
-/// Builds filter expressions for dplyr from row filters
-fn build_filter_expressions(row_filters: &[RowFilter]) -> Vec<String> {
-    let mut expressions = Vec::new();
-
-    for filter in row_filters {
-        if let Some(expr) = row_filter_to_dplyr(filter) {
-            expressions.push(expr);
-        }
-    }
-
-    expressions
-}
 
 /// Formats a value for use in R code based on the column type
 fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
