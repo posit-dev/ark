@@ -267,8 +267,8 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
         },
         RowFilterType::IsNull => Some(format!("is.na({})", column_name)),
         RowFilterType::NotNull => Some(format!("!is.na({})", column_name)),
-        RowFilterType::IsTrue => Some(format!("{} == TRUE", column_name)),
-        RowFilterType::IsFalse => Some(format!("{} == FALSE", column_name)),
+        RowFilterType::IsTrue => Some(format!("{}", column_name)),
+        RowFilterType::IsFalse => Some(format!("!{}", column_name)),
         RowFilterType::IsEmpty => Some(format!("{} == \"\"", column_name)),
         RowFilterType::NotEmpty => Some(format!("{} != \"\"", column_name)),
         RowFilterType::Search => {
@@ -534,6 +534,38 @@ mod tests {
         let filter_false = comparison_filter("active", FilterComparisonOp::Eq, "false", ColumnDisplayType::Boolean);
         let result_false = filter_handler.convert_filter(&filter_false);
         assert_eq!(result_false, Some("active == FALSE".to_string()));
+    }
+
+    #[test]
+    fn test_filter_is_true_is_false() {
+        let filter_handler = DplyrFilterHandler;
+        let column_schema = test_column_schema("active", ColumnDisplayType::Boolean);
+
+        // Test IsTrue filter
+        let is_true_filter = RowFilter {
+            filter_id: "test".to_string(),
+            column_schema: column_schema.clone(),
+            filter_type: RowFilterType::IsTrue,
+            condition: RowFilterCondition::And,
+            params: None,
+            is_valid: Some(true),
+            error_message: None,
+        };
+        let result_true = filter_handler.convert_filter(&is_true_filter);
+        assert_eq!(result_true, Some("active".to_string()));
+
+        // Test IsFalse filter
+        let is_false_filter = RowFilter {
+            filter_id: "test".to_string(),
+            column_schema: column_schema,
+            filter_type: RowFilterType::IsFalse,
+            condition: RowFilterCondition::And,
+            params: None,
+            is_valid: Some(true),
+            error_message: None,
+        };
+        let result_false = filter_handler.convert_filter(&is_false_filter);
+        assert_eq!(result_false, Some("!active".to_string()));
     }
 
     #[test]
