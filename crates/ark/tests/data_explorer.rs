@@ -2916,3 +2916,194 @@ fn test_export_with_sort_order() {
     });
 }
 
+#[test]
+fn test_empty_data_frame_schema() {
+    let _lock = r_test_lock();
+
+    // Test schema behavior with 0-row data frames for different column types
+    let socket = open_data_explorer_from_expression(
+        "data.frame(
+            a = numeric(0),
+            b = character(0),
+            c = logical(0),
+            d = factor(character(0)),
+            e = as.Date(character(0)),
+            f = as.POSIXct(character(0))
+        )",
+        None,
+    )
+    .unwrap();
+
+    let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
+        column_indices: vec![0, 1, 2, 3, 4, 5],
+    });
+
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetSchemaReply(schema) => {
+            assert_eq!(schema.columns.len(), 6);
+
+            let expected_types = vec![
+                (ColumnDisplayType::Number, "dbl"),
+                (ColumnDisplayType::String, "str"),
+                (ColumnDisplayType::Boolean, "lgl"),
+                (ColumnDisplayType::String, "fct(0)"),
+                (ColumnDisplayType::Date, "Date"),
+                (ColumnDisplayType::Datetime, "POSIXct"),
+            ];
+
+            for (i, (expected_display, expected_name)) in expected_types.iter().enumerate() {
+                assert_eq!(schema.columns[i].type_display, *expected_display);
+                assert_eq!(schema.columns[i].type_name, expected_name.to_string());
+                assert_eq!(schema.columns[i].column_name,
+                    match i {
+                        0 => "a",
+                        1 => "b",
+                        2 => "c",
+                        3 => "d",
+                        4 => "e",
+                        5 => "f",
+                        _ => unreachable!(),
+                    }.to_string()
+                );
+            }
+        }
+    );
+}
+
+#[test]
+fn test_empty_data_frame_data_values() {
+    let _lock = r_test_lock();
+
+    // Test data values request behavior with 0-row data frames
+    let socket = open_data_explorer_from_expression(
+        "data.frame(
+            numbers = numeric(0),
+            strings = character(0),
+            booleans = logical(0)
+        )",
+        None,
+    )
+    .unwrap();
+
+    let req = get_data_values_request(0, 10, vec![0, 1, 2], default_format_options());
+
+    assert_match!(socket_rpc(&socket, req),
+        DataExplorerBackendReply::GetDataValuesReply(data) => {
+            assert_eq!(data.columns.len(), 3);
+            // Each column should be empty
+            for column in &data.columns {
+                assert_eq!(column.len(), 0);
+            }
+        }
+    );
+}
+
+#[test]
+fn test_empty_data_frame_state() {
+    let _lock = r_test_lock();
+
+    // Test state request with 0-row data frame
+    let socket = open_data_explorer_from_expression(
+        "data.frame(x = numeric(0), y = character(0))",
+        None,
+    )
+    .unwrap();
+
+    assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
+        DataExplorerBackendReply::GetStateReply(state) => {
+            assert_eq!(state.table_shape.num_rows, 0);
+            assert_eq!(state.table_shape.num_columns, 2);
+            // has_row_labels depends on whether the data frame has row names, even when empty
+            // For our empty data frame, this could be true or false depending on R's behavior
+        }
+    );
+}
+
+#[test]
+fn test_empty_data_frame_column_profiles() {
+    let _lock = r_test_lock();
+
+    // Test column profile requests (histograms, summary stats) with 0-row data frames
+    let socket = open_data_explorer_from_expression(
+        "data.frame(numbers = numeric(0), strings = character(0))",
+        None,
+    )
+    .unwrap();
+
+    // Test histogram profile for empty numeric column
+    let histogram_req = ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
+    let req = RequestBuilder::get_column_profiles("empty_histogram".to_string(), vec![histogram_req]);
+
+    expect_column_profile_results(&socket, req, |profiles| {
+        let histogram = profiles[0].small_histogram.clone().unwrap();
+        assert_eq!(histogram.bin_edges, Vec::<String>::new());
+        assert_eq!(histogram.bin_counts, Vec::<i64>::new());
+    });
+
+    // Test frequency table for empty string column
+    let freq_table_req = ProfileBuilder::small_frequency_table(1, 5);
+    let req = RequestBuilder::get_column_profiles("empty_freq_table".to_string(), vec![freq_table_req]);
+
+    expect_column_profile_results(&socket, req, |profiles| {
+        let freq_table = profiles[0].small_frequency_table.clone().unwrap();
+        assert_eq!(freq_table.values.len(), 0);
+        assert_eq!(freq_table.counts.len(), 0);
+        assert_eq!(freq_table.other_count, None);
+    });
+}
+
+#[test]
+fn test_single_row_data_frame_column_profiles() {
+    let _lock = r_test_lock();
+
+    // Test column profiles specifically for 1-row data frames to ensure sparklines work
+    let socket = open_data_explorer_from_expression(
+        "data.frame(
+            single_num = c(42.5),
+            single_str = c('hello'),
+            single_bool = c(TRUE),
+            single_int = c(7L)
+        )",
+        None,
+    )
+    .unwrap();
+
+    // Test histogram profile for single value numeric column
+    let histogram_req = ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
+    let req = RequestBuilder::get_column_profiles("single_histogram".to_string(), vec![histogram_req]);
+
+    expect_column_profile_results(&socket, req, |profiles| {
+        let histogram = profiles[0].small_histogram.clone().unwrap();
+        assert_eq!(histogram.bin_edges, vec!["42.50", "42.50"]);
+        assert_eq!(histogram.bin_counts, vec![1]);
+    });
+
+    // Test frequency table for single value string column
+    let freq_table_req = ProfileBuilder::small_frequency_table(1, 5);
+    let req = RequestBuilder::get_column_profiles("single_freq_table".to_string(), vec![freq_table_req]);
+
+    expect_column_profile_results(&socket, req, |profiles| {
+        let freq_table = profiles[0].small_frequency_table.clone().unwrap();
+        assert_eq!(freq_table.values.len(), 1);
+        assert_eq!(freq_table.counts, vec![1]);
+        assert_eq!(freq_table.other_count, None);
+    });
+
+    // Test different histogram methods work for single values
+    let histogram_methods = vec![
+        ColumnHistogramParamsMethod::Sturges,
+        ColumnHistogramParamsMethod::FreedmanDiaconis,
+        ColumnHistogramParamsMethod::Scott,
+    ];
+
+    for method in histogram_methods {
+        let histogram_req = ProfileBuilder::small_histogram(3, method.clone(), 10, None); // single_int column
+        let req = RequestBuilder::get_column_profiles(format!("single_histogram_{:?}", method), vec![histogram_req]);
+
+        expect_column_profile_results(&socket, req, |profiles| {
+            let histogram = profiles[0].small_histogram.clone().unwrap();
+            assert_eq!(histogram.bin_edges, vec!["7", "7"]);
+            assert_eq!(histogram.bin_counts, vec![1]);
+        });
+    }
+}
