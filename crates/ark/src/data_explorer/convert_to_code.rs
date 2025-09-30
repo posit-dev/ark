@@ -34,7 +34,12 @@ trait SortHandler {
 
 /// Base trait for code converters that generate final code output
 trait CodeConverter {
-    fn build_code(&self, params: ConvertToCodeParams, object_name: Option<&str>, resolved_sort_keys: &[ResolvedSortKey]) -> ConvertedCode;
+    fn build_code(
+        &self,
+        params: ConvertToCodeParams,
+        object_name: Option<&str>,
+        resolved_sort_keys: &[ResolvedSortKey],
+    ) -> ConvertedCode;
 }
 
 /// Helper for building pipe chains with library imports
@@ -136,7 +141,12 @@ impl SortHandler for DplyrSortHandler {
 struct DplyrCodeConverter;
 
 impl CodeConverter for DplyrCodeConverter {
-    fn build_code(&self, params: ConvertToCodeParams, object_name: Option<&str>, resolved_sort_keys: &[ResolvedSortKey]) -> ConvertedCode {
+    fn build_code(
+        &self,
+        params: ConvertToCodeParams,
+        object_name: Option<&str>,
+        resolved_sort_keys: &[ResolvedSortKey],
+    ) -> ConvertedCode {
         let table_name = object_name.unwrap_or("dat").to_string();
         let mut builder = PipeBuilder::new(table_name);
 
@@ -171,13 +181,29 @@ impl CodeConverter for DplyrCodeConverter {
 /// # Returns
 ///
 /// A `ConvertedCode` containing lines of code implementing the filters and sort keys
-pub fn convert_to_code(params: ConvertToCodeParams, object_name: Option<&str>, resolved_sort_keys: &[ResolvedSortKey]) -> ConvertedCode {
+pub fn convert_to_code(
+    params: ConvertToCodeParams,
+    object_name: Option<&str>,
+    resolved_sort_keys: &[ResolvedSortKey],
+) -> ConvertedCode {
     // For now, default to dplyr syntax
     // TODO: Use params.code_syntax_name to choose the appropriate converter
     let converter = DplyrCodeConverter;
     converter.build_code(params, object_name, resolved_sort_keys)
 }
 
+/// Suggest a code syntax based on available options
+///
+/// Currently always returns "dplyr" as the preferred syntax
+///
+/// # Returns
+///
+/// A `CodeSyntaxName` with the suggested syntax
+pub fn suggest_code_syntax() -> CodeSyntaxName {
+    CodeSyntaxName {
+        code_syntax_name: "dplyr".into(),
+    }
+}
 
 /// Formats a value for use in R code based on the column type
 fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
@@ -330,15 +356,15 @@ fn quote_string(s: &str) -> String {
     format!("\"{}\"", s.replace("\"", "\\\""))
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
     use amalthea::comm::data_explorer_comm::ColumnSchema;
     use amalthea::comm::data_explorer_comm::FilterBetween;
     use amalthea::comm::data_explorer_comm::FilterComparison;
     use amalthea::comm::data_explorer_comm::FilterTextSearch;
     use amalthea::comm::data_explorer_comm::RowFilterCondition;
+
+    use super::*;
 
     /// Helper to create a test ColumnSchema
     fn test_column_schema(name: &str, display_type: ColumnDisplayType) -> ColumnSchema {
@@ -491,7 +517,10 @@ mod tests {
         ];
 
         let result = sort_handler.convert_sorts(&sort_keys);
-        assert_eq!(result, Some("arrange(desc(sales), region, desc(date))".to_string()));
+        assert_eq!(
+            result,
+            Some("arrange(desc(sales), region, desc(date))".to_string())
+        );
     }
 
     #[test]
@@ -517,7 +546,12 @@ mod tests {
     #[test]
     fn test_filter_string_values() {
         let filter_handler = DplyrFilterHandler;
-        let filter = comparison_filter("category", FilterComparisonOp::Eq, "Electronics", ColumnDisplayType::String);
+        let filter = comparison_filter(
+            "category",
+            FilterComparisonOp::Eq,
+            "Electronics",
+            ColumnDisplayType::String,
+        );
 
         let result = filter_handler.convert_filter(&filter);
         assert_eq!(result, Some("category == \"Electronics\"".to_string()));
@@ -527,11 +561,21 @@ mod tests {
     fn test_filter_boolean_values() {
         let filter_handler = DplyrFilterHandler;
 
-        let filter_true = comparison_filter("active", FilterComparisonOp::Eq, "true", ColumnDisplayType::Boolean);
+        let filter_true = comparison_filter(
+            "active",
+            FilterComparisonOp::Eq,
+            "true",
+            ColumnDisplayType::Boolean,
+        );
         let result_true = filter_handler.convert_filter(&filter_true);
         assert_eq!(result_true, Some("active == TRUE".to_string()));
 
-        let filter_false = comparison_filter("active", FilterComparisonOp::Eq, "false", ColumnDisplayType::Boolean);
+        let filter_false = comparison_filter(
+            "active",
+            FilterComparisonOp::Eq,
+            "false",
+            ColumnDisplayType::Boolean,
+        );
         let result_false = filter_handler.convert_filter(&filter_false);
         assert_eq!(result_false, Some("active == FALSE".to_string()));
     }
@@ -557,7 +601,7 @@ mod tests {
         // Test IsFalse filter
         let is_false_filter = RowFilter {
             filter_id: "test".to_string(),
-            column_schema: column_schema,
+            column_schema,
             filter_type: RowFilterType::IsFalse,
             condition: RowFilterCondition::And,
             params: None,
@@ -584,12 +628,19 @@ mod tests {
         // Test contains
         let contains_filter = text_search_filter("name", "john", TextSearchType::Contains, true);
         let result = filter_handler.convert_filter(&contains_filter);
-        assert_eq!(result, Some("grepl(\"john\", name, fixed = TRUE)".to_string()));
+        assert_eq!(
+            result,
+            Some("grepl(\"john\", name, fixed = TRUE)".to_string())
+        );
 
         // Test not contains
-        let not_contains_filter = text_search_filter("name", "john", TextSearchType::NotContains, true);
+        let not_contains_filter =
+            text_search_filter("name", "john", TextSearchType::NotContains, true);
         let result = filter_handler.convert_filter(&not_contains_filter);
-        assert_eq!(result, Some("grepl(\"john\", name, fixed = TRUE, invert = TRUE)".to_string()));
+        assert_eq!(
+            result,
+            Some("grepl(\"john\", name, fixed = TRUE, invert = TRUE)".to_string())
+        );
 
         // Test starts with
         let starts_filter = text_search_filter("name", "Mr", TextSearchType::StartsWith, true);
@@ -606,21 +657,37 @@ mod tests {
     fn test_multiple_filters() {
         let filter_handler = DplyrFilterHandler;
         let filters = vec![
-            comparison_filter("price", FilterComparisonOp::Gt, "100", ColumnDisplayType::Number),
-            comparison_filter("category", FilterComparisonOp::Eq, "Electronics", ColumnDisplayType::String),
+            comparison_filter(
+                "price",
+                FilterComparisonOp::Gt,
+                "100",
+                ColumnDisplayType::Number,
+            ),
+            comparison_filter(
+                "category",
+                FilterComparisonOp::Eq,
+                "Electronics",
+                ColumnDisplayType::String,
+            ),
         ];
 
         let result = filter_handler.convert_filters(&filters);
-        assert_eq!(result, Some("filter(\n    price > 100,\n    category == \"Electronics\"\n  )".to_string()));
+        assert_eq!(
+            result,
+            Some("filter(\n    price > 100,\n    category == \"Electronics\"\n  )".to_string())
+        );
     }
 
     #[test]
     fn test_complete_conversion_filters_only() {
         let params = ConvertToCodeParams {
             column_filters: vec![],
-            row_filters: vec![
-                comparison_filter("price", FilterComparisonOp::Gt, "100", ColumnDisplayType::Number),
-            ],
+            row_filters: vec![comparison_filter(
+                "price",
+                FilterComparisonOp::Gt,
+                "100",
+                ColumnDisplayType::Number,
+            )],
             sort_keys: vec![],
             code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
                 code_syntax_name: "dplyr".to_string(),
@@ -666,8 +733,18 @@ mod tests {
         let params = ConvertToCodeParams {
             column_filters: vec![],
             row_filters: vec![
-                comparison_filter("price", FilterComparisonOp::Gt, "100", ColumnDisplayType::Number),
-                comparison_filter("category", FilterComparisonOp::Eq, "Electronics", ColumnDisplayType::String),
+                comparison_filter(
+                    "price",
+                    FilterComparisonOp::Gt,
+                    "100",
+                    ColumnDisplayType::Number,
+                ),
+                comparison_filter(
+                    "category",
+                    FilterComparisonOp::Eq,
+                    "Electronics",
+                    ColumnDisplayType::String,
+                ),
             ],
             sort_keys: vec![],
             code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
@@ -716,24 +793,8 @@ mod tests {
     }
 }
 
-/// Suggest a code syntax based on available options
-///
-/// Currently always returns "dplyr" as the preferred syntax
-///
-/// # Returns
-///
-/// A `CodeSyntaxName` with the suggested syntax
-pub fn suggest_code_syntax() -> CodeSyntaxName {
-    CodeSyntaxName {
-        code_syntax_name: "dplyr".into(),
-    }
-}
-
 #[cfg(test)]
 mod execution_tests {
-    use super::*;
-    use crate::fixtures::r_test_lock;
-    use crate::r_task::r_task;
     use amalthea::comm::data_explorer_comm::CodeSyntaxName;
     use amalthea::comm::data_explorer_comm::ColumnDisplayType;
     use amalthea::comm::data_explorer_comm::ColumnSchema;
@@ -745,6 +806,10 @@ mod execution_tests {
     use amalthea::comm::data_explorer_comm::RowFilterParams;
     use amalthea::comm::data_explorer_comm::RowFilterType;
     use harp::DataFrame;
+
+    use super::*;
+    use crate::fixtures::r_test_lock;
+    use crate::r_task::r_task;
 
     /// Helper function to execute generated convert-to-code output and assign the
     /// result
@@ -837,12 +902,13 @@ mod execution_tests {
 
             // Check that result has 2 rows (Bob: 30, Charlie: 35)
             let nrows =
-                DataFrame::n_row(harp::parse_eval_global("filtered_people").unwrap().sexp)
-                    .unwrap();
+                DataFrame::n_row(harp::parse_eval_global("filtered_people").unwrap().sexp).unwrap();
             assert_eq!(nrows, 2);
 
             // Check that the filtered data contains exactly Bob and Charlie
-            let names_check = harp::parse_eval_global("setequal(filtered_people$name, c('Bob', 'Charlie'))").unwrap();
+            let names_check =
+                harp::parse_eval_global("setequal(filtered_people$name, c('Bob', 'Charlie'))")
+                    .unwrap();
             assert_eq!(harp::r_lgl_get(names_check.sexp, 0), 1);
         });
 
