@@ -788,6 +788,9 @@ impl RDataExplorer {
 
         let is_compare_supported = |x: &ColumnDisplayType| match x {
             ColumnDisplayType::Number |
+            ColumnDisplayType::Integer |
+            ColumnDisplayType::Floating |
+            ColumnDisplayType::Decimal |
             ColumnDisplayType::Date |
             ColumnDisplayType::Datetime |
             ColumnDisplayType::Time => true,
