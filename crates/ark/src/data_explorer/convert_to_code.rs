@@ -210,13 +210,13 @@ pub fn suggest_code_syntax() -> CodeSyntaxName {
 fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
     match display_type {
         // For strings, wrap in quotes
-        ColumnDisplayType::String => quote_string(value),
+        ColumnDisplayType::String => escape_character_constant(value),
 
         // For date and datetime types, wrap in quotes
         ColumnDisplayType::Date |
         ColumnDisplayType::Datetime |
         ColumnDisplayType::Time |
-        ColumnDisplayType::Interval => quote_string(value),
+        ColumnDisplayType::Interval => escape_character_constant(value),
 
         // For booleans, return as R logical constants
         ColumnDisplayType::Boolean => {
@@ -234,7 +234,7 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
         ColumnDisplayType::Number => value.to_string(),
 
         // For any other type, default to quoting
-        _ => quote_string(value),
+        _ => escape_character_constant(value),
     }
 }
 
@@ -303,27 +303,27 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 match search.search_type {
                     TextSearchType::Contains => Some(format!(
                         "grepl({}, {}, fixed = TRUE)",
-                        quote_string(&search.term),
+                        escape_character_constant(&search.term),
                         column_name
                     )),
                     TextSearchType::NotContains => Some(format!(
                         "grepl({}, {}, fixed = TRUE, invert = TRUE)",
-                        quote_string(&search.term),
+                        escape_character_constant(&search.term),
                         column_name
                     )),
                     TextSearchType::StartsWith => Some(format!(
                         "startsWith({}, {})",
                         column_name,
-                        quote_string(&search.term)
+                        escape_character_constant(&search.term)
                     )),
                     TextSearchType::EndsWith => Some(format!(
                         "endsWith({}, {})",
                         column_name,
-                        quote_string(&search.term)
+                        escape_character_constant(&search.term)
                     )),
                     TextSearchType::RegexMatch => Some(format!(
                         "grepl({}, {})",
-                        quote_string(&search.term),
+                        escape_character_constant(&search.term),
                         column_name
                     )),
                 }
@@ -336,7 +336,7 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 let values = set
                     .values
                     .iter()
-                    .map(|v| quote_string(&v))
+                    .map(|v| escape_character_constant(&v))
                     .collect::<Vec<_>>()
                     .join(", ");
 
@@ -428,9 +428,11 @@ fn format_column_name(name: &str) -> String {
     }
 }
 
-/// Properly quotes a string for R code
-fn quote_string(s: &str) -> String {
-    format!("\"{}\"", s.replace("\"", "\\\""))
+/// Escape certain characters
+fn escape_character_constant(s: &str) -> String {
+    // Escape backslashes first, then double quotes
+    let escaped = s.replace("\\", "\\\\").replace("\"", "\\\"");
+    format!("\"{}\"", escaped)
 }
 
 #[cfg(test)]
@@ -933,6 +935,29 @@ mod tests {
         assert_eq!(format_column_name("column-name"), "`column-name`");
         assert_eq!(format_column_name("if"), "`if`");
         assert_eq!(format_column_name("123abc"), "`123abc`");
+    }
+
+    #[test]
+    fn test_escape_character_constant() {
+        assert_eq!(escape_character_constant("hello"), r#""hello""#);
+
+        // String with embedded double quotes
+        assert_eq!(
+            escape_character_constant(r#"say "hello""#),
+            r#""say \"hello\"""#
+        );
+
+        // String with backslashes
+        assert_eq!(
+            escape_character_constant(r"C:\Users\jenny"),
+            r#""C:\\Users\\jenny""#
+        );
+
+        // String with both backslashes and quotes
+        assert_eq!(escape_character_constant(r#"a\"b"#), r#""a\\\"b""#);
+
+        // Empty string
+        assert_eq!(escape_character_constant(""), r#""""#);
     }
 
     #[test]
