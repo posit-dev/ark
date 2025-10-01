@@ -1153,17 +1153,9 @@ impl RDataExplorer {
                 },
                 convert_to_code: ConvertToCodeFeatures {
                     support_status: SupportStatus::Supported,
-                    code_syntaxes: Some(vec![
-                        CodeSyntaxName {
-                            code_syntax_name: "base".into(),
-                        },
-                        CodeSyntaxName {
-                            code_syntax_name: "data.table".into(),
-                        },
-                        CodeSyntaxName {
-                            code_syntax_name: "dplyr".into(),
-                        },
-                    ]),
+                    code_syntaxes: Some(vec![CodeSyntaxName {
+                        code_syntax_name: "dplyr".into(),
+                    }]),
                 },
             },
         };
@@ -1278,12 +1270,15 @@ impl RDataExplorer {
     /// to executable code that can reproduce the current data view.
     fn convert_to_code(&self, params: ConvertToCodeParams) -> ConvertedCode {
         // Get object name if available, fallback to title
-        let object_name = self.binding.as_ref()
+        let object_name = self
+            .binding
+            .as_ref()
             .map(|b| b.name.as_str())
             .or_else(|| Some(self.title.as_str()));
 
         // Resolve column names for sort keys using the same pattern as r_sort_rows()
-        let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params.sort_keys
+        let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params
+            .sort_keys
             .iter()
             .filter_map(|sort_key| {
                 // Get column schema from index, similar to existing sort implementation
