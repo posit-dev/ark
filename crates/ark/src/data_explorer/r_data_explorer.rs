@@ -24,6 +24,7 @@ use amalthea::comm::data_explorer_comm::ColumnSelection;
 use amalthea::comm::data_explorer_comm::ColumnSortKey;
 use amalthea::comm::data_explorer_comm::ColumnValue;
 use amalthea::comm::data_explorer_comm::ConvertToCodeFeatures;
+use amalthea::comm::data_explorer_comm::ConvertToCodeParams;
 use amalthea::comm::data_explorer_comm::ConvertedCode;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendReply;
 use amalthea::comm::data_explorer_comm::DataExplorerBackendRequest;
@@ -91,6 +92,7 @@ use uuid::Uuid;
 
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
 use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
+use crate::data_explorer::convert_to_code;
 use crate::data_explorer::export_selection;
 use crate::data_explorer::format;
 use crate::data_explorer::format::format_string;
@@ -566,15 +568,11 @@ impl RDataExplorer {
                     format,
                 },
             )),
-            DataExplorerBackendRequest::ConvertToCode(_) => Ok(
-                DataExplorerBackendReply::ConvertToCodeReply(ConvertedCode {
-                    converted_code: vec!["not yet implemented".to_string()],
-                }),
+            DataExplorerBackendRequest::ConvertToCode(params) => Ok(
+                DataExplorerBackendReply::ConvertToCodeReply(self.convert_to_code(params)),
             ),
             DataExplorerBackendRequest::SuggestCodeSyntax => Ok(
-                DataExplorerBackendReply::SuggestCodeSyntaxReply(CodeSyntaxName {
-                    code_syntax_name: "base".into(),
-                }),
+                DataExplorerBackendReply::SuggestCodeSyntaxReply(self.suggest_code_syntax()),
             ),
         }
     }
@@ -1151,7 +1149,7 @@ impl RDataExplorer {
                     ],
                 },
                 convert_to_code: ConvertToCodeFeatures {
-                    support_status: SupportStatus::Unsupported,
+                    support_status: SupportStatus::Supported,
                     code_syntaxes: Some(vec![
                         CodeSyntaxName {
                             code_syntax_name: "base".into(),
@@ -1262,6 +1260,45 @@ impl RDataExplorer {
                 format,
             )
         })
+    }
+
+    /// Suggest code syntax for code conversion
+    ///
+    /// Returns the preferred code syntax for converting data explorer operations to code.
+    fn suggest_code_syntax(&self) -> CodeSyntaxName {
+        convert_to_code::suggest_code_syntax()
+    }
+
+    /// Convert the current data view state to code
+    ///
+    /// Takes the current filters, sort keys, and other parameters and converts them
+    /// to executable code that can reproduce the current data view.
+    fn convert_to_code(&self, params: ConvertToCodeParams) -> ConvertedCode {
+        // Get object name if available, fallback to title
+        let object_name = self.binding.as_ref()
+            .map(|b| b.name.as_str())
+            .or_else(|| Some(self.title.as_str()));
+
+        // Resolve column names for sort keys using the same pattern as r_sort_rows()
+        let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params.sort_keys
+            .iter()
+            .filter_map(|sort_key| {
+                // Get column schema from index, similar to existing sort implementation
+                let column_index = sort_key.column_index as usize;
+                if column_index < self.shape.columns.len() {
+                    Some(convert_to_code::ResolvedSortKey {
+                        column_name: self.shape.columns[column_index].column_name.clone(),
+                        ascending: sort_key.ascending,
+                    })
+                } else {
+                    // Invalid column index - skip this sort key
+                    None
+                }
+            })
+            .collect();
+
+        // Call the conversion function with resolved sort keys
+        convert_to_code::convert_to_code(params, object_name, &resolved_sort_keys)
     }
 }
 

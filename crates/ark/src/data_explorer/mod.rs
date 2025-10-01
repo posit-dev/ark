@@ -6,6 +6,7 @@
 //
 
 pub mod column_profile;
+pub mod convert_to_code;
 pub mod export_selection;
 pub mod format;
 pub mod histogram;

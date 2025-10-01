@@ -2705,19 +2705,19 @@ fn test_column_labels_edge_cases() {
                 multiple_labels = c(10, 11, 12),
                 null_label = c(13, 14, 15)
             )
-            
+
             # Normal case
             attr(df_edge_cases$normal, "label") <- "Normal label"
-            
+
             # Empty string label
             attr(df_edge_cases$empty_label, "label") <- ""
-            
+
             # Numeric label (should be ignored/converted safely)
             attr(df_edge_cases$numeric_label, "label") <- 42
-            
+
             # Multiple character labels (should take first one)
             attr(df_edge_cases$multiple_labels, "label") <- c("First label", "Second label")
-            
+
             # NULL label (should result in None)
             attr(df_edge_cases$null_label, "label") <- NULL
         "#,
