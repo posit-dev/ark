@@ -958,6 +958,18 @@ mod tests {
 
         // Empty string
         assert_eq!(escape_character_constant(""), r#""""#);
+
+        // String with single quote - not escaped, R accepts it in double-quoted strings
+        assert_eq!(
+            escape_character_constant("it's"),
+            r#""it's""#
+        );
+
+        // String with backtick - not escaped, R accepts it in double-quoted strings
+        assert_eq!(
+            escape_character_constant("code: `x`"),
+            r#""code: `x`""#
+        );
     }
 
     #[test]
