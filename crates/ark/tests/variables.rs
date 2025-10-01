@@ -626,8 +626,8 @@ fn test_query_table_summary() {
             assert_eq!(schemas[2]["column_name"], "character_col");
             assert_eq!(schemas[3]["column_name"], "logical_col");
 
-            assert_eq!(schemas[0]["type_display"], "number");
-            assert_eq!(schemas[1]["type_display"], "number");
+            assert_eq!(schemas[0]["type_display"], "floating");
+            assert_eq!(schemas[1]["type_display"], "integer");
             assert_eq!(schemas[2]["type_display"], "string");
             assert_eq!(schemas[3]["type_display"], "boolean");
 
@@ -702,9 +702,9 @@ fn test_query_table_summary() {
             assert_eq!(schemas[1]["column_name"], "col2");
             assert_eq!(schemas[2]["column_name"], "col3");
 
-            // Matrix should have numeric columns
+            // Matrix created with 1:12 has integer columns
             for schema in &schemas {
-                assert_eq!(schema["type_display"], "number");
+                assert_eq!(schema["type_display"], "integer");
             }
         },
         _ => panic!("Expected QueryTableSummaryReply"),
