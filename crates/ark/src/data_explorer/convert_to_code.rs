@@ -125,10 +125,11 @@ impl SortHandler for DplyrSortHandler {
         let sort_expressions: Vec<String> = sort_keys
             .iter()
             .map(|sort_key| {
+                let formatted_name = format_column_name(&sort_key.column_name);
                 if sort_key.ascending {
-                    sort_key.column_name.clone()
+                    formatted_name
                 } else {
-                    format!("desc({})", sort_key.column_name)
+                    format!("desc({})", formatted_name)
                 }
             })
             .collect();
@@ -239,7 +240,7 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
 
 /// Converts a single row filter to a dplyr filter expression
 fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
-    let column_name = &filter.column_schema.column_name;
+    let column_name = format_column_name(&filter.column_schema.column_name);
 
     match filter.filter_type {
         RowFilterType::Compare => {
@@ -348,6 +349,82 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 None
             }
         },
+    }
+}
+
+/// Non-syntactic column names need to be surrounded by backticks
+fn needs_backticks(name: &str) -> bool {
+    // I think an empty string is super degenerate here, but will "handle" for
+    // some semblance of completeness.
+    if name.is_empty() {
+        return true;
+    }
+
+    const RESERVED: &[&str] = &[
+        "if",
+        "else",
+        "repeat",
+        "while",
+        "function",
+        "for",
+        "in",
+        "next",
+        "break",
+        "TRUE",
+        "FALSE",
+        "NULL",
+        "Inf",
+        "NaN",
+        "NA",
+        "NA_integer_",
+        "NA_real_",
+        "NA_complex_",
+        "NA_character_",
+    ];
+    if RESERVED.contains(&name) {
+        return true;
+    }
+
+    // We're mostly targetting `...` and `.` here, but let's just backtick any
+    // name that consists entirely of dots.
+    if name.chars().all(|c| c == '.') {
+        return true;
+    }
+
+    // Check for ..j where j is one or more digits (..1, ..2, ..123, etc.)
+    if let Some(rest) = name.strip_prefix("..") {
+        if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()) {
+            return true;
+        }
+    }
+
+    // Must start with
+    // * letter or
+    // * or a dot followed by a non-digit
+    let first = name.chars().next().unwrap();
+    if !first.is_alphabetic() && first != '.' {
+        return true;
+    }
+    if first == '.' {
+        if let Some(second) = name.chars().nth(1) {
+            if second.is_ascii_digit() {
+                return true;
+            }
+        }
+    }
+
+    // All characters must be alphanumeric, dot, or underscore
+    !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '_')
+}
+
+/// Formats a column name for use in R code, adding backticks if needed
+fn format_column_name(name: &str) -> String {
+    if needs_backticks(name) {
+        format!("`{}`", name)
+    } else {
+        name.to_string()
     }
 }
 
@@ -789,6 +866,103 @@ mod tests {
             "library(dplyr)".to_string(),
             "".to_string(),
             "dat".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_needs_backticks_syntactic_names() {
+        // Valid syntactic names don't need backticks
+        assert!(!needs_backticks("age"));
+        assert!(!needs_backticks("Price"));
+        assert!(!needs_backticks("column_name"));
+        assert!(!needs_backticks("col.name"));
+        assert!(!needs_backticks(".hidden"));
+        assert!(!needs_backticks("..hidden"));
+        assert!(!needs_backticks("var123"));
+    }
+
+    #[test]
+    fn test_needs_backticks_non_syntactic_names() {
+        // Names with spaces
+        assert!(needs_backticks("2025 score"));
+
+        // Names starting with numbers
+        assert!(needs_backticks("2025score"));
+
+        // Names starting with underscore
+        assert!(needs_backticks("_private"));
+
+        // Names with special characters
+        assert!(needs_backticks("column-name"));
+        assert!(needs_backticks("price($)"));
+
+        // Dot followed by number
+        assert!(needs_backticks(".2fa"));
+
+        // Names consisting entirely of dots
+        assert!(needs_backticks("."));
+        assert!(needs_backticks(".."));
+        assert!(needs_backticks("..."));
+
+        // Reserved words
+        assert!(needs_backticks("if"));
+        assert!(needs_backticks("for"));
+        assert!(needs_backticks("function"));
+        assert!(needs_backticks("TRUE"));
+        assert!(needs_backticks("FALSE"));
+        assert!(needs_backticks("NULL"));
+        assert!(needs_backticks("NA"));
+
+        // Special ..j forms (two dots followed by digits)
+        assert!(needs_backticks("..1"));
+        assert!(needs_backticks("..42"));
+
+        // Empty string
+        assert!(needs_backticks(""));
+    }
+
+    #[test]
+    fn test_format_column_name_syntactic() {
+        assert_eq!(format_column_name("column_name"), "column_name");
+    }
+
+    #[test]
+    fn test_format_column_name_non_syntactic() {
+        assert_eq!(format_column_name("column name"), "`column name`");
+        assert_eq!(format_column_name("2025 score"), "`2025 score`");
+        assert_eq!(format_column_name("column-name"), "`column-name`");
+        assert_eq!(format_column_name("if"), "`if`");
+        assert_eq!(format_column_name("123abc"), "`123abc`");
+    }
+
+    #[test]
+    fn test_filter_and_sort_with_non_syntactic_names() {
+        let params = ConvertToCodeParams {
+            column_filters: vec![],
+            row_filters: vec![comparison_filter(
+                "2025 score",
+                FilterComparisonOp::Gt,
+                "80",
+                ColumnDisplayType::Number,
+            )],
+            sort_keys: vec![],
+            code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
+                code_syntax_name: "dplyr".to_string(),
+            },
+        };
+
+        let resolved_sorts = vec![ResolvedSortKey {
+            column_name: "student name".to_string(),
+            ascending: false,
+        }];
+
+        let result = convert_to_code(params, Some("my_data"), &resolved_sorts);
+
+        assert_eq!(result.converted_code, vec![
+            "library(dplyr)".to_string(),
+            "".to_string(),
+            "my_data |>\n  filter(\n    `2025 score` > 80\n  ) |>\n  arrange(desc(`student name`))"
+                .to_string(),
         ]);
     }
 }
