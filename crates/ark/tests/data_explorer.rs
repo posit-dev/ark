@@ -2086,7 +2086,7 @@ fn test_schema_identification() {
             assert_eq!(schema.columns.len(), 6);
 
             let expected_types = vec![
-                (ColumnDisplayType::Number, "dbl"),
+                (ColumnDisplayType::Floating, "dbl"),
                 (ColumnDisplayType::String, "str"),
                 (ColumnDisplayType::Boolean, "lgl"),
                 (ColumnDisplayType::String, "fct(3)"),
@@ -2203,7 +2203,7 @@ fn test_search_schema_data_type_filters() {
 
     // Test filter for numeric columns: should match age (int) and score (dbl)
     let req = RequestBuilder::search_schema_data_types(
-        vec![ColumnDisplayType::Number],
+        vec![ColumnDisplayType::Integer, ColumnDisplayType::Floating],
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![1, 2]);
@@ -2236,9 +2236,9 @@ fn test_search_schema_data_type_filters() {
     );
     TestAssertions::assert_search_matches(socket, req, vec![0, 3]); // name, is_active
 
-    // Test filter for all numeric-like types: Number and Date
+    // Test filter for all numeric-like types: Integer, Floating and Date
     let req = RequestBuilder::search_schema_data_types(
-        vec![ColumnDisplayType::Number, ColumnDisplayType::Date],
+        vec![ColumnDisplayType::Integer, ColumnDisplayType::Floating, ColumnDisplayType::Date],
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![1, 2, 4]); // age, score, date_joined
@@ -2352,7 +2352,8 @@ fn test_search_schema_type_sort_orders() {
 
     // Test type sorting with filters - only numeric types (int, dbl)
     let filters = vec![FilterBuilder::match_data_types(vec![
-        ColumnDisplayType::Number,
+        ColumnDisplayType::Integer,
+        ColumnDisplayType::Floating,
     ])];
 
     // Ascending type sort with filter: dbl first, then int
@@ -2943,7 +2944,7 @@ fn test_empty_data_frame_schema() {
             assert_eq!(schema.columns.len(), 6);
 
             let expected_types = vec![
-                (ColumnDisplayType::Number, "dbl"),
+                (ColumnDisplayType::Floating, "dbl"),
                 (ColumnDisplayType::String, "str"),
                 (ColumnDisplayType::Boolean, "lgl"),
                 (ColumnDisplayType::String, "fct(0)"),

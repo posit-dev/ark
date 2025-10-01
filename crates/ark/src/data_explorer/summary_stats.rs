@@ -39,7 +39,16 @@ pub fn summary_stats(
     stats.type_display = display_type;
     match stats.type_display {
         ColumnDisplayType::Number => {
-            stats.number_stats = Some(summary_stats_number(column, format_options)?);
+            stats.number_stats = Some(summary_stats_number(column, format_options, false)?);
+        },
+        ColumnDisplayType::Integer => {
+            stats.number_stats = Some(summary_stats_number(column, format_options, true)?);
+        },
+        ColumnDisplayType::Floating => {
+            stats.number_stats = Some(summary_stats_number(column, format_options, false)?);
+        },
+        ColumnDisplayType::Decimal => {
+            stats.number_stats = Some(summary_stats_number(column, format_options, false)?);
         },
         ColumnDisplayType::String => {
             stats.string_stats = Some(summary_stats_string(column)?);
@@ -59,6 +68,7 @@ pub fn summary_stats(
 fn summary_stats_number(
     column: SEXP,
     format_options: &FormatOptions,
+    is_integer: bool,
 ) -> anyhow::Result<SummaryStatsNumber> {
     let r_stats = call_summary_fn("summary_stats_number", column)?;
 
@@ -74,13 +84,38 @@ fn summary_stats_number(
         })
         .collect();
 
-    Ok(SummaryStatsNumber {
-        min_value: r_stats.get("min_value").cloned(),
-        max_value: r_stats.get("max_value").cloned(),
-        mean: r_stats.get("mean").cloned(),
-        median: r_stats.get("median").cloned(),
-        stdev: r_stats.get("stdev").cloned(),
-    })
+    let min_value = r_stats.get("min_value").cloned();
+    let max_value = r_stats.get("max_value").cloned();
+    let mean = r_stats.get("mean").cloned();
+    let median = r_stats.get("median").cloned();
+    let stdev = r_stats.get("stdev").cloned();
+
+    // For integer types, reformat min/max/median as whole numbers without decimal points.
+    // Mean and stdev keep their decimal formatting since they can be fractional even for integers.
+    if is_integer {
+        let reformat_as_whole_number = |value: Option<String>| -> Option<String> {
+            value.and_then(|v| {
+                // Remove thousands separator, parse, and format as integer
+                v.replace(',', "").parse::<f64>().ok().map(|num| format!("{:.0}", num))
+            })
+        };
+
+        Ok(SummaryStatsNumber {
+            min_value: reformat_as_whole_number(min_value),
+            max_value: reformat_as_whole_number(max_value),
+            mean,
+            median: reformat_as_whole_number(median),
+            stdev,
+        })
+    } else {
+        Ok(SummaryStatsNumber {
+            min_value,
+            max_value,
+            mean,
+            median,
+            stdev,
+        })
+    }
 }
 
 fn summary_stats_string(column: SEXP) -> anyhow::Result<SummaryStatsString> {
@@ -201,7 +236,7 @@ mod tests {
         crate::r_task(|| {
             let column = harp::parse_eval_global("c(1,2,3,4,5, NA)").unwrap();
             let stats =
-                summary_stats(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::Floating, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
                 min_value: Some("1.00".to_string()),
                 max_value: Some("5.00".to_string()),
@@ -214,11 +249,28 @@ mod tests {
     }
 
     #[test]
+    fn test_integer_summary() {
+        crate::r_task(|| {
+            let column = harp::parse_eval_global("c(1L, 2L, 3L, 4L, 5L, NA)").unwrap();
+            let stats =
+                summary_stats(column.sexp, ColumnDisplayType::Integer, &default_options()).unwrap();
+            let expected = SummaryStatsNumber {
+                min_value: Some("1".to_string()),
+                max_value: Some("5".to_string()),
+                mean: Some("3.00".to_string()),
+                median: Some("3".to_string()),
+                stdev: Some("1.58".to_string()),
+            };
+            assert_eq!(stats.number_stats, Some(expected));
+        })
+    }
+
+    #[test]
     fn test_numeric_all_nas() {
         crate::r_task(|| {
             let column = harp::parse_eval_global("c(NA_real_, NA_real_, NA_real_)").unwrap();
             let stats =
-                summary_stats(column.sexp, ColumnDisplayType::Number, &default_options()).unwrap();
+                summary_stats(column.sexp, ColumnDisplayType::Floating, &default_options()).unwrap();
             let expected = SummaryStatsNumber {
                 min_value: None,
                 max_value: None,

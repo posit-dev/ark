@@ -67,16 +67,16 @@ pub fn display_type(x: SEXP) -> ColumnDisplayType {
         }
 
         if r_inherits(x, "integer") {
-            return ColumnDisplayType::Number;
+            return ColumnDisplayType::Integer;
         }
         if r_inherits(x, "double") {
-            return ColumnDisplayType::Number;
+            return ColumnDisplayType::Floating;
         }
         if r_inherits(x, "complex") {
-            return ColumnDisplayType::Number;
+            return ColumnDisplayType::Floating;
         }
         if r_inherits(x, "numeric") {
-            return ColumnDisplayType::Number;
+            return ColumnDisplayType::Floating;
         }
 
         if r_inherits(x, "character") {
@@ -107,7 +107,9 @@ pub fn display_type(x: SEXP) -> ColumnDisplayType {
 
     match r_typeof(x) {
         LGLSXP => return ColumnDisplayType::Boolean,
-        INTSXP | REALSXP | CPLXSXP => return ColumnDisplayType::Number,
+        INTSXP => return ColumnDisplayType::Integer,
+        REALSXP => return ColumnDisplayType::Floating,
+        CPLXSXP => return ColumnDisplayType::Floating,
         STRSXP => return ColumnDisplayType::String,
         VECSXP => return ColumnDisplayType::Unknown,
         _ => return ColumnDisplayType::Unknown,

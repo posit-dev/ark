@@ -231,7 +231,10 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
         },
 
         // For numbers, no quotes needed
-        ColumnDisplayType::Number => value.to_string(),
+        ColumnDisplayType::Number |
+        ColumnDisplayType::Integer |
+        ColumnDisplayType::Floating |
+        ColumnDisplayType::Decimal => value.to_string(),
 
         // For any other type, default to quoting
         _ => escape_character_constant(value),
@@ -616,7 +619,7 @@ mod tests {
         ];
 
         for (op, expected_op) in test_cases {
-            let filter = comparison_filter("price", op, "100", ColumnDisplayType::Number);
+            let filter = comparison_filter("price", op, "100", ColumnDisplayType::Floating);
             let result = filter_handler.convert_filter(&filter);
             assert_eq!(result, Some(format!("price {} 100", expected_op)));
         }
@@ -694,7 +697,7 @@ mod tests {
     #[test]
     fn test_filter_between() {
         let filter_handler = DplyrFilterHandler;
-        let filter = between_filter("price", "100", "500", ColumnDisplayType::Number);
+        let filter = between_filter("price", "100", "500", ColumnDisplayType::Floating);
 
         let result = filter_handler.convert_filter(&filter);
         assert_eq!(result, Some("price >= 100 & price <= 500".to_string()));
@@ -740,7 +743,7 @@ mod tests {
                 "price",
                 FilterComparisonOp::Gt,
                 "100",
-                ColumnDisplayType::Number,
+                ColumnDisplayType::Floating,
             ),
             comparison_filter(
                 "category",
@@ -765,7 +768,7 @@ mod tests {
                 "price",
                 FilterComparisonOp::Gt,
                 "100",
-                ColumnDisplayType::Number,
+                ColumnDisplayType::Floating,
             )],
             sort_keys: vec![],
             code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
@@ -816,7 +819,7 @@ mod tests {
                     "price",
                     FilterComparisonOp::Gt,
                     "100",
-                    ColumnDisplayType::Number,
+                    ColumnDisplayType::Floating,
                 ),
                 comparison_filter(
                     "category",
@@ -980,7 +983,7 @@ mod tests {
                 "2025 score",
                 FilterComparisonOp::Gt,
                 "80",
-                ColumnDisplayType::Number,
+                ColumnDisplayType::Floating,
             )],
             sort_keys: vec![],
             code_syntax_name: amalthea::comm::data_explorer_comm::CodeSyntaxName {
@@ -1070,7 +1073,7 @@ mod execution_tests {
             column_label: None,
             column_index: 1,
             type_name: "numeric".to_string(),
-            type_display: ColumnDisplayType::Number,
+            type_display: ColumnDisplayType::Floating,
             description: None,
             children: None,
             precision: None,

@@ -772,7 +772,19 @@ pub enum ColumnDisplayType {
 
 	#[serde(rename = "unknown")]
 	#[strum(to_string = "unknown")]
-	Unknown
+	Unknown,
+
+	#[serde(rename = "floating")]
+	#[strum(to_string = "floating")]
+	Floating,
+
+	#[serde(rename = "integer")]
+	#[strum(to_string = "integer")]
+	Integer,
+
+	#[serde(rename = "decimal")]
+	#[strum(to_string = "decimal")]
+	Decimal
 }
 
 /// Possible values for Condition in RowFilter
