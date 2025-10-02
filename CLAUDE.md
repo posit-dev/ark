@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance LLM agents and contributors when working with code in this repository.
 
 ## Project Overview
 
@@ -43,15 +43,18 @@ cargo check --package ark
 
 ### Running Tests
 
+We use `nextest` to run tests, which we invoke through our `just` runner. `just test` expands to `cargo nextest run`. Arguments are forwarded and nextest generally supports the same arguments as `cargo test`.
+
 ```bash
-# Run all tests with nextest (recommended for CI)
-cargo nextest run
+# Run all tests
+just test
 
 # Run specific tests
-cargo test <test_name>
+# Much better output than `cargo test <testname>`
+just test <test_name>
 
 # Run tests for a specific crate
-cargo test -p ark
+just test -p ark
 ```
 
 ### Required R Packages for Testing
@@ -79,4 +82,3 @@ After building, you can install the Jupyter kernel specification with:
 Some of the files below `crates/amalthea/src/comm/` are automatically generated from comms specified in the Positron front end.
 Such files always have `// @generated` at the top and SHOULD NEVER be edited "by hand".
 If changes are needed in these files, that must happen in the separate Positron source repository and the comms for R and Python must be regenerated.
-

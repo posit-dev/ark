@@ -1,7 +1,6 @@
-
 # Run the tests
-test:
-  cargo nextest run
+test +ARGS:
+  cargo nextest run {{ARGS}}
 
 # Run the tests in verbose mode
 # `--no-capture` forces stdout/stderr to be shown for all tests, not just failing ones,
