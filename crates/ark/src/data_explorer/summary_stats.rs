@@ -38,9 +38,6 @@ pub fn summary_stats(
     let mut stats = empty_column_summary_stats();
     stats.type_display = display_type;
     match stats.type_display {
-        ColumnDisplayType::Number => {
-            stats.number_stats = Some(summary_stats_number(column, format_options, false)?);
-        },
         ColumnDisplayType::Integer => {
             stats.number_stats = Some(summary_stats_number(column, format_options, true)?);
         },

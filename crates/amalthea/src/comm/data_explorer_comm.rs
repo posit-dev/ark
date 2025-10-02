@@ -730,10 +730,6 @@ pub enum SearchSchemaSortOrder {
 /// Possible values for ColumnDisplayType
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum ColumnDisplayType {
-	#[serde(rename = "number")]
-	#[strum(to_string = "number")]
-	Number,
-
 	#[serde(rename = "boolean")]
 	#[strum(to_string = "boolean")]
 	Boolean,
