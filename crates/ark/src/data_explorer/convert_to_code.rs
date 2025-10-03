@@ -231,7 +231,6 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
         },
 
         // For numbers, no quotes needed
-        ColumnDisplayType::Number |
         ColumnDisplayType::Integer |
         ColumnDisplayType::Floating |
         ColumnDisplayType::Decimal => value.to_string(),
