@@ -90,5 +90,13 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
 }
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
-    path.join("bin").join("x64")
+    #[cfg(target_arch = "aarch64")]
+    {
+        // arm64 has a flatter structure
+        path.join("bin")
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        path.join("bin").join("x64")
+    }
 }
