@@ -36,6 +36,11 @@ jobs:
           Start-Process -Wait -FilePath .\R-installer.exe -ArgumentList '/VERYSILENT', '/DIR=C:\R'
           echo "C:\R\bin" >> $env:GITHUB_PATH
 
+      - name: Install Rtools45
+        run: |
+          curl -L -o rtools45-installer.exe https://github.com/r-hub/rtools45/releases/download/latest/rtools45-aarch64.exe
+          Start-Process -Wait -FilePath .\rtools45-installer.exe -ArgumentList '/VERYSILENT'
+
       - name: Install R Packages Required For Tests
         run: |
           Rscript -e "install.packages(c('data.table', 'dplyr', 'rstudioapi', 'tibble', 'haven', 'R6', 'survival'), repos = 'https://cloud.r-project.org')"
