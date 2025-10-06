@@ -6,7 +6,7 @@ on:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    runs-on: windows-11-arm
     name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
     strategy:
       fail-fast: false
