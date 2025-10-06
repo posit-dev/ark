@@ -38,7 +38,7 @@ jobs:
 
       - name: Install R Packages Required For Tests
         run: |
-          Rscript -e "install.packages(c('data.table', 'dplyr', 'rstudioapi', 'tibble', 'haven', 'R6', 'survival'))"
+          Rscript -e "install.packages(c('data.table', 'dplyr', 'rstudioapi', 'tibble', 'haven', 'R6', 'survival'), repos = 'https://cloud.r-project.org')"
 
       - name: Build
         run: |
