@@ -121,6 +121,11 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-windows-x64-archive
 
+            - name: Download Windows arm64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-arm64-archive
+
             - name: Download Linux x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v4
               with:
@@ -146,6 +151,14 @@ jobs:
               with:
                   tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-x64.zip
+
+            - name: Upload Windows release artifact (arm64)
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-windows-arm64.zip
 
             - name: Upload Linux release artifacts (x64)
               uses: softprops/action-gh-release@v2

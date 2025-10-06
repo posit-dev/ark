@@ -13,7 +13,7 @@ on:
 jobs:
     build_windows:
         name: Build Windows
-        runs-on: windows-latest
+        runs-on: ${{ matrix.arch == 'arm64' && 'windows-11-arm' || 'windows-latest' }}
         timeout-minutes: 40
 
         env:
@@ -22,11 +22,13 @@ jobs:
 
         strategy:
             matrix:
-                arch: [x64]
+                arch: [x64, arm64]
                 flavor: [debug, release]
                 include:
                     - arch: x64
                       rust_target_prefix: x86_64
+                    - arch: arm64
+                      rust_target_prefix: aarch64
 
         steps:
             - name: Checkout sources
