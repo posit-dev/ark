@@ -37,16 +37,8 @@ jobs:
           echo "C:\R\bin" >> $env:GITHUB_PATH
 
       - name: Install R Packages Required For Tests
-        uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          packages:
-            data.table
-            dplyr
-            rstudioapi
-            tibble
-            haven
-            R6
-            survival
+        run: |
+          Rscript -e "install.packages(c('data.table', 'dplyr', 'rstudioapi', 'tibble', 'haven', 'R6', 'survival'))"
 
       - name: Build
         run: |
