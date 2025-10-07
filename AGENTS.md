@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance LLM agents and contributors when working with code in this repository.
 
