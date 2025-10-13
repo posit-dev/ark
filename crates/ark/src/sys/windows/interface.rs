@@ -30,7 +30,7 @@ use crate::interface::r_suicide;
 use crate::interface::r_write_console;
 use crate::sys::windows::strings::system_to_utf8;
 
-pub fn setup_r(mut _args: Vec<*mut c_char>) {
+pub fn setup_r(mut args: Vec<*mut c_char>) {
     unsafe {
         libr::set(R_SignalHandlers, 0);
 
@@ -66,6 +66,18 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         // versions.
         // R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
         R_DefParamsEx(params, 0);
+
+        // Check if --no-restore-date is in args
+        let args_str: Vec<String> = args
+            .iter()
+            .map(|&arg| {
+                let cstr = unsafe { CStr::from_ptr(arg) };
+                cstr.to_string_lossy().to_string()
+            })
+            .collect();
+        if args_str.contains(&"--no-restore-data".to_string()) {
+            (*params).RestoreAction = libr::SA_TYPE_SA_NORESTORE;
+        }
 
         (*params).R_Interactive = 1;
         (*params).CharacterMode = libr::UImode_RGui;
