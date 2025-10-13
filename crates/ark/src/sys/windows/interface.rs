@@ -70,7 +70,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         let args_str: Vec<String> = args
             .iter()
             .map(|&arg| {
-                let cstr = unsafe { CStr::from_ptr(arg) };
+                let cstr = CStr::from_ptr(arg);
                 cstr.to_string_lossy().to_string()
             })
             .collect();
