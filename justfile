@@ -1,5 +1,5 @@
 # Run the tests
-test +ARGS:
+test *ARGS:
   cargo nextest run {{ARGS}}
 
 # Run the tests in verbose mode
