@@ -75,11 +75,17 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
             })
             .collect();
 
-        if args_str.contains(&"--save".to_string()) {
-            (*params).SaveAction = libr::SA_TYPE_SA_SAVE;
-        } else {
-            (*params).SaveAction = libr::SA_TYPE_SA_NOSAVE;
+        // Determine save action by scanning args in order and letting the last
+        // occurrence of --save or --no-save win (mirrors R's last-one-wins behavior).
+        let mut save_action = libr::SA_TYPE_SA_NOSAVE;
+        for arg in &args_str {
+            match arg.as_str() {
+                "--save" => save_action = libr::SA_TYPE_SA_SAVE,
+                "--no-save" => save_action = libr::SA_TYPE_SA_NOSAVE,
+                _ => {},
+            }
         }
+        (*params).SaveAction = save_action;
 
         (*params).R_Interactive = 1;
         (*params).CharacterMode = libr::UImode_RGui;
