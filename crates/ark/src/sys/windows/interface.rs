@@ -67,7 +67,7 @@ pub fn setup_r(mut args: Vec<*mut c_char>) {
         // R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
         R_DefParamsEx(params, 0);
 
-        // Check if --no-restore-date is in args
+        // Check if --no-restore-data is in args
         let args_str: Vec<String> = args
             .iter()
             .map(|&arg| {
