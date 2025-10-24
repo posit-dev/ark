@@ -9,8 +9,17 @@ mod control;
 mod dummy_frontend;
 mod shell;
 
+use amalthea::assert_no_incoming;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_comm_close;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_iopub_stream_stdout;
+use amalthea::recv_shell_execute_reply;
+use amalthea::recv_stdin_input_request;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::comm_close::CommClose;
@@ -32,7 +41,7 @@ fn test_amalthea_kernel_info() {
     // Ask the kernel for the kernel info. This should return an object with the
     // language "Test" defined in our shell handler.
     frontend.send_shell(KernelInfoRequest {});
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
     assert_matches!(
         frontend.recv_shell(),
@@ -43,7 +52,7 @@ fn test_amalthea_kernel_info() {
         }
     );
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 }
 
 #[test]
@@ -52,15 +61,15 @@ fn test_amalthea_execute_request() {
 
     let code = "42";
     frontend.send_execute_request(code, Default::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert_eq!(frontend.recv_iopub_execute_result(), "42");
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "42");
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 }
 
 #[test]
@@ -69,22 +78,22 @@ fn test_amalthea_input_request() {
 
     let code = "prompt";
     frontend.send_execute_request(code, Default::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, "Amalthea Echo> ");
 
     frontend.send_stdin_input_reply(String::from("42"));
 
-    frontend.recv_iopub_stream_stdout("42");
-    assert_eq!(frontend.recv_iopub_execute_result(), "prompt");
+    recv_iopub_stream_stdout!(frontend, "42");
+    assert_eq!(recv_iopub_execute_result!(frontend), "prompt");
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 }
 
 #[test]
@@ -97,7 +106,7 @@ fn test_amalthea_heartbeat() {
 
 #[test]
 fn test_amalthea_comms() {
-    let mut frontend = DummyAmaltheaFrontend::lock();
+    let frontend = DummyAmaltheaFrontend::lock();
 
     let comm_id = "A3A6D0EA-1443-4F70-B059-F423E445B8D6";
 
@@ -107,9 +116,9 @@ fn test_amalthea_comms() {
         data: serde_json::Value::Null,
     });
 
-    frontend.recv_iopub_busy();
-    assert_eq!(frontend.recv_iopub_comm_close(), comm_id.to_string());
-    frontend.recv_iopub_idle();
+    recv_iopub_busy!(frontend);
+    assert_eq!(recv_iopub_comm_close!(frontend), comm_id.to_string());
+    recv_iopub_idle!(frontend);
 
     frontend.send_shell(CommOpen {
         comm_id: comm_id.to_string(),
@@ -119,14 +128,14 @@ fn test_amalthea_comms() {
 
     // Absorb the IOPub messages that the kernel sends back during the
     // processing of the above `CommOpen` request
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_idle();
-    frontend.assert_no_incoming();
+    recv_iopub_busy!(frontend);
+    recv_iopub_idle!(frontend);
+    assert_no_incoming!(frontend);
 
     frontend.send_shell(CommInfoRequest {
         target_name: "".to_string(),
     });
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
     assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
         // Ensure the comm we just opened is in the list of comms
@@ -134,8 +143,8 @@ fn test_amalthea_comms() {
         assert!(comms.contains_key(comm_id));
     });
 
-    frontend.recv_iopub_idle();
-    frontend.assert_no_incoming();
+    recv_iopub_idle!(frontend);
+    assert_no_incoming!(frontend);
 
     // Test requesting comm info and filtering by target name. We should get
     // back an empty list of comms, since we haven't opened any comms with
@@ -143,15 +152,15 @@ fn test_amalthea_comms() {
     frontend.send_shell(CommInfoRequest {
         target_name: "i-think-not".to_string(),
     });
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
     assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
         let comms = request.content.comms;
         assert!(comms.is_empty());
     });
 
-    frontend.recv_iopub_idle();
-    frontend.assert_no_incoming();
+    recv_iopub_idle!(frontend);
+    assert_no_incoming!(frontend);
 
     let comm_req_id = frontend.send_shell(CommWireMsg {
         comm_id: comm_id.to_string(),
@@ -159,7 +168,7 @@ fn test_amalthea_comms() {
         data: serde_json::json!({ "id": "foo" }),
     });
 
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
     let mut got_idle = false;
     let mut got_reply = false;
@@ -205,15 +214,15 @@ fn test_amalthea_comms() {
         comm_id: comm_id.to_string(),
     });
 
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_idle();
+    recv_iopub_busy!(frontend);
+    recv_iopub_idle!(frontend);
 
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
     frontend.send_shell(CommInfoRequest {
         target_name: "variables".to_string(),
     });
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
     assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
         // Ensure the comm we just closed not present in the list of comms
@@ -221,7 +230,7 @@ fn test_amalthea_comms() {
         assert!(!comms.contains_key(comm_id));
     });
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 }
 
 #[test]
@@ -262,7 +271,7 @@ fn test_amalthea_comm_open_from_kernel() {
         target_name: test_comm_name.clone(),
     });
 
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
     assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
         // Ensure the comm we just opened is in the list of comms
@@ -275,7 +284,7 @@ fn test_amalthea_comm_open_from_kernel() {
         assert!(target.target_name == test_comm_name)
     });
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     // Now send a message from the backend to the frontend using the comm we just
     // created.

@@ -1,4 +1,9 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_shell_execute_reply;
 use ark::fixtures::DummyArkFrontend;
 
 #[test]
@@ -18,18 +23,18 @@ fn test_get_version() {
 
     let code = "as.character(rstudioapi::getVersion())";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
     assert_eq!(
-        frontend.recv_iopub_execute_result(),
+        recv_iopub_execute_result!(frontend),
         format!("[1] \"{value}\"")
     );
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }
 
 #[test]
@@ -49,42 +54,42 @@ fn test_get_mode() {
 
     let code = "rstudioapi::getMode()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
     assert_eq!(
-        frontend.recv_iopub_execute_result(),
+        recv_iopub_execute_result!(frontend),
         format!("[1] \"{value}\"")
     );
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }
 
 fn set_var(key: &str, value: &str, frontend: &DummyArkFrontend) {
     let code = format!("Sys.setenv({key} = \"{value}\")");
     frontend.send_execute_request(code.as_str(), ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }
 
 fn has_rstudioapi(frontend: &DummyArkFrontend) -> bool {
     let code = ".ps.is_installed('rstudioapi')";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    let result = frontend.recv_iopub_execute_result();
+    let result = recv_iopub_execute_result!(frontend);
 
     let out = if result == "[1] TRUE" {
         true
@@ -94,9 +99,9 @@ fn has_rstudioapi(frontend: &DummyArkFrontend) -> bool {
         panic!("Expected `TRUE` or `FALSE`, got '{result}'.");
     };
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     out
 }

@@ -1,4 +1,11 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_display_data;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_iopub_update_display_data;
+use amalthea::recv_shell_execute_reply;
 use ark::fixtures::DummyArkFrontend;
 
 #[test]
@@ -7,15 +14,15 @@ fn test_basic_plot() {
 
     let code = "plot(1:10)";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_display_data();
+    recv_iopub_display_data!(frontend);
 
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -28,19 +35,19 @@ for (i in 1:5) {
 }"#;
 
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_display_data();
+    recv_iopub_display_data!(frontend);
+    recv_iopub_display_data!(frontend);
+    recv_iopub_display_data!(frontend);
+    recv_iopub_display_data!(frontend);
+    recv_iopub_display_data!(frontend);
 
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -68,16 +75,16 @@ if (file.exists(temp_file)) {
 "#;
 
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_display_data();
+    recv_iopub_display_data!(frontend);
+    recv_iopub_display_data!(frontend);
 
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -96,18 +103,18 @@ par(mfrow = c(1, 1))
 "#;
 
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_update_display_data();
-    frontend.recv_iopub_update_display_data();
-    frontend.recv_iopub_display_data();
+    recv_iopub_display_data!(frontend);
+    recv_iopub_update_display_data!(frontend);
+    recv_iopub_update_display_data!(frontend);
+    recv_iopub_display_data!(frontend);
 
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -117,51 +124,51 @@ fn test_graphics_device_initialization() {
     // On startup we are in the interactive list, but not current device
     let code = "'.ark.graphics.device' %in% grDevices::deviceIsInteractive()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    let input = frontend.recv_iopub_execute_input();
+    recv_iopub_busy!(frontend);
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] TRUE");
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     // The current device is `"null device"`
     let code = ".Device";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    let input = frontend.recv_iopub_execute_input();
+    recv_iopub_busy!(frontend);
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"null device\"");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] \"null device\"");
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     // The current `"null device"` is not interactive
     let code = "grDevices::dev.interactive()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    let input = frontend.recv_iopub_execute_input();
+    recv_iopub_busy!(frontend);
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] FALSE");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] FALSE");
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     // But `orNone = TRUE` looks at `options(device =)` in this case, which
     // we set to us, so this works (and is used by `demo(graphics)`)
     let code = "grDevices::dev.interactive(orNone = TRUE)";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    let input = frontend.recv_iopub_execute_input();
+    recv_iopub_busy!(frontend);
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] TRUE");
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     // Now simulate the user creating a plot, which makes us the current graphics device
     let code = "x <- .ark.graphics.device(); grDevices::dev.interactive()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    let input = frontend.recv_iopub_execute_input();
+    recv_iopub_busy!(frontend);
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] TRUE");
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }

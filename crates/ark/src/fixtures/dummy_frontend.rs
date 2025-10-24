@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
 
+use amalthea::assert_no_incoming;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
@@ -125,7 +126,7 @@ impl DummyArkFrontend {
 // Check that we haven't left crumbs behind
 impl Drop for DummyArkFrontend {
     fn drop(&mut self) {
-        self.assert_no_incoming()
+        assert_no_incoming!(self);
     }
 }
 

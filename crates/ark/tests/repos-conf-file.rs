@@ -7,6 +7,11 @@
 use std::io::Write;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_shell_execute_reply;
 use ark::fixtures::DummyArkFrontendDefaultRepos;
 
 /// Using a configuration file, set the default CRAN repo to a custom value,
@@ -36,31 +41,31 @@ Internal=https://internal.cran.mirror/
 
     let code = r#"getOption("repos")[["CRAN"]]"#;
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
     assert_eq!(
-        frontend.recv_iopub_execute_result(),
+        recv_iopub_execute_result!(frontend),
         r#"[1] "https://my.cran.mirror/""#
     );
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = r#"getOption("repos")[["Internal"]]"#;
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
     assert_eq!(
-        frontend.recv_iopub_execute_result(),
+        recv_iopub_execute_result!(frontend),
         r#"[1] "https://internal.cran.mirror/""#
     );
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }

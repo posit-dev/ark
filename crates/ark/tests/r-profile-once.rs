@@ -1,6 +1,11 @@
 use std::io::Write;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_shell_execute_reply;
 use ark::fixtures::DummyArkFrontendRprofile;
 
 // SAFETY:
@@ -38,13 +43,13 @@ if (exists("x")) {
     let frontend = DummyArkFrontendRprofile::lock();
 
     frontend.send_execute_request("x", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, "x");
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] 1");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }

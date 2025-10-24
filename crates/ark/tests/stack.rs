@@ -1,4 +1,9 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_shell_execute_reply;
 use ark::fixtures::DummyArkFrontend;
 
 // These tests assert that we've correctly turned off the `R_StackLimit` check during integration
@@ -11,15 +16,15 @@ fn test_stack_info_size() {
 
     let code = "Cstack_info()[['size']]";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] NA");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] NA");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }
 
 #[test]
@@ -28,13 +33,13 @@ fn test_stack_info_current() {
 
     let code = "Cstack_info()[['current']]";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] NA");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] NA");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }

@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use amalthea::recv_iopub_stream_stdout;
 use ark::fixtures::DummyArkFrontendRprofile;
 
 // SAFETY:
@@ -30,5 +31,5 @@ fn test_r_profile_can_cat() {
     // Ok, load up R now. It should `cat()` the `message` over iopub.
     let frontend = DummyArkFrontendRprofile::lock();
 
-    frontend.recv_iopub_stream_stdout(message)
+    recv_iopub_stream_stdout!(frontend, message)
 }

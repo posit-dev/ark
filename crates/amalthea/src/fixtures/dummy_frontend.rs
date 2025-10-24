@@ -7,13 +7,11 @@
 
 use assert_matches::assert_matches;
 use rand::Rng;
-use serde_json::Value;
 
 use crate::connection_file::ConnectionFile;
 use crate::registration_file::RegistrationFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
-use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::handshake_reply::HandshakeReply;
 use crate::wire::input_reply::InputReply;
@@ -22,7 +20,6 @@ use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
 use crate::wire::status::ExecutionState;
-use crate::wire::stream::Stream;
 use crate::wire::wire_message::WireMessage;
 
 pub struct DummyConnection {
@@ -268,151 +265,6 @@ impl DummyFrontend {
         Self::recv(&self.stdin_socket)
     }
 
-    /// Receive from Shell and assert `ExecuteReply` message.
-    /// Returns `execution_count`.
-    pub fn recv_shell_execute_reply(&self) -> u32 {
-        let msg = self.recv_shell();
-
-        assert_matches!(msg, Message::ExecuteReply(data) => {
-            assert_eq!(data.content.status, Status::Ok);
-            data.content.execution_count
-        })
-    }
-
-    /// Receive from Shell and assert `ExecuteReplyException` message.
-    /// Returns `execution_count`.
-    pub fn recv_shell_execute_reply_exception(&self) -> u32 {
-        let msg = self.recv_shell();
-
-        assert_matches!(msg, Message::ExecuteReplyException(data) => {
-            assert_eq!(data.content.status, Status::Error);
-            data.content.execution_count
-        })
-    }
-
-    /// Receive from IOPub and assert Busy message
-    pub fn recv_iopub_busy(&self) -> () {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::Status(data) => {
-            assert_eq!(data.content.execution_state, ExecutionState::Busy);
-        });
-    }
-
-    /// Receive from IOPub and assert Idle message
-    pub fn recv_iopub_idle(&self) -> () {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::Status(data) => {
-            assert_eq!(data.content.execution_state, ExecutionState::Idle);
-        });
-    }
-
-    /// Receive from IOPub and assert ExecuteInput message
-    pub fn recv_iopub_execute_input(&self) -> ExecuteInput {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::ExecuteInput(data) => {
-            data.content
-        })
-    }
-
-    /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
-    /// `plain/text` result.
-    pub fn recv_iopub_execute_result(&self) -> String {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::ExecuteResult(data) => {
-            assert_matches!(data.content.data, Value::Object(map) => {
-                assert_matches!(map["text/plain"], Value::String(ref string) => {
-                    string.clone()
-                })
-            })
-        })
-    }
-
-    pub fn recv_iopub_display_data(&self) {
-        let msg = self.recv_iopub();
-        assert_matches!(msg, Message::DisplayData(_))
-    }
-
-    pub fn recv_iopub_update_display_data(&self) {
-        let msg = self.recv_iopub();
-        assert_matches!(msg, Message::UpdateDisplayData(_))
-    }
-
-    pub fn recv_iopub_stream_stdout(&self, expect: &str) {
-        self.recv_iopub_stream(expect, Stream::Stdout)
-    }
-
-    pub fn recv_iopub_stream_stderr(&self, expect: &str) {
-        self.recv_iopub_stream(expect, Stream::Stderr)
-    }
-
-    pub fn recv_iopub_comm_close(&self) -> String {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::CommClose(data) => {
-            data.content.comm_id
-        })
-    }
-
-    /// Receive from IOPub Stream
-    ///
-    /// Stdout and Stderr Stream messages are buffered, so to reliably test against them
-    /// we have to collect the messages in batches on the receiving end and compare against
-    /// an expected message.
-    fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
-        let mut out = String::new();
-
-        loop {
-            // Receive a piece of stream output (with a timeout)
-            let msg = self.recv_iopub();
-
-            // Assert its type
-            let piece = assert_matches!(msg, Message::Stream(data) => {
-                assert_eq!(data.content.name, stream);
-                data.content.text
-            });
-
-            // Add to what we've already collected
-            out += piece.as_str();
-
-            if out == expect {
-                // Done, found the entire `expect` string
-                return;
-            }
-
-            if !expect.starts_with(out.as_str()) {
-                // Something is wrong, message doesn't match up
-                panic!("Expected IOPub stream of '{expect}'. Actual stream of '{out}'.");
-            }
-
-            // We have a prefix of `expect`, but not the whole message yet.
-            // Wait on the next IOPub Stream message.
-        }
-    }
-
-    /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
-    /// `evalue` field.
-    pub fn recv_iopub_execute_error(&self) -> String {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::ExecuteError(data) => {
-            data.content.exception.evalue
-        })
-    }
-
-    /// Receive from Stdin and assert `InputRequest` message.
-    /// Returns the `prompt`.
-    pub fn recv_stdin_input_request(&self) -> String {
-        let msg = self.recv_stdin();
-
-        assert_matches!(msg, Message::InputRequest(data) => {
-            data.content.prompt
-        })
-    }
-
     /// Send back an `InputReply` to an `InputRequest` over Stdin
     pub fn send_stdin_input_reply(&self, value: String) {
         self.send_stdin(InputReply { value })
@@ -429,34 +281,10 @@ impl DummyFrontend {
     pub fn send_heartbeat(&self, msg: zmq::Message) {
         self.heartbeat_socket.send(msg).unwrap();
     }
+}
 
-    /// Asserts that no socket has incoming data
-    pub fn assert_no_incoming(&mut self) {
-        let mut has_incoming = false;
-
-        if self.iopub_socket.has_incoming_data().unwrap() {
-            has_incoming = true;
-            Self::flush_incoming("IOPub", &self.iopub_socket);
-        }
-        if self.shell_socket.has_incoming_data().unwrap() {
-            has_incoming = true;
-            Self::flush_incoming("Shell", &self.shell_socket);
-        }
-        if self.stdin_socket.has_incoming_data().unwrap() {
-            has_incoming = true;
-            Self::flush_incoming("StdIn", &self.stdin_socket);
-        }
-        if self.heartbeat_socket.has_incoming_data().unwrap() {
-            has_incoming = true;
-            Self::flush_incoming("Heartbeat", &self.heartbeat_socket);
-        }
-
-        if has_incoming {
-            panic!("Sockets must be empty on exit (see details above)");
-        }
-    }
-
-    fn flush_incoming(name: &str, socket: &Socket) {
+impl DummyFrontend {
+    pub fn flush_incoming(name: &str, socket: &Socket) {
         eprintln!("{name} has incoming data:");
 
         while socket.has_incoming_data().unwrap() {
@@ -470,4 +298,231 @@ impl Default for ExecuteRequestOptions {
     fn default() -> Self {
         Self { allow_stdin: false }
     }
+}
+
+/// Receive from Shell and assert `ExecuteReply` message.
+/// Returns `execution_count`.
+#[macro_export]
+macro_rules! recv_shell_execute_reply {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_shell();
+
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::ExecuteReply(data) => {
+            assert_eq!(data.content.status, $crate::wire::jupyter_message::Status::Ok);
+            data.content.execution_count
+        })
+    }};
+}
+
+/// Receive from Shell and assert `ExecuteReplyException` message.
+/// Returns `execution_count`.
+#[macro_export]
+macro_rules! recv_shell_execute_reply_exception {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_shell();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::ExecuteReplyException(data) => {
+            assert_eq!(data.content.status, $crate::wire::jupyter_message::Status::Error);
+            data.content.execution_count
+        })
+    }};
+}
+
+/// Receive from IOPub and assert Busy message.
+#[macro_export]
+macro_rules! recv_iopub_busy {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::Status(data) => {
+            assert_eq!(data.content.execution_state, $crate::wire::status::ExecutionState::Busy);
+        });
+    }};
+}
+
+/// Receive from IOPub and assert Idle message.
+#[macro_export]
+macro_rules! recv_iopub_idle {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::Status(data) => {
+            assert_eq!(data.content.execution_state, $crate::wire::status::ExecutionState::Idle);
+        });
+    }};
+}
+
+/// Receive from IOPub and assert ExecuteInput message.
+#[macro_export]
+macro_rules! recv_iopub_execute_input {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::ExecuteInput(data) => {
+            data.content
+        })
+    }};
+}
+
+/// Receive from IOPub and assert ExecuteResult message. Returns compulsory `plain/text` result.
+#[macro_export]
+macro_rules! recv_iopub_execute_result {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::ExecuteResult(data) => {
+            ::assert_matches::assert_matches!(data.content.data, serde_json::Value::Object(map) => {
+                ::assert_matches::assert_matches!(map["text/plain"], serde_json::Value::String(ref string) => {
+                    string.clone()
+                })
+            })
+        })
+    }};
+}
+
+/// Receive from IOPub and assert DisplayData message.
+#[macro_export]
+macro_rules! recv_iopub_display_data {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(
+            msg,
+            $crate::wire::jupyter_message::Message::DisplayData(_)
+        )
+    }};
+}
+
+/// Receive from IOPub and assert UpdateDisplayData message.
+#[macro_export]
+macro_rules! recv_iopub_update_display_data {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(
+            msg,
+            $crate::wire::jupyter_message::Message::UpdateDisplayData(_)
+        )
+    }};
+}
+
+/// Receive from IOPub and assert CommClose message. Returns comm_id.
+#[macro_export]
+macro_rules! recv_iopub_comm_close {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::CommClose(data) => {
+            data.content.comm_id
+        })
+    }};
+}
+
+/// Receive from IOPub and assert ExecuteError message. Returns `evalue`.
+#[macro_export]
+macro_rules! recv_iopub_execute_error {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_iopub();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::ExecuteError(data) => {
+            data.content.exception.evalue
+        })
+    }};
+}
+
+/// Receive from Stdin and assert InputRequest message. Returns the prompt.
+#[macro_export]
+macro_rules! recv_stdin_input_request {
+    ($frontend:expr) => {{
+        let msg = $frontend.recv_stdin();
+        ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::InputRequest(data) => {
+            data.content.prompt
+        })
+    }};
+}
+
+/// Receive from IOPub Stream
+///
+/// Stdout and Stderr Stream messages are buffered, so to reliably test against them
+/// we have to collect the messages in batches on the receiving end and compare against
+/// an expected message.
+#[macro_export]
+macro_rules! recv_iopub_stream {
+    ($frontend:expr, $expect:expr, $stream:expr) => {{
+        let mut out = String::new();
+
+        loop {
+            // Receive a piece of stream output (with a timeout)
+            let msg = $frontend.recv_iopub();
+
+            // Assert its type
+            let piece = ::assert_matches::assert_matches!(msg, $crate::wire::jupyter_message::Message::Stream(data) => {
+                assert_eq!(data.content.name, $stream);
+                data.content.text
+            });
+
+            // Add to what we've already collected
+            out += piece.as_str();
+
+            if out == $expect {
+                // Done, found the entire `expect` string
+                break;
+            }
+
+            if !$expect.starts_with(out.as_str()) {
+                // Something is wrong, message doesn't match up
+                panic!("Expected IOPub stream of '{expect}'. Actual stream of '{out}'.", expect = $expect, out = out);
+            }
+
+            // We have a prefix of `expect`, but not the whole message yet.
+            // Wait on the next IOPub Stream message.
+        }
+    }};
+}
+
+/// Receive from IOPub and assert Stdout Stream message.
+#[macro_export]
+macro_rules! recv_iopub_stream_stdout {
+    ($frontend:expr, $expect:expr) => {{
+        $crate::recv_iopub_stream!($frontend, $expect, $crate::wire::stream::Stream::Stdout)
+    }};
+}
+
+/// Receive from IOPub and assert Stderr Stream message.
+#[macro_export]
+macro_rules! recv_iopub_stream_stderr {
+    ($frontend:expr, $expect:expr) => {{
+        $crate::recv_iopub_stream!($frontend, $expect, $crate::wire::stream::Stream::Stderr)
+    }};
+}
+
+#[macro_export]
+macro_rules! assert_no_incoming {
+    ($frontend:expr) => {{
+        let mut has_incoming = false;
+
+        if $frontend.iopub_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            $crate::fixtures::dummy_frontend::DummyFrontend::flush_incoming(
+                "IOPub",
+                &$frontend.iopub_socket,
+            );
+        }
+        if $frontend.shell_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            $crate::fixtures::dummy_frontend::DummyFrontend::flush_incoming(
+                "Shell",
+                &$frontend.shell_socket,
+            );
+        }
+        if $frontend.stdin_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            $crate::fixtures::dummy_frontend::DummyFrontend::flush_incoming(
+                "StdIn",
+                &$frontend.stdin_socket,
+            );
+        }
+        if $frontend.heartbeat_socket.has_incoming_data().unwrap() {
+            has_incoming = true;
+            $crate::fixtures::dummy_frontend::DummyFrontend::flush_incoming(
+                "Heartbeat",
+                &$frontend.heartbeat_socket,
+            );
+        }
+
+        if has_incoming {
+            panic!("Sockets must be empty on exit (see details above)");
+        }
+    }};
 }

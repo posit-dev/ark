@@ -1,4 +1,14 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::recv_iopub_busy;
+use amalthea::recv_iopub_execute_error;
+use amalthea::recv_iopub_execute_input;
+use amalthea::recv_iopub_execute_result;
+use amalthea::recv_iopub_idle;
+use amalthea::recv_iopub_stream_stderr;
+use amalthea::recv_iopub_stream_stdout;
+use amalthea::recv_shell_execute_reply;
+use amalthea::recv_shell_execute_reply_exception;
+use amalthea::recv_stdin_input_request;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
@@ -17,8 +27,8 @@ fn test_kernel_info() {
         assert_eq!(reply.content.language_info.nbconvert_exporter, None);
     });
 
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_idle();
+    recv_iopub_busy!(frontend);
+    recv_iopub_idle!(frontend);
 }
 
 #[test]
@@ -27,15 +37,15 @@ fn test_execute_request() {
 
     let code = "42";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] 42");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -44,26 +54,26 @@ fn test_execute_request_empty() {
 
     let code = "";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     // Equivalent to invisible output
     let code = "invisible(1)";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -72,15 +82,15 @@ fn test_execute_request_multiple_lines() {
 
     let code = "1 +\n  2+\n  3";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 6");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] 6");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count)
 }
 
 #[test]
@@ -89,19 +99,17 @@ fn test_execute_request_incomplete() {
 
     let code = "1 +";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't execute incomplete input"));
+    assert!(recv_iopub_execute_error!(frontend).contains("Can't execute incomplete input"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
+        recv_shell_execute_reply_exception!(frontend),
         input.execution_count
     )
 }
@@ -112,19 +120,17 @@ fn test_execute_request_incomplete_multiple_lines() {
 
     let code = "1 +\n2 +";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't execute incomplete input"));
+    assert!(recv_iopub_execute_error!(frontend).contains("Can't execute incomplete input"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
+        recv_shell_execute_reply_exception!(frontend),
         input.execution_count
     )
 }
@@ -135,29 +141,27 @@ fn test_execute_request_browser() {
 
     let code = "browser()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_result()
-        .contains("Called from: top level"));
+    assert!(recv_iopub_execute_result!(frontend).contains("Called from: top level"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -171,40 +175,38 @@ fn test_execute_request_browser_error() {
 
     let code = "browser()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_result()
-        .contains("Called from: top level"));
+    assert!(recv_iopub_execute_result!(frontend).contains("Called from: top level"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     frontend.send_execute_request("stop('foobar')", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, "stop('foobar')");
 
-    frontend.recv_iopub_stream_stderr("Error: foobar\n");
-    frontend.recv_iopub_idle();
+    recv_iopub_stream_stderr!(frontend, "Error: foobar\n");
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -213,41 +215,39 @@ fn test_execute_request_browser_incomplete() {
 
     let code = "browser()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_result()
-        .contains("Called from: top level"));
+    assert!(recv_iopub_execute_result!(frontend).contains("Called from: top level"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = "1 +";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stderr("Error: \nCan't execute incomplete input:\n1 +\n");
-    frontend.recv_iopub_idle();
+    recv_iopub_stream_stderr!(frontend, "Error: \nCan't execute incomplete input:\n1 +\n");
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 // Test that a multiline input in the browser doesn't throw off our prompt info
@@ -264,42 +264,42 @@ fn <- function() {
 }
 fn()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
     // We aren't at top level, so this comes as an iopub stream
-    frontend.recv_iopub_stream_stdout("Called from: fn()\n");
-    frontend.recv_iopub_idle();
+    recv_iopub_stream_stdout!(frontend, "Called from: fn()\n");
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     // Execute a multiline statement while paused in the debugger
     let code = "1 +
         1";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
     // Also received as iopub stream because we aren't at top level, we are in the debugger
-    frontend.recv_iopub_stream_stdout("[1] 2\n");
-    frontend.recv_iopub_idle();
+    recv_iopub_stream_stdout!(frontend, "[1] 2\n");
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -308,46 +308,44 @@ fn test_execute_request_browser_stdin() {
 
     let code = "browser()";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_result()
-        .contains("Called from: top level"));
+    assert!(recv_iopub_execute_result!(frontend).contains("Called from: top level"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let options = ExecuteRequestOptions { allow_stdin: true };
     let code = "readline('prompt>')";
     frontend.send_execute_request(code, options);
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, String::from("prompt>"));
 
     frontend.send_stdin_input_reply(String::from("hi"));
 
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi\"");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] \"hi\"");
+    recv_iopub_idle!(frontend);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -355,16 +353,16 @@ fn test_execute_request_error() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.send_execute_request("stop('foobar')", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, "stop('foobar')");
-    assert!(frontend.recv_iopub_execute_error().contains("foobar"));
+    assert!(recv_iopub_execute_error!(frontend).contains("foobar"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
+        recv_shell_execute_reply_exception!(frontend),
         input.execution_count
     );
 }
@@ -374,18 +372,18 @@ fn test_execute_request_error_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.send_execute_request("1\nstop('foobar')\n2", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, "1\nstop('foobar')\n2");
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
-    assert!(frontend.recv_iopub_execute_error().contains("foobar"));
+    recv_iopub_stream_stdout!(frontend, "[1] 1\n");
+    assert!(recv_iopub_execute_error!(frontend).contains("foobar"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
+        recv_shell_execute_reply_exception!(frontend),
         input.execution_count
     );
 }
@@ -396,22 +394,22 @@ fn test_execute_request_multiple_expressions() {
 
     let code = "1\nprint(2)\n3";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
     // Printed output
-    frontend.recv_iopub_stream_stdout("[1] 1\n[1] 2\n");
+    recv_iopub_stream_stdout!(frontend, "[1] 1\n[1] 2\n");
 
     // In console mode, we get output for all intermediate results.  That's not
     // the case in notebook mode where only the final result is emitted. Note
     // that `print()` returns invisibly.
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] 3");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -425,19 +423,17 @@ fn test_execute_request_single_line_buffer_overflow() {
     let aaa = "a".repeat(4096);
     let code = format!("quote(\n{aaa}\n)");
     frontend.send_execute_request(code.as_str(), ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't pass console input on to R"));
+    assert!(recv_iopub_execute_error!(frontend).contains("Can't pass console input on to R"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
+        recv_shell_execute_reply_exception!(frontend),
         input.execution_count
     );
 }
@@ -450,21 +446,21 @@ fn test_stdin_basic_prompt() {
 
     let code = "readline('prompt>')";
     frontend.send_execute_request(code, options);
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, String::from("prompt>"));
 
     frontend.send_stdin_input_reply(String::from("hi"));
 
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi\"");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] \"hi\"");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -475,21 +471,21 @@ fn test_stdin_followed_by_an_expression_on_the_same_line() {
 
     let code = "val <- readline('prompt>'); paste0(val,'-there')";
     frontend.send_execute_request(code, options);
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, String::from("prompt>"));
 
     frontend.send_stdin_input_reply(String::from("hi"));
 
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi-there\"");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] \"hi-there\"");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -500,23 +496,23 @@ fn test_stdin_followed_by_an_expression_on_the_next_line() {
 
     let code = "1\nval <- readline('prompt>')\npaste0(val,'-there')";
     frontend.send_execute_request(code, options);
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
+    recv_iopub_stream_stdout!(frontend, "[1] 1\n");
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, String::from("prompt>"));
 
     frontend.send_stdin_input_reply(String::from("hi"));
 
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi-there\"");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] \"hi-there\"");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -527,28 +523,26 @@ fn test_stdin_single_line_buffer_overflow() {
 
     let code = "1\nreadline('prompt>')";
     frontend.send_execute_request(code, options);
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
+    recv_iopub_stream_stdout!(frontend, "[1] 1\n");
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, String::from("prompt>"));
 
     // Would overflow R's internal buffer
     let aaa = "a".repeat(4096);
     frontend.send_stdin_input_reply(aaa);
 
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't pass console input on to R"));
+    assert!(recv_iopub_execute_error!(frontend).contains("Can't pass console input on to R"));
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
     assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
+        recv_shell_execute_reply_exception!(frontend),
         input.execution_count
     );
 }
@@ -561,33 +555,34 @@ fn test_stdin_from_menu() {
 
     let code = "menu(c('a', 'b'))\n3";
     frontend.send_execute_request(code, options);
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
 
     // R emits this before asking for your selection
-    frontend.recv_iopub_stream_stdout(
+    recv_iopub_stream_stdout!(
+        frontend,
         "
 1: a
 2: b
 
-",
+"
     );
 
-    let prompt = frontend.recv_stdin_input_request();
+    let prompt = recv_stdin_input_request!(frontend);
     assert_eq!(prompt, String::from("Selection: "));
 
     frontend.send_stdin_input_reply(String::from("b"));
 
     // Position of selection is returned
-    frontend.recv_iopub_stream_stdout("[1] 2\n");
+    recv_iopub_stream_stdout!(frontend, "[1] 2\n");
 
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
+    assert_eq!(recv_iopub_execute_result!(frontend), "[1] 3");
 
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
 
 #[test]
@@ -602,11 +597,11 @@ fn test_env_vars() {
             identical(Sys.getenv('R_DOC_DIR'), R.home('doc'))
         )";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
+    recv_iopub_busy!(frontend);
 
-    let input = frontend.recv_iopub_execute_input();
+    let input = recv_iopub_execute_input!(frontend);
     assert_eq!(input.code, code);
-    frontend.recv_iopub_idle();
+    recv_iopub_idle!(frontend);
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(recv_shell_execute_reply!(frontend), input.execution_count);
 }
