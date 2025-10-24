@@ -238,6 +238,10 @@ pub fn r_list_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
     }
 }
 
+pub fn r_list_get(x: SEXP, i: R_xlen_t) -> RObject {
+    unsafe { RObject::new(VECTOR_ELT(x, i)) }
+}
+
 pub fn r_lgl_begin(x: SEXP) -> *mut i32 {
     unsafe { LOGICAL(x) }
 }
@@ -319,6 +323,15 @@ impl RObject {
             sexp: data,
             cell: unsafe { protect(data) },
         }
+    }
+
+    /// Consume the `RObject` and return the underlying `SEXP`, protected via
+    /// `Rf_protect`.
+    pub unsafe fn into_protected(self) -> SEXP {
+        unsafe {
+            libr::Rf_protect(self.sexp);
+        }
+        self.sexp
     }
 
     pub fn view(data: SEXP) -> Self {

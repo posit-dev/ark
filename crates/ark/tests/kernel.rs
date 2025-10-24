@@ -418,6 +418,9 @@ fn test_execute_request_multiple_expressions() {
 fn test_execute_request_single_line_buffer_overflow() {
     let frontend = DummyArkFrontend::lock();
 
+    // This used to fail back when we were passing inputs down to the REPL from
+    // our `ReadConsole` handler. Below is the old test description for posterity.
+
     // The newlines do matter for what we are testing here,
     // due to how we internally split by newlines. We want
     // to test that the `aaa`s result in an immediate R error,
@@ -430,16 +433,10 @@ fn test_execute_request_single_line_buffer_overflow() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't pass console input on to R"));
+    assert!(frontend.recv_iopub_execute_result().contains(&aaa));
 
     frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    );
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 
 #[test]
@@ -587,6 +584,98 @@ fn test_stdin_from_menu() {
 
     frontend.recv_iopub_idle();
 
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+// Can debug the base environment (parent is the empty environment)
+#[test]
+fn test_browser_in_base_env() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "evalq(browser(), baseenv())";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Inside `evalq()` we aren't at top level, so this comes as an iopub stream
+    // and not an execute result
+    frontend.recv_iopub_stream_stdout("Called from: evalq(browser(), baseenv())\n");
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // While paused in the debugger, evaluate a simple expression
+    let code = "1 + 1";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("[1] 2\n");
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+// The minimal environment we can debug in: access to base via `::`. This might
+// be a problem for very specialised sandboxing environment, but they can
+// temporarily add `::` while debugging.
+#[test]
+fn test_browser_in_sandboxing_environment() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "
+env <- new.env(parent = emptyenv())
+env$`::` <- `::`
+evalq(base::browser(), env)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Inside `evalq()` we aren't at top level, so this comes as an iopub stream
+    // and not an execute result
+    frontend.recv_iopub_stream_stdout("Called from: evalq(base::browser(), env)\n");
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // While paused in the debugger, evaluate a simple expression that only
+    // requires `::`
+    let code = "base::list";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("function (...)  .Primitive(\"list\")\n");
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 

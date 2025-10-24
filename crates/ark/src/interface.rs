@@ -73,6 +73,8 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
+use harp::srcref::get_block_srcrefs;
+use harp::srcref::get_srcref;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
@@ -127,7 +129,6 @@ use crate::srcref::ark_uri;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
-use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
@@ -235,7 +236,7 @@ pub struct RMain {
 
     pub positron_ns: Option<RObject>,
 
-    pending_lines: Vec<String>,
+    pending_inputs: Option<PendingInputs>,
 
     /// Banner output accumulated during startup, but set to `None` after we complete
     /// the initialization procedure and forward the banner on
@@ -267,6 +268,52 @@ pub struct RMain {
     /// Ever increasing debug session index. Used to create URIs that are only
     /// valid for a single session.
     debug_session_index: u32,
+}
+
+struct PendingInputs {
+    exprs: RObject,
+    srcrefs: RObject,
+    len: isize,
+    index: isize,
+}
+
+impl PendingInputs {
+    pub(crate) fn new(exprs: RObject, srcrefs: RObject) -> Option<Self> {
+        let len = exprs.length();
+        let index = 0;
+
+        if len == 0 {
+            return None;
+        }
+
+        Some(Self {
+            exprs,
+            srcrefs,
+            len,
+            index,
+        })
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.index >= self.len
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<PendingInput> {
+        if self.index >= self.len {
+            return None;
+        }
+
+        let srcref = get_srcref(self.srcrefs.sexp, self.index);
+        let expr = harp::r_list_get(self.exprs.sexp, self.index);
+
+        self.index += 1;
+        Some(PendingInput { expr, srcref })
+    }
+}
+
+pub(crate) struct PendingInput {
+    expr: RObject,
+    srcref: RObject,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -323,8 +370,9 @@ pub enum ConsoleInput {
     Input(String),
 }
 
-pub enum ConsoleResult {
+pub(crate) enum ConsoleResult {
     NewInput,
+    NewPendingInput(PendingInput),
     Interrupt,
     Disconnected,
     Error(amalthea::Error),
@@ -616,7 +664,6 @@ impl RMain {
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
-            pending_lines: Vec::new(),
             banner: None,
             r_error_buffer: None,
             captured_output: String::new(),
@@ -624,6 +671,7 @@ impl RMain {
             debug_last_stack: vec![],
             debug_env: None,
             debug_session_index: 1,
+            pending_inputs: None,
         }
     }
 
@@ -745,6 +793,13 @@ impl RMain {
     ) -> ConsoleResult {
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
+
+        // An incomplete prompt when we no longer have any inputs to send should
+        // never happen because we check for incomplete inputs ahead of time and
+        // respond to the frontend with an error.
+        if info.incomplete {
+            unreachable!("Incomplete input in `ReadConsole` handler");
+        }
 
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
@@ -1020,18 +1075,19 @@ impl RMain {
             }
         }
 
-        // An incomplete prompt when we no longer have any inputs to send should
-        // never happen because we check for incomplete inputs ahead of time and
-        // respond to the frontend with an error.
-        if info.incomplete && self.pending_lines.is_empty() {
-            unreachable!("Incomplete input in `ReadConsole` handler");
-        }
-
-        // Next check if we have any pending lines. If we do, we are in the middle of
-        // evaluating a multi line selection, so immediately write the next line into R's buffer.
-        // The active request remains active.
-        if let Some(console_result) = self.handle_pending_line(buf, buflen) {
-            return Some(console_result);
+        if let Some(input) = self.pop_pending() {
+            if info.browser {
+                if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
+                    let sym = String::from(sym);
+                    let debug_commands =
+                        vec!["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
+                    if debug_commands.contains(&&sym[..]) {
+                        Self::on_console_input(buf, buflen, sym).unwrap();
+                    }
+                    return Some(ConsoleResult::NewInput);
+                }
+            }
+            return Some(ConsoleResult::NewPendingInput(input));
         }
 
         // Finally, check if we have an active request from a previous `read_console()`
@@ -1124,27 +1180,105 @@ impl RMain {
                     }
                 }
 
-                // If the input is invalid (e.g. incomplete), don't send it to R
-                // at all, reply with an error right away
-                if let Err(err) = Self::check_console_input(code.as_str()) {
-                    return Some(ConsoleResult::Error(err));
+                if let Err(err) = self.read(&code) {
+                    return Some(ConsoleResult::Error(amalthea::anyhow!("{err:?}")));
                 }
 
-                // Split input by lines, retrieve first line, and store
-                // remaining lines in a buffer. This helps with long inputs
-                // because R has a fixed input buffer size of 4096 bytes at the
-                // time of writing.
-                let code = self.buffer_console_input(code.as_str());
-
-                // Store input in R's buffer and return sentinel indicating some
-                // new input is ready
-                match Self::on_console_input(buf, buflen, code) {
-                    Ok(()) => Some(ConsoleResult::NewInput),
-                    Err(err) => Some(ConsoleResult::Error(err)),
-                }
+                self.handle_active_request(info, buf, buflen)
             },
+
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
+    }
+
+    fn read(&mut self, input: &str) -> anyhow::Result<()> {
+        let status = match harp::parse_status(&harp::ParseInput::Text(input)) {
+            Err(err) => {
+                // Failed to even attempt to parse the input, something is seriously wrong
+                // FIXME: There are some valid syntax errors going through here, e.g. `identity |> _(1)`.
+                return Err(anyhow!("Failed to parse input: {err:?}"));
+            },
+            Ok(status) => status,
+        };
+
+        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
+        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
+        // - Complete statements are obviously fine.
+        // - Syntax errors will cause R to throw an error, which is expected.
+        let exprs = match status {
+            harp::ParseResult::Complete(exprs) => exprs,
+            harp::ParseResult::Incomplete => {
+                return Err(anyhow!("Can't execute incomplete input:\n{input}"));
+            },
+            harp::ParseResult::SyntaxError { message, .. } => {
+                return Err(anyhow!("Syntax error: {message}"));
+            },
+        };
+
+        let srcrefs = get_block_srcrefs(exprs.sexp);
+
+        self.pending_inputs = PendingInputs::new(exprs, srcrefs);
+        Ok(())
+    }
+
+    fn pop_pending(&mut self) -> Option<PendingInput> {
+        let Some(pending_inputs) = self.pending_inputs.as_mut() else {
+            return None;
+        };
+
+        let Some(input) = pending_inputs.pop() else {
+            // TODO! Don't like this
+            self.pending_inputs = None;
+            return None;
+        };
+
+        if pending_inputs.is_empty() {
+            self.pending_inputs = None;
+        }
+
+        Some(input)
+    }
+
+    // SAFETY: Call this from a POD frame. Inputs must be protected.
+    unsafe fn eval_pending(
+        &mut self,
+        expr: libr::SEXP,
+        srcref: libr::SEXP,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> Option<()> {
+        // SAFETY: This may jump in case of error, keep this POD
+        unsafe {
+            // The global source reference is stored in this global variable by
+            // the R REPL before evaluation. We do the same here.
+            libr::set(libr::R_Srcref, srcref);
+
+            // Evaluate the expression. Beware: this may throw an R longjump.
+            let value = libr::Rf_eval(expr, R_ENVS.global);
+            libr::Rf_protect(value);
+
+            // Store in the base environment for robust access from (almost) any
+            // evaluation environment. We only require the presence of `::` so
+            // we can reach into base. Note that unlike regular environments
+            // which are stored in pairlists or hash tables, the base environment
+            // is stored in the `value` field of symbols, i.e. their "CDR".
+            libr::SETCDR(r_symbol!(".ark_last_value"), value);
+
+            libr::Rf_unprotect(1);
+            value
+        };
+
+        // Back in business, Rust away
+        let code = if unsafe { libr::get(libr::R_Visible) == 1 } {
+            String::from("base::.ark_last_value")
+        } else {
+            String::from("base::invisible(base::.ark_last_value)")
+        };
+
+        // Unwrap safety: The input always fits in the buffer
+        Self::on_console_input(buf, buflen, code).unwrap();
+
+        Some(())
     }
 
     /// Handle an `input_request` received outside of an `execute_request` context
@@ -1544,63 +1678,6 @@ impl RMain {
         self.get_ui_comm_tx().is_some()
     }
 
-    fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
-        if self.error_occurred {
-            // If an error has occurred, we've already sent a complete expression that resulted in
-            // an error. Flush the remaining lines and return to `read_console()`, who will handle
-            // that error.
-            self.pending_lines.clear();
-            return None;
-        }
-
-        let Some(input) = self.pending_lines.pop() else {
-            // No pending lines
-            return None;
-        };
-
-        match Self::on_console_input(buf, buflen, input) {
-            Ok(()) => Some(ConsoleResult::NewInput),
-            Err(err) => Some(ConsoleResult::Error(err)),
-        }
-    }
-
-    fn check_console_input(input: &str) -> amalthea::Result<()> {
-        let status = unwrap!(harp::parse_status(&harp::ParseInput::Text(input)), Err(err) => {
-            // Failed to even attempt to parse the input, something is seriously wrong
-            return Err(Error::InvalidConsoleInput(format!(
-                "Failed to parse input: {err:?}"
-            )));
-        });
-
-        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
-        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
-        // - Complete statements are obviously fine.
-        // - Syntax errors will cause R to throw an error, which is expected.
-        match status {
-            harp::ParseResult::Incomplete => Err(Error::InvalidConsoleInput(format!(
-                "Can't execute incomplete input:\n{input}"
-            ))),
-            harp::ParseResult::Complete(_) => Ok(()),
-            harp::ParseResult::SyntaxError { .. } => Ok(()),
-        }
-    }
-
-    fn buffer_console_input(&mut self, input: &str) -> String {
-        // Split into lines and reverse them to be able to `pop()` from the front
-        let mut lines: Vec<String> = lines(input).rev().map(String::from).collect();
-
-        // SAFETY: There is always at least one line because:
-        // - `lines("")` returns 1 element containing `""`
-        // - `lines("\n")` returns 2 elements containing `""`
-        let first = lines.pop().unwrap();
-
-        // No-op if `lines` is empty
-        assert!(self.pending_lines.is_empty());
-        self.pending_lines.append(&mut lines);
-
-        first
-    }
-
     /// Copy console input into R's internal input buffer
     ///
     /// Supposedly `buflen` is "the maximum length, in bytes, including the
@@ -1917,7 +1994,7 @@ impl RMain {
             // https://github.com/posit-dev/positron/issues/1881
 
             // Handle last expression
-            if r_main.pending_lines.is_empty() {
+            if r_main.pending_inputs.is_none() {
                 r_main.autoprint_output.push_str(&content);
                 return;
             }
@@ -2299,8 +2376,26 @@ pub extern "C-unwind" fn r_read_console(
     // destructors. We're longjumping from here in case of interrupt.
 
     match result {
+        ConsoleResult::NewPendingInput(input) => {
+            let PendingInput { expr, srcref } = input;
+
+            unsafe {
+                let expr = expr.into_protected();
+                let srcref = srcref.into_protected();
+
+                match main.eval_pending(expr, srcref, buf, buflen) {
+                    None => todo!(),
+                    Some(()) => Some(ConsoleResult::NewInput),
+                };
+
+                libr::Rf_unprotect(2);
+                return 1;
+            }
+        },
+
         ConsoleResult::NewInput => return 1,
         ConsoleResult::Disconnected => return 0,
+
         ConsoleResult::Interrupt => {
             log::trace!("Interrupting `ReadConsole()`");
             unsafe {
@@ -2311,6 +2406,7 @@ pub extern "C-unwind" fn r_read_console(
             log::error!("`Rf_onintr()` did not longjump");
             return 0;
         },
+
         ConsoleResult::Error(err) => {
             main.propagate_error(anyhow::anyhow!("{err}"));
         },
