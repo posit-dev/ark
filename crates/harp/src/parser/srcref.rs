@@ -153,6 +153,42 @@ impl TryFrom<&harp::CharacterVector> for SrcFile {
     }
 }
 
+pub fn get_srcref(srcrefs: libr::SEXP, ind: isize) -> RObject {
+    if crate::r_is_null(srcrefs) {
+        return RObject::null();
+    }
+
+    if harp::r_length(srcrefs) <= ind {
+        return RObject::null();
+    }
+
+    let result = harp::list_get(srcrefs, ind);
+
+    if crate::r_is_null(result) {
+        return RObject::null();
+    }
+
+    if unsafe { libr::TYPEOF(result) as u32 } != libr::INTSXP {
+        return RObject::null();
+    }
+
+    if harp::r_length(result) < 6 {
+        return RObject::null();
+    }
+
+    RObject::new(result)
+}
+
+pub fn get_block_srcrefs(call: libr::SEXP) -> RObject {
+    let srcrefs = unsafe { libr::Rf_getAttrib(call, libr::R_SrcrefSymbol) };
+
+    if unsafe { libr::TYPEOF(srcrefs) as u32 } == libr::VECSXP {
+        return RObject::new(srcrefs);
+    }
+
+    RObject::null()
+}
+
 #[cfg(test)]
 mod tests {
     use std::ops::Range;

@@ -135,7 +135,7 @@ functions::generate! {
 
     pub fn Rf_cons(arg1: SEXP, arg2: SEXP) -> SEXP;
 
-    pub fn Rf_defineVar(arg1: SEXP, arg2: SEXP, arg3: SEXP);
+    pub fn Rf_defineVar(sym: SEXP, value: SEXP, env: SEXP);
 
     pub fn Rf_eval(arg1: SEXP, arg2: SEXP) -> SEXP;
 
@@ -617,6 +617,14 @@ constant_globals::generate! {
     #[default = std::ptr::null_mut()]
     pub static R_TripleColonSymbol: SEXP;
 
+    #[doc = "\"srcfile\""]
+    #[default = std::ptr::null_mut()]
+    pub static R_SrcfileSymbol: SEXP;
+
+    #[doc = "\"srcref\""]
+    #[default = std::ptr::null_mut()]
+    pub static R_SrcrefSymbol: SEXP;
+
     #[doc = "\"tsp\""]
     #[default = std::ptr::null_mut()]
     pub static R_TspSymbol: SEXP;
@@ -688,6 +696,8 @@ mutable_globals::generate! {
     pub static mut R_CStackLimit: usize;
 
     pub static mut R_Srcref: SEXP;
+
+    pub static mut R_Visible: Rboolean;
 
     // -----------------------------------------------------------------------------------
     // Unix
