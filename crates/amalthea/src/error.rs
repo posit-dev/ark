@@ -228,6 +228,6 @@ impl<T: std::fmt::Debug> From<SendError<T>> for Error {
 macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = anyhow::anyhow!($($rest, )*);
-        crate::error::Error::Anyhow(message)
+        $crate::error::Error::Anyhow(message)
     }}
 }
