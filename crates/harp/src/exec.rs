@@ -95,8 +95,8 @@ impl RFunction {
 pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
     let mut res = try_catch(|| unsafe { Rf_eval(expr, env) }).map(RObject::from);
 
-    if let Err(Error::TryCatchError { ref mut code, .. }) = res {
-        *code = Some(unsafe { r_stringify(expr, "\n")? });
+    if let Err(Error::TryCatchError { ref mut call, .. }) = res {
+        *call = Some(unsafe { r_stringify(expr, "\n")? });
     }
 
     res
@@ -237,7 +237,7 @@ where
             let rust_trace = std::backtrace::Backtrace::force_capture();
 
             *(data.res) = Some(Err(Error::TryCatchError {
-                code: call,
+                call,
                 message,
                 class,
                 r_trace,

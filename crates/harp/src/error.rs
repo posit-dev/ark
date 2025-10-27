@@ -23,7 +23,7 @@ pub enum Error {
         message: String,
     },
     TryCatchError {
-        code: Option<String>,
+        call: Option<String>,
         message: String,
         class: Option<Vec<String>>,
         r_trace: String,
@@ -98,14 +98,14 @@ impl fmt::Display for Error {
             },
 
             Error::TryCatchError {
-                code,
+                call,
                 message,
                 r_trace,
                 rust_trace,
                 ..
             } => {
-                if let Some(code) = code {
-                    let code = truncate_lines(code.to_owned(), 50);
+                if let Some(call) = call {
+                    let code = truncate_lines(call.to_owned(), 50);
                     write!(f, "Error evaluating '{code}': {message}")?;
                 } else {
                     write!(f, "{message}")?;
