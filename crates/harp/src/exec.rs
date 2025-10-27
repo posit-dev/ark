@@ -96,7 +96,9 @@ pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
     let mut res = try_catch(|| unsafe { Rf_eval(expr, env) }).map(RObject::from);
 
     if let Err(Error::TryCatchError { ref mut call, .. }) = res {
-        *call = Some(unsafe { r_stringify(expr, "\n")? });
+        if call.is_none() {
+            *call = Some(unsafe { r_stringify(expr, "\n")? });
+        }
     }
 
     res
