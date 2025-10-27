@@ -391,14 +391,6 @@ impl RMain {
             startup::push_ignore_user_r_profile(&mut r_args);
         }
 
-        // Build the argument list from the command line arguments. The default
-        // list is `--interactive` unless altered with the `--` passthrough
-        // argument.
-        let mut args = cargs!["ark"];
-        for arg in r_args {
-            args.push(CString::new(arg).unwrap().into_raw());
-        }
-
         let r_home = r_home_setup();
 
         // `R_HOME` is now defined no matter what and will be used by
@@ -433,7 +425,7 @@ impl RMain {
         let libraries = RLibraries::from_r_home_path(&r_home);
         libraries.initialize_pre_setup_r();
 
-        crate::sys::interface::setup_r(args);
+        crate::sys::interface::setup_r(&r_args);
 
         libraries.initialize_post_setup_r();
 
@@ -515,6 +507,29 @@ impl RMain {
 
         // Start the REPL. Does not return!
         crate::sys::interface::run_r();
+    }
+
+    pub fn build_ark_c_args(args: &Vec<String>) -> Vec<*mut c_char> {
+        // Build the argument list from the command line arguments. The default
+        // list is `--interactive` unless altered with the `--` passthrough
+        // argument.
+        cfg_if::cfg_if! {
+            if #[cfg(unix)] {
+                let mut out = cargs!["ark"];
+            } else if #[cfg(windows)] {
+                let mut out = cargs!["ark.exe"];
+            } else {
+                unreachable!("Unsupported OS");
+            }
+        }
+
+        // The `into_raw()` call leaks each individual `arg` because we never call
+        // `CString::from_raw()`, but we are fine with that
+        for arg in args {
+            out.push(CString::new(arg.as_str()).unwrap().into_raw());
+        }
+
+        out
     }
 
     /// Completes the kernel's initialization.

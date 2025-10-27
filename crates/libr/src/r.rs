@@ -368,6 +368,9 @@ functions::generate! {
     #[cfg(target_family = "windows")]
     pub fn readconsolecfg();
 
+    #[cfg(target_family = "windows")]
+    pub fn R_common_command_line(pac: *mut std::ffi::c_int, argv: *mut *mut std::ffi::c_char, Rp: Rstart);
+
     /// R >= 4.2.0
     #[cfg(target_family = "windows")]
     pub fn R_DefParamsEx(Rp: Rstart, RstartVersion: i32);

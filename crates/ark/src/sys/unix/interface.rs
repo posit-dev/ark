@@ -35,16 +35,18 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_suicide;
 use crate::interface::r_write_console;
+use crate::interface::RMain;
 use crate::signals::initialize_signal_handlers;
 
-pub fn setup_r(mut args: Vec<*mut c_char>) {
+pub fn setup_r(args: &Vec<String>) {
     unsafe {
         // Before `Rf_initialize_R()`
         libr::set(R_running_as_main_program, 1);
 
         libr::set(R_SignalHandlers, 0);
 
-        Rf_initialize_R(args.len() as i32, args.as_mut_ptr() as *mut *mut c_char);
+        let mut c_args = RMain::build_ark_c_args(args);
+        Rf_initialize_R(c_args.len() as i32, c_args.as_mut_ptr() as *mut *mut c_char);
 
         // Initialize the signal blocks and handlers (like interrupts).
         // Don't do that in tests because that makes them uninterruptible.
