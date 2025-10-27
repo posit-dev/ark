@@ -509,10 +509,10 @@ impl RMain {
         crate::sys::interface::run_r();
     }
 
+    /// Build the argument list from the command line arguments. The default
+    /// list is `--interactive` unless altered with the `--` passthrough
+    /// argument.
     pub fn build_ark_c_args(args: &Vec<String>) -> Vec<*mut c_char> {
-        // Build the argument list from the command line arguments. The default
-        // list is `--interactive` unless altered with the `--` passthrough
-        // argument.
         cfg_if::cfg_if! {
             if #[cfg(unix)] {
                 let mut out = cargs!["ark"];
