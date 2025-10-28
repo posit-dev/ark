@@ -464,6 +464,31 @@ impl DummyFrontend {
             eprintln!("---");
         }
     }
+
+    pub fn is_installed(&self, package: &str) -> bool {
+        let code = format!(".ps.is_installed('{package}')");
+        self.send_execute_request(&code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let result = self.recv_iopub_execute_result();
+
+        let out = if result == "[1] TRUE" {
+            true
+        } else if result == "[1] FALSE" {
+            false
+        } else {
+            panic!("Expected `TRUE` or `FALSE`, got '{result}'.");
+        };
+
+        self.recv_iopub_idle();
+
+        assert_eq!(self.recv_shell_execute_reply(), input.execution_count);
+
+        out
+    }
 }
 
 impl Default for ExecuteRequestOptions {
