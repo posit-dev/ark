@@ -65,7 +65,6 @@ pub use harp::error::as_result;
 pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
 pub use harp::exec::try_eval;
-pub use harp::exec::try_eval_silent;
 #[cfg(test)]
 pub(crate) use harp::fixtures::r_task;
 pub use harp::object::list_get;

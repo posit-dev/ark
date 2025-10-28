@@ -104,11 +104,6 @@ pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
     res
 }
 
-pub fn try_eval_silent(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
-    let _guard = crate::raii::RLocalShowErrorMessageOption::new(false);
-    try_eval(expr, env)
-}
-
 impl From<&str> for RFunction {
     fn from(function: &str) -> Self {
         RFunction::new("", function)

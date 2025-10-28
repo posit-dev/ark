@@ -58,7 +58,7 @@ pub fn parse_eval(code: &str, options: RParseEvalOptions) -> harp::Result<RObjec
 
     for i in 0..exprs.length() {
         let expr = harp::list_get(exprs.sexp, i);
-        value = harp::try_eval_silent(expr, options.env.sexp)?;
+        value = harp::try_eval(expr, options.env.sexp)?;
     }
 
     Ok(value)
