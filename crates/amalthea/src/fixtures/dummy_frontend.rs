@@ -270,6 +270,7 @@ impl DummyFrontend {
 
     /// Receive from Shell and assert `ExecuteReply` message.
     /// Returns `execution_count`.
+    #[track_caller]
     pub fn recv_shell_execute_reply(&self) -> u32 {
         let msg = self.recv_shell();
 
@@ -281,6 +282,7 @@ impl DummyFrontend {
 
     /// Receive from Shell and assert `ExecuteReplyException` message.
     /// Returns `execution_count`.
+    #[track_caller]
     pub fn recv_shell_execute_reply_exception(&self) -> u32 {
         let msg = self.recv_shell();
 
@@ -291,6 +293,7 @@ impl DummyFrontend {
     }
 
     /// Receive from IOPub and assert Busy message
+    #[track_caller]
     pub fn recv_iopub_busy(&self) -> () {
         let msg = self.recv_iopub();
 
@@ -300,6 +303,7 @@ impl DummyFrontend {
     }
 
     /// Receive from IOPub and assert Idle message
+    #[track_caller]
     pub fn recv_iopub_idle(&self) -> () {
         let msg = self.recv_iopub();
 
@@ -309,6 +313,7 @@ impl DummyFrontend {
     }
 
     /// Receive from IOPub and assert ExecuteInput message
+    #[track_caller]
     pub fn recv_iopub_execute_input(&self) -> ExecuteInput {
         let msg = self.recv_iopub();
 
@@ -319,6 +324,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
     /// `plain/text` result.
+    #[track_caller]
     pub fn recv_iopub_execute_result(&self) -> String {
         let msg = self.recv_iopub();
 
@@ -331,24 +337,29 @@ impl DummyFrontend {
         })
     }
 
+    #[track_caller]
     pub fn recv_iopub_display_data(&self) {
         let msg = self.recv_iopub();
         assert_matches!(msg, Message::DisplayData(_))
     }
 
+    #[track_caller]
     pub fn recv_iopub_update_display_data(&self) {
         let msg = self.recv_iopub();
         assert_matches!(msg, Message::UpdateDisplayData(_))
     }
 
+    #[track_caller]
     pub fn recv_iopub_stream_stdout(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stdout)
     }
 
+    #[track_caller]
     pub fn recv_iopub_stream_stderr(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stderr)
     }
 
+    #[track_caller]
     pub fn recv_iopub_comm_close(&self) -> String {
         let msg = self.recv_iopub();
 
@@ -362,6 +373,7 @@ impl DummyFrontend {
     /// Stdout and Stderr Stream messages are buffered, so to reliably test against them
     /// we have to collect the messages in batches on the receiving end and compare against
     /// an expected message.
+    #[track_caller]
     fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
         let mut out = String::new();
 
@@ -395,6 +407,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
     /// `evalue` field.
+    #[track_caller]
     pub fn recv_iopub_execute_error(&self) -> String {
         let msg = self.recv_iopub();
 
@@ -405,6 +418,7 @@ impl DummyFrontend {
 
     /// Receive from Stdin and assert `InputRequest` message.
     /// Returns the `prompt`.
+    #[track_caller]
     pub fn recv_stdin_input_request(&self) -> String {
         let msg = self.recv_stdin();
 
@@ -414,11 +428,13 @@ impl DummyFrontend {
     }
 
     /// Send back an `InputReply` to an `InputRequest` over Stdin
+    #[track_caller]
     pub fn send_stdin_input_reply(&self, value: String) {
         self.send_stdin(InputReply { value })
     }
 
     /// Receives a (raw) message from the heartbeat socket
+    #[track_caller]
     pub fn recv_heartbeat(&self) -> zmq::Message {
         let mut msg = zmq::Message::new();
         self.heartbeat_socket.recv(&mut msg).unwrap();
@@ -426,11 +442,13 @@ impl DummyFrontend {
     }
 
     /// Sends a (raw) message to the heartbeat socket
+    #[track_caller]
     pub fn send_heartbeat(&self, msg: zmq::Message) {
         self.heartbeat_socket.send(msg).unwrap();
     }
 
     /// Asserts that no socket has incoming data
+    #[track_caller]
     pub fn assert_no_incoming(&mut self) {
         let mut has_incoming = false;
 
