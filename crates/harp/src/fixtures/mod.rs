@@ -8,6 +8,7 @@
 // Helper functions for ensuring R is running before running tests
 // that rely on an R session being available.
 
+use std::ffi::CString;
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::sync::Once;
@@ -15,7 +16,6 @@ use std::sync::Once;
 use libr::setup_Rmainloop;
 use libr::R_CStackLimit;
 use libr::Rf_initialize_R;
-use stdext::cargs;
 
 use crate::command::r_command_from_path;
 use crate::library::RLibraries;
@@ -82,13 +82,15 @@ pub fn r_test_init() {
 
 fn r_test_setup() {
     // Build the argument list for Rf_initialize_R
-    let mut arguments = cargs!["R", "--slave", "--no-save", "--no-restore"];
+    let args = vec!["R", "--slave", "--no-save", "--no-restore"];
+
+    let mut r_args = Vec::with_capacity(args.len());
+    for arg in args {
+        r_args.push(CString::new(arg).unwrap().into_raw());
+    }
 
     unsafe {
-        Rf_initialize_R(
-            arguments.len() as i32,
-            arguments.as_mut_ptr() as *mut *mut c_char,
-        );
+        Rf_initialize_R(r_args.len() as i32, r_args.as_mut_ptr() as *mut *mut c_char);
         libr::set(R_CStackLimit, usize::MAX);
         setup_Rmainloop();
     }
