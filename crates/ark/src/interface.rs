@@ -2209,6 +2209,14 @@ impl RMain {
         }
     }
 
+    fn propagate_error(&mut self, err: anyhow::Error) -> ! {
+        // Save error message to `RMain`'s buffer to avoid leaking memory when `Rf_error()` jumps.
+        // Some gymnastics are required to deal with the possibility of `CString` conversion failure
+        // since the error message comes from the frontend and might be corrupted.
+        self.r_error_buffer = Some(new_cstring(format!("\n{err}")));
+        unsafe { Rf_error(self.r_error_buffer.as_ref().unwrap().as_ptr()) }
+    }
+
     #[cfg(not(test))] // Avoid warnings in unit test
     pub(crate) fn debug_env(&self) -> Option<RObject> {
         self.debug_env.clone()
@@ -2286,7 +2294,7 @@ pub extern "C-unwind" fn r_read_console(
     main.read_console_cleanup();
 
     let result = unwrap!(result, Err(err) => {
-        panic!("Unexpected longjump while reading console: {err:?}");
+        panic!("Unexpected longjump while reading from console: {err:?}");
     });
 
     // NOTE: Keep this function a "Plain Old Frame" without any
@@ -2306,12 +2314,7 @@ pub extern "C-unwind" fn r_read_console(
             return 0;
         },
         ConsoleResult::Error(err) => {
-            // Save error message to `RMain`'s buffer to avoid leaking memory
-            // when `Rf_error()` jumps. Some gymnastics are required to deal
-            // with the possibility of `CString` conversion failure since the
-            // error message comes from the frontend and might be corrupted.
-            main.r_error_buffer = Some(new_cstring(format!("\n{err}")));
-            unsafe { Rf_error(main.r_error_buffer.as_ref().unwrap().as_ptr()) };
+            main.propagate_error(anyhow::anyhow!("{err}"));
         },
     };
 }
@@ -2322,7 +2325,9 @@ fn new_cstring(x: String) -> CString {
 
 #[no_mangle]
 pub extern "C-unwind" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
-    RMain::write_console(buf, buflen, otype);
+    if let Err(err) = r_sandbox(|| RMain::write_console(buf, buflen, otype)) {
+        panic!("Unexpected longjump while writing to console: {err:?}");
+    };
 }
 
 #[no_mangle]
