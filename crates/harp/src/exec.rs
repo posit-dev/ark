@@ -385,6 +385,12 @@ where
     try_catch(f)
 }
 
+// here
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_sandbox(env: SEXP) -> anyhow::Result<SEXP> {
+    r_sandbox(|| libr::Rf_eval(r_symbol!("arg"), env)).map_err(|err| anyhow::anyhow!("{err}"))
+}
+
 /// Unwrap Rust error and throw as R error
 ///
 /// Takes a lambda returning a `Result`. On error, converts the Rust error

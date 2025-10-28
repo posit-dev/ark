@@ -139,6 +139,11 @@ rstudio_ns <- function() {
     .Call(.NAME, ..., PACKAGE = "(embedding)")
 }
 
+# `arg` is forced from Rust within a sandbox environment (interrupts disabled)
+sandbox <- function(arg) {
+    .Call(".ps.sandbox", environment())
+}
+
 env_unlock <- function(env) {
     .ps.Call("ark_env_unlock", env)
 }
