@@ -512,19 +512,26 @@ impl RMain {
     /// Build the argument list from the command line arguments. The default
     /// list is `--interactive` unless altered with the `--` passthrough
     /// argument.
+    ///
+    /// # Safety
+    ///
+    /// The R initialization routines `Rf_initialize_R()`, `cmdlineoptions()`, and
+    /// `R_common_command_line()` all modify the underlying array of C strings directly,
+    /// invalidating our pointers, so we can't actually free these by reclaiming them with
+    /// [CString::from_raw()]. It should be a very small memory leak though.
     pub fn build_ark_c_args(args: &Vec<String>) -> Vec<*mut c_char> {
+        let mut out = Vec::with_capacity(args.len() + 1);
+
         cfg_if::cfg_if! {
             if #[cfg(unix)] {
-                let mut out = cargs!["ark"];
+                out.push(CString::new("ark").unwrap().into_raw());
             } else if #[cfg(windows)] {
-                let mut out = cargs!["ark.exe"];
+                out.push(CString::new("ark.exe").unwrap().into_raw());
             } else {
                 unreachable!("Unsupported OS");
             }
         }
 
-        // The `into_raw()` call leaks each individual `arg` because we never call
-        // `CString::from_raw()`, but we are fine with that
         for arg in args {
             out.push(CString::new(arg.as_str()).unwrap().into_raw());
         }
