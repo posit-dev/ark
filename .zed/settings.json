@@ -1,4 +1,13 @@
 {
+    "lsp": {
+        "rust-analyzer": {
+            "initialization_options": {
+                "rustfmt": {
+                    "extraArgs": ["+nightly"]
+                }
+            }
+        }
+    },
     "languages": {
         "Rust": {
             "format_on_save": "on"
