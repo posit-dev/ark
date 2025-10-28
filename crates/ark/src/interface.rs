@@ -2351,7 +2351,9 @@ pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
 #[no_mangle]
 pub unsafe extern "C-unwind" fn r_polled_events() {
     let main = RMain::get_mut();
-    main.polled_events();
+    if let Err(err) = r_sandbox(|| main.polled_events()) {
+        panic!("Unexpected longjump while polling events: {err:?}");
+    };
 }
 
 // This hook is called like a user onLoad hook but for every package to be
