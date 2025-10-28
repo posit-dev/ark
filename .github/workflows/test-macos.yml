@@ -19,6 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set macOS deployment target
+        run: grep -v '^#' .github/env/macos.env >> $GITHUB_ENV
+
       - name: Report Rust Toolchain
         run: rustup show
 
