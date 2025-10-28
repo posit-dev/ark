@@ -170,8 +170,10 @@ fn test_graphics_device_initialization() {
 fn test_ragg_is_used_by_default() {
     let frontend = DummyArkFrontend::lock();
 
-    // We install ragg on CI and expect developers to have it locally
-    let code = ".ps.internal(use_ragg())";
+    // We install ragg on CI, but developers may not have it locally
+    let code = ".ps.internal(use_ragg()) ||
+        # Returns TRUE if ragg is available, FALSE otherwise
+        identical(system.file(package = 'ragg'), '')";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     let input = frontend.recv_iopub_execute_input();
