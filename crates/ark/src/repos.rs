@@ -149,6 +149,18 @@ fn find_repos_conf() -> Option<PathBuf> {
     if let Some(path) = find_repos_conf_xdg("ark".to_string()) {
         return Some(path);
     }
+
+    // RStudio respects a system-wide repos.conf in /etc/rstudio/repos.conf.
+    //
+    // https://solutions.posit.co/envs-pkgs/rsw_defaults/#repos.conf
+    //
+    // This isn't strictly XDG-compliant, but we check for it for compatibility.
+    let rstudio_etc = PathBuf::from("/etc/rstudio/repos.conf");
+    if rstudio_etc.exists() {
+        return Some(rstudio_etc);
+    }
+
+    // No repos.conf file found
     None
 }
 
