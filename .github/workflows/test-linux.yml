@@ -62,11 +62,12 @@ jobs:
           packages:
             data.table
             dplyr
-            rstudioapi
-            tibble
             haven
             R6
+            ragg
+            rstudioapi
             survival
+            tibble
 
       - name: Set LD_LIBRARY_PATH
         run: |

@@ -69,17 +69,18 @@ jobs:
           packages:
             data.table
             dplyr
-            rstudioapi
-            tibble
             haven
             R6
+            ragg
+            rstudioapi
             survival
+            tibble
 
       # arm64: Manual install.packages (until setup-r-dependencies supports arm64)
       - name: Install R Packages Required For Tests (arm64)
         if: matrix.arch == 'arm64'
         run: |
-          Rscript -e "install.packages(c('data.table', 'dplyr', 'rstudioapi', 'tibble', 'haven', 'R6', 'survival'), repos = 'https://cloud.r-project.org')"
+          Rscript -e "install.packages(c('data.table', 'dplyr', 'haven', 'R6', 'ragg', 'rstudioapi', 'survival', 'tibble'), repos = 'https://cloud.r-project.org')"
 
       - name: Build
         run: |

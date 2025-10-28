@@ -42,11 +42,12 @@ jobs:
           packages:
             data.table
             dplyr
-            rstudioapi
-            tibble
             haven
             R6
+            ragg
+            rstudioapi
             survival
+            tibble
 
       - name: Build
         run: |
