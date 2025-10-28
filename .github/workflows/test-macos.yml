@@ -6,18 +6,22 @@ on:
 
 jobs:
   macos:
-    runs-on: macos-latest
-    name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
+    name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}, OS: ${{ matrix.config.runs_on }}"
+    runs-on: ${{ matrix.config.runs_on }}
     strategy:
       fail-fast: false
       matrix:
         config:
-          - { rust: 'stable', r: 'release' }
+          - { rust: 'nightly', r: 'release', runs_on: 'macos-latest' }
+          - { rust: 'stable', r: '4.2', runs_on: 'macos-14' }
     timeout-minutes: 30
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure environment
+        run: grep -v '^#' .github/env/macos.env >> $GITHUB_ENV
 
       - name: Report Rust Toolchain
         run: rustup show

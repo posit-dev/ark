@@ -40,6 +40,12 @@ jobs:
                       rust_target_prefix: x86_64
 
         steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Configure environment
+              run: grep -v '^#' .github/env/macos.env >> $GITHUB_ENV
+
             - name: Install Rust toolchain
               run: |
                 rustup update --no-self-update stable
@@ -53,10 +59,6 @@ jobs:
 
                 # Install x86 Rust target
                 rustup target add x86_64-apple-darwin
-
-            # Checkout sources
-            - name: Checkout sources
-              uses: actions/checkout@v4
 
             # Zeromq calls whatever pkg-config version is findable on the PATH to be able to locate
             # libsodium, so we have to ensure the x86_64 version is first on the PATH when compiling for
