@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set macOS deployment target
+      - name: Configure environment
         run: grep -v '^#' .github/env/macos.env >> $GITHUB_ENV
 
       - name: Report Rust Toolchain
