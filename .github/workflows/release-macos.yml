@@ -48,7 +48,6 @@ jobs:
             - name: Set macOS 11 deployment target
               run: |
                 echo "MACOSX_DEPLOYMENT_TARGET=11" >> $GITHUB_ENV
-                echo "RUSTFLAGS=-C link-args=-mmacosx-version-min=11" >> $GITHUB_ENV
 
             - name: Setup for x86 cross-compiling
               if: matrix.arch == 'x64'
