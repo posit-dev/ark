@@ -181,3 +181,41 @@ system_path <- function(pkg) {
 
     ""
 }
+
+# `NULL` if successful, otherwise an error condition
+try_load_namespace <- function(package) {
+    tryCatch(
+        expr = {
+            loadNamespace(package)
+            NULL
+        },
+        error = function(cnd) {
+            cnd
+        }
+    )
+}
+
+log_cant_load_namespace <- function(package, cnd) {
+    message <- conditionMessage(cnd)
+    message <- sprintf(
+        "Failed to load '%s' due to: %s",
+        package,
+        message
+    )
+    log_error(message)
+}
+
+log_trace <- function(msg) {
+    stopifnot(is_string(msg))
+    .Call("ark_log_trace", msg)
+}
+
+log_warning <- function(msg) {
+    stopifnot(is_string(msg))
+    .Call("ark_log_warning", msg)
+}
+
+log_error <- function(msg) {
+    stopifnot(is_string(msg))
+    .Call("ark_log_error", msg)
+}

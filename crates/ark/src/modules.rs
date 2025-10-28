@@ -292,6 +292,21 @@ fn r_poke_option_ark_testing() {
     }
 }
 
+#[harp::register]
+pub extern "C-unwind" fn ark_log_trace(msg: SEXP) -> harp::error::Result<SEXP> {
+    Ok(harp::utils::harp_log_trace(msg))
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ark_log_warning(msg: SEXP) -> harp::error::Result<SEXP> {
+    Ok(harp::utils::harp_log_warning(msg))
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ark_log_error(msg: SEXP) -> harp::error::Result<SEXP> {
+    Ok(harp::utils::harp_log_error(msg))
+}
+
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;

@@ -165,3 +165,66 @@ fn test_graphics_device_initialization() {
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+#[test]
+fn test_ragg_is_used_by_default() {
+    let frontend = DummyArkFrontend::lock();
+
+    // We install ragg on CI and expect developers to have it locally
+    let code = ".ps.internal(use_ragg())";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] TRUE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_inability_to_load_ragg_falls_back_to_base_graphics() {
+    // https://github.com/posit-dev/ark/issues/917
+    let frontend = DummyArkFrontend::lock();
+
+    // Mock `loadNamespace()` with a version that will fail on ragg
+    let code = r#"
+oldLoadNamespace <- base::loadNamespace
+unlockBinding("loadNamespace", .BaseNamespaceEnv)
+
+newLoadNamespace <- function(package, ...) {
+  if (identical(package, "ragg")) {
+    stop("Can't load ragg")
+  }
+  oldLoadNamespace(package, ...)
+}
+
+assign("loadNamespace", newLoadNamespace, envir = .BaseNamespaceEnv)
+lockBinding("loadNamespace", .BaseNamespaceEnv)
+    "#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // ragg is installed on CI, so our graphics code should try and use it,
+    // but should fail when loading the package and should fall back to base R graphics
+    let code = ".ps.internal(use_ragg())";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] FALSE");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}

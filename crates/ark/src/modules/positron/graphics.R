@@ -221,6 +221,16 @@ init_use_ragg <- function() {
         return(FALSE)
     }
 
+    # We've seen examples where ragg is installed but is unable to be loaded due
+    # to system library incompatibilites in its stack. If we can't load it, an
+    # error is logged and we fall back to base R graphics.
+    # https://github.com/posit-dev/ark/issues/917
+    result <- try_load_namespace("ragg")
+    if (!is.null(result)) {
+        log_cant_load_namespace("ragg", result)
+        return(FALSE)
+    }
+
     TRUE
 }
 
@@ -233,6 +243,12 @@ init_use_svglite <- function() {
     }
 
     if (!.ps.is_installed("svglite")) {
+        return(FALSE)
+    }
+
+    result <- try_load_namespace("svglite")
+    if (!is.null(result)) {
+        log_cant_load_namespace("svglite", result)
         return(FALSE)
     }
 
