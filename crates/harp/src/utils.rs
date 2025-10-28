@@ -515,7 +515,7 @@ pub fn r_promise_expr(x: SEXP) -> SEXP {
 
 pub unsafe fn r_promise_force(x: SEXP) -> harp::Result<RObject> {
     // Expect that the promise protects its own result
-    harp::try_eval_silent(x, R_EmptyEnv)
+    harp::try_eval(x, R_EmptyEnv)
 }
 
 pub fn r_promise_force_with_rollback(x: SEXP) -> harp::Result<RObject> {
@@ -523,7 +523,7 @@ pub fn r_promise_force_with_rollback(x: SEXP) -> harp::Result<RObject> {
     // then the original promise is untouched, i.e. `PRSEEN` isn't modified,
     // avoiding `"restarting interrupted promise evaluation"` warnings.
     unsafe {
-        let out = harp::try_eval_silent(PRCODE(x), PRENV(x))?;
+        let out = harp::try_eval(PRCODE(x), PRENV(x))?;
         SET_PRVALUE(x, out.sexp);
         Ok(out)
     }

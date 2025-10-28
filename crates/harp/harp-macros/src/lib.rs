@@ -185,8 +185,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 // Insulate from condition handlers and detect unexpected
                 // errors/longjumps with a top-level context.
                 //
-                // TODO: This disables interrupts and `r_sandbox()` by
-                // itself does not time out. We will want to do better.
+                // This also disables interrupts.
                 let result = harp::exec::r_sandbox(|| {
                     #function_block
                 });

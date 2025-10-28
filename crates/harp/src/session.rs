@@ -32,7 +32,7 @@ pub fn r_n_frame() -> crate::Result<i32> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        let ffi = harp::try_eval_silent(NFRAME_CALL.unwrap_unchecked(), R_ENVS.base)?;
+        let ffi = harp::try_eval(NFRAME_CALL.unwrap_unchecked(), R_ENVS.base)?;
         let n_frame = IntegerVector::new(ffi)?;
         Ok(n_frame.get_unchecked_elt(0))
     }
@@ -42,7 +42,7 @@ pub fn r_sys_calls() -> crate::Result<RObject> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        Ok(harp::try_eval_silent(
+        Ok(harp::try_eval(
             SYS_CALLS_CALL.unwrap_unchecked(),
             R_BaseEnv,
         )?)
@@ -53,7 +53,7 @@ pub fn r_sys_frames() -> crate::Result<RObject> {
     SESSION_INIT.call_once(init_interface);
 
     unsafe {
-        Ok(harp::try_eval_silent(
+        Ok(harp::try_eval(
             SYS_FRAMES_CALL.unwrap_unchecked(),
             R_BaseEnv,
         )?)
@@ -80,11 +80,7 @@ pub fn r_sys_functions() -> crate::Result<SEXP> {
             let call = r_lang!(fun, index);
             protect.add(call);
 
-            SET_VECTOR_ELT(
-                out,
-                i as isize,
-                harp::try_eval_silent(call, R_BaseEnv)?.sexp,
-            );
+            SET_VECTOR_ELT(out, i as isize, harp::try_eval(call, R_BaseEnv)?.sexp);
         }
 
         Ok(out)
@@ -96,7 +92,7 @@ pub fn r_sys_frame(n: std::ffi::c_int) -> crate::Result<RObject> {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.frame"), n));
-        Ok(harp::try_eval_silent(call, R_BaseEnv)?)
+        Ok(harp::try_eval(call, R_BaseEnv)?)
     }
 }
 
@@ -105,7 +101,7 @@ pub fn r_sys_call(n: std::ffi::c_int) -> crate::Result<RObject> {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.call"), n));
-        Ok(harp::try_eval_silent(call, R_BaseEnv)?)
+        Ok(harp::try_eval(call, R_BaseEnv)?)
     }
 }
 
