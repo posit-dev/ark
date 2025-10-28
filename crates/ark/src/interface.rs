@@ -391,14 +391,6 @@ impl RMain {
             startup::push_ignore_user_r_profile(&mut r_args);
         }
 
-        // Build the argument list from the command line arguments. The default
-        // list is `--interactive` unless altered with the `--` passthrough
-        // argument.
-        let mut args = cargs!["ark"];
-        for arg in r_args {
-            args.push(CString::new(arg).unwrap().into_raw());
-        }
-
         let r_home = r_home_setup();
 
         // `R_HOME` is now defined no matter what and will be used by
@@ -433,7 +425,7 @@ impl RMain {
         let libraries = RLibraries::from_r_home_path(&r_home);
         libraries.initialize_pre_setup_r();
 
-        crate::sys::interface::setup_r(args);
+        crate::sys::interface::setup_r(&r_args);
 
         libraries.initialize_post_setup_r();
 
@@ -515,6 +507,36 @@ impl RMain {
 
         // Start the REPL. Does not return!
         crate::sys::interface::run_r();
+    }
+
+    /// Build the argument list from the command line arguments. The default
+    /// list is `--interactive` unless altered with the `--` passthrough
+    /// argument.
+    ///
+    /// # Safety
+    ///
+    /// The R initialization routines `Rf_initialize_R()`, `cmdlineoptions()`, and
+    /// `R_common_command_line()` all modify the underlying array of C strings directly,
+    /// invalidating our pointers, so we can't actually free these by reclaiming them with
+    /// [CString::from_raw()]. It should be a very small memory leak though.
+    pub fn build_ark_c_args(args: &Vec<String>) -> Vec<*mut c_char> {
+        let mut out = Vec::with_capacity(args.len() + 1);
+
+        cfg_if::cfg_if! {
+            if #[cfg(unix)] {
+                out.push(CString::new("ark").unwrap().into_raw());
+            } else if #[cfg(windows)] {
+                out.push(CString::new("ark.exe").unwrap().into_raw());
+            } else {
+                unreachable!("Unsupported OS");
+            }
+        }
+
+        for arg in args {
+            out.push(CString::new(arg.as_str()).unwrap().into_raw());
+        }
+
+        out
     }
 
     /// Completes the kernel's initialization.

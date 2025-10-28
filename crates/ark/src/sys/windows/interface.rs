@@ -20,17 +20,18 @@ use libr::R_DefParamsEx;
 use libr::R_HomeDir;
 use libr::R_SetParams;
 use libr::R_SignalHandlers;
+use libr::R_common_command_line;
 use libr::Rboolean_FALSE;
-use stdext::cargs;
 
 use crate::interface::r_busy;
 use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_suicide;
 use crate::interface::r_write_console;
+use crate::interface::RMain;
 use crate::sys::windows::strings::system_to_utf8;
 
-pub fn setup_r(mut _args: Vec<*mut c_char>) {
+pub fn setup_r(args: &Vec<String>) {
     unsafe {
         libr::set(R_SignalHandlers, 0);
 
@@ -47,18 +48,20 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         let user_home = CString::new(user_home).unwrap();
         let user_home = user_home.as_ptr() as *mut c_char;
 
-        // setup command line options
-        // note that R does a lot of initialization here that's not accessible
+        // Note that R does a lot of initialization here that's not accessible
         // in any other way; e.g. the default translation domain is set within
-        //
+        // via `BindDomain()`. We don't supply the `args` here because we do a
+        // wholesale replacement of the options they set via `R_SetParams()`
+        // later on, so setting them here would have no effect anyways.
         // https://github.com/rstudio/rstudio/issues/10308
-        let rargc: i32 = 1;
-        let mut rargv: Vec<*mut c_char> = cargs!["R.exe"];
-        cmdlineoptions(rargc, rargv.as_mut_ptr() as *mut *mut c_char);
+        let mut c_args = RMain::build_ark_c_args(&vec![]);
+        cmdlineoptions(c_args.len() as i32, c_args.as_mut_ptr() as *mut *mut c_char);
 
         let mut params_struct = MaybeUninit::uninit();
         let params: libr::Rstart = params_struct.as_mut_ptr();
 
+        // Set up initial defaults for `params`
+        //
         // TODO: Windows
         // We eventually need to use `RSTART_VERSION` (i.e., 1). It might just
         // work as is but will require a little testing. It sets and initializes
@@ -66,6 +69,29 @@ pub fn setup_r(mut _args: Vec<*mut c_char>) {
         // versions.
         // R_DefParamsEx(params, bindings::RSTART_VERSION as i32);
         R_DefParamsEx(params, 0);
+
+        // Set up "common" command line arguments, inheriting R's "last flag
+        // wins" behavior for these. On the Unix side this is automatically
+        // called by `Rf_initialize_R()`. On the Windows side this is called by
+        // `cmdlineoptions()`, but because we call `R_SetParams()` later on to
+        // tweak some options, we have to fully rebuild the correct `params`
+        // list anyways so we don't supply any user `args` to
+        // `cmdlineoptions()` and instead pass them here.
+        //
+        // Notably sets:
+        // - `(*params).R_Quiet` via `--silent`, `--quiet`, `-q`, `--no-echo`
+        // - `(*params).R_Verbose` via `--verbose`
+        // - `(*params).NoRenviron` via `--no-environ`, `--vanilla`
+        // - `(*params).SaveAction` via `--save`, `--no-save`, `--vanilla`, `--no-echo`
+        // - `(*params).RestoreAction` via `--restore`, `--no-restore`, `--no-restore-data`, `--vanilla`
+        // - `R_RestoreHistory` (a global) via `--restore`, `--no-restore`, `--no-restore-history`, `--vanilla`
+        let mut c_args = RMain::build_ark_c_args(args);
+        let mut c_args_len = c_args.len() as std::ffi::c_int;
+        R_common_command_line(
+            &mut c_args_len,
+            c_args.as_mut_ptr() as *mut *mut c_char,
+            params,
+        );
 
         (*params).R_Interactive = 1;
         (*params).CharacterMode = libr::UImode_RGui;
