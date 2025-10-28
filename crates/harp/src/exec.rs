@@ -348,19 +348,11 @@ where
 
     match res {
         Some(res) => res,
-        None => {
-            let mut err_buf = r_peek_error_buffer();
-
-            if err_buf.len() > 0 {
-                err_buf = format!("\nLikely caused by:\n{err_buf}");
-            }
-
-            Err(Error::TopLevelExecError {
-                message: format!("Unexpected longjump{err_buf}"),
-                backtrace: std::backtrace::Backtrace::force_capture(),
-                span_trace: tracing_error::SpanTrace::capture(),
-            })
-        },
+        None => Err(Error::TopLevelExecError {
+            message: String::from("Unexpected longjump"),
+            backtrace: std::backtrace::Backtrace::force_capture(),
+            span_trace: tracing_error::SpanTrace::capture(),
+        }),
     }
 }
 
@@ -606,7 +598,6 @@ mod tests {
 
             assert_match!(out, Err(Error::TopLevelExecError { message, backtrace: _ , span_trace: _}) => {
                 assert!(message.contains("Unexpected longjump"));
-                assert!(message.contains("my message"));
             });
         })
     }
