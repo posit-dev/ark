@@ -77,28 +77,7 @@ fn set_var(key: &str, value: &str, frontend: &DummyArkFrontend) {
 }
 
 fn has_rstudioapi(frontend: &DummyArkFrontend) -> bool {
-    let code = ".ps.is_installed('rstudioapi')";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    let result = frontend.recv_iopub_execute_result();
-
-    let out = if result == "[1] TRUE" {
-        true
-    } else if result == "[1] FALSE" {
-        false
-    } else {
-        panic!("Expected `TRUE` or `FALSE`, got '{result}'.");
-    };
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    out
+    frontend.is_installed("rstudioapi")
 }
 
 fn report_skipped(f: &str) {

@@ -170,7 +170,12 @@ fn test_graphics_device_initialization() {
 fn test_ragg_is_used_by_default() {
     let frontend = DummyArkFrontend::lock();
 
-    // We install ragg on CI and expect developers to have it locally
+    if !frontend.is_installed("ragg") {
+        report_skipped("test_ragg_is_used_by_default", "ragg");
+        return;
+    }
+
+    // We install ragg on CI, but developers may not have it locally
     let code = ".ps.internal(use_ragg())";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -185,6 +190,11 @@ fn test_ragg_is_used_by_default() {
 fn test_inability_to_load_ragg_falls_back_to_base_graphics() {
     // https://github.com/posit-dev/ark/issues/917
     let frontend = DummyArkFrontend::lock();
+
+    if !frontend.is_installed("ragg") {
+        report_skipped("test_ragg_is_used_by_default", "ragg");
+        return;
+    }
 
     // Mock `loadNamespace()` with a version that will fail on ragg
     let code = r#"
@@ -227,4 +237,8 @@ lockBinding("loadNamespace", .BaseNamespaceEnv)
     frontend.recv_iopub_display_data();
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+fn report_skipped(f: &str, pkg: &str) {
+    println!("Skipping `{f}()`. {pkg} is not installed.");
 }
