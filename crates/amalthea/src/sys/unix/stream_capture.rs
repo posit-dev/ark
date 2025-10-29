@@ -47,19 +47,28 @@ impl StreamCapture {
         let stderr_poll = nix::poll::PollFd::new(stderr_fd, nix::poll::PollFlags::POLLIN);
         let mut poll_fds = [stdout_poll, stderr_poll];
 
+        log::info!("Starting thread for stdout/stderr capture");
+
         loop {
             // Wait for data to be available on either stdout or stderr.  This
             // blocks until data is available, the streams are interrupted, or
             // the timeout occurs.
             let count = match nix::poll::poll(&mut poll_fds, 1000) {
                 Ok(c) => c,
-                Err(e) => {
-                    // If the poll was interrupted, stop listening.
-                    if (e as i32) == nix::errno::Errno::EINTR as i32 {
-                        break;
+                Err(err) => {
+                    // https://pubs.opengroup.org/onlinepubs/9699919799/functions/poll.html
+                    match err {
+                        // If the poll was interrupted, silently continue
+                        nix::errno::Errno::EINTR => continue,
+
+                        // Internal allocation has failed, but a retry might succeed
+                        nix::errno::Errno::EAGAIN => continue,
+
+                        _ => {
+                            log::error!("Error polling for stream data: {err:?}");
+                            break;
+                        },
                     }
-                    warn!("Error polling for stream data: {}", e);
-                    continue;
                 },
             };
 
@@ -86,7 +95,7 @@ impl StreamCapture {
                     } else if fd == stderr_fd {
                         Stream::Stderr
                     } else {
-                        warn!("Unknown stream fd: {}", fd);
+                        log::warn!("Unknown stream fd: {}", fd);
                         continue;
                     };
 
@@ -95,7 +104,8 @@ impl StreamCapture {
                 }
             }
         }
-        warn!("Stream capture thread exiting after interrupt");
+
+        log::warn!("Stream capture thread exiting after interrupt");
         Ok(())
     }
 
