@@ -11,6 +11,8 @@ use std::os::raw::c_void;
 
 use anyhow::anyhow;
 use libr::*;
+use once_cell::sync::Lazy;
+use regex::Regex;
 
 use crate::call::RCall;
 use crate::environment::R_ENVS;
@@ -21,6 +23,9 @@ use crate::object::r_null_or_try_into;
 use crate::object::RObject;
 use crate::r_symbol;
 use crate::utils::r_stringify;
+
+pub static RE_STACK_OVERFLOW: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
 
 pub struct RFunction {
     pub call: RCall,
@@ -296,10 +301,13 @@ where
 /// and long jumps.
 ///
 /// If a longjump does occur for any reason (including but not limited to R
-/// errors), the caller is notified, in this case by an `Err` return value
-/// of kind `TopLevelExecError`. The error message contains the contents of
-/// the C-level error buffer. It might or might not be related to the cause
-/// of the longjump. The error also carries a Rust backtrace.
+/// errors), the caller is notified, in this case by an `Err` return value of
+/// kind `TopLevelExecError`.
+///
+/// If the longjump occurs after a stack overflow error, this is indicated in
+/// the error message. Note that it's possible the stackoverflow did not
+/// actually cause that particular longjump, it's only indicative that it did
+/// happen prior to the longjump. The error also carries a Rust backtrace.
 ///
 /// `top_level_exec()` is a low-level operator. Prefer using `try_catch()`
 /// if possible:
@@ -351,7 +359,7 @@ where
         None => {
             let mut err_buf = r_peek_error_buffer();
 
-            if err_buf.len() > 0 {
+            if RE_STACK_OVERFLOW.is_match(&err_buf) {
                 err_buf = format!("\nLikely caused by:\n{err_buf}");
             }
 
