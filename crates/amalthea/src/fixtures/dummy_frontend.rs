@@ -236,6 +236,7 @@ impl DummyFrontend {
         id
     }
 
+    #[track_caller]
     pub fn recv(socket: &Socket) -> Message {
         // It's important to wait with a timeout because the kernel thread might have
         // panicked, preventing it from sending the expected message. The tests would then
@@ -254,16 +255,19 @@ impl DummyFrontend {
     }
 
     /// Receives a Jupyter message from the Shell socket
+    #[track_caller]
     pub fn recv_shell(&self) -> Message {
         Self::recv(&self.shell_socket)
     }
 
     /// Receives a Jupyter message from the IOPub socket
+    #[track_caller]
     pub fn recv_iopub(&self) -> Message {
         Self::recv(&self.iopub_socket)
     }
 
     /// Receives a Jupyter message from the Stdin socket
+    #[track_caller]
     pub fn recv_stdin(&self) -> Message {
         Self::recv(&self.stdin_socket)
     }
