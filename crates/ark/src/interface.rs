@@ -64,6 +64,7 @@ use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::exec::RE_STACK_OVERFLOW;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
@@ -2232,9 +2233,6 @@ fn new_incomplete_reply(req: &ExecuteRequest, exec_count: u32) -> amalthea::Resu
     };
     Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
 }
-
-static RE_STACK_OVERFLOW: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"C stack usage [ 0-9]+ is too close to the limit\n").unwrap());
 
 fn new_execute_reply(exec_count: u32) -> amalthea::Result<ExecuteReply> {
     Ok(ExecuteReply {
