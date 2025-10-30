@@ -792,21 +792,30 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        let info = self.prompt_info(prompt);
-        log::trace!("R prompt: {}", info.input_prompt);
-
-        // An incomplete prompt when we no longer have any inputs to send should
-        // never happen because we check for incomplete inputs ahead of time and
-        // respond to the frontend with an error.
-        if info.incomplete {
-            unreachable!("Incomplete input in `ReadConsole` handler");
-        }
-
         // Upon entering read-console, finalize any debug call text that we were capturing.
         // At this point, the user can either advance the debugger, causing us to capture
         // a new expression, or execute arbitrary code, where we will reuse a finalized
         // debug call text to maintain the debug state.
         self.dap.finalize_call_text();
+
+        let info = self.prompt_info(prompt);
+        log::trace!("R prompt: {}", info.input_prompt);
+
+        // Since we parse expressions ourselves and only send complete inputs to
+        // the base REPL, we never should be asked for completing input
+        if info.incomplete {
+            unreachable!("Incomplete input in `ReadConsole` handler");
+        }
+
+        // Invariant: If we detect a browser prompt, `self.dap.is_debugging()`
+        // is true. Otherwise it is false.
+        if info.browser {
+            // Start or continue debugging with the `debug_preserve_focus` hint
+            // from the last expression we evaluated
+            self.start_debug(self.debug_preserve_focus);
+        } else if self.dap.is_debugging() {
+            self.stop_debug();
+        }
 
         // We get called here everytime R needs more input. This handler
         // represents the driving event of a small state machine that manages
@@ -856,20 +865,12 @@ impl RMain {
         // often. We'd still push a `DidChangeConsoleInputs` notification from
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
-        if !info.browser && !info.incomplete && !info.input_request {
+        if !self.dap.is_debugging() && !info.input_request {
             self.refresh_lsp();
         }
 
         // Signal prompt
         EVENTS.console_prompt.emit(());
-
-        if info.browser {
-            self.start_debug();
-        } else {
-            if self.dap.is_debugging() {
-                self.stop_debug();
-            }
-        }
 
         let mut select = crossbeam::channel::Select::new();
 
@@ -1077,24 +1078,53 @@ impl RMain {
         }
 
         if let Some(input) = self.pop_pending() {
-            if info.browser {
+            // Default: preserve current focus for evaluated expressions.
+            // This only has an effect if we're debugging.
+            // https://github.com/posit-dev/positron/issues/3151
+            self.debug_preserve_focus = true;
+
+            if self.dap.is_debugging() {
+                // Try to interpret this pending input as a symbol (debug commands
+                // are entered as symbols). Whether or not it parses as a symbol,
+                // if we're currently debugging we must set `debug_preserve_focus`.
                 if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
+                    // All debug commands as documented in `?browser`
+                    const DEBUG_COMMANDS: &[&str] =
+                        &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
+
+                    // The subset of debug commands that continue execution
+                    const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+
                     let sym = String::from(sym);
-                    let debug_commands =
-                        vec!["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
-                    if debug_commands.contains(&&sym[..]) {
+
+                    if DEBUG_COMMANDS.contains(&&sym[..]) {
+                        if DEBUG_COMMANDS_CONTINUE.contains(&&sym[..]) {
+                            // For continue-like commands, we do not preserve focus,
+                            // i.e. we let the cursor jump to the stopped
+                            // position. Set the preserve focus hint for the
+                            // next iteration of ReadConsole.
+                            self.debug_preserve_focus = false;
+
+                            // Let the DAP client know that execution is now continuing
+                            self.dap.send_dap(DapBackendEvent::Continued);
+                        }
+
+                        // All debug commands are forwarded to the base REPL as
+                        // is so that R can interpret them.
+                        // Unwrap safety: A debug command fits in the buffer.
                         Self::on_console_input(buf, buflen, sym).unwrap();
+                        return Some(ConsoleResult::NewInput);
                     }
-                    return Some(ConsoleResult::NewInput);
                 }
             }
+
             return Some(ConsoleResult::NewPendingInput(input));
         }
 
-        // Finally, check if we have an active request from a previous `read_console()`
-        // iteration. If so, we `take()` and clear the `active_request` as we're about
-        // to complete it and send a reply to unblock the active Shell
-        // request.
+        // If we get here we finished evaluating all pending inputs. Check if we
+        // have an active request from a previous `read_console()` iteration. If
+        // so, we `take()` and clear the `active_request` as we're about to
+        // complete it and send a reply to unblock the active Shell request.
         if let Some(req) = std::mem::take(&mut self.active_request) {
             // FIXME: Race condition between the comm and shell socket threads.
             //
@@ -1117,7 +1147,8 @@ impl RMain {
             self.reply_execute_request(req, &info);
         }
 
-        // Prepare for the next user input
+        // Fall through Ark's ReadConsole event loop while waiting for the next
+        // execution request
         None
     }
 
@@ -1167,20 +1198,6 @@ impl RMain {
 
         match input {
             ConsoleInput::Input(code) => {
-                // Handle commands for the debug interpreter
-                if self.dap.is_debugging() {
-                    let continue_cmds = vec!["n", "f", "c", "cont"];
-                    if continue_cmds.contains(&&code[..]) {
-                        // We're stepping so we want to focus the next location we stop at
-                        self.debug_preserve_focus = false;
-                        self.dap.send_dap(DapBackendEvent::Continued);
-                    } else {
-                        // The user is evaluating some other expression so preserve current focus
-                        // https://github.com/posit-dev/positron/issues/3151
-                        self.debug_preserve_focus = true;
-                    }
-                }
-
                 if let Err(err) = self.read(&code) {
                     return Some(ConsoleResult::Error(amalthea::anyhow!("{err:?}")));
                 }
@@ -1324,7 +1341,7 @@ impl RMain {
         return ConsoleResult::Error(Error::InvalidInputRequest(message));
     }
 
-    fn start_debug(&mut self) {
+    fn start_debug(&mut self, debug_preserve_focus: bool) {
         match self.dap.stack_info() {
             Ok(stack) => {
                 if let Some(frame) = stack.first() {
@@ -1351,11 +1368,8 @@ impl RMain {
                 let fallback_sources = self.load_fallback_sources(&stack);
 
                 self.debug_last_stack = stack_id;
-                self.dap.start_debug(
-                    stack,
-                    same_stack && self.debug_preserve_focus,
-                    fallback_sources,
-                );
+                self.dap
+                    .start_debug(stack, same_stack && debug_preserve_focus, fallback_sources);
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
         };
