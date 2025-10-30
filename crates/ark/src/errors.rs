@@ -5,6 +5,8 @@
 //
 //
 
+use harp::exec::r_peek_error_buffer;
+use harp::exec::RE_STACK_OVERFLOW;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::session::r_format_traceback;
@@ -66,4 +68,13 @@ unsafe extern "C-unwind" fn ps_rust_backtrace() -> anyhow::Result<SEXP> {
     let trace = std::backtrace::Backtrace::force_capture();
     let trace = format!("{trace}");
     Ok(*RObject::from(trace))
+}
+
+pub(crate) fn stack_overflow_occurred() -> bool {
+    // Error handlers are not called on stack overflow so the error flag
+    // isn't set. Instead we detect stack overflows by peeking at the error
+    // buffer. The message is explicitly not translated to save stack space
+    // so the matching should be reliable.
+    let err_buf = r_peek_error_buffer();
+    RE_STACK_OVERFLOW.is_match(&err_buf)
 }
