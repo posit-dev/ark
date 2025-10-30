@@ -821,9 +821,13 @@ impl RMain {
             if let Some(input) = self.handle_input_request(&info.input_prompt, buf, buflen) {
                 return input;
             }
-        } else if let Some(console_result) = self.handle_active_request(&info, buf, buflen) {
-            return console_result;
-        };
+        } else if let Some(input) = self.pop_pending() {
+            // Evaluate pending expression if there is any remaining
+            return self.handle_pending_input(input, buf, buflen);
+        } else {
+            // Otherwise close active request
+            self.handle_active_request(&info);
+        }
 
         // In the future we'll also send browser information, see
         // https://github.com/posit-dev/positron/issues/3001. Currently this is
@@ -1009,56 +1013,7 @@ impl RMain {
     /// Returns:
     /// - `None` if we should fall through to the event loop to wait for more user input
     /// - `Some(ConsoleResult)` if we should immediately exit `read_console()`
-    fn handle_active_request(
-        &mut self,
-        info: &PromptInfo,
-        buf: *mut c_uchar,
-        buflen: c_int,
-    ) -> Option<ConsoleResult> {
-        if let Some(input) = self.pop_pending() {
-            // Default: preserve current focus for evaluated expressions.
-            // This only has an effect if we're debugging.
-            // https://github.com/posit-dev/positron/issues/3151
-            self.debug_preserve_focus = true;
-
-            if self.dap.is_debugging() {
-                // Try to interpret this pending input as a symbol (debug commands
-                // are entered as symbols). Whether or not it parses as a symbol,
-                // if we're currently debugging we must set `debug_preserve_focus`.
-                if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
-                    // All debug commands as documented in `?browser`
-                    const DEBUG_COMMANDS: &[&str] =
-                        &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
-
-                    // The subset of debug commands that continue execution
-                    const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
-
-                    let sym = String::from(sym);
-
-                    if DEBUG_COMMANDS.contains(&&sym[..]) {
-                        if DEBUG_COMMANDS_CONTINUE.contains(&&sym[..]) {
-                            // For continue-like commands, we do not preserve focus,
-                            // i.e. we let the cursor jump to the stopped
-                            // position. Set the preserve focus hint for the
-                            // next iteration of ReadConsole.
-                            self.debug_preserve_focus = false;
-
-                            // Let the DAP client know that execution is now continuing
-                            self.dap.send_dap(DapBackendEvent::Continued);
-                        }
-
-                        // All debug commands are forwarded to the base REPL as
-                        // is so that R can interpret them.
-                        // Unwrap safety: A debug command fits in the buffer.
-                        Self::on_console_input(buf, buflen, sym).unwrap();
-                        return Some(ConsoleResult::NewInput);
-                    }
-                }
-            }
-
-            return Some(ConsoleResult::NewPendingInput(input));
-        }
-
+    fn handle_active_request(&mut self, info: &PromptInfo) {
         // If we get here we finished evaluating all pending inputs. Check if we
         // have an active request from a previous `read_console()` iteration. If
         // so, we `take()` and clear the `active_request` as we're about to
@@ -1084,10 +1039,6 @@ impl RMain {
             // back to Idle.
             self.reply_execute_request(req, &info);
         }
-
-        // Fall through Ark's ReadConsole event loop while waiting for the next
-        // execution request
-        None
     }
 
     fn handle_execute_request(
@@ -1136,11 +1087,22 @@ impl RMain {
 
         match input {
             ConsoleInput::Input(code) => {
+                // Parse input into pending expressions
                 if let Err(err) = self.read(&code) {
                     return Some(ConsoleResult::Error(amalthea::anyhow!("{err:?}")));
                 }
 
-                self.handle_active_request(info, buf, buflen)
+                // Evaluate first expression if we got one
+                if let Some(input) = self.pop_pending() {
+                    return Some(self.handle_pending_input(input, buf, buflen));
+                }
+
+                // Otherwise we got an empty input, e.g. `""` and there's
+                // nothing to do. Close active request.
+                self.handle_active_request(info);
+
+                // And return to event loop
+                None
             },
 
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
@@ -1205,6 +1167,55 @@ impl RMain {
             // Invalid input request, propagate error to R
             Some(self.handle_invalid_input_request(buf, buflen))
         }
+    }
+
+    fn handle_pending_input(
+        &mut self,
+        input: PendingInput,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> ConsoleResult {
+        // Default: preserve current focus for evaluated expressions.
+        // This only has an effect if we're debugging.
+        // https://github.com/posit-dev/positron/issues/3151
+        self.debug_preserve_focus = true;
+
+        if self.dap.is_debugging() {
+            // Try to interpret this pending input as a symbol (debug commands
+            // are entered as symbols). Whether or not it parses as a symbol,
+            // if we're currently debugging we must set `debug_preserve_focus`.
+            if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
+                // All debug commands as documented in `?browser`
+                const DEBUG_COMMANDS: &[&str] =
+                    &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
+
+                // The subset of debug commands that continue execution
+                const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+
+                let sym = String::from(sym);
+
+                if DEBUG_COMMANDS.contains(&&sym[..]) {
+                    if DEBUG_COMMANDS_CONTINUE.contains(&&sym[..]) {
+                        // For continue-like commands, we do not preserve focus,
+                        // i.e. we let the cursor jump to the stopped
+                        // position. Set the preserve focus hint for the
+                        // next iteration of ReadConsole.
+                        self.debug_preserve_focus = false;
+
+                        // Let the DAP client know that execution is now continuing
+                        self.dap.send_dap(DapBackendEvent::Continued);
+                    }
+
+                    // All debug commands are forwarded to the base REPL as
+                    // is so that R can interpret them.
+                    // Unwrap safety: A debug command fits in the buffer.
+                    Self::on_console_input(buf, buflen, sym).unwrap();
+                    return ConsoleResult::NewInput;
+                }
+            }
+        }
+
+        ConsoleResult::NewPendingInput(input)
     }
 
     fn pop_pending(&mut self) -> Option<PendingInput> {
