@@ -351,6 +351,36 @@ fn test_execute_request_browser_stdin() {
 }
 
 #[test]
+fn test_execute_request_browser_pending_cancelled() {
+    let frontend = DummyArkFrontend::lock();
+
+    // The `print()` call should be cancelled when we get in the debugger
+    let code = "browser()\nprint('hello')";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // We don't get any output for "hello"
+    frontend.recv_iopub_stream_stdout("Called from: top level \n");
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
 fn test_execute_request_error() {
     let frontend = DummyArkFrontend::lock();
 
