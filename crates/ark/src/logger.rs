@@ -23,7 +23,8 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
 
     ONCE.call_once(|| {
         // Parse `RUST_LOG`
-        let mut env_filter = EnvFilter::from_default_env();
+        // let mut env_filter = EnvFilter::from_default_env();
+        let mut env_filter = EnvFilter::new("trace");
 
         // Propagate 'ark' verbosity to internal crates
         let re = Regex::new(r"ark=([a-zA-Z]+)(,|$)").unwrap();

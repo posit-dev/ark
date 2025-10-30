@@ -816,6 +816,8 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
+        // crate::logger::init(None, None);
+
         self.dap.handle_read_console();
 
         let info = self.prompt_info(prompt);
