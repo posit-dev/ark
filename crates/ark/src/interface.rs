@@ -816,43 +816,11 @@ impl RMain {
             self.stop_debug();
         }
 
-        // We get called here everytime R needs more input. This handler
-        // represents the driving event of a small state machine that manages
-        // communication between R and the frontend. In the following order:
-        //
-        // - If we detect an input request prompt, then we forward the request
-        //   on to the frontend and then fall through to the event loop to wait
-        //   on the input reply.
-        //
-        // - If the vector of pending lines is not empty, R might be waiting for
-        //   us to complete an incomplete expression, or we might just have
-        //   completed an intermediate expression (e.g. from an ExecuteRequest
-        //   like `foo\nbar` where `foo` is intermediate and `bar` is final).
-        //   Send the next line to R.
-        //
-        // - If the vector of pending lines is empty, and if the prompt is for
-        //   new R code, we close the active ExecuteRequest and send an
-        //   ExecuteReply to the frontend. We then fall through to the event
-        //   loop to wait for more input.
-        //
-        // This state machine depends on being able to reliably distinguish
-        // between readline prompts (from `readline()`, `scan()`, or `menu()`),
-        // and actual R code prompts (either top-level or from a nested debug
-        // REPL).  A readline prompt should never change our state (in
-        // particular our vector of pending inputs). We think we are making this
-        // distinction sufficiently robustly but ideally R would let us know the
-        // prompt type so there is no ambiguity at all.
-        //
-        // R might throw an error at any time while we are working on our vector
-        // of pending lines, either from a syntax error or from an evaluation
-        // error. When this happens, we abort evaluation and clear the pending
-        // lines.
-        //
-        // If the vector of pending lines is empty and we detect an incomplete
-        // prompt, this is a panic. We check ahead of time for complete
-        // expressions before breaking up an ExecuteRequest in multiple lines,
-        // so this should not happen.
-        if let Some(console_result) = self.handle_active_request(&info, buf, buflen) {
+        if info.input_request {
+            if let Some(input) = self.handle_input_request(&info.input_prompt, buf, buflen) {
+                return input;
+            }
+        } else if let Some(console_result) = self.handle_active_request(&info, buf, buflen) {
             return console_result;
         };
 
@@ -1046,36 +1014,6 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> Option<ConsoleResult> {
-        // TODO: Can we remove this below code?
-        // If the prompt begins with "Save workspace", respond with (n)
-        // and allow R to immediately exit.
-        //
-        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
-        // This would also help with detecting normal exits versus crashes.
-        if info.input_prompt.starts_with("Save workspace") {
-            match Self::on_console_input(buf, buflen, String::from("n")) {
-                Ok(()) => return Some(ConsoleResult::NewInput),
-                Err(err) => return Some(ConsoleResult::Error(err)),
-            }
-        }
-
-        // First check if we are inside request for user input, like a `readline()` or `menu()`.
-        // It's entirely possible that we still have more pending lines, but an intermediate line
-        // put us into an `input_request` state. We must respond to that request before processing
-        // the rest of the pending lines.
-        if info.input_request {
-            if let Some(req) = &self.active_request {
-                // Send request to frontend. We'll wait for an `input_reply`
-                // from the frontend in the event loop in `read_console()`.
-                // The active request remains active.
-                self.request_input(req.originator.clone(), info.input_prompt.to_string());
-                return None;
-            } else {
-                // Invalid input request, propagate error to R
-                return Some(self.handle_invalid_input_request(buf, buflen));
-            }
-        }
-
         if let Some(input) = self.pop_pending() {
             // Default: preserve current focus for evaluated expressions.
             // This only has an effect if we're debugging.
@@ -1236,6 +1174,36 @@ impl RMain {
 
         self.pending_inputs = PendingInputs::new(exprs, srcrefs);
         Ok(())
+    }
+
+    /// Handles user input requests (e.g., readline, menu) and special prompts.
+    /// Returns `Some()` if this handler needs to return to the base R REPL, or
+    /// `None` if it needs to run Ark's `ReadConsole` event loop.
+    fn handle_input_request(
+        &mut self,
+        input_prompt: &str,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> Option<ConsoleResult> {
+        // If the prompt begins with "Save workspace", respond with (n)
+        // and allow R to immediately exit.
+        if input_prompt.starts_with("Save workspace") {
+            match Self::on_console_input(buf, buflen, String::from("n")) {
+                Ok(()) => return Some(ConsoleResult::NewInput),
+                Err(err) => return Some(ConsoleResult::Error(err)),
+            }
+        }
+
+        if let Some(req) = &self.active_request {
+            // Send request to frontend. We'll wait for an `input_reply`
+            // from the frontend in the event loop in `read_console()`.
+            // The active request remains active.
+            self.request_input(req.originator.clone(), String::from(input_prompt));
+            None
+        } else {
+            // Invalid input request, propagate error to R
+            Some(self.handle_invalid_input_request(buf, buflen))
+        }
     }
 
     fn pop_pending(&mut self) -> Option<PendingInput> {
