@@ -141,7 +141,7 @@ impl RMainDap {
         self.debugging = false;
     }
 
-    pub fn handle_stdout(&mut self, content: &str) {
+    pub fn handle_write_console(&mut self, content: &str) {
         if let DebugCallText::Capturing(ref mut call_text) = self.call_text {
             // Append to current expression if we are currently capturing stdout
             call_text.push_str(content);
@@ -164,7 +164,11 @@ impl RMainDap {
         }
     }
 
-    pub fn finalize_call_text(&mut self) {
+    pub fn handle_read_console(&mut self) {
+        // Upon entering read-console, finalize any debug call text that we were capturing.
+        // At this point, the user can either advance the debugger, causing us to capture
+        // a new expression, or execute arbitrary code, where we will reuse a finalized
+        // debug call text to maintain the debug state.
         match &self.call_text {
             // If not debugging, nothing to do.
             DebugCallText::None => (),
