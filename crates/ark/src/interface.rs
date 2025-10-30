@@ -791,11 +791,7 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        // Upon entering read-console, finalize any debug call text that we were capturing.
-        // At this point, the user can either advance the debugger, causing us to capture
-        // a new expression, or execute arbitrary code, where we will reuse a finalized
-        // debug call text to maintain the debug state.
-        self.dap.finalize_call_text();
+        self.dap.handle_read_console();
 
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
@@ -1944,7 +1940,7 @@ impl RMain {
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        r_main.dap.handle_stdout(&content);
+        r_main.dap.handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
