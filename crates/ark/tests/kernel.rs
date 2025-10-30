@@ -130,6 +130,30 @@ fn test_execute_request_incomplete_multiple_lines() {
 }
 
 #[test]
+fn test_execute_request_invalid() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "1 + )";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert_eq!(
+        frontend.recv_iopub_execute_error(),
+        "Error:\n\nSyntax error: unexpected ')'"
+    );
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    )
+}
+
+#[test]
 fn test_execute_request_browser() {
     let frontend = DummyArkFrontend::lock();
 
