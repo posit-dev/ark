@@ -373,11 +373,13 @@ fn test_execute_request_error() {
 fn test_execute_request_error_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_execute_request("1\nstop('foobar')\n2", ExecuteRequestOptions::default());
+    // `print(2)` and `3` are never evaluated
+    let code = "1\nstop('foobar')\nprint(2)\n3";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, "1\nstop('foobar')\n2");
+    assert_eq!(input.code, code);
 
     frontend.recv_iopub_stream_stdout("[1] 1\n");
     assert!(frontend.recv_iopub_execute_error().contains("foobar"));
