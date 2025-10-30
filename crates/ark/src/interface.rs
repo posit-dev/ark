@@ -278,20 +278,45 @@ struct PendingInputs {
 }
 
 impl PendingInputs {
-    pub(crate) fn new(exprs: RObject, srcrefs: RObject) -> Option<Self> {
+    pub(crate) fn read(input: &str) -> anyhow::Result<Option<Self>> {
+        let status = match harp::parse_status(&harp::ParseInput::Text(input)) {
+            Err(err) => {
+                // Failed to even attempt to parse the input, something is seriously wrong
+                // FIXME: There are some valid syntax errors going through here, e.g. `identity |> _(1)`.
+                return Err(anyhow!("Failed to parse input: {err:?}"));
+            },
+            Ok(status) => status,
+        };
+
+        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
+        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
+        // - Complete statements are obviously fine.
+        // - Syntax errors will cause R to throw an error, which is expected.
+        let exprs = match status {
+            harp::ParseResult::Complete(exprs) => exprs,
+            harp::ParseResult::Incomplete => {
+                return Err(anyhow!("Can't execute incomplete input:\n{input}"));
+            },
+            harp::ParseResult::SyntaxError { message, .. } => {
+                return Err(anyhow!("Syntax error: {message}"));
+            },
+        };
+
+        let srcrefs = get_block_srcrefs(exprs.sexp);
+
         let len = exprs.length();
         let index = 0;
 
         if len == 0 {
-            return None;
+            return Ok(None);
         }
 
-        Some(Self {
+        Ok(Some(Self {
             exprs,
             srcrefs,
             len,
             index,
-        })
+        }))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -1084,11 +1109,14 @@ impl RMain {
         match input {
             ConsoleInput::Input(code) => {
                 // Parse input into pending expressions
-                if let Err(err) = self.read(&code) {
-                    return Some(ConsoleResult::Error(amalthea::anyhow!("{err:?}")));
+                match PendingInputs::read(&code) {
+                    Ok(inputs) => {
+                        self.pending_inputs = inputs;
+                    },
+                    Err(err) => return Some(ConsoleResult::Error(amalthea::anyhow!("{err:?}"))),
                 }
 
-                // Evaluate first expression if we got one
+                // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
                     return Some(self.handle_pending_input(input, buf, buflen));
                 }
@@ -1103,36 +1131,6 @@ impl RMain {
 
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
-    }
-
-    fn read(&mut self, input: &str) -> anyhow::Result<()> {
-        let status = match harp::parse_status(&harp::ParseInput::Text(input)) {
-            Err(err) => {
-                // Failed to even attempt to parse the input, something is seriously wrong
-                // FIXME: There are some valid syntax errors going through here, e.g. `identity |> _(1)`.
-                return Err(anyhow!("Failed to parse input: {err:?}"));
-            },
-            Ok(status) => status,
-        };
-
-        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
-        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
-        // - Complete statements are obviously fine.
-        // - Syntax errors will cause R to throw an error, which is expected.
-        let exprs = match status {
-            harp::ParseResult::Complete(exprs) => exprs,
-            harp::ParseResult::Incomplete => {
-                return Err(anyhow!("Can't execute incomplete input:\n{input}"));
-            },
-            harp::ParseResult::SyntaxError { message, .. } => {
-                return Err(anyhow!("Syntax error: {message}"));
-            },
-        };
-
-        let srcrefs = get_block_srcrefs(exprs.sexp);
-
-        self.pending_inputs = PendingInputs::new(exprs, srcrefs);
-        Ok(())
     }
 
     /// Handles user input requests (e.g., readline, menu) and special prompts.
@@ -1220,7 +1218,6 @@ impl RMain {
         };
 
         let Some(input) = pending_inputs.pop() else {
-            // TODO! Don't like this
             self.pending_inputs = None;
             return None;
         };
