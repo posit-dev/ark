@@ -5,6 +5,7 @@
 //
 //
 
+use amalthea::wire::exception::Exception;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::RE_STACK_OVERFLOW;
 use harp::object::RObject;
@@ -39,9 +40,16 @@ unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> an
         Vec::<String>::new()
     });
 
-    main.error_occurred = true;
-    main.error_message = evalue;
-    main.error_traceback = traceback;
+    main.last_error = Some(
+        // We don't fill out `ename` with anything meaningful because typically
+        // R errors don't have names. We could consider using the condition class
+        // here, which r-lib/tidyverse packages have been using more heavily.
+        Exception {
+            ename: String::from(""),
+            evalue,
+            traceback,
+        },
+    );
 
     Ok(R_NilValue)
 }
