@@ -215,10 +215,9 @@ pub struct RMain {
     /// by forwarding them through the UI comm. Optional, and really Positron specific.
     ui_comm_tx: Option<UiCommSender>,
 
-    /// Represents whether an error occurred during R code execution.
-    pub error_occurred: bool,
-    pub error_message: String, // `evalue` in the Jupyter protocol
-    pub error_traceback: Vec<String>,
+    /// Error captured by our global condition handler during the last iteration
+    /// of the REPL.
+    pub(crate) last_error: Option<Exception>,
 
     /// Channel to communicate with the Help thread
     help_event_tx: Option<Sender<HelpEvent>>,
@@ -688,9 +687,7 @@ impl RMain {
             execution_count: 0,
             autoprint_output: String::new(),
             ui_comm_tx: None,
-            error_occurred: false,
-            error_message: String::new(),
-            error_traceback: Vec::new(),
+            last_error: None,
             help_event_tx: None,
             help_port: None,
             lsp_events_tx: None,
@@ -1094,18 +1091,8 @@ impl RMain {
     }
 
     fn take_exception(&mut self) -> Option<Exception> {
-        let mut exception = if self.error_occurred {
-            // Reset flag
-            self.error_occurred = false;
-
-            // We don't fill out `ename` with anything meaningful because typically
-            // R errors don't have names. We could consider using the condition class
-            // here, which r-lib/tidyverse packages have been using more heavily.
-            Exception {
-                ename: String::from(""),
-                evalue: self.error_message.clone(),
-                traceback: self.error_traceback.clone(),
-            }
+        let mut exception = if let Some(exception) = self.last_error.take() {
+            exception
         } else if stack_overflow_occurred() {
             // Call `base::traceback()` since we don't have a handled error
             // object carrying a backtrace. This won't be formatted as a
