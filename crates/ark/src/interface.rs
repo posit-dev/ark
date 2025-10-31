@@ -270,10 +270,15 @@ pub struct RMain {
     debug_session_index: u32,
 }
 
+/// Stack of pending inputs
 struct PendingInputs {
+    /// EXPRSXP vector of parsed expressions
     exprs: RObject,
+    /// List of srcrefs, the same length as `exprs`
     srcrefs: RObject,
+    /// Length of `exprs` and `srcrefs`
     len: isize,
+    /// Index into the stack
     index: isize,
 }
 
@@ -884,6 +889,8 @@ impl RMain {
         // Signal prompt
         EVENTS.console_prompt.emit(());
 
+        // --- Event loop part of ReadConsole
+
         let mut select = crossbeam::channel::Select::new();
 
         // Cloning is necessary to avoid a double mutable borrow error
@@ -1145,10 +1152,8 @@ impl RMain {
         // so, we `take()` and clear the `active_request` as we're about to
         // complete it and send a reply to unblock the active Shell request.
         if let Some(req) = std::mem::take(&mut self.active_request) {
-            // FIXME: Race condition between the comm and shell socket threads.
-            //
-            // Perform a refresh of the frontend state
-            // (Prompts, working directory, etc)
+            // Perform a refresh of the frontend state (Prompts, working
+            // directory, etc)
             self.with_mut_ui_comm_tx(|ui_comm_tx| {
                 let input_prompt = info.input_prompt.clone();
                 let continuation_prompt = info.continuation_prompt.clone();
@@ -1169,6 +1174,9 @@ impl RMain {
         }
     }
 
+    // Called from Ark's ReadConsole event loop when we get a new execute
+    // request. It's not possible to get one while an active request is ongoing
+    // because of Jupyter's queueing of Shell messages.
     fn handle_execute_request(
         &mut self,
         req: RRequest,
@@ -1340,7 +1348,7 @@ impl RMain {
         srcref: libr::SEXP,
         buf: *mut c_uchar,
         buflen: c_int,
-    ) -> Option<()> {
+    ) {
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
             // The global source reference is stored in this global variable by
@@ -1371,8 +1379,6 @@ impl RMain {
 
         // Unwrap safety: The input always fits in the buffer
         Self::on_console_input(buf, buflen, code).unwrap();
-
-        Some(())
     }
 
     /// Handle an `input_request` received outside of an `execute_request` context
@@ -2292,11 +2298,11 @@ impl RMain {
         }
     }
 
-    fn propagate_error(&mut self, err: anyhow::Error) -> ! {
+    fn propagate_error(&mut self, message: String) -> ! {
         // Save error message to `RMain`'s buffer to avoid leaking memory when `Rf_error()` jumps.
         // Some gymnastics are required to deal with the possibility of `CString` conversion failure
         // since the error message comes from the frontend and might be corrupted.
-        self.r_error_buffer = Some(new_cstring(format!("\n{err}")));
+        self.r_error_buffer = Some(new_cstring(message));
         unsafe { Rf_error(self.r_error_buffer.as_ref().unwrap().as_ptr()) }
     }
 
@@ -2363,13 +2369,13 @@ pub extern "C-unwind" fn r_read_console(
             let PendingInput { expr, srcref } = input;
 
             unsafe {
+                // The pointer protection stack is restored by `run_Rmainloop()`
+                // after a longjump to top-level, so it's safe to protect here
+                // even if the evaluation throws
                 let expr = expr.into_protected();
                 let srcref = srcref.into_protected();
 
-                match main.eval_pending(expr, srcref, buf, buflen) {
-                    None => todo!(),
-                    Some(()) => Some(ConsoleResult::NewInput),
-                };
+                main.eval_pending(expr, srcref, buf, buflen);
 
                 libr::Rf_unprotect(2);
                 return 1;
@@ -2391,7 +2397,7 @@ pub extern "C-unwind" fn r_read_console(
         },
 
         ConsoleResult::Error(err) => {
-            main.propagate_error(anyhow::anyhow!("{err}"));
+            main.propagate_error(format!("{err}"));
         },
     };
 }

@@ -142,7 +142,7 @@ fn test_execute_request_invalid() {
 
     assert_eq!(
         frontend.recv_iopub_execute_error(),
-        "Error:\n\nSyntax error: unexpected ')'"
+        "Error:\nSyntax error: unexpected ')'"
     );
 
     frontend.recv_iopub_idle();
@@ -257,7 +257,7 @@ fn test_execute_request_browser_incomplete() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stderr("Error: \nCan't execute incomplete input:\n1 +\n");
+    frontend.recv_iopub_stream_stderr("Error: Can't execute incomplete input:\n1 +\n");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
