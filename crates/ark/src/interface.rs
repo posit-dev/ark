@@ -351,6 +351,11 @@ enum ConsoleValue {
     Error(Exception),
 }
 
+enum WaitFor {
+    InputReply,
+    ExecuteRequest,
+}
+
 /// Represents the currently active execution request from the frontend. It
 /// resolves at the next invocation of the `ReadConsole()` frontend method.
 struct ActiveReadConsoleRequest {
@@ -809,11 +814,16 @@ impl RMain {
     /// * `prompt` - The prompt shown to the user
     /// * `buf`    - Pointer to buffer to receive the user's input (type `CONSOLE_BUFFER_CHAR`)
     /// * `buflen` - Size of the buffer to receiver user's input
-    /// * `hist`   - Whether to add the input to the history (1) or not (0)
+    /// * `_hist`   - Whether to add the input to the history (1) or not (0)
     ///
-    /// Returns a tuple. First value is to be passed on to `ReadConsole()` and
-    /// indicates whether new input is available. Second value indicates whether
-    /// we need to call `Rf_onintr()` to process an interrupt.
+    /// This does two things:
+    /// - Move the Console state machine to the next state:
+    ///   - Wait for input
+    ///   - Set an active execute request and a list of pending expressions
+    ///   - Set `self.dap.is_debugging()` depending on presence or absence of debugger prompt
+    ///   - Evaluate next pending expression
+    ///   - Close active execute request if pending list is empty
+    /// - Run an event loop while waiting for input
     fn read_console(
         &mut self,
         prompt: *const c_char,
@@ -822,6 +832,8 @@ impl RMain {
         _hist: c_int,
     ) -> ConsoleResult {
         self.dap.handle_read_console();
+
+        // State machine part of ReadConsole
 
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
@@ -849,14 +861,13 @@ impl RMain {
             // Reply to active request with error
             self.handle_active_request(&info, ConsoleValue::Error(exception));
         } else if info.input_request {
-            if let Some(input) = self.handle_input_request(&info.input_prompt, buf, buflen) {
-                return input;
-            }
+            // Request input reply to the frontend and return it to R
+            return self.handle_input_request(&info, buf, buflen);
         } else if let Some(input) = self.pop_pending() {
             // Evaluate pending expression if there is any remaining
             return self.handle_pending_input(input, buf, buflen);
         } else {
-            // Otherwise close active request
+            // Otherwise reply to active request with accumulated result
             let result = self.take_result();
             self.handle_active_request(&info, ConsoleValue::Success(result));
         }
@@ -876,8 +887,23 @@ impl RMain {
         // Signal prompt
         EVENTS.console_prompt.emit(());
 
-        // --- Event loop part of ReadConsole
+        self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
+    }
 
+    /// Runs the ReadConsole event loop.
+    /// This handles events for:
+    /// - Reception of either input replies or execute requests (as determined
+    ///   by `wait_for`)
+    /// - Idle-time and interrupt-time tasks
+    /// - Requests from the frontend (currently only used for establishing UI comm)
+    /// - R's polled events
+    fn run_event_loop(
+        &mut self,
+        info: &PromptInfo,
+        buf: *mut c_uchar,
+        buflen: c_int,
+        wait_for: WaitFor,
+    ) -> ConsoleResult {
         let mut select = crossbeam::channel::Select::new();
 
         // Cloning is necessary to avoid a double mutable borrow error
@@ -893,8 +919,14 @@ impl RMain {
         // package. 50ms seems to be more in line with RStudio (posit-dev/positron#7235).
         let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
-        let r_request_index = select.recv(&r_request_rx);
-        let stdin_reply_index = select.recv(&stdin_reply_rx);
+        // This is the main kind of message from the frontend that we are expecting.
+        // We either wait for `input_reply` messages on StdIn, or for
+        // `execute_request` on Shell.
+        let (r_request_index, stdin_reply_index) = match wait_for {
+            WaitFor::ExecuteRequest => (Some(select.recv(&r_request_rx)), None),
+            WaitFor::InputReply => (None, Some(select.recv(&stdin_reply_rx))),
+        };
+
         let kernel_request_index = select.recv(&kernel_request_rx);
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
         let polled_events_index = select.recv(&polled_events_rx);
@@ -929,17 +961,13 @@ impl RMain {
             // reset the flag
             set_interrupts_pending(false);
 
-            // FIXME: Race between interrupt and new code request. To fix
-            // this, we could manage the Shell and Control sockets on the
-            // common message event thread. The Control messages would need
-            // to be handled in a blocking way to ensure subscribers are
-            // notified before the next incoming message is processed.
-
             // First handle execute requests outside of `select` to ensure they
             // have priority. `select` chooses at random.
-            if let Ok(req) = r_request_rx.try_recv() {
-                if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
-                    return input;
+            if let WaitFor::ExecuteRequest = wait_for {
+                if let Ok(req) = r_request_rx.try_recv() {
+                    if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
+                        return input;
+                    }
                 }
             }
 
@@ -947,7 +975,7 @@ impl RMain {
 
             match oper.index() {
                 // We've got an execute request from the frontend
-                i if i == r_request_index => {
+                i if Some(i) == r_request_index => {
                     let req = oper.recv(&r_request_rx);
                     let Ok(req) = req else {
                         // The channel is disconnected and empty
@@ -960,7 +988,7 @@ impl RMain {
                 },
 
                 // We've got a reply for readline
-                i if i == stdin_reply_index => {
+                i if Some(i) == stdin_reply_index => {
                     let reply = oper.recv(&stdin_reply_rx).unwrap();
                     return self.handle_input_reply(reply, buf, buflen);
                 },
@@ -1212,20 +1240,19 @@ impl RMain {
     }
 
     /// Handles user input requests (e.g., readline, menu) and special prompts.
-    /// Returns `Some()` if this handler needs to return to the base R REPL, or
-    /// `None` if it needs to run Ark's `ReadConsole` event loop.
+    /// Runs the ReadConsole event loop until a reply comes in.
     fn handle_input_request(
         &mut self,
-        input_prompt: &str,
+        info: &PromptInfo,
         buf: *mut c_uchar,
         buflen: c_int,
-    ) -> Option<ConsoleResult> {
+    ) -> ConsoleResult {
         // If the prompt begins with "Save workspace", respond with (n)
         // and allow R to immediately exit.
-        if input_prompt.starts_with("Save workspace") {
+        if info.input_prompt.starts_with("Save workspace") {
             match Self::on_console_input(buf, buflen, String::from("n")) {
-                Ok(()) => return Some(ConsoleResult::NewInput),
-                Err(err) => return Some(ConsoleResult::Error(err)),
+                Ok(()) => return ConsoleResult::NewInput,
+                Err(err) => return ConsoleResult::Error(err),
             }
         }
 
@@ -1233,11 +1260,13 @@ impl RMain {
             // Send request to frontend. We'll wait for an `input_reply`
             // from the frontend in the event loop in `read_console()`.
             // The active request remains active.
-            self.request_input(req.originator.clone(), String::from(input_prompt));
-            None
+            self.request_input(req.originator.clone(), String::from(&info.input_prompt));
+
+            // Run the event loop, waiting for stdin replies but not execute requests
+            self.run_event_loop(info, buf, buflen, WaitFor::InputReply)
         } else {
             // Invalid input request, propagate error to R
-            Some(self.handle_invalid_input_request(buf, buflen))
+            self.handle_invalid_input_request(buf, buflen)
         }
     }
 
