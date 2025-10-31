@@ -2372,8 +2372,8 @@ pub extern "C-unwind" fn r_read_console(
                 // The pointer protection stack is restored by `run_Rmainloop()`
                 // after a longjump to top-level, so it's safe to protect here
                 // even if the evaluation throws
-                let expr = expr.into_protected();
-                let srcref = srcref.into_protected();
+                let expr = libr::Rf_protect(expr.into());
+                let srcref = libr::Rf_protect(srcref.into());
 
                 main.eval_pending(expr, srcref, buf, buflen);
 
