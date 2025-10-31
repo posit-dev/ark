@@ -1168,7 +1168,7 @@ impl RMain {
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
-            self.reply_execute_request(req, &info, value);
+            Self::reply_execute_request(&self.iopub_tx, req, &info, value);
         } else {
             log::info!("No active request to handle, discarding: {value:?}");
         }
@@ -1834,7 +1834,7 @@ impl RMain {
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the reply kind.
     fn reply_execute_request(
-        &mut self,
+        iopub_tx: &Sender<IOPubMessage>,
         req: ActiveReadConsoleRequest,
         prompt_info: &PromptInfo,
         value: ConsoleValue,
@@ -1878,7 +1878,7 @@ impl RMain {
         };
 
         if let Some(result) = result {
-            self.iopub_tx.send(result).unwrap();
+            iopub_tx.send(result).unwrap();
         }
 
         log::trace!("Sending `execute_reply`: {reply:?}");
