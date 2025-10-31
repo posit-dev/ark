@@ -247,6 +247,8 @@ impl DummyFrontend {
         //
         // Note that the panic hook will still have run to record the panic, so we'll get
         // expected panic information in the test output.
+        //
+        // If you're debugging tests, you'll need to bump this timeout to a large value.
         if socket.poll_incoming(10000).unwrap() {
             return Message::read_from_socket(socket).unwrap();
         }
