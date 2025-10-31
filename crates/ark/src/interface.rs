@@ -852,12 +852,6 @@ impl RMain {
             // Start or continue debugging with the `debug_preserve_focus` hint
             // from the last expression we evaluated
             self.start_debug(self.debug_preserve_focus);
-
-            // Clear any pending inputs, if any. Ideally we'd preserve them and
-            // run them once the debugging session is over, but that'd require
-            // keeping a stack of pending expressions and accurately tracking
-            // the lifetime of nested debug sessions.
-            self.pending_inputs = None;
         } else if self.dap.is_debugging() {
             self.stop_debug();
         }
