@@ -1346,7 +1346,7 @@ impl RMain {
     }
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
-    unsafe fn eval_pending(
+    unsafe fn eval(
         &mut self,
         expr: libr::SEXP,
         srcref: libr::SEXP,
@@ -2403,7 +2403,7 @@ pub extern "C-unwind" fn r_read_console(
                 let srcref = libr::Rf_protect(srcref.into());
 
                 main.console_need_reset = true;
-                main.eval_pending(expr, srcref, buf, buflen);
+                main.eval(expr, srcref, buf, buflen);
 
                 libr::Rf_unprotect(2);
                 return 1;
