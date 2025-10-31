@@ -392,9 +392,6 @@ pub struct PromptInfo {
     /// incomplete but is never a user request.
     browser: bool,
 
-    /// Whether the last input didn't fully parse and R is waiting for more input
-    incomplete: bool,
-
     /// Whether this is a prompt from a fresh REPL iteration (browser or
     /// top level) or a prompt from some user code, e.g. via `readline()`
     input_request: bool,
@@ -829,12 +826,6 @@ impl RMain {
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
-        // Since we parse expressions ourselves and only send complete inputs to
-        // the base REPL, we never should be asked for completing input
-        if info.incomplete {
-            unreachable!("Incomplete input in `ReadConsole` handler");
-        }
-
         // Invariant: If we detect a browser prompt, `self.dap.is_debugging()`
         // is true. Otherwise it is false.
         if info.browser {
@@ -1013,8 +1004,9 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
+        // Sent to the frontend after each top-level command so users can
+        // customise their prompts
         let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-        let matches_continuation = prompt == continuation_prompt;
 
         // Detect browser prompt by matching the prompt string
         // https://github.com/posit-dev/positron/issues/4742.
@@ -1022,28 +1014,16 @@ impl RMain {
         // `options(prompt =, continue = ` to something that looks like
         // a browser prompt, or doing the same with `readline()`. We have
         // chosen to not support these edge cases.
-        // Additionally, we send code to R one line at a time, so even if we are debugging
-        // it can look like we are in a continuation state. To try and detect that, we
-        // detect if we matched the continuation prompt while the DAP is active.
-        let browser =
-            RE_DEBUG_PROMPT.is_match(&prompt) || (self.dap.is_debugging() && matches_continuation);
+        let browser = RE_DEBUG_PROMPT.is_match(&prompt);
 
         // If there are frames on the stack and we're not in a browser prompt,
         // this means some user code is requesting input, e.g. via `readline()`
         let user_request = !browser && n_frame > 0;
 
-        // The request is incomplete if we see the continue prompt, except if
-        // we're in a user request, e.g. `readline("+ ")`. To guard against
-        // this, we check that we are at top-level (call stack is empty or we
-        // have a debug prompt).
-        let top_level = n_frame == 0 || browser;
-        let incomplete = matches_continuation && top_level;
-
         return PromptInfo {
             input_prompt: prompt,
             continuation_prompt,
             browser,
-            incomplete,
             input_request: user_request,
         };
     }
