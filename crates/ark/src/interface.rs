@@ -219,6 +219,8 @@ pub struct RMain {
     /// of the REPL.
     pub(crate) last_error: Option<Exception>,
 
+    console_need_reset: bool,
+
     /// Channel to communicate with the Help thread
     help_event_tx: Option<Sender<HelpEvent>>,
     /// R help port
@@ -340,6 +342,7 @@ impl PendingInputs {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct PendingInput {
     expr: RObject,
     srcref: RObject,
@@ -407,6 +410,7 @@ pub enum ConsoleInput {
     Input(String),
 }
 
+#[derive(Debug)]
 pub(crate) enum ConsoleResult {
     NewInput,
     NewPendingInput(PendingInput),
@@ -561,6 +565,9 @@ impl RMain {
             if let Err(err) = apply_default_repos(default_repos) {
                 log::error!("Error setting default repositories: {err:?}");
             }
+
+            // Initialise Ark's last value
+            libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
         }
 
         // Now that R has started (emitting any startup messages that we capture in the
@@ -708,6 +715,7 @@ impl RMain {
             debug_env: None,
             debug_session_index: 1,
             pending_inputs: None,
+            console_need_reset: false,
         }
     }
 
@@ -2350,6 +2358,29 @@ pub extern "C-unwind" fn r_read_console(
     hist: c_int,
 ) -> i32 {
     let main = RMain::get_mut();
+
+    // In case of error, we haven't had a chance to evaluate ".ark_last_value".
+    // So we return to the R REPL to give R a chance to run the state
+    // restoration that occurs between `R_ReadConsole()` and `eval()`:
+    // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
+    // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+    //
+    // Technically this also resets time limits (see `base::setTimeLimit()`) but
+    // these aren't supported in Ark because they cause errors when we poll R
+    // events.
+    if main.last_error.is_some() && main.console_need_reset {
+        main.console_need_reset = false;
+
+        // Evaluate last value so that `base::.Last.value` remains the same
+        RMain::on_console_input(
+            buf,
+            buflen,
+            String::from("base::invisible(base::.ark_last_value)"),
+        )
+        .unwrap();
+        return 1;
+    }
+
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
     main.read_console_cleanup();
 
@@ -2371,6 +2402,7 @@ pub extern "C-unwind" fn r_read_console(
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
+                main.console_need_reset = true;
                 main.eval_pending(expr, srcref, buf, buflen);
 
                 libr::Rf_unprotect(2);

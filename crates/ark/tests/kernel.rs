@@ -424,6 +424,100 @@ fn test_execute_request_error() {
 }
 
 #[test]
+fn test_execute_request_error_expressions_overflow() {
+    let frontend = DummyArkFrontend::lock();
+    // Deterministically produce an "evaluation too deeply nested" error
+    let code = "options(expressions = 100); f <- function(x) if (x > 0 ) f(x - 1); f(100)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("evaluation nested too deeply"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+
+    // Check we can still evaluate without causing another too deeply nested error
+    let code = "f(10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_execute_request_error_expressions_overflow_last_value() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Set state and last value
+    let code =
+        "options(expressions = 100); f <- function(x) if (x > 0 ) f(x - 1); invisible('hello')";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Check last value is set
+    let code = ".Last.value";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hello\"");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Deterministically produce an "evaluation too deeply nested" error
+    let code = "f(100)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_error()
+        .contains("evaluation nested too deeply"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+
+    // Check last value is still set
+    let code = ".Last.value";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hello\"");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
 fn test_execute_request_error_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
