@@ -325,15 +325,6 @@ impl RObject {
         }
     }
 
-    /// Consume the `RObject` and return the underlying `SEXP`, protected via
-    /// `Rf_protect`.
-    pub unsafe fn into_protected(self) -> SEXP {
-        unsafe {
-            libr::Rf_protect(self.sexp);
-        }
-        self.sexp
-    }
-
     pub fn view(data: SEXP) -> Self {
         RObject {
             sexp: data,
