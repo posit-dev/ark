@@ -33,6 +33,14 @@
 
 #' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
+    # Unlike C stack overflow errors, expressions nested too deeply errors allow
+    # calling handlers. But since we run R code, we need to temporarily bump the
+    # threshold to give a little room while we handle the error.
+    if (inherits(cnd, "expressionStackOverflowError")) {
+        old <- options(expressions = getOption("expressions") + 500)
+        defer(options(old))
+    }
+
     # This reproduces the behaviour of R's default error handler:
     # - Invoke `getOption("error")`
     # - Save backtrace for `traceback()`
