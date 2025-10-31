@@ -375,23 +375,54 @@ fn test_execute_request_browser_stdin() {
 }
 
 #[test]
-fn test_execute_request_browser_pending_cancelled() {
+fn test_execute_request_browser_multiple_expressions() {
     let frontend = DummyArkFrontend::lock();
 
-    // The `print()` call should be cancelled when we get in the debugger
-    let code = "browser()\nprint('hello')";
+    // Ideally the evaluation of `1` would be cancelled
+    let code = "browser()\n1";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // We don't get any output for "hello"
     frontend.recv_iopub_stream_stdout("Called from: top level \n");
-    frontend.recv_iopub_idle();
 
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
+    frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
+    // Even if we could cancel pending expressions, it would still be possible
+    // to run multiple expressions in a debugger prompt
+    let code = "1\n2";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("[1] 1\n");
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 2");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // But getting in a nested browser session with a pending expression would
+    // cancel it (not the case currently)
+    let code = "browser()\n1";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout("Called from: top level \n");
+
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Quit session
     let code = "Q";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
