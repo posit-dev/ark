@@ -1,4 +1,4 @@
 #' @export
-.rs.api.readRStudioPreference <- function(name, default) {
+.rs.api.readRStudioPreference <- function(name, default = NULL) {
     default
 }
