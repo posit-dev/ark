@@ -1339,13 +1339,7 @@ impl RMain {
     }
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
-    unsafe fn eval(
-        &mut self,
-        expr: libr::SEXP,
-        srcref: libr::SEXP,
-        buf: *mut c_uchar,
-        buflen: c_int,
-    ) {
+    unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
             // The global source reference is stored in this global variable by
@@ -2396,7 +2390,7 @@ pub extern "C-unwind" fn r_read_console(
                 let srcref = libr::Rf_protect(srcref.into());
 
                 main.console_need_reset = true;
-                main.eval(expr, srcref, buf, buflen);
+                RMain::eval(expr, srcref, buf, buflen);
 
                 libr::Rf_unprotect(2);
                 return 1;
