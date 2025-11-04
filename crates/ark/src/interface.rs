@@ -10,6 +10,7 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
@@ -59,6 +60,7 @@ use harp::command::r_home_setup;
 use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
+use harp::exec::exec_with_cleanup;
 use harp::exec::r_check_stack;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
@@ -219,8 +221,6 @@ pub struct RMain {
     /// of the REPL.
     pub(crate) last_error: Option<Exception>,
 
-    console_need_reset: bool,
-
     /// Channel to communicate with the Help thread
     help_event_tx: Option<Sender<HelpEvent>>,
     /// R help port
@@ -269,6 +269,24 @@ pub struct RMain {
     /// Ever increasing debug session index. Used to create URIs that are only
     /// valid for a single session.
     debug_session_index: u32,
+
+    /// Tracks how many nested `r_read_console()` calls are on the stack.
+    /// Incremented when entering `r_read_console(),` decremented on exit.
+    read_console_depth: Cell<usize>,
+
+    /// Set to true when `r_read_console()` exits. Reset to false at the start
+    /// of each `r_read_console()` call. Used to detect if `eval()` returned
+    /// from a nested REPL (the flag will be true when the evaluation returns).
+    nested_read_console_returned: Cell<bool>,
+
+    /// Set to true `r_read_console()` exits via an error longjump. Used to
+    /// detect if we need to go return from `r_read_console()` with a dummy
+    /// evaluation to reset things like `R_EvalDepth`.
+    read_console_threw_error: Cell<bool>,
+
+    /// Used to track an input to evaluate upon returning to `r_read_console()`,
+    /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
+    next_read_console_input: Cell<Option<String>>,
 }
 
 /// Stack of pending inputs
@@ -715,7 +733,10 @@ impl RMain {
             debug_env: None,
             debug_session_index: 1,
             pending_inputs: None,
-            console_need_reset: false,
+            read_console_depth: Cell::new(0),
+            nested_read_console_returned: Cell::new(false),
+            read_console_threw_error: Cell::new(false),
+            next_read_console_input: Cell::new(None),
         }
     }
 
@@ -1816,6 +1837,13 @@ impl RMain {
         Ok(())
     }
 
+    fn console_input(buf: *mut c_uchar, _buflen: c_int) -> String {
+        unsafe {
+            let cstr = CStr::from_ptr(buf as *const c_char);
+            cstr.to_string_lossy().into_owned()
+        }
+    }
+
     // Hitting this means a SINGLE line from the user was longer than the buffer size (>4000 characters)
     fn buffer_overflow_error() -> amalthea::Error {
         Error::InvalidConsoleInput(String::from(
@@ -2345,30 +2373,90 @@ pub extern "C-unwind" fn r_read_console(
     buflen: c_int,
     hist: c_int,
 ) -> i32 {
-    let main = RMain::get_mut();
-
-    // In case of error, we haven't had a chance to evaluate ".ark_last_value".
-    // So we return to the R REPL to give R a chance to run the state
-    // restoration that occurs between `R_ReadConsole()` and `eval()`:
-    // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
-    // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+    // In this entry point we handle two kinds of state:
+    // - The number of nested REPLs `read_console_depth`
+    // - A bunch of flags that help us reset the calling R REPL
     //
-    // Technically this also resets time limits (see `base::setTimeLimit()`) but
-    // these aren't supported in Ark because they cause errors when we poll R
-    // events.
-    if main.last_error.is_some() && main.console_need_reset {
-        main.console_need_reset = false;
+    // The second kind is unfortunate and due to us taking charge of parsing and
+    // evaluation. Ideally R would extend their frontend API so that this would
+    // only be necessary for backward compatibility with old versions of R.
 
-        // Evaluate last value so that `base::.Last.value` remains the same
-        RMain::on_console_input(
-            buf,
-            buflen,
-            String::from("base::invisible(base::.ark_last_value)"),
-        )
-        .unwrap();
-        return 1;
+    {
+        let main = RMain::get_mut();
+
+        // We've finished evaluating a dummy value to reset state in R's REPL,
+        // and are now ready to evaluate the actual input
+        if let Some(next_input) = main.next_read_console_input.take() {
+            RMain::on_console_input(buf, buflen, next_input).unwrap();
+            return 1;
+        }
+
+        // In case of error, we haven't had a chance to evaluate ".ark_last_value".
+        // So we return to the R REPL to give R a chance to run the state
+        // restoration that occurs between `R_ReadConsole()` and `eval()`:
+        // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
+        // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+        //
+        // Technically this also resets time limits (see `base::setTimeLimit()`) but
+        // these aren't supported in Ark because they cause errors when we poll R
+        // events.
+        if main.last_error.is_some() && main.read_console_threw_error.get() {
+            main.read_console_threw_error.set(false);
+
+            // Evaluate last value so that `base::.Last.value` remains the same
+            RMain::on_console_input(
+                buf,
+                buflen,
+                String::from("base::invisible(base::.Last.value)"),
+            )
+            .unwrap();
+            return 1;
+        }
+
+        // Track nesting depth of ReadConsole REPLs
+        main.read_console_depth
+            .set(main.read_console_depth.get() + 1);
+
+        // Reset flag that helps us figure out when a nested REPL returns
+        main.nested_read_console_returned.set(false);
+
+        // Reset flag that helps us figure out when an error occurred and needs a
+        // reset of `R_EvalDepth` and friends
+        main.read_console_threw_error.set(true);
     }
 
+    exec_with_cleanup(
+        || {
+            let main = RMain::get_mut();
+            let result = r_read_console_impl(main, prompt, buf, buflen, hist);
+
+            // If we get here, there was no error
+            main.read_console_threw_error.set(false);
+
+            result
+        },
+        || {
+            let main = RMain::get_mut();
+
+            // We're exiting, decrease depth of nested consoles
+            main.read_console_depth
+                .set(main.read_console_depth.get() - 1);
+
+            // Set flag so that parent read console, if any, can detect that a
+            // nested console returned (if it indeed returns instead of looping
+            // for another iteration)
+            main.nested_read_console_returned.set(true);
+        },
+    )
+}
+
+fn r_read_console_impl(
+    main: &mut RMain,
+    prompt: *const c_char,
+    buf: *mut c_uchar,
+    buflen: c_int,
+    hist: c_int,
+) -> i32 {
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
     main.read_console_cleanup();
 
@@ -2390,16 +2478,35 @@ pub extern "C-unwind" fn r_read_console(
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
-                main.console_need_reset = true;
                 RMain::eval(expr, srcref, buf, buflen);
+
+                // Check if a nested read_console() just returned. If that's the
+                // case, we need to reset the `R_ConsoleIob` by first returning
+                // a dummy value causing a `PARSE_NULL` event.
+                if main.nested_read_console_returned.get() {
+                    let next_input = RMain::console_input(buf, buflen);
+                    main.next_read_console_input.set(Some(next_input));
+
+                    // Evaluating a space causes a `PARSE_NULL` event. Don't
+                    // evaluate a newline, that would cause a parent debug REPL
+                    // to interpret it as `n`, causing it to exit instead of
+                    // being a no-op.
+                    RMain::on_console_input(buf, buflen, String::from(" ")).unwrap();
+                    main.nested_read_console_returned.set(false);
+                }
 
                 libr::Rf_unprotect(2);
                 return 1;
             }
         },
 
-        ConsoleResult::NewInput => return 1,
-        ConsoleResult::Disconnected => return 0,
+        ConsoleResult::NewInput => {
+            return 1;
+        },
+
+        ConsoleResult::Disconnected => {
+            return 0;
+        },
 
         ConsoleResult::Interrupt => {
             log::trace!("Interrupting `ReadConsole()`");
