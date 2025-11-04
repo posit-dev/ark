@@ -388,7 +388,7 @@ pub struct PromptInfo {
     input_prompt: String,
 
     /// The continuation prompt string when user supplies incomplete
-    /// inputs. This always corresponds to `getOption("continue"). We send
+    /// inputs. This always corresponds to `getOption("continue")`. We send
     /// it to frontends along with `prompt` because some frontends such as
     /// Positron do not send incomplete inputs to Ark and take charge of
     /// continuation prompts themselves. For frontends that can send
@@ -396,8 +396,8 @@ pub struct PromptInfo {
     /// error on them rather than requesting that this be shown.
     continuation_prompt: String,
 
-    /// Whether this is a `browser()` prompt. A browser prompt can be
-    /// incomplete but is never a user request.
+    /// Whether this is a `browser()` prompt. A browser prompt is never a user
+    /// request.
     browser: bool,
 
     /// Whether this is a prompt from a fresh REPL iteration (browser or
