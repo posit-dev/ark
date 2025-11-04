@@ -367,6 +367,101 @@ where
     }
 }
 
+/// Execute a function with a cleanup handler using R's cleanup mechanism.
+///
+/// This wraps `R_ExecWithCleanup` to provide execution with guaranteed cleanup,
+/// even in case of an R longjump.
+///
+/// In case of longjump, `cleanup()` runs but `exec_with_cleanup()` does not
+/// return, the lonjump propagates.
+///
+/// Note that `fun` and `cleanup` must be longjump-safe:
+/// - Only POD types without Drop destructors on the stack
+/// - Or protects itself from longjumps via e.g. `try_catch()`
+/// ```
+pub fn exec_with_cleanup<'env, F, C, T>(fun: F, cleanup: C) -> T
+where
+    F: FnOnce() -> T,
+    F: 'env,
+    C: FnOnce(),
+    C: 'env,
+    T: 'env,
+{
+    struct CleanupData<'a, F, C, T>
+    where
+        F: FnOnce() -> T + 'a,
+        C: FnOnce() + 'a,
+    {
+        // slot for the result of the closure
+        result: &'a mut Option<T>,
+        closure: Option<F>,
+        cleanup: Option<C>,
+    }
+
+    // Allocate stack memory for the result
+    let mut result: Option<T> = None;
+
+    // Move closures to the payload
+    let mut callback_data = CleanupData {
+        result: &mut result,
+        closure: Some(fun),
+        cleanup: Some(cleanup),
+    };
+    let payload = &mut callback_data as *mut _ as *mut c_void;
+
+    extern "C-unwind" fn exec_callback<'env, F, C, T>(data: *mut c_void) -> SEXP
+    where
+        F: FnOnce() -> T,
+        F: 'env,
+        C: FnOnce(),
+        C: 'env,
+        T: 'env,
+    {
+        // SAFETY: `data` points to a `CleanupData<F, C, T>` allocated on the caller's stack.
+        let data: &mut CleanupData<F, C, T> = unsafe { &mut *(data as *mut CleanupData<F, C, T>) };
+
+        // Move closure here so it can be called. Required since that's an `FnOnce`.
+        let closure = take(&mut data.closure).unwrap();
+
+        // Call closure and store the result in the payload
+        let result = closure();
+        *(data.result) = Some(result);
+
+        // Always return R_NilValue to R_ExecWithCleanup; the real result is in `payload`.
+        unsafe { R_NilValue }
+    }
+
+    extern "C-unwind" fn cleanup_callback<'env, F, C, T>(data: *mut c_void)
+    where
+        F: FnOnce() -> T,
+        F: 'env,
+        C: FnOnce(),
+        C: 'env,
+        T: 'env,
+    {
+        // SAFETY: `data` points to a `CleanupData<F, C, T>` allocated on the caller's stack.
+        let data: &mut CleanupData<F, C, T> = unsafe { &mut *(data as *mut CleanupData<F, C, T>) };
+
+        // Move cleanup closure here so it can be called
+        if let Some(cleanup) = take(&mut data.cleanup) {
+            cleanup();
+        }
+    }
+
+    // Call into R; the callbacks will populate `res` and always return R_NilValue.
+    unsafe {
+        R_ExecWithCleanup(
+            Some(exec_callback::<F, C, T>),
+            payload,
+            Some(cleanup_callback::<F, C, T>),
+            payload,
+        )
+    };
+
+    // Unwrap Safety: If we get here, we're in the happy path and the result is Some
+    result.unwrap()
+}
+
 pub fn r_peek_error_buffer() -> String {
     // SAFETY: Returns pointer to static memory buffer owned by R.
     let buffer = unsafe { R_curErrorBuf() };
@@ -495,6 +590,8 @@ pub fn r_check_stack(size: Option<usize>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::ffi::CString;
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
     use stdext::assert_match;
 
@@ -642,6 +739,54 @@ mod tests {
                 assert_eq!(message, "ouch");
                 assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
             });
+        })
+    }
+
+    #[test]
+    fn test_exec_with_cleanup() {
+        crate::r_task(|| {
+            let cleanup_called = Arc::new(Mutex::new(false));
+            let cleanup_called_clone = cleanup_called.clone();
+
+            let result = exec_with_cleanup(
+                || {
+                    // Create a simple R object and return it directly (T = RObject)
+                    let obj = RObject::from(unsafe { Rf_ScalarInteger(42) });
+                    obj
+                },
+                || {
+                    *cleanup_called_clone.lock().unwrap() = true;
+                },
+            );
+
+            assert_eq!(unsafe { Rf_asInteger(*result) }, 42);
+            assert!(
+                *cleanup_called.lock().unwrap(),
+                "Cleanup should have been called"
+            );
+
+            // Test error case - cleanup should still be called.
+            let cleanup_called_error = Arc::new(Mutex::new(false));
+            let cleanup_called_error_clone = cleanup_called_error.clone();
+
+            let result = try_catch(|| {
+                exec_with_cleanup(
+                    || -> RObject {
+                        let msg = CString::new("ouch").unwrap(); // This leaks
+                        unsafe { Rf_error(msg.as_ptr()) };
+                    },
+                    || {
+                        *cleanup_called_error_clone.lock().unwrap() = true;
+                    },
+                )
+            });
+
+            assert!(result.is_err());
+
+            assert!(
+                *cleanup_called_error.lock().unwrap(),
+                "Cleanup should have been called on error"
+            );
         })
     }
 }
