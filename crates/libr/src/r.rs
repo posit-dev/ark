@@ -98,6 +98,13 @@ functions::generate! {
         data: *mut std::ffi::c_void
     ) -> Rboolean;
 
+    pub fn R_ExecWithCleanup(
+        fun: Option<unsafe extern "C-unwind" fn(data: *mut std::ffi::c_void) -> SEXP>,
+        data: *mut std::ffi::c_void,
+        cleanfun: Option<unsafe extern "C-unwind" fn(cleandata: *mut std::ffi::c_void)>,
+        cleandata: *mut std::ffi::c_void
+    ) -> SEXP;
+
     pub fn R_withCallingErrorHandler(
         body: Option<unsafe extern "C-unwind" fn(args: *mut std::ffi::c_void) -> SEXP>,
         bdata: *mut std::ffi::c_void,
