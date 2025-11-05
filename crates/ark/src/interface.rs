@@ -1143,6 +1143,17 @@ impl RMain {
             return None;
         };
 
+        // Flush any accumulated output to StdOut. This can happen if
+        // the last input errors out during autoprint.
+        let autoprint = std::mem::take(&mut self.autoprint_output);
+        if !autoprint.is_empty() {
+            let message = IOPubMessage::Stream(StreamOutput {
+                name: Stream::Stdout,
+                text: autoprint,
+            });
+            self.iopub_tx.send(message).unwrap();
+        }
+
         // Jupyter clients typically discard the `evalue` when a `traceback` is
         // present.  Jupyter-Console even disregards `evalue` in all cases. So
         // include it here if we are in Notebook mode. But should Positron
