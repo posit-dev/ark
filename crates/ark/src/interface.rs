@@ -2584,6 +2584,28 @@ pub unsafe extern "C-unwind" fn r_polled_events() {
     };
 }
 
+// For integration tests
+use std::sync::Condvar;
+pub static CLEANUP_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+
+#[no_mangle]
+pub extern "C-unwind" fn r_cleanup_for_tests(_save_act: i32, _status: i32, _run_last: i32) {
+    // Signal that cleanup has started
+    let (lock, cvar) = &CLEANUP_SIGNAL;
+
+    let mut started = lock.lock().unwrap();
+    *started = true;
+
+    cvar.notify_all();
+    drop(started);
+
+    // Sleep to give tests time to complete before we panic
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    // Fallthrough to R which will call `exit()`. Note that panicking from here
+    // would be UB, we can't panic over a C stack.
+}
+
 // This hook is called like a user onLoad hook but for every package to be
 // loaded in the session
 #[harp::register]

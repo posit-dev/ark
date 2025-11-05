@@ -73,6 +73,14 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
 
+        if stdext::IS_TESTING {
+            use libr::ptr_R_CleanUp;
+
+            use crate::interface::r_cleanup_for_tests;
+
+            libr::set(ptr_R_CleanUp, Some(r_cleanup_for_tests));
+        }
+
         // In tests R may be run from various threads. This confuses R's stack
         // overflow checks so we disable those. This should not make it in
         // production builds as it causes stack overflows to crash R instead of
