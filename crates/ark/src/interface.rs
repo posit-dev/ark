@@ -281,7 +281,11 @@ pub struct RMain {
 
     /// Used to track an input to evaluate upon returning to `r_read_console()`,
     /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
-    next_read_console_input: Cell<Option<String>>,
+    read_console_next_input: Cell<Option<String>>,
+
+    /// We've received a Shutdown signal and need to return EOF from all nested
+    /// consoles to get R to shut down
+    read_console_shutdown: Cell<bool>,
 
     /// Current topmost environment on the stack while waiting for input in ReadConsole
     read_console_frame: RefCell<RObject>,
@@ -741,8 +745,9 @@ impl RMain {
             read_console_depth: Cell::new(0),
             nested_read_console_returned: Cell::new(false),
             read_console_threw_error: Cell::new(false),
-            next_read_console_input: Cell::new(None),
+            read_console_next_input: Cell::new(None),
             read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
+            read_console_shutdown: Cell::new(false),
         }
     }
 
@@ -2389,9 +2394,15 @@ pub extern "C-unwind" fn r_read_console(
 
     let main = RMain::get_mut();
 
+    // Propagate an EOF event (e.g. from a Shutdown request). We need to exit
+    // from all consoles on the stack to let R shut down with an `exit()`.
+    if main.read_console_shutdown.get() {
+        return 0;
+    }
+
     // We've finished evaluating a dummy value to reset state in R's REPL,
     // and are now ready to evaluate the actual input
-    if let Some(next_input) = main.next_read_console_input.take() {
+    if let Some(next_input) = main.read_console_next_input.take() {
         RMain::on_console_input(buf, buflen, next_input).unwrap();
         return 1;
     }
@@ -2499,7 +2510,7 @@ fn r_read_console_impl(
                 // a dummy value causing a `PARSE_NULL` event.
                 if main.nested_read_console_returned.get() {
                     let next_input = RMain::console_input(buf, buflen);
-                    main.next_read_console_input.set(Some(next_input));
+                    main.read_console_next_input.set(Some(next_input));
 
                     // Evaluating a space causes a `PARSE_NULL` event. Don't
                     // evaluate a newline, that would cause a parent debug REPL
@@ -2519,6 +2530,8 @@ fn r_read_console_impl(
         },
 
         ConsoleResult::Disconnected => {
+            // Cause parent consoles to shutdown too
+            main.read_console_shutdown.set(true);
             return 0;
         },
 
