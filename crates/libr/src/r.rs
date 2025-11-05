@@ -760,6 +760,9 @@ mutable_globals::generate! {
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_Suicide: Option<unsafe extern "C-unwind" fn(arg1: *const std::ffi::c_char)>;
 
+    #[cfg(target_family = "unix")]
+    pub static mut ptr_R_CleanUp: Option<unsafe extern "C-unwind" fn(std::ffi::c_int, std::ffi::c_int, std::ffi::c_int)>;
+
     // -----------------------------------------------------------------------------------
     // Windows
 

@@ -4,11 +4,13 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
 use crate::interface::SessionMode;
+use crate::interface::CLEANUP_SIGNAL;
 use crate::repos::DefaultRepos;
 
 // There can be only one frontend per process. Needs to be in a mutex because
@@ -59,6 +61,22 @@ impl DummyArkFrontend {
     pub fn lock() -> Self {
         Self {
             guard: Self::get_frontend().lock().unwrap(),
+        }
+    }
+
+    /// Wait for R cleanup to start (indicating shutdown has been initiated).
+    /// Panics if cleanup doesn't start within the timeout.
+    #[track_caller]
+    pub fn wait_for_cleanup() {
+        let (lock, cvar) = &CLEANUP_SIGNAL;
+        let result = cvar
+            .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(3), |started| {
+                !*started
+            })
+            .unwrap();
+
+        if !*result.0 {
+            panic!("Cleanup did not start within timeout");
         }
     }
 
