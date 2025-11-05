@@ -261,11 +261,6 @@ pub struct RMain {
     /// reliable indication of whether we moved since last time.
     debug_last_stack: Vec<FrameInfoId>,
 
-    /// Current topmost environment on the stack while waiting for input in the
-    /// debugger. This is `Some()` only when R is idle and in a `browser()`
-    /// prompt.
-    debug_env: Option<RObject>,
-
     /// Ever increasing debug session index. Used to create URIs that are only
     /// valid for a single session.
     debug_session_index: u32,
@@ -287,6 +282,9 @@ pub struct RMain {
     /// Used to track an input to evaluate upon returning to `r_read_console()`,
     /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
     next_read_console_input: Cell<Option<String>>,
+
+    /// Current topmost environment on the stack while waiting for input in ReadConsole
+    read_console_frame: RefCell<RObject>,
 }
 
 /// Stack of pending inputs
@@ -738,13 +736,13 @@ impl RMain {
             captured_output: String::new(),
             debug_preserve_focus: false,
             debug_last_stack: vec![],
-            debug_env: None,
             debug_session_index: 1,
             pending_inputs: None,
             read_console_depth: Cell::new(0),
             nested_read_console_returned: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             next_read_console_input: Cell::new(None),
+            read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
         }
     }
 
@@ -1181,11 +1179,6 @@ impl RMain {
         Some(exception)
     }
 
-    fn read_console_cleanup(&mut self) {
-        // The debug environment is only valid while R is idle
-        self.debug_env = None;
-    }
-
     /// Returns:
     /// - `None` if we should fall through to the event loop to wait for more user input
     /// - `Some(ConsoleResult)` if we should immediately exit `read_console()`
@@ -1468,13 +1461,6 @@ impl RMain {
     fn start_debug(&mut self, debug_preserve_focus: bool) {
         match self.dap.stack_info() {
             Ok(stack) => {
-                if let Some(frame) = stack.first() {
-                    if let Some(ref env) = frame.environment {
-                        // This is reset on exit in the cleanup phase, see `r_read_console()`
-                        self.debug_env = Some(env.get().clone());
-                    }
-                }
-
                 // Figure out whether we changed location since last time,
                 // e.g. because the user evaluated an expression that hit
                 // another breakpoint. In that case we do want to move
@@ -2356,8 +2342,8 @@ impl RMain {
     }
 
     #[cfg(not(test))] // Avoid warnings in unit test
-    pub(crate) fn debug_env(&self) -> Option<RObject> {
-        self.debug_env.clone()
+    pub(crate) fn read_console_frame(&self) -> RObject {
+        self.read_console_frame.borrow().clone()
     }
 }
 
@@ -2410,49 +2396,50 @@ pub extern "C-unwind" fn r_read_console(
     // evaluation. Ideally R would extend their frontend API so that this would
     // only be necessary for backward compatibility with old versions of R.
 
-    {
-        let main = RMain::get_mut();
+    let main = RMain::get_mut();
 
-        // We've finished evaluating a dummy value to reset state in R's REPL,
-        // and are now ready to evaluate the actual input
-        if let Some(next_input) = main.next_read_console_input.take() {
-            RMain::on_console_input(buf, buflen, next_input).unwrap();
-            return 1;
-        }
-
-        // In case of error, we haven't had a chance to evaluate ".ark_last_value".
-        // So we return to the R REPL to give R a chance to run the state
-        // restoration that occurs between `R_ReadConsole()` and `eval()`:
-        // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
-        // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
-        //
-        // Technically this also resets time limits (see `base::setTimeLimit()`) but
-        // these aren't supported in Ark because they cause errors when we poll R
-        // events.
-        if main.last_error.is_some() && main.read_console_threw_error.get() {
-            main.read_console_threw_error.set(false);
-
-            // Evaluate last value so that `base::.Last.value` remains the same
-            RMain::on_console_input(
-                buf,
-                buflen,
-                String::from("base::invisible(base::.Last.value)"),
-            )
-            .unwrap();
-            return 1;
-        }
-
-        // Track nesting depth of ReadConsole REPLs
-        main.read_console_depth
-            .set(main.read_console_depth.get() + 1);
-
-        // Reset flag that helps us figure out when a nested REPL returns
-        main.nested_read_console_returned.set(false);
-
-        // Reset flag that helps us figure out when an error occurred and needs a
-        // reset of `R_EvalDepth` and friends
-        main.read_console_threw_error.set(true);
+    // We've finished evaluating a dummy value to reset state in R's REPL,
+    // and are now ready to evaluate the actual input
+    if let Some(next_input) = main.next_read_console_input.take() {
+        RMain::on_console_input(buf, buflen, next_input).unwrap();
+        return 1;
     }
+
+    // In case of error, we haven't had a chance to evaluate ".ark_last_value".
+    // So we return to the R REPL to give R a chance to run the state
+    // restoration that occurs between `R_ReadConsole()` and `eval()`:
+    // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
+    // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+    //
+    // Technically this also resets time limits (see `base::setTimeLimit()`) but
+    // these aren't supported in Ark because they cause errors when we poll R
+    // events.
+    if main.last_error.is_some() && main.read_console_threw_error.get() {
+        main.read_console_threw_error.set(false);
+
+        // Evaluate last value so that `base::.Last.value` remains the same
+        RMain::on_console_input(
+            buf,
+            buflen,
+            String::from("base::invisible(base::.Last.value)"),
+        )
+        .unwrap();
+        return 1;
+    }
+
+    // Track nesting depth of ReadConsole REPLs
+    main.read_console_depth
+        .set(main.read_console_depth.get() + 1);
+
+    // Reset flag that helps us figure out when a nested REPL returns
+    main.nested_read_console_returned.set(false);
+
+    // Reset flag that helps us figure out when an error occurred and needs a
+    // reset of `R_EvalDepth` and friends
+    main.read_console_threw_error.set(true);
+
+    // Set current frame environment
+    let current_frame = main.read_console_frame.replace(harp::r_current_frame());
 
     exec_with_cleanup(
         || {
@@ -2475,6 +2462,9 @@ pub extern "C-unwind" fn r_read_console(
             // nested console returned (if it indeed returns instead of looping
             // for another iteration)
             main.nested_read_console_returned.set(true);
+
+            // Restore current frame
+            main.read_console_frame.replace(current_frame);
         },
     )
 }
@@ -2487,7 +2477,6 @@ fn r_read_console_impl(
     hist: c_int,
 ) -> i32 {
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
-    main.read_console_cleanup();
 
     let result = unwrap!(result, Err(err) => {
         panic!("Unexpected longjump while reading from console: {err:?}");

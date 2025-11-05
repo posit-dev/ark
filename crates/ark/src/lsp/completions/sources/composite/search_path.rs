@@ -13,7 +13,6 @@ use harp::vector::CharacterVector;
 use harp::vector::Vector;
 use harp::RObject;
 use libr::R_EmptyEnv;
-use libr::R_GlobalEnv;
 use libr::R_lsInternal;
 use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
@@ -51,19 +50,12 @@ fn completions_from_search_path(
     ];
 
     unsafe {
-        // Iterate through environments starting from the global environment.
-        let mut env = R_GlobalEnv;
-
-        // If we're waiting for input in `read_console()` with a debugger
-        // prompt, start from current environment
+        // Iterate through environments starting from the current frame environment.
         #[cfg(not(test))] // Unit tests do not have an `RMain`
-        {
-            use crate::interface::RMain;
-            if let Some(debug_env) = &RMain::get().debug_env() {
-                // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
-                env = debug_env.sexp;
-            }
-        }
+        // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+        let mut env = crate::interface::RMain::get().read_console_frame().sexp;
+        #[cfg(test)]
+        let mut env = libr::R_GlobalEnv;
 
         while env != R_EmptyEnv {
             let is_pkg_env = r_env_is_pkg_env(env);
