@@ -21,6 +21,8 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
+use crate::wire::shutdown_reply::ShutdownReply;
+use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::ExecutionState;
 use crate::wire::stream::Stream;
 use crate::wire::wire_message::WireMessage;
@@ -36,7 +38,7 @@ pub struct DummyConnection {
 }
 
 pub struct DummyFrontend {
-    pub _control_socket: Socket,
+    pub control_socket: Socket,
     pub shell_socket: Socket,
     pub iopub_socket: Socket,
     pub stdin_socket: Socket,
@@ -132,7 +134,7 @@ impl DummyFrontend {
         // the Jupyter specification, these must share a ZeroMQ identity.
         let shell_id = rand::thread_rng().gen::<[u8; 16]>();
 
-        let _control_socket = Socket::new(
+        let control_socket = Socket::new(
             connection.session.clone(),
             connection.ctx.clone(),
             String::from("Control"),
@@ -198,7 +200,7 @@ impl DummyFrontend {
         });
 
         Self {
-            _control_socket,
+            control_socket,
             shell_socket,
             iopub_socket,
             stdin_socket,
@@ -207,10 +209,20 @@ impl DummyFrontend {
         }
     }
 
+    /// Sends a Jupyter message on the Control socket; returns the ID of the newly
+    /// created message
+    pub fn send_control<T: ProtocolMessage>(&self, msg: T) -> String {
+        Self::send(&self.control_socket, &self.session, msg)
+    }
+
     /// Sends a Jupyter message on the Shell socket; returns the ID of the newly
     /// created message
     pub fn send_shell<T: ProtocolMessage>(&self, msg: T) -> String {
         Self::send(&self.shell_socket, &self.session, msg)
+    }
+
+    pub fn send_shutdown_request(&self, restart: bool) -> String {
+        self.send_control(ShutdownRequest { restart })
     }
 
     pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
@@ -256,6 +268,12 @@ impl DummyFrontend {
         panic!("Timeout while expecting message on socket {}", socket.name);
     }
 
+    /// Receives a Jupyter message from the Control socket
+    #[track_caller]
+    pub fn recv_control(&self) -> Message {
+        Self::recv(&self.control_socket)
+    }
+
     /// Receives a Jupyter message from the Shell socket
     #[track_caller]
     pub fn recv_shell(&self) -> Message {
@@ -272,6 +290,15 @@ impl DummyFrontend {
     #[track_caller]
     pub fn recv_stdin(&self) -> Message {
         Self::recv(&self.stdin_socket)
+    }
+
+    /// Receive from Control and assert `ShutdownReply` message.
+    #[track_caller]
+    pub fn recv_control_shutdown_reply(&self) -> ShutdownReply {
+        let message = self.recv_control();
+        assert_matches!(message, Message::ShutdownReply(message) => {
+            message.content
+        })
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.
