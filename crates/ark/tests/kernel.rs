@@ -1178,3 +1178,36 @@ fn test_shutdown_request_with_restart() {
 
     DummyArkFrontend::wait_for_cleanup();
 }
+
+// Can shut down Ark when running a nested debug console
+// https://github.com/posit-dev/positron/issues/6553
+#[test]
+fn test_shutdown_request_browser() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "browser()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    assert!(frontend
+        .recv_iopub_execute_result()
+        .contains("Called from: top level"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    frontend.send_shutdown_request(true);
+    frontend.recv_iopub_busy();
+
+    let reply = frontend.recv_control_shutdown_reply();
+    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(reply.restart, true);
+
+    frontend.recv_iopub_idle();
+
+    DummyArkFrontend::wait_for_cleanup();
+}
