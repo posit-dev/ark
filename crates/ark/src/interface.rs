@@ -395,6 +395,19 @@ pub struct KernelInfo {
     pub continuation_prompt: Option<String>,
 }
 
+/// The kind of prompt we're handling in the REPL.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptKind {
+    /// A top-level REPL prompt
+    TopLevel,
+
+    /// A `browser()` debugging prompt
+    Browser,
+
+    /// A user input request from code, e.g., via `readline()`
+    InputRequest,
+}
+
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
@@ -414,13 +427,8 @@ pub struct PromptInfo {
     /// error on them rather than requesting that this be shown.
     continuation_prompt: String,
 
-    /// Whether this is a `browser()` prompt. A browser prompt is never a user
-    /// request.
-    browser: bool,
-
-    /// Whether this is a prompt from a fresh REPL iteration (browser or
-    /// top level) or a prompt from some user code, e.g. via `readline()`
-    input_request: bool,
+    /// The kind of prompt we're handling.
+    kind: PromptKind,
 }
 
 pub enum ConsoleInput {
@@ -869,7 +877,7 @@ impl RMain {
 
         // Invariant: If we detect a browser prompt, `self.dap.is_debugging()`
         // is true. Otherwise it is false.
-        if info.browser {
+        if matches!(info.kind, PromptKind::Browser) {
             // Start or continue debugging with the `debug_preserve_focus` hint
             // from the last expression we evaluated
             self.start_debug(self.debug_preserve_focus);
@@ -883,7 +891,7 @@ impl RMain {
 
             // Reply to active request with error
             self.handle_active_request(&info, ConsoleValue::Error(exception));
-        } else if info.input_request {
+        } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input reply to the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
         } else if let Some(input) = self.pop_pending() {
@@ -903,7 +911,7 @@ impl RMain {
         // often. We'd still push a `DidChangeConsoleInputs` notification from
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
-        if !self.dap.is_debugging() && !info.input_request {
+        if !self.dap.is_debugging() && !matches!(info.kind, PromptKind::InputRequest) {
             self.refresh_lsp();
         }
 
@@ -954,16 +962,16 @@ impl RMain {
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
         let polled_events_index = select.recv(&polled_events_rx);
 
-        // Don't process idle tasks in browser prompts. We currently don't want
+        // Don't process idle tasks unless at top level. We currently don't want
         // idle tasks (e.g. for srcref generation) to run when the call stack is
-        // empty. We could make this configurable though if needed, i.e. some
+        // not empty. We could make this configurable though if needed, i.e. some
         // idle tasks would be able to run in the browser. Those should be sent
         // to a dedicated channel that would always be included in the set of
         // recv channels.
-        let tasks_idle_index = if info.browser {
-            None
-        } else {
+        let tasks_idle_index = if matches!(info.kind, PromptKind::TopLevel) {
             Some(select.recv(&tasks_idle_rx))
+        } else {
+            None
         };
 
         loop {
@@ -975,7 +983,7 @@ impl RMain {
             // `UserBreak`, but won't actually fire the interrupt b/c
             // we have them disabled, so it would end up swallowing the
             // user interrupt request.
-            if info.input_request && interrupts_pending() {
+            if matches!(info.kind, PromptKind::InputRequest) && interrupts_pending() {
                 return ConsoleResult::Interrupt;
             }
 
@@ -1067,15 +1075,21 @@ impl RMain {
         // chosen to not support these edge cases.
         let browser = RE_DEBUG_PROMPT.is_match(&prompt);
 
-        // If there are frames on the stack and we're not in a browser prompt,
-        // this means some user code is requesting input, e.g. via `readline()`
-        let user_request = !browser && n_frame > 0;
+        // Determine the prompt kind based on context
+        let kind = if browser {
+            PromptKind::Browser
+        } else if n_frame > 0 {
+            // If there are frames on the stack and we're not in a browser prompt,
+            // this means some user code is requesting input, e.g. via `readline()`
+            PromptKind::InputRequest
+        } else {
+            PromptKind::TopLevel
+        };
 
         return PromptInfo {
             input_prompt: prompt,
             continuation_prompt,
-            browser,
-            input_request: user_request,
+            kind,
         };
     }
 
@@ -1212,7 +1226,7 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> Option<ConsoleResult> {
-        if info.input_request {
+        if matches!(info.kind, PromptKind::InputRequest) {
             panic!("Unexpected `execute_request` while waiting for `input_reply`.");
         }
 
