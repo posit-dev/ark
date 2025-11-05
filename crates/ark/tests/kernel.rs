@@ -622,6 +622,50 @@ fn test_execute_request_browser_multiple_expressions() {
 }
 
 #[test]
+fn test_execute_request_browser_local_variable() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "local({\n  local_foo <- 1\n  browser()\n})";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_stream_stdout(
+        "Called from: eval(quote({\n    local_foo <- 1\n    browser()\n}), new.env())\n",
+    );
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "local_foo";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Should ideally be `recv_iopub_execute_result()`, but auto-printing
+    // detection currently does not work reliably in debug REPLs
+    frontend.recv_iopub_stream_stdout("[1] 1\n");
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    let code = "Q";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
 fn test_execute_request_error() {
     let frontend = DummyArkFrontend::lock();
 

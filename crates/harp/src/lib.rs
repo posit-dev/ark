@@ -70,6 +70,7 @@ pub(crate) use harp::fixtures::r_task;
 pub use harp::object::list_get;
 pub use harp::object::list_poke;
 pub use harp::object::RObject;
+pub use harp::session::*;
 pub use harp::symbol::RSymbol;
 pub use harp::utils::get_option;
 pub use harp::weak_ref::RWeakRef;
