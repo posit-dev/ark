@@ -2426,19 +2426,24 @@ pub extern "C-unwind" fn r_read_console(
         return 1;
     }
 
-    // Track nesting depth of ReadConsole REPLs
+    // Keep track of state that we care about
+
+    // - Track nesting depth of ReadConsole REPLs
     main.read_console_depth
         .set(main.read_console_depth.get() + 1);
 
-    // Reset flag that helps us figure out when a nested REPL returns
+    // - Set current frame environment
+    let old_current_frame = main.read_console_frame.replace(harp::r_current_frame());
+
+    // Keep track of state that we use for workarounds while interacting
+    // with the R REPL and force it to reset state
+
+    // - Reset flag that helps us figure out when a nested REPL returns
     main.nested_read_console_returned.set(false);
 
-    // Reset flag that helps us figure out when an error occurred and needs a
-    // reset of `R_EvalDepth` and friends
+    // - Reset flag that helps us figure out when an error occurred and needs a
+    //   reset of `R_EvalDepth` and friends
     main.read_console_threw_error.set(true);
-
-    // Set current frame environment
-    let current_frame = main.read_console_frame.replace(harp::r_current_frame());
 
     exec_with_cleanup(
         || {
@@ -2463,7 +2468,7 @@ pub extern "C-unwind" fn r_read_console(
             main.nested_read_console_returned.set(true);
 
             // Restore current frame
-            main.read_console_frame.replace(current_frame);
+            main.read_console_frame.replace(old_current_frame);
         },
     )
 }
