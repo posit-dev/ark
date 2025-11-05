@@ -1386,14 +1386,18 @@ impl RMain {
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
     unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
+        let frame = harp::r_current_frame();
+
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
+            let frame = libr::Rf_protect(frame.into());
+
             // The global source reference is stored in this global variable by
             // the R REPL before evaluation. We do the same here.
             libr::set(libr::R_Srcref, srcref);
 
             // Evaluate the expression. Beware: this may throw an R longjump.
-            let value = libr::Rf_eval(expr, R_ENVS.global);
+            let value = libr::Rf_eval(expr, frame);
             libr::Rf_protect(value);
 
             // Store in the base environment for robust access from (almost) any
@@ -1403,7 +1407,7 @@ impl RMain {
             // is stored in the `value` field of symbols, i.e. their "CDR".
             libr::SETCDR(r_symbol!(".ark_last_value"), value);
 
-            libr::Rf_unprotect(1);
+            libr::Rf_unprotect(2);
             value
         };
 
@@ -2642,7 +2646,10 @@ fn do_resource_namespaces() -> bool {
 fn is_auto_printing() -> bool {
     let n_frame = harp::session::r_n_frame().unwrap();
 
-    // The call-stack is empty so this must be R auto-printing an unclassed object
+    // The call-stack is empty so this must be R auto-printing an unclassed
+    // object. Note that this might wrongly return true in debug REPLs. Ideally
+    // we'd take note of the number of frames on the stack when we enter
+    // `r_read_console()`, and compare against that.
     if n_frame == 0 {
         return true;
     }
