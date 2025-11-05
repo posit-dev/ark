@@ -1,5 +1,6 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
 use stdext::assert_match;
@@ -1142,4 +1143,38 @@ fn test_env_vars() {
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+// Note that because of these shutdown tests you _have_ to use `cargo nextest`
+// instead of `cargo test`, so that each test has its own process and R thread.
+#[test]
+fn test_shutdown_request() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_shutdown_request(false);
+    frontend.recv_iopub_busy();
+
+    let reply = frontend.recv_control_shutdown_reply();
+    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(reply.restart, false);
+
+    frontend.recv_iopub_idle();
+
+    DummyArkFrontend::wait_for_cleanup();
+}
+
+#[test]
+fn test_shutdown_request_with_restart() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_shutdown_request(true);
+    frontend.recv_iopub_busy();
+
+    let reply = frontend.recv_control_shutdown_reply();
+    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(reply.restart, true);
+
+    frontend.recv_iopub_idle();
+
+    DummyArkFrontend::wait_for_cleanup();
 }
