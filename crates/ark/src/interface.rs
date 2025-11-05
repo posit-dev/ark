@@ -1289,15 +1289,6 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> ConsoleResult {
-        // If the prompt begins with "Save workspace", respond with (n)
-        // and allow R to immediately exit.
-        if info.input_prompt.starts_with("Save workspace") {
-            match Self::on_console_input(buf, buflen, String::from("n")) {
-                Ok(()) => return ConsoleResult::NewInput,
-                Err(err) => return ConsoleResult::Error(err),
-            }
-        }
-
         if let Some(req) = &self.active_request {
             // Send request to frontend. We'll wait for an `input_reply`
             // from the frontend in the event loop in `read_console()`.
