@@ -641,6 +641,39 @@ fn test_execute_request_error() {
 }
 
 #[test]
+fn test_execute_request_error_with_accumulated_output() {
+    // Test that when the very last input output and then throws an error,
+    // the accumulated output is flushed before the error is reported.
+    // This tests the autoprint buffer flush logic in error handling.
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "{
+        print.foo <- function(x) {
+            print(unclass(x))
+            stop(\"foo\")
+        }
+        structure(42, class = \"foo\")
+    }";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // The output from print(1) should be flushed to stdout
+    frontend.recv_iopub_stream_stdout("[1] 42\n");
+
+    // Then the error should be reported on stderr
+    assert!(frontend.recv_iopub_execute_error().contains("foo"));
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+}
+
+#[test]
 fn test_execute_request_error_expressions_overflow() {
     let frontend = DummyArkFrontend::lock();
     // Deterministically produce an "evaluation too deeply nested" error
