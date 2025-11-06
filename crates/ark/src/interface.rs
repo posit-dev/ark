@@ -272,7 +272,7 @@ pub struct RMain {
     /// Set to true when `r_read_console()` exits. Reset to false at the start
     /// of each `r_read_console()` call. Used to detect if `eval()` returned
     /// from a nested REPL (the flag will be true when the evaluation returns).
-    nested_read_console_returned: Cell<bool>,
+    read_console_nested_return: Cell<bool>,
 
     /// Set to true `r_read_console()` exits via an error longjump. Used to
     /// detect if we need to go return from `r_read_console()` with a dummy
@@ -743,7 +743,7 @@ impl RMain {
             debug_session_index: 1,
             pending_inputs: None,
             read_console_depth: Cell::new(0),
-            nested_read_console_returned: Cell::new(false),
+            read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             read_console_next_input: Cell::new(None),
             read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
@@ -2442,7 +2442,7 @@ pub extern "C-unwind" fn r_read_console(
     // with the R REPL and force it to reset state
 
     // - Reset flag that helps us figure out when a nested REPL returns
-    main.nested_read_console_returned.set(false);
+    main.read_console_nested_return.set(false);
 
     // - Reset flag that helps us figure out when an error occurred and needs a
     //   reset of `R_EvalDepth` and friends
@@ -2468,7 +2468,7 @@ pub extern "C-unwind" fn r_read_console(
             // Set flag so that parent read console, if any, can detect that a
             // nested console returned (if it indeed returns instead of looping
             // for another iteration)
-            main.nested_read_console_returned.set(true);
+            main.read_console_nested_return.set(true);
 
             // Restore current frame
             main.read_console_frame.replace(old_current_frame);
@@ -2508,7 +2508,7 @@ fn r_read_console_impl(
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning
                 // a dummy value causing a `PARSE_NULL` event.
-                if main.nested_read_console_returned.get() {
+                if main.read_console_nested_return.get() {
                     let next_input = RMain::console_input(buf, buflen);
                     main.read_console_next_input.set(Some(next_input));
 
@@ -2517,7 +2517,7 @@ fn r_read_console_impl(
                     // to interpret it as `n`, causing it to exit instead of
                     // being a no-op.
                     RMain::on_console_input(buf, buflen, String::from(" ")).unwrap();
-                    main.nested_read_console_returned.set(false);
+                    main.read_console_nested_return.set(false);
                 }
 
                 libr::Rf_unprotect(2);
