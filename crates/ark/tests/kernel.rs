@@ -3,6 +3,9 @@ use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
+use nix::sys::signal::signal;
+use nix::sys::signal::SigHandler;
+use nix::sys::signal::Signal;
 use stdext::assert_match;
 
 #[test]
@@ -1145,10 +1148,21 @@ fn test_env_vars() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 
+/// Install a SIGINT handler for shutdown tests. This overrides the test runner
+/// handler so it doesn't cancel our test.
+fn install_sigint_handler() {
+    extern "C" fn sigint_handler(_: libc::c_int) {}
+    #[cfg(unix)]
+    unsafe {
+        signal(Signal::SIGINT, SigHandler::Handler(sigint_handler)).unwrap();
+    }
+}
+
 // Note that because of these shutdown tests you _have_ to use `cargo nextest`
 // instead of `cargo test`, so that each test has its own process and R thread.
 #[test]
 fn test_shutdown_request() {
+    install_sigint_handler();
     let frontend = DummyArkFrontend::lock();
 
     frontend.send_shutdown_request(false);
@@ -1165,6 +1179,7 @@ fn test_shutdown_request() {
 
 #[test]
 fn test_shutdown_request_with_restart() {
+    install_sigint_handler();
     let frontend = DummyArkFrontend::lock();
 
     frontend.send_shutdown_request(true);
@@ -1183,6 +1198,7 @@ fn test_shutdown_request_with_restart() {
 // https://github.com/posit-dev/positron/issues/6553
 #[test]
 fn test_shutdown_request_browser() {
+    install_sigint_handler();
     let frontend = DummyArkFrontend::lock();
 
     let code = "browser()";
@@ -1207,6 +1223,34 @@ fn test_shutdown_request_browser() {
     assert_eq!(reply.status, Status::Ok);
     assert_eq!(reply.restart, true);
 
+    frontend.recv_iopub_idle();
+
+    DummyArkFrontend::wait_for_cleanup();
+}
+
+#[test]
+fn test_shutdown_request_while_busy() {
+    install_sigint_handler();
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "Sys.sleep(10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.send_shutdown_request(false);
+    frontend.recv_iopub_busy();
+
+    let reply = frontend.recv_control_shutdown_reply();
+    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(reply.restart, false);
+
+    frontend.recv_iopub_stream_stderr("\n");
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
     frontend.recv_iopub_idle();
 
     DummyArkFrontend::wait_for_cleanup();
