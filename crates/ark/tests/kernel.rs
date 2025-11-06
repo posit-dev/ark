@@ -1159,6 +1159,7 @@ fn install_sigint_handler() {
 // Note that because of these shutdown tests you _have_ to use `cargo nextest`
 // instead of `cargo test`, so that each test has its own process and R thread.
 #[test]
+#[cfg(unix)]
 fn test_shutdown_request() {
     install_sigint_handler();
     let frontend = DummyArkFrontend::lock();
@@ -1176,6 +1177,7 @@ fn test_shutdown_request() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_shutdown_request_with_restart() {
     install_sigint_handler();
     let frontend = DummyArkFrontend::lock();
@@ -1197,6 +1199,7 @@ static SHUTDOWN_TESTS_ENABLED: bool = false;
 // Can shut down Ark when running a nested debug console
 // https://github.com/posit-dev/positron/issues/6553
 #[test]
+#[cfg(unix)]
 fn test_shutdown_request_browser() {
     if !SHUTDOWN_TESTS_ENABLED {
         return;
@@ -1236,6 +1239,7 @@ fn test_shutdown_request_browser() {
 }
 
 #[test]
+#[cfg(unix)]
 fn test_shutdown_request_while_busy() {
     if !SHUTDOWN_TESTS_ENABLED {
         return;
