@@ -3,9 +3,6 @@ use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
-use nix::sys::signal::signal;
-use nix::sys::signal::SigHandler;
-use nix::sys::signal::Signal;
 use stdext::assert_match;
 
 #[test]
@@ -1154,6 +1151,10 @@ fn install_sigint_handler() {
     extern "C" fn sigint_handler(_: libc::c_int) {}
     #[cfg(unix)]
     unsafe {
+        use nix::sys::signal::signal;
+        use nix::sys::signal::SigHandler;
+        use nix::sys::signal::Signal;
+
         signal(Signal::SIGINT, SigHandler::Handler(sigint_handler)).unwrap();
     }
 }
