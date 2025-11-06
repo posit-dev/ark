@@ -303,13 +303,18 @@ struct PendingInputs {
     index: isize,
 }
 
+enum ParseResult<T> {
+    Success(Option<T>),
+    SyntaxError(String),
+}
+
 impl PendingInputs {
-    pub(crate) fn read(input: &str) -> anyhow::Result<Option<Self>> {
+    pub(crate) fn read(input: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
         let status = match harp::parse_status(&harp::ParseInput::Text(input)) {
             Err(err) => {
                 // Failed to even attempt to parse the input, something is seriously wrong
                 // FIXME: There are some valid syntax errors going through here, e.g. `identity |> _(1)`.
-                return Err(anyhow!("Failed to parse input: {err:?}"));
+                return Ok(ParseResult::SyntaxError(format!("{err}")));
             },
             Ok(status) => status,
         };
@@ -321,10 +326,12 @@ impl PendingInputs {
         let exprs = match status {
             harp::ParseResult::Complete(exprs) => exprs,
             harp::ParseResult::Incomplete => {
-                return Err(anyhow!("Can't execute incomplete input:\n{input}"));
+                return Ok(ParseResult::SyntaxError(format!(
+                    "Can't execute incomplete input:\n{input}"
+                )));
             },
             harp::ParseResult::SyntaxError { message, .. } => {
-                return Err(anyhow!("Syntax error: {message}"));
+                return Ok(ParseResult::SyntaxError(format!("Syntax error: {message}")));
             },
         };
 
@@ -334,15 +341,15 @@ impl PendingInputs {
         let index = 0;
 
         if len == 0 {
-            return Ok(None);
+            return Ok(ParseResult::Success(None));
         }
 
-        Ok(Some(Self {
+        Ok(ParseResult::Success(Some(Self {
             exprs,
             srcrefs,
             len,
             index,
-        }))
+        })))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -444,7 +451,7 @@ pub(crate) enum ConsoleResult {
     NewPendingInput(PendingInput),
     Interrupt,
     Disconnected,
-    Error(amalthea::Error),
+    Error(String),
 }
 
 impl RMain {
@@ -1262,10 +1269,17 @@ impl RMain {
             ConsoleInput::Input(code) => {
                 // Parse input into pending expressions
                 match PendingInputs::read(&code) {
-                    Ok(inputs) => {
+                    Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },
-                    Err(err) => return Some(ConsoleResult::Error(amalthea::anyhow!("{err:?}"))),
+                    Ok(ParseResult::SyntaxError(message)) => {
+                        return Some(ConsoleResult::Error(message))
+                    },
+                    Err(err) => {
+                        return Some(ConsoleResult::Error(format!(
+                            "Error while parsing input: {err:?}"
+                        )))
+                    },
                 }
 
                 // Evaluate first expression if there is one
@@ -1439,7 +1453,7 @@ impl RMain {
             log::info!("Detected `readline()` call in renv autoloader. Returning `'{input}'`.");
             match Self::on_console_input(buf, buflen, input) {
                 Ok(()) => return ConsoleResult::NewInput,
-                Err(err) => return ConsoleResult::Error(err),
+                Err(err) => return ConsoleResult::Error(format!("{err}")),
             }
         }
 
@@ -1450,7 +1464,7 @@ impl RMain {
             "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
         ].join("\n");
 
-        return ConsoleResult::Error(Error::InvalidInputRequest(message));
+        return ConsoleResult::Error(message);
     }
 
     fn start_debug(&mut self, debug_preserve_focus: bool) {
@@ -1607,10 +1621,10 @@ impl RMain {
                 let input = convert_line_endings(&input.value, LineEnding::Posix);
                 match Self::on_console_input(buf, buflen, input) {
                     Ok(()) => ConsoleResult::NewInput,
-                    Err(err) => ConsoleResult::Error(err),
+                    Err(err) => ConsoleResult::Error(format!("{err:?}")),
                 }
             },
-            Err(err) => ConsoleResult::Error(err),
+            Err(err) => ConsoleResult::Error(format!("{err:?}")),
         }
     }
 
@@ -2328,14 +2342,6 @@ impl RMain {
         }
     }
 
-    fn propagate_error(&mut self, message: String) -> ! {
-        // Save error message to `RMain`'s buffer to avoid leaking memory when `Rf_error()` jumps.
-        // Some gymnastics are required to deal with the possibility of `CString` conversion failure
-        // since the error message comes from the frontend and might be corrupted.
-        self.r_error_buffer = Some(new_cstring(message));
-        unsafe { Rf_error(self.r_error_buffer.as_ref().unwrap().as_ptr()) }
-    }
-
     #[cfg(not(test))] // Avoid warnings in unit test
     pub(crate) fn read_console_frame(&self) -> RObject {
         self.read_console_frame.borrow().clone()
@@ -2545,8 +2551,13 @@ fn r_read_console_impl(
             return 0;
         },
 
-        ConsoleResult::Error(err) => {
-            main.propagate_error(format!("{err}"));
+        ConsoleResult::Error(message) => {
+            // Save error message in `RMain` to avoid leaking memory when
+            // `Rf_error()` jumps. Some gymnastics are required to deal with the
+            // possibility of `CString` conversion failure since the error
+            // message comes from the frontend and might be corrupted.
+            main.r_error_buffer = Some(new_cstring(message));
+            unsafe { Rf_error(main.r_error_buffer.as_ref().unwrap().as_ptr()) }
         },
     };
 }

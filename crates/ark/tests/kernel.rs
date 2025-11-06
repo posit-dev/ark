@@ -86,6 +86,11 @@ fn test_execute_request_multiple_lines() {
 
 #[test]
 fn test_execute_request_incomplete() {
+    // Set RUST_BACKTRACE to ensure backtraces are captured. We used to leak
+    // backtraces in syntax error messages, and this shouldn't happen even when
+    // `RUST_BACKTRACE` is set.
+    std::env::set_var("RUST_BACKTRACE", "1");
+
     let frontend = DummyArkFrontend::lock();
 
     let code = "1 +";
@@ -95,9 +100,10 @@ fn test_execute_request_incomplete() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't execute incomplete input"));
+    assert_eq!(
+        frontend.recv_iopub_execute_error(),
+        "Error:\nCan't execute incomplete input:\n1 +"
+    );
 
     frontend.recv_iopub_idle();
 
@@ -132,6 +138,11 @@ fn test_execute_request_incomplete_multiple_lines() {
 
 #[test]
 fn test_execute_request_invalid() {
+    // Set RUST_BACKTRACE to ensure backtraces are captured. We used to leak
+    // backtraces in syntax error messages, and this shouldn't happen even when
+    // `RUST_BACKTRACE` is set.
+    std::env::set_var("RUST_BACKTRACE", "1");
+
     let frontend = DummyArkFrontend::lock();
 
     let code = "1 + )";
@@ -141,7 +152,13 @@ fn test_execute_request_invalid() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    assert!(frontend.recv_iopub_execute_error().contains("Syntax error"));
+    let error_msg = frontend.recv_iopub_execute_error();
+
+    // Expected error
+    assert!(error_msg.contains("Syntax error"));
+
+    // Check that no Rust backtrace is injected in the error message
+    assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
 
     frontend.recv_iopub_idle();
 
@@ -417,6 +434,11 @@ fn test_execute_request_browser_error() {
 
 #[test]
 fn test_execute_request_browser_incomplete() {
+    // Set RUST_BACKTRACE to ensure backtraces are captured. We used to leak
+    // backtraces in syntax error messages, and this shouldn't happen even when
+    // `RUST_BACKTRACE` is set.
+    std::env::set_var("RUST_BACKTRACE", "1");
+
     let frontend = DummyArkFrontend::lock();
 
     let code = "browser()";

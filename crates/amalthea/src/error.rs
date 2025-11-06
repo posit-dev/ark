@@ -43,7 +43,6 @@ pub enum Error {
     UnknownCommName(String),
     UnknownCommId(String),
     InvalidCommMessage(String, String, String),
-    InvalidInputRequest(String),
     InvalidConsoleInput(String),
     Anyhow(anyhow::Error),
     ShellErrorReply(Exception),
@@ -195,9 +194,6 @@ impl fmt::Display for Error {
                     "Message '{}' sent to comm '{}' is invalid: {}",
                     msg, id, err
                 )
-            },
-            Error::InvalidInputRequest(message) => {
-                write!(f, "{message}")
             },
             Error::InvalidConsoleInput(message) => {
                 write!(f, "{message}")
