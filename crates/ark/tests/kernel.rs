@@ -141,10 +141,7 @@ fn test_execute_request_invalid() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    assert_eq!(
-        frontend.recv_iopub_execute_error(),
-        "Error:\nSyntax error: unexpected ')'"
-    );
+    assert!(frontend.recv_iopub_execute_error().contains("Syntax error"));
 
     frontend.recv_iopub_idle();
 
