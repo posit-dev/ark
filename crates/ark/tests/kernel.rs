@@ -165,7 +165,54 @@ fn test_execute_request_invalid() {
     assert_eq!(
         frontend.recv_shell_execute_reply_exception(),
         input.execution_count
-    )
+    );
+
+    // https://github.com/posit-dev/ark/issues/598
+    let code = "``";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let error_msg = frontend.recv_iopub_execute_error();
+
+    // Expected error
+    assert!(error_msg.contains("Syntax error"));
+
+    // Check that no Rust backtrace is injected in the error message
+    assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+
+    // https://github.com/posit-dev/ark/issues/722
+
+    let code = "_ + _()";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let error_msg = frontend.recv_iopub_execute_error();
+
+    // Expected error
+    assert!(error_msg.contains("Syntax error"));
+
+    // Check that no Rust backtrace is injected in the error message
+    assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
 }
 
 #[test]

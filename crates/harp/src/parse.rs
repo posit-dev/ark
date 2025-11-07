@@ -28,7 +28,7 @@ pub struct RParseOptions {
 pub enum ParseResult {
     Complete(RObject),
     Incomplete,
-    SyntaxError { message: String, line: i32 },
+    SyntaxError { message: String },
 }
 
 pub enum ParseInput<'a> {
@@ -79,9 +79,7 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
             code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),
         }),
-        ParseResult::SyntaxError { message, line } => {
-            Err(crate::Error::ParseSyntaxError { message, line })
-        },
+        ParseResult::SyntaxError { message } => Err(crate::Error::ParseSyntaxError { message }),
     }
 }
 
@@ -109,17 +107,34 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
             ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.clone()),
         };
 
-        let result: RObject =
-            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into())?;
+        let result =
+            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into());
+
+        let value = match result {
+            Ok(value) => value,
+            Err(err) => match err {
+                // The parser sometimes throws errors instead of returning an
+                // error flag. Convert these errors to proper syntax errors so
+                // we don't leak a backtrace making it seem like an internal
+                // error.
+                // https://github.com/posit-dev/ark/issues/598
+                // https://github.com/posit-dev/ark/issues/722
+                crate::Error::TryCatchError { message, .. } => {
+                    return Ok(ParseResult::SyntaxError { message });
+                },
+                _ => {
+                    return Err(err);
+                },
+            },
+        };
 
         match status {
-            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
+            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(value)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
             libr::ParseStatus_PARSE_ERROR => Ok(ParseResult::SyntaxError {
                 message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
                     .to_string_lossy()
                     .to_string(),
-                line: libr::get(libr::R_ParseError) as i32,
             }),
             _ => {
                 // Should not get here
@@ -207,15 +222,16 @@ mod tests {
             // Error
             assert_match!(
                 parse_status(&ParseInput::Text("42 + _")),
-                Err(_) => {}
+                Ok(ParseResult::SyntaxError { message }) => {
+                    assert!(message.contains("invalid use of pipe placeholder"));
+                }
             );
 
             // "normal" syntax error
             assert_match!(
                 parse_status(&ParseInput::Text("1+1\n*42")),
-                Ok(ParseResult::SyntaxError {message, line}) => {
+                Ok(ParseResult::SyntaxError { message }) => {
                     assert!(message.contains("unexpected"));
-                    assert_eq!(line, 2);
                 }
             );
 
