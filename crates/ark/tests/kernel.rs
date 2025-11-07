@@ -5,6 +5,9 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
 use stdext::assert_match;
 
+// Avoids our global calling handler from rlangifying errors.
+// This causes some test instability across configs.
+
 #[test]
 fn test_kernel_info() {
     let frontend = DummyArkFrontend::lock();
@@ -92,6 +95,18 @@ fn test_execute_request_incomplete() {
     std::env::set_var("RUST_BACKTRACE", "1");
 
     let frontend = DummyArkFrontend::lock();
+
+    let code = "options(positron.error_entrace = FALSE)";
+
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
     let code = "1 +";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
