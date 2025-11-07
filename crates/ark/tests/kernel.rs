@@ -28,63 +28,24 @@ fn test_kernel_info() {
 #[test]
 fn test_execute_request() {
     let frontend = DummyArkFrontend::lock();
-
-    let code = "42";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("42", |result| assert_eq!(result, "[1] 42"));
 }
 
 #[test]
 fn test_execute_request_empty() {
     let frontend = DummyArkFrontend::lock();
 
-    let code = "";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("");
 
     // Equivalent to invisible output
-    let code = "invisible(1)";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("invisible(1)");
 }
 
 #[test]
 fn test_execute_request_multiple_lines() {
     let frontend = DummyArkFrontend::lock();
 
-    let code = "1 +\n  2+\n  3";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 6");
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count)
+    frontend.execute_request("1 +\n  2+\n  3", |result| assert_eq!(result, "[1] 6"));
 }
 
 #[test]
@@ -96,59 +57,20 @@ fn test_execute_request_incomplete() {
 
     let frontend = DummyArkFrontend::lock();
 
-    let code = "options(positron.error_entrace = FALSE)";
+    frontend.execute_request_invisibly("options(positron.error_entrace = FALSE)");
 
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    let code = "1 +";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert_eq!(
-        frontend.recv_iopub_execute_error(),
-        "Error:\nCan't execute incomplete input:\n1 +"
-    );
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    )
+    frontend.execute_request_error("1 +", |error_msg| {
+        assert_eq!(error_msg, "Error:\nCan't execute incomplete input:\n1 +");
+    });
 }
 
 #[test]
 fn test_execute_request_incomplete_multiple_lines() {
     let frontend = DummyArkFrontend::lock();
 
-    let code = "1 +\n2 +";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("Can't execute incomplete input"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    )
+    frontend.execute_request_error("1 +\n2 +", |error_msg| {
+        assert!(error_msg.contains("Can't execute incomplete input"));
+    });
 }
 
 #[test]
@@ -160,74 +82,22 @@ fn test_execute_request_invalid() {
 
     let frontend = DummyArkFrontend::lock();
 
-    let code = "1 + )";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    let error_msg = frontend.recv_iopub_execute_error();
-
-    // Expected error
-    assert!(error_msg.contains("Syntax error"));
-
-    // Check that no Rust backtrace is injected in the error message
-    assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    );
+    frontend.execute_request_error("1 + )", |error_msg| {
+        assert!(error_msg.contains("Syntax error"));
+        assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
+    });
 
     // https://github.com/posit-dev/ark/issues/598
-    let code = "``";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    let error_msg = frontend.recv_iopub_execute_error();
-
-    // Expected error
-    assert!(error_msg.contains("Syntax error"));
-
-    // Check that no Rust backtrace is injected in the error message
-    assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    );
+    frontend.execute_request_error("``", |error_msg| {
+        assert!(error_msg.contains("Syntax error"));
+        assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
+    });
 
     // https://github.com/posit-dev/ark/issues/722
-
-    let code = "_ + _()";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    let error_msg = frontend.recv_iopub_execute_error();
-
-    // Expected error
-    assert!(error_msg.contains("Syntax error"));
-
-    // Check that no Rust backtrace is injected in the error message
-    assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    );
+    frontend.execute_request_error("_ + _()", |error_msg| {
+        assert!(error_msg.contains("Syntax error"));
+        assert!(!error_msg.contains("Stack backtrace:") && !error_msg.contains("std::backtrace"));
+    });
 }
 
 #[test]
@@ -249,16 +119,7 @@ fn test_execute_request_browser() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "Q";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("Q");
 }
 
 #[test]
@@ -280,16 +141,7 @@ fn test_execute_request_browser_continue() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "n";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("n");
 }
 
 #[test]
@@ -314,61 +166,17 @@ fn test_execute_request_browser_nested() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
     // Evaluate a value in the outer browser
-    let code = "42";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend.recv_iopub_execute_result().contains("[1] 42"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("42", |result| assert!(result.contains("[1] 42")));
 
     // Start nested browser from within the first browser
-    let code = "browser()";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
     // Nested browser() produces execute_result output
-    frontend.recv_iopub_execute_result();
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("browser()", |_result| {});
 
     // Evaluate a command in the nested browser
-    let code = "1";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend.recv_iopub_execute_result().contains("[1] 1"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("1", |result| assert!(result.contains("[1] 1")));
 
     // Evaluate another value in the nested browser
-    let code = "\"hello\"";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend.recv_iopub_execute_result().contains("hello"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("\"hello\"", |result| assert!(result.contains("hello")));
 
     // Throw an error in the nested browser
     let code = "stop('error in nested')";
@@ -384,30 +192,10 @@ fn test_execute_request_browser_nested() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
     // Continue to exit the nested browser and return to parent
-    let code = "c";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("c");
 
     // Back in the parent browser, evaluate another value
-    let code = "3.14";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend.recv_iopub_execute_result().contains("[1] 3.14"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("3.14", |result| assert!(result.contains("[1] 3.14")));
 
     // Throw an error in the outer browser
     let code = "stop('error in parent')";
@@ -422,29 +210,9 @@ fn test_execute_request_browser_nested() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "NA";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend.recv_iopub_execute_result().contains("[1] NA"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request("NA", |result| assert!(result.contains("[1] NA")));
     // Quit the outer browser
-    let code = "Q";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("Q");
 }
 
 #[test]
@@ -482,16 +250,7 @@ fn test_execute_request_browser_error() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "Q";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("Q");
 }
 
 #[test]
@@ -582,16 +341,7 @@ fn()";
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "Q";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("Q");
 }
 
 #[test]
@@ -630,16 +380,7 @@ fn test_execute_request_browser_stdin() {
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "Q";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("Q");
 }
 
 #[test]
@@ -735,35 +476,16 @@ fn test_execute_request_browser_local_variable() {
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    let code = "Q";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("Q");
 }
 
 #[test]
 fn test_execute_request_error() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.send_execute_request("stop('foobar')", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, "stop('foobar')");
-    assert!(frontend.recv_iopub_execute_error().contains("foobar"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
-    );
+    frontend.execute_request_error("stop('foobar')", |error_msg| {
+        assert!(error_msg.contains("foobar"));
+    });
 }
 
 #[test]
@@ -802,35 +524,17 @@ fn test_execute_request_error_with_accumulated_output() {
 #[test]
 fn test_execute_request_error_expressions_overflow() {
     let frontend = DummyArkFrontend::lock();
+
     // Deterministically produce an "evaluation too deeply nested" error
-    let code = "options(expressions = 100); f <- function(x) if (x > 0 ) f(x - 1); f(100)";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("evaluation nested too deeply"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
+    frontend.execute_request_error(
+        "options(expressions = 100); f <- function(x) if (x > 0 ) f(x - 1); f(100)",
+        |error_msg| {
+            assert!(error_msg.contains("evaluation nested too deeply"));
+        },
     );
 
     // Check we can still evaluate without causing another too deeply nested error
-    let code = "f(10)";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request_invisibly("f(10)");
 }
 
 #[test]
@@ -838,59 +542,24 @@ fn test_execute_request_error_expressions_overflow_last_value() {
     let frontend = DummyArkFrontend::lock();
 
     // Set state and last value
-    let code =
-        "options(expressions = 100); f <- function(x) if (x > 0 ) f(x - 1); invisible('hello')";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    // Check last value is set
-    let code = ".Last.value";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hello\"");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    // Deterministically produce an "evaluation too deeply nested" error
-    let code = "f(100)";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend
-        .recv_iopub_execute_error()
-        .contains("evaluation nested too deeply"));
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(
-        frontend.recv_shell_execute_reply_exception(),
-        input.execution_count
+    frontend.execute_request_invisibly(
+        "options(expressions = 100); f <- function(x) if (x > 0 ) f(x - 1); invisible('hello')",
     );
 
+    // Check last value is set
+    frontend.execute_request(".Last.value", |result| {
+        assert_eq!(result, "[1] \"hello\"");
+    });
+
+    // Deterministically produce an "evaluation too deeply nested" error
+    frontend.execute_request_error("f(100)", |error_msg| {
+        assert!(error_msg.contains("evaluation nested too deeply"));
+    });
+
     // Check last value is still set
-    let code = ".Last.value";
-    frontend.send_execute_request(code, ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hello\"");
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request(".Last.value", |result| {
+        assert_eq!(result, "[1] \"hello\"");
+    });
 }
 
 #[test]
@@ -953,16 +622,7 @@ fn test_execute_request_single_line_buffer_overflow() {
     // not in text written to the R buffer that calls `stop()`.
     let aaa = "a".repeat(4096);
     let code = format!("quote(\n{aaa}\n)");
-    frontend.send_execute_request(code.as_str(), ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, code);
-
-    assert!(frontend.recv_iopub_execute_result().contains(&aaa));
-
-    frontend.recv_iopub_idle();
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    frontend.execute_request(code.as_str(), |result| assert!(result.contains(&aaa)));
 }
 
 #[test]
