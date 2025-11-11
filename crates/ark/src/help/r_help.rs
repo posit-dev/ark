@@ -246,7 +246,7 @@ impl RHelp {
     }
 
     // Must be called in a `r_task` context.
-    fn r_help_handler(_topic: String) -> anyhow::Result<Option<bool>> {
+    fn r_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
         unsafe {
             let env = (|| {
                 #[cfg(not(test))]
@@ -260,7 +260,7 @@ impl RHelp {
                 R_GlobalEnv
             })();
 
-            let obj = harp::parse_eval0(_topic.as_str(), env)?;
+            let obj = harp::parse_eval0(topic.as_str(), env)?;
             let handler: Option<RObject> =
                 ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
 
