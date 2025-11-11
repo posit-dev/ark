@@ -277,31 +277,39 @@ impl<R: Read, W: Write> DapServer<R, W> {
         true
     }
 
+    fn respond(&mut self, rsp: Response) {
+        log::trace!("DAP: Responding to request: {rsp:#?}");
+        self.server.respond(rsp).unwrap();
+    }
+
+    fn send_event(&mut self, event: Event) {
+        log::trace!("DAP: Sending event: {event:#?}");
+        self.server.send_event(event).unwrap();
+    }
+
     fn handle_initialize(&mut self, req: Request, _args: InitializeArguments) {
         let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
             supports_restart_request: Some(true),
             ..Default::default()
         }));
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
 
-        self.server.send_event(Event::Initialized).unwrap();
+        self.send_event(Event::Initialized);
     }
 
     fn handle_attach(&mut self, req: Request, _args: AttachRequestArguments) {
         let rsp = req.success(ResponseBody::Attach);
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
 
-        self.server
-            .send_event(Event::Stopped(StoppedEventBody {
-                reason: StoppedEventReason::Step,
-                description: Some(String::from("Execution paused")),
-                thread_id: Some(THREAD_ID),
-                preserve_focus_hint: Some(false),
-                text: None,
-                all_threads_stopped: None,
-                hit_breakpoint_ids: None,
-            }))
-            .unwrap();
+        self.send_event(Event::Stopped(StoppedEventBody {
+            reason: StoppedEventReason::Step,
+            description: Some(String::from("Execution paused")),
+            thread_id: Some(THREAD_ID),
+            preserve_focus_hint: Some(false),
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
     }
 
     fn handle_disconnect(&mut self, req: Request, _args: DisconnectArguments) {
@@ -312,7 +320,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         }
 
         let rsp = req.success(ResponseBody::Disconnect);
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     fn handle_restart<T>(&mut self, req: Request, _args: T) {
@@ -324,7 +332,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         }
 
         let rsp = req.success(ResponseBody::Restart);
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     // All servers must respond to `Threads` requests, possibly with
@@ -336,7 +344,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 name: String::from("Main thread"),
             }],
         }));
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     fn handle_set_exception_breakpoints(
@@ -349,7 +357,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 breakpoints: None, // TODO
             },
         ));
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     fn handle_stacktrace(&mut self, req: Request, args: StackTraceArguments) {
@@ -385,14 +393,15 @@ impl<R: Read, W: Write> DapServer<R, W> {
             total_frames: Some(n),
         }));
 
-        self.server.respond(rsp).unwrap();
+        drop(state);
+        self.respond(rsp);
     }
 
     fn handle_source(&mut self, req: Request, _args: SourceArguments) {
         let message = "Unsupported `source` request: {req:?}";
         log::error!("{message}");
         let rsp = req.error(message);
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     fn handle_scopes(&mut self, req: Request, args: ScopesArguments) {
@@ -424,7 +433,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         let rsp = req.success(ResponseBody::Scopes(ScopesResponse { scopes }));
 
-        self.server.respond(rsp).unwrap();
+        drop(state);
+        self.respond(rsp);
     }
 
     fn handle_variables(&mut self, req: Request, args: VariablesArguments) {
@@ -432,7 +442,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let variables = self.collect_r_variables(variables_reference);
         let variables = self.into_variables(variables);
         let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
@@ -496,7 +506,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     fn handle_step<A>(&mut self, req: Request, _args: A, cmd: DebugRequest, resp: ResponseBody) {
         self.send_command(cmd);
         let rsp = req.success(resp);
-        self.server.respond(rsp).unwrap();
+        self.respond(rsp);
     }
 
     fn send_command(&mut self, cmd: DebugRequest) {
