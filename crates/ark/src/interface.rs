@@ -71,6 +71,7 @@ use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
 use harp::object::r_null_or_try_into;
 use harp::object::RObject;
+use harp::r_null;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
@@ -295,8 +296,8 @@ pub struct RMain {
 struct PendingInputs {
     /// EXPRSXP vector of parsed expressions
     exprs: RObject,
-    /// List of srcrefs, the same length as `exprs`
-    srcrefs: RObject,
+    /// Srcref of each expression. If known, this is a list the same length as `exprs`.
+    srcrefs: Option<RObject>,
     /// Length of `exprs` and `srcrefs`
     len: isize,
     /// Index into the stack
@@ -336,6 +337,11 @@ impl PendingInputs {
         };
 
         let srcrefs = get_block_srcrefs(exprs.sexp);
+        let srcrefs = if srcrefs.is_null() {
+            None
+        } else {
+            Some(srcrefs)
+        };
 
         let len = exprs.length();
         let index = 0;
@@ -361,7 +367,11 @@ impl PendingInputs {
             return None;
         }
 
-        let srcref = get_srcref(self.srcrefs.sexp, self.index);
+        let srcref = self
+            .srcrefs
+            .as_ref()
+            .map(|srcrefs| get_srcref(srcrefs.sexp, self.index));
+
         let expr = harp::r_list_get(self.exprs.sexp, self.index);
 
         self.index += 1;
@@ -372,7 +382,7 @@ impl PendingInputs {
 #[derive(Debug)]
 pub(crate) struct PendingInput {
     expr: RObject,
-    srcref: RObject,
+    srcref: Option<RObject>,
 }
 
 #[derive(Debug, Clone)]
@@ -2506,7 +2516,12 @@ fn r_read_console_impl(
                 // after a longjump to top-level, so it's safe to protect here
                 // even if the evaluation throws
                 let expr = libr::Rf_protect(expr.into());
-                let srcref = libr::Rf_protect(srcref.into());
+
+                let srcref = match srcref {
+                    Some(srcref) => srcref.into(),
+                    None => r_null(),
+                };
+                libr::Rf_protect(srcref);
 
                 RMain::eval(expr, srcref, buf, buflen);
 
