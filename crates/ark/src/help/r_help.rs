@@ -232,16 +232,35 @@ impl RHelp {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
-        let found = r_task(|| unsafe {
-            if let Ok(Some(result)) = Self::r_help_handler(topic.clone()) {
-                return Ok(result);
-            }
+        let topic = HelpTopic::parse(topic);
 
-            RFunction::from(".ps.help.showHelpTopic")
-                .add(topic)
-                .call()?
-                .to::<bool>()
-        })?;
+        let found = match topic {
+            HelpTopic::Simple(symbol) => r_task(|| unsafe {
+                // Try evaluating the help handler first and then fall back to
+                // the default help topic display function.
+
+                if let Ok(Some(result)) = Self::r_help_handler(symbol.clone()) {
+                    return Ok(result);
+                }
+
+                RFunction::from(".ps.help.showHelpTopic")
+                    .add(symbol)
+                    .call()?
+                    .to::<bool>()
+            }),
+            HelpTopic::Expression(expression) => {
+                // For expressions, we have to use the help handler
+                // If that fails there's no fallback.
+                r_task(|| match Self::r_help_handler(expression) {
+                    Ok(Some(result)) => Ok(result),
+                    // No method found
+                    Ok(None) => Ok(false),
+                    // Error during evaluation
+                    Err(err) => Err(harp::Error::Anyhow(err)),
+                })
+            },
+        }?;
+
         Ok(found)
     }
 
@@ -287,6 +306,24 @@ impl RHelp {
         RFunction::from(".ps.help.startOrReconnectToHelpServer")
             .call()
             .and_then(|x| x.try_into())
+    }
+}
+
+enum HelpTopic {
+    // no obvious expression syntax — e.g. "abs", "base::abs"
+    Simple(String),
+    // contains expression syntax — e.g. "tensorflow::tf$abs", "model@coef"
+    // such that there will never exist a help topic with that name
+    Expression(String),
+}
+
+impl HelpTopic {
+    pub fn parse(topic: String) -> Self {
+        if topic.contains('$') || topic.contains('@') {
+            Self::Expression(topic)
+        } else {
+            Self::Simple(topic)
+        }
     }
 }
 
