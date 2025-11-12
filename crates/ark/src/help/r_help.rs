@@ -239,7 +239,7 @@ impl RHelp {
                 // Try evaluating the help handler first and then fall back to
                 // the default help topic display function.
 
-                if let Ok(Some(result)) = Self::r_help_handler(symbol.clone()) {
+                if let Ok(Some(result)) = Self::r_custom_help_handler(symbol.clone()) {
                     return Ok(result);
                 }
 
@@ -251,7 +251,7 @@ impl RHelp {
             HelpTopic::Expression(expression) => {
                 // For expressions, we have to use the help handler
                 // If that fails there's no fallback.
-                r_task(|| match Self::r_help_handler(expression) {
+                r_task(|| match Self::r_custom_help_handler(expression) {
                     Ok(Some(result)) => Ok(result),
                     // No method found
                     Ok(None) => Ok(false),
@@ -265,7 +265,8 @@ impl RHelp {
     }
 
     // Must be called in a `r_task` context.
-    fn r_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
+    // Tries calling a custom help handler defined as an ark method.
+    fn r_custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
         unsafe {
             let env = (|| {
                 #[cfg(not(test))]
