@@ -13,49 +13,53 @@ use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use ark::help::message::HelpEvent;
 use ark::help::r_help::RHelp;
 use ark::help_proxy;
 use ark::r_task::r_task;
+use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 
-/**
- * Basic test for the R help comm; requests help for a topic and ensures that we
- * get a reply.
- */
-#[test]
-fn test_help_comm() {
-    // Create the comm socket for the Help comm
-    let comm = CommSocket::new(
-        CommInitiator::FrontEnd,
-        String::from("test-help-comm-id"),
-        String::from("positron.help"),
-    );
+struct TestRHelp {
+    comm: CommSocket,
+    _help_event_tx: Sender<HelpEvent>,
+}
 
-    let incoming_tx = comm.incoming_tx.clone();
-    let outgoing_rx = comm.outgoing_rx.clone();
+impl TestRHelp {
+    fn new(comm_id: String) -> Self {
+        let comm = CommSocket::new(
+            CommInitiator::FrontEnd,
+            comm_id,
+            String::from("positron.help"),
+        );
+        // Start the help comm. It's important to save the help event sender so
+        // that the help comm doesn't exit before we're done with it; allowing the
+        // sender to be dropped signals the help comm to exit.
+        let r_port = r_task(|| RHelp::r_start_or_reconnect_to_help_server().unwrap());
+        let proxy_port = help_proxy::start(r_port).unwrap();
+        let _help_event_tx = RHelp::start(comm.clone(), r_port, proxy_port).unwrap();
 
-    // Start the help comm. It's important to save the help event sender so
-    // that the help comm doesn't exit before we're done with it; allowing the
-    // sender to be dropped signals the help comm to exit.
-    let r_port = r_task(|| RHelp::r_start_or_reconnect_to_help_server().unwrap());
-    let proxy_port = help_proxy::start(r_port).unwrap();
-    let _help_event_tx = RHelp::start(comm, r_port, proxy_port).unwrap();
+        Self {
+            comm,
+            _help_event_tx,
+        }
+    }
 
-    // Utility function for testing `ShowHelpTopic` requests
-    let test_topic = |topic: &str, id: &str| {
+    fn test_topic(&self, topic: &str, id: &str) {
         // Send a request for the help topic
         let request = HelpBackendRequest::ShowHelpTopic(ShowHelpTopicParams {
             topic: String::from(topic),
         });
         let data = serde_json::to_value(request).unwrap();
         let request_id = String::from(id);
-        incoming_tx
+        self.comm
+            .incoming_tx
             .send(CommMsg::Rpc(request_id.clone(), data))
             .unwrap();
 
         // Wait for the response (up to 1 second; this should be fast!)
         let duration = std::time::Duration::from_secs(1);
-        let response = outgoing_rx.recv_timeout(duration).unwrap();
+        let response = self.comm.outgoing_rx.recv_timeout(duration).unwrap();
         match response {
             CommMsg::Rpc(id, val) => {
                 let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
@@ -71,13 +75,22 @@ fn test_help_comm() {
                 panic!("Unexpected response from help comm: {:?}", response);
             },
         }
-    };
+    }
+}
 
-    test_topic("library", "help-test-id-1");
-    test_topic("utils::find", "help-test-id-2");
+/**
+ * Basic test for the R help comm; requests help for a topic and ensures that we
+ * get a reply.
+ */
+#[test]
+fn test_help_comm() {
+    let r_help = TestRHelp::new(String::from("test-help-comm-id"));
+
+    r_help.test_topic("library", "help-test-id-1");
+    r_help.test_topic("utils::find", "help-test-id-2");
     // Can come through this way if users request help while their cursor is on
     // an internal function
-    test_topic("utils:::find", "help-test-id-3");
+    r_help.test_topic("utils:::find", "help-test-id-3");
 
     // Figure out which port the R help server is running on (or would run on)
     let r_help_port = r_task(|| unsafe {
@@ -97,4 +110,34 @@ fn test_help_comm() {
         r_help_port
     );
     assert!(RHelp::is_help_url(url.as_str(), r_help_port));
+}
+
+#[test]
+fn test_custom_help_handlers() {
+    let r_help = TestRHelp::new(String::from("test-help-comm-id-2"));
+
+    // Add a test help handler for an object
+    r_task(|| {
+        harp::parse_eval_global(
+            r#"
+
+        called <- FALSE
+        .ark.register_method("ark_positron_help_get_handler", "foo", function(x) {
+            function() {
+                called <<- TRUE
+            }
+        })
+
+        obj <- new.env()
+        obj$hello <- structure(list(), class = "foo")
+        "#,
+        )
+        .unwrap();
+    });
+
+    r_help.test_topic("obj$hello", "help-test-id-4");
+    assert_eq!(
+        r_task(|| unsafe { harp::parse_eval_global("called").unwrap().to::<bool>() }).unwrap(),
+        true,
+    );
 }
