@@ -1882,13 +1882,7 @@ impl RMain {
             Stream::Stderr
         };
 
-        // If active execution request is silent don't broadcast
-        // any output
-        if let Some(ref req) = r_main.active_request {
-            if req.request.silent {
-                return;
-            }
-        }
+        // No early return for silent requests anymore to match Python kernel behaviour.
 
         if stream == Stream::Stdout && is_auto_printing() {
             // If we are at top-level, we're handling visible output auto-printed by
