@@ -89,6 +89,7 @@ fn locate_help_node(tree: &Tree, point: Point) -> Option<Node<'_>> {
     // Even if they are at `p<>kg::fun`, we assume they really want docs for `fun`.
     let node = match node.parent() {
         Some(parent) if matches!(parent.node_type(), NodeType::NamespaceOperator(_)) => parent,
+        Some(parent) if matches!(parent.node_type(), NodeType::ExtractOperator(_)) => parent,
         Some(_) => node,
         None => node,
     };
@@ -110,33 +111,30 @@ mod tests {
             .set_language(&tree_sitter_r::LANGUAGE.into())
             .expect("failed to create parser");
 
-        // On the RHS
-        let (text, point) = point_from_cursor("dplyr::ac@ross(x:y, sum)");
-        let tree = parser.parse(text.as_str(), None).unwrap();
-        let node = locate_help_node(&tree, point).unwrap();
-        let text = node.utf8_text(text.as_bytes()).unwrap();
-        assert_eq!(text, "dplyr::across");
+        // (text cursor, expected help topic)
+        let cases = vec![
+            // On the RHS
+            ("dplyr::ac@ross(x:y, sum)", "dplyr::across"),
+            // On the LHS (Returns function help for `across()`, not package help for `dplyr`,
+            // as we assume that is more useful for the user).
+            ("dpl@yr::across(x:y, sum)", "dplyr::across"),
+            // In the operator
+            ("dplyr:@:across(x:y, sum)", "dplyr::across"),
+            // Internal `:::`
+            ("dplyr:::ac@ross(x:y, sum)", "dplyr:::across"),
+            // R6 methods, or reticulate accessors
+            ("tf$a@bs(x)", "tf$abs"),
+            ("t@f$abs(x)", "tf$abs"),
+            // With the package namespace
+            ("tensorflow::tf$ab@s(x)", "tensorflow::tf$abs"),
+        ];
 
-        // On the LHS (Returns function help for `across()`, not package help for `dplyr`,
-        // as we assume that is more useful for the user).
-        let (text, point) = point_from_cursor("dpl@yr::across(x:y, sum)");
-        let tree = parser.parse(text.as_str(), None).unwrap();
-        let node = locate_help_node(&tree, point).unwrap();
-        let text = node.utf8_text(text.as_bytes()).unwrap();
-        assert_eq!(text, "dplyr::across");
-
-        // In the operator
-        let (text, point) = point_from_cursor("dplyr:@:across(x:y, sum)");
-        let tree = parser.parse(text.as_str(), None).unwrap();
-        let node = locate_help_node(&tree, point).unwrap();
-        let text = node.utf8_text(text.as_bytes()).unwrap();
-        assert_eq!(text, "dplyr::across");
-
-        // Internal `:::`
-        let (text, point) = point_from_cursor("dplyr:::ac@ross(x:y, sum)");
-        let tree = parser.parse(text.as_str(), None).unwrap();
-        let node = locate_help_node(&tree, point).unwrap();
-        let text = node.utf8_text(text.as_bytes()).unwrap();
-        assert_eq!(text, "dplyr:::across");
+        for (code, expected) in cases {
+            let (text, point) = point_from_cursor(code);
+            let tree = parser.parse(text.as_str(), None).unwrap();
+            let node = locate_help_node(&tree, point).unwrap();
+            let text = node.utf8_text(text.as_bytes()).unwrap();
+            assert_eq!(text, expected);
+        }
     }
 }

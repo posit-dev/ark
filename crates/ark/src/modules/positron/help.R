@@ -230,6 +230,11 @@ getHtmlHelpContentsDevImpl <- function(x) {
     .ps.Call("ps_browse_url", as.character(url))
 }
 
+#' @export
+.ps.help.browse_external_url <- function(url) {
+    .ps.Call("ps_help_browse_external_url", as.character(url))
+}
+
 # @param rd_file Path to an `.Rd` file.
 # @returns The result of converting that `.Rd` to HTML and concatenating to a
 #   string.

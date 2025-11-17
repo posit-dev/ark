@@ -18,13 +18,20 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::RObject;
+use libr::R_GlobalEnv;
+use libr::R_NilValue;
+use libr::SEXP;
 use log::info;
 use log::trace;
 use log::warn;
 use stdext::spawn;
 
 use crate::help::message::HelpEvent;
+use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
+use crate::interface::RMain;
+use crate::methods::ArkGenerics;
 use crate::r_task;
 
 /**
@@ -182,27 +189,37 @@ impl RHelp {
     /// coming through here has already been verified to look like a help URL with
     /// `is_help_url()`, so if we get an unexpected prefix, that's an error.
     fn handle_show_help_url(&self, params: ShowHelpUrlParams) -> anyhow::Result<()> {
-        let url = params.url;
+        let url = params.url.clone();
 
-        if !Self::is_help_url(url.as_str(), self.r_port) {
-            let prefix = Self::help_url_prefix(self.r_port);
-            return Err(anyhow!(
-                "Help URL '{url}' doesn't have expected prefix '{prefix}'."
-            ));
-        }
+        let url = match params.kind {
+            ShowHelpUrlKind::HelpProxy => {
+                if !Self::is_help_url(url.as_str(), self.r_port) {
+                    let prefix = Self::help_url_prefix(self.r_port);
+                    return Err(anyhow!(
+                        "Help URL '{url}' doesn't have expected prefix '{prefix}'."
+                    ));
+                }
 
-        // Re-direct the help event to our help proxy server.
-        let r_prefix = Self::help_url_prefix(self.r_port);
-        let proxy_prefix = Self::help_url_prefix(self.proxy_port);
+                // Re-direct the help event to our help proxy server.
+                let r_prefix = Self::help_url_prefix(self.r_port);
+                let proxy_prefix = Self::help_url_prefix(self.proxy_port);
 
-        let proxy_url = url.replace(r_prefix.as_str(), proxy_prefix.as_str());
+                url.replace(r_prefix.as_str(), proxy_prefix.as_str())
+            },
+            ShowHelpUrlKind::External => {
+                // The URL is not a help URL; just use it as-is.
+                url
+            },
+        };
 
         log::trace!(
-            "Sending frontend event `ShowHelp` with R url '{url}' and proxy url '{proxy_url}'"
+            "Sending frontend event `ShowHelp` with R url '{}' and proxy url '{}'",
+            params.url,
+            url
         );
 
         let msg = HelpFrontendEvent::ShowHelp(ShowHelpParams {
-            content: proxy_url,
+            content: url,
             kind: ShowHelpKind::Url,
             focus: true,
         });
@@ -215,13 +232,73 @@ impl RHelp {
 
     #[tracing::instrument(level = "trace", skip(self))]
     fn show_help_topic(&self, topic: String) -> anyhow::Result<bool> {
-        let found = r_task(|| unsafe {
-            RFunction::from(".ps.help.showHelpTopic")
-                .add(topic)
-                .call()?
-                .to::<bool>()
-        })?;
+        let topic = HelpTopic::parse(topic);
+
+        let found = match topic {
+            HelpTopic::Simple(symbol) => r_task(|| unsafe {
+                // Try evaluating the help handler first and then fall back to
+                // the default help topic display function.
+
+                if let Ok(Some(result)) = Self::r_custom_help_handler(symbol.clone()) {
+                    return Ok(result);
+                }
+
+                RFunction::from(".ps.help.showHelpTopic")
+                    .add(symbol)
+                    .call()?
+                    .to::<bool>()
+            }),
+            HelpTopic::Expression(expression) => {
+                // For expressions, we have to use the help handler
+                // If that fails there's no fallback.
+                r_task(|| match Self::r_custom_help_handler(expression) {
+                    Ok(Some(result)) => Ok(result),
+                    // No method found
+                    Ok(None) => Ok(false),
+                    // Error during evaluation
+                    Err(err) => Err(harp::Error::Anyhow(err)),
+                })
+            },
+        }?;
+
         Ok(found)
+    }
+
+    // Must be called in a `r_task` context.
+    // Tries calling a custom help handler defined as an ark method.
+    fn r_custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
+        unsafe {
+            let env = (|| {
+                #[cfg(not(test))]
+                if RMain::is_initialized() {
+                    if let Some(debug_env) = &RMain::get().debug_env() {
+                        // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
+                        return debug_env.sexp;
+                    }
+                }
+
+                R_GlobalEnv
+            })();
+
+            let obj = harp::parse_eval0(topic.as_str(), env)?;
+            let handler: Option<RObject> =
+                ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
+
+            if let Some(handler) = handler {
+                let mut fun = RFunction::new_inlined(handler);
+                match fun.call_in(env) {
+                    Err(err) => {
+                        log::error!("Error calling help handler: {:?}", err);
+                        return Err(anyhow!("Error calling help handler: {:?}", err));
+                    },
+                    Ok(result) => {
+                        return Ok(Some(result.try_into()?));
+                    },
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn r_start_or_reconnect_to_help_server() -> harp::Result<u16> {
@@ -231,4 +308,34 @@ impl RHelp {
             .call()
             .and_then(|x| x.try_into())
     }
+}
+
+enum HelpTopic {
+    // no obvious expression syntax — e.g. "abs", "base::abs"
+    Simple(String),
+    // contains expression syntax — e.g. "tensorflow::tf$abs", "model@coef"
+    // such that there will never exist a help topic with that name
+    Expression(String),
+}
+
+impl HelpTopic {
+    pub fn parse(topic: String) -> Self {
+        if topic.contains('$') || topic.contains('@') {
+            Self::Expression(topic)
+        } else {
+            Self::Simple(topic)
+        }
+    }
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_help_browse_external_url(
+    url: SEXP,
+) -> Result<SEXP, anyhow::Error> {
+    RMain::get().send_help_event(HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
+        url: RObject::view(url).to::<String>()?,
+        kind: ShowHelpUrlKind::External,
+    }))?;
+
+    Ok(R_NilValue)
 }
