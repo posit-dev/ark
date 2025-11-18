@@ -134,6 +134,12 @@ impl TryFrom<&CharacterVector> for Vec<String> {
     }
 }
 
+impl From<CharacterVector> for RObject {
+    fn from(value: CharacterVector) -> Self {
+        value.object
+    }
+}
+
 #[cfg(test)]
 mod test {
     use libr::STRSXP;

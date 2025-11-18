@@ -19,6 +19,8 @@ use crate::types::*;
 // Functions and globals
 
 functions::generate! {
+    pub fn R_NewEnv(enclos: SEXP, hash: std::ffi::c_int, size: std::ffi::c_int) -> SEXP;
+
     pub fn Rf_initialize_R(ac: std::ffi::c_int, av: *mut *mut std::ffi::c_char) -> std::ffi::c_int;
 
     pub fn run_Rmainloop();

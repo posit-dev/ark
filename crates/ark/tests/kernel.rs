@@ -60,7 +60,7 @@ fn test_execute_request_incomplete() {
     frontend.execute_request_invisibly("options(positron.error_entrace = FALSE)");
 
     frontend.execute_request_error("1 +", |error_msg| {
-        assert_eq!(error_msg, "Error:\nCan't execute incomplete input:\n1 +");
+        assert_eq!(error_msg, "Error:\nCan't parse incomplete input");
     });
 }
 
@@ -69,7 +69,7 @@ fn test_execute_request_incomplete_multiple_lines() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.execute_request_error("1 +\n2 +", |error_msg| {
-        assert!(error_msg.contains("Can't execute incomplete input"));
+        assert!(error_msg.contains("Can't parse incomplete input"));
     });
 }
 
@@ -229,7 +229,7 @@ fn test_execute_request_browser_incomplete() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stderr("Error: Can't execute incomplete input:\n1 +\n");
+    frontend.recv_iopub_stream_stderr("Error: Can't parse incomplete input\n");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -937,4 +937,38 @@ fn test_shutdown_request_while_busy() {
     frontend.recv_iopub_idle();
 
     DummyArkFrontend::wait_for_cleanup();
+}
+
+#[test]
+fn test_execute_request_source_references() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Test that our parser attaches source references when global option is set
+    frontend.execute_request_invisibly("options(keep.source = TRUE)");
+    frontend.execute_request_invisibly("f <- function() {}");
+
+    frontend.execute_request(
+        "srcref <- attr(f, 'srcref'); inherits(srcref, 'srcref')",
+        |result| {
+            assert_eq!(result, "[1] TRUE");
+        },
+    );
+
+    frontend.execute_request(
+        "srcfile <- attr(srcref, 'srcfile'); inherits(srcfile, 'srcfile')",
+        |result| {
+            assert_eq!(result, "[1] TRUE");
+        },
+    );
+
+    // When global option is unset, we don't attach source references
+    frontend.execute_request_invisibly("options(keep.source = FALSE)");
+    frontend.execute_request_invisibly("g <- function() {}");
+
+    frontend.execute_request(
+        "srcref <- attr(g, 'srcref'); identical(srcref, NULL)",
+        |result| {
+            assert_eq!(result, "[1] TRUE");
+        },
+    );
 }

@@ -31,7 +31,7 @@ pub struct SrcRef {
     pub column_byte: std::ops::Range<u32>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct SrcFile {
     pub inner: RObject,
 }
@@ -118,13 +118,33 @@ impl TryFrom<RObject> for SrcRef {
 /// Creates the same sort of srcfile object as with `parse(text = )`.
 /// Takes code as an R string containing newlines, or as a R vector of lines.
 impl SrcFile {
-    fn new_virtual(text: RObject) -> harp::Result<Self> {
+    // Created by the R function `parse()`
+    pub fn new_virtual(text: RObject) -> Self {
         let inner = RFunction::new("base", "srcfilecopy")
             .param("filename", "<text>")
             .param("lines", text)
-            .call()?;
+            .call();
 
-        Ok(Self { inner })
+        // Unwrap safety: Should never fail, unless something is seriously wrong
+        let inner = inner.unwrap();
+
+        Self { inner }
+    }
+
+    // Created by the C-level parser
+    pub fn new_virtual_empty_filename(text: RObject) -> Self {
+        let inner = harp::Environment::new_empty();
+        inner.bind("filename".into(), &RObject::from(""));
+        inner.bind("lines".into(), &text);
+
+        let inner: RObject = inner.into();
+
+        thread_local! {
+            static CLASS: RObject = crate::CharacterVector::create(vec!["srcfile", "srcfilecopy"]).into();
+        }
+        CLASS.with(|c| inner.set_attribute("class", c.sexp));
+
+        Self { inner }
     }
 
     pub fn lines(&self) -> harp::Result<RObject> {
@@ -136,19 +156,15 @@ impl SrcFile {
     }
 }
 
-impl TryFrom<&str> for SrcFile {
-    type Error = harp::Error;
-
-    fn try_from(value: &str) -> harp::Result<Self> {
+impl From<&str> for SrcFile {
+    fn from(value: &str) -> Self {
         let input = crate::as_parse_text(value);
         SrcFile::new_virtual(input)
     }
 }
 
-impl TryFrom<&harp::CharacterVector> for SrcFile {
-    type Error = harp::Error;
-
-    fn try_from(value: &harp::CharacterVector) -> harp::Result<Self> {
+impl From<&harp::CharacterVector> for SrcFile {
+    fn from(value: &harp::CharacterVector) -> Self {
         SrcFile::new_virtual(value.object.clone())
     }
 }

@@ -31,6 +31,7 @@ pub enum ParseResult {
     SyntaxError { message: String },
 }
 
+#[derive(Clone, Debug)]
 pub enum ParseInput<'a> {
     Text(&'a str),
     SrcFile(&'a srcref::SrcFile),
@@ -67,7 +68,7 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
-    let srcfile = srcref::SrcFile::try_from(text)?;
+    let srcfile = srcref::SrcFile::from(text);
     parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
@@ -84,7 +85,7 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
 }
 
 pub fn parse_with_parse_data(text: &str) -> crate::Result<(ParseResult, ParseData)> {
-    let srcfile = srcref::SrcFile::try_from(text)?;
+    let srcfile = srcref::SrcFile::from(text);
 
     // Fill parse data in `srcfile` by side effect
     let status = parse_status(&ParseInput::SrcFile(&srcfile))?;
