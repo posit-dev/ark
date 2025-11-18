@@ -76,6 +76,7 @@ use harp::routines::r_register_routines;
 use harp::session::r_traceback;
 use harp::srcref::get_block_srcrefs;
 use harp::srcref::get_srcref;
+use harp::srcref::SrcFile;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
@@ -310,7 +311,16 @@ enum ParseResult<T> {
 
 impl PendingInputs {
     pub(crate) fn read(input: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
-        let status = match harp::parse_status(&harp::ParseInput::Text(input)) {
+        let mut _srcfile = None;
+
+        let input = if harp::get_option_bool("keep.source") {
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(input.into()));
+            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+        } else {
+            harp::ParseInput::Text(input)
+        };
+
+        let status = match harp::parse_status(&input) {
             Err(err) => {
                 // Failed to even attempt to parse the input, something is seriously wrong
                 // FIXME: There are some valid syntax errors going through here, e.g. `identity |> _(1)`.
@@ -327,7 +337,7 @@ impl PendingInputs {
             harp::ParseResult::Complete(exprs) => exprs,
             harp::ParseResult::Incomplete => {
                 return Ok(ParseResult::SyntaxError(format!(
-                    "Can't execute incomplete input:\n{input}"
+                    "Can't parse incomplete input"
                 )));
             },
             harp::ParseResult::SyntaxError { message, .. } => {

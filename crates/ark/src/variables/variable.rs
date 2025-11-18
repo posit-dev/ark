@@ -2112,7 +2112,7 @@ mod tests {
     #[test]
     fn test_truncation_on_matrices() {
         r_task(|| {
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value = harp::parse_eval_base("matrix(0, nrow = 10000, ncol = 10000)").unwrap();
             env.bind("x".into(), &value);
 
@@ -2132,7 +2132,7 @@ mod tests {
     #[test]
     fn test_string_truncation() {
         r_task(|| {
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value = harp::parse_eval_base("paste(1:5e6, collapse = ' - ')").unwrap();
             env.bind("x".into(), &value);
 
@@ -2143,7 +2143,7 @@ mod tests {
             assert_eq!(vars[0].is_truncated, true);
 
             // Test for the empty string
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value = harp::parse_eval_base("''").unwrap();
             env.bind("x".into(), &value);
 
@@ -2157,7 +2157,7 @@ mod tests {
     #[test]
     fn test_s4_with_different_length() {
         r_task(|| {
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             // Matrix::Matrix objects have length != 1, but their format() method returns a length 1 character
             // describing their class.
             let value = harp::parse_eval_base("Matrix::Matrix(0, nrow= 10, ncol = 10)").unwrap();
@@ -2181,7 +2181,7 @@ mod tests {
                 return;
             }
 
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value = harp::parse_eval_base(r#"rlang:::chr_get("foo", 0L)"#).unwrap();
             env.bind("x".into(), &value);
 
@@ -2196,7 +2196,7 @@ mod tests {
     fn test_matrix_display() {
         r_task(|| {
             // Test 10x10 matrix
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value =
                 harp::parse_eval_base("matrix(paste(1:90, collapse = ' - '), nrow = 9, ncol = 10)")
                     .unwrap();
@@ -2220,7 +2220,7 @@ mod tests {
             assert_eq!(display_value_matrix, display_value_df);
 
             // Test plurals
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value =
                 harp::parse_eval_base("matrix(paste(1:100, collapse = ' - '), nrow = 1, ncol = 1)")
                     .unwrap();
@@ -2231,7 +2231,7 @@ mod tests {
             assert_eq!(vars[0].display_value, "[1 row x 1 column] <matrix>");
 
             // Test class
-            let env = Environment::new_empty().unwrap();
+            let env = Environment::new_empty();
             let value = harp::parse_eval_base(
                 "structure(matrix(paste(1:100, collapse = ' - '), nrow = 1, ncol = 1), class='foo')",
             )

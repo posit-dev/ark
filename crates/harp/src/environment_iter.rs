@@ -189,7 +189,7 @@ mod tests {
     #[allow(non_snake_case)]
     fn test_binding_eq() {
         r_task(|| {
-            let env: Environment = Environment::new_empty().unwrap();
+            let env: Environment = Environment::new_empty();
 
             let obj = harp::parse_eval_base("1").unwrap();
             env.bind(RSymbol::from("a"), &obj);

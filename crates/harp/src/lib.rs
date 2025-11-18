@@ -1,9 +1,10 @@
 //
 // lib.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
 //
+
 pub mod attrib;
 pub mod call;
 mod column_names;
@@ -24,6 +25,7 @@ pub mod line_ending;
 mod matrix;
 pub mod modules;
 pub mod object;
+pub mod options;
 pub mod parse;
 pub mod parser;
 pub mod polled_events;
@@ -61,6 +63,7 @@ pub use vector::list::*;
 // resolve to the correct symbols
 extern crate self as harp;
 
+pub use harp::environment::*;
 pub use harp::error::as_result;
 pub use harp::exec::top_level_exec;
 pub use harp::exec::try_catch;
@@ -72,7 +75,7 @@ pub use harp::object::list_poke;
 pub use harp::object::RObject;
 pub use harp::session::*;
 pub use harp::symbol::RSymbol;
-pub use harp::utils::get_option;
+pub use harp::options::*;
 pub use harp::weak_ref::RWeakRef;
 pub use harp_macros::register;
 
