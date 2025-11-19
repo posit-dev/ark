@@ -66,6 +66,7 @@ use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use anyhow::anyhow;
 use anyhow::bail;
+use anyhow::Context;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
 use crossbeam::select;
@@ -84,7 +85,7 @@ use libr::*;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::local;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::spawn;
 use stdext::unwrap;
 use tracing::Instrument;
@@ -236,7 +237,7 @@ impl RDataExplorer {
                     // the schema
                     comm_manager_tx
                         .send(CommManagerEvent::Closed(comm.comm_id))
-                        .or_log_error("Error sending comm closed event")
+                        .log_err();
                 },
             }
         });
@@ -680,7 +681,8 @@ impl RDataExplorer {
             handle_columns_profiles_requests(params, comm)
                 .instrument(tracing::info_span!("get_columns_profile", ns = id))
                 .await
-                .or_log_error("Unable to handle get_columns_profile");
+                .context("Unable to handle get_columns_profile")
+                .log_err();
         });
     }
 

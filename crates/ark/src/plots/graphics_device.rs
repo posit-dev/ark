@@ -31,6 +31,7 @@ use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
+use anyhow::Context;
 use base64::engine::general_purpose;
 use base64::Engine;
 use crossbeam::channel::Select;
@@ -43,7 +44,7 @@ use libr::pGEcontext;
 use libr::R_NilValue;
 use libr::SEXP;
 use serde_json::json;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
@@ -567,7 +568,7 @@ impl DeviceContext {
                 metadata,
                 transient,
             }))
-            .or_log_warning(&format!("Could not publish display data on IOPub."));
+            .log_err();
     }
 
     fn process_update_plot(&self, id: &PlotId) {
@@ -620,7 +621,8 @@ impl DeviceContext {
         socket
             .outgoing_tx
             .send(CommMsg::Data(value))
-            .or_log_error("Failed to send update message for id {id}.");
+            .context("Failed to send update message for id {id}.")
+            .log_err();
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
@@ -647,7 +649,7 @@ impl DeviceContext {
                 metadata,
                 transient,
             }))
-            .or_log_warning(&format!("Could not publish update display data on IOPub."));
+            .log_err();
     }
 
     fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {

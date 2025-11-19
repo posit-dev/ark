@@ -15,7 +15,7 @@ use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
-use stdext::log_error;
+use stdext::result::ResultExt;
 use stdext::spawn;
 
 use crate::dap::dap_r_main::FrameInfo;
@@ -134,14 +134,15 @@ impl Dap {
 
         if self.is_debugging {
             if let Some(tx) = &self.backend_events_tx {
-                log_error!(tx.send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus })));
+                tx.send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus }))
+                    .log_err();
             }
         } else {
             if let Some(tx) = &self.comm_tx {
                 // Ask frontend to connect to the DAP
                 log::trace!("DAP: Sending `start_debug` event");
                 let msg = amalthea::comm_rpc_message!("start_debug");
-                log_error!(tx.send(msg));
+                tx.send(msg).log_err();
             }
 
             self.is_debugging = true;
@@ -162,7 +163,7 @@ impl Dap {
                 // terminate the debugging session and disconnect.
                 if let Some(tx) = &self.backend_events_tx {
                     log::trace!("DAP: Sending `stop_debug` event");
-                    log_error!(tx.send(DapBackendEvent::Terminated));
+                    tx.send(DapBackendEvent::Terminated).log_err();
                 }
             }
             // else: If not connected to a frontend, the DAP client should
