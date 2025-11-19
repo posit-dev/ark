@@ -139,7 +139,7 @@ impl SrcFile {
 
         let inner: RObject = inner.into();
 
-        thread_local! {
+        harp::once! {
             static CLASS: RObject = crate::CharacterVector::create(vec!["srcfile", "srcfilecopy"]).into();
         }
         CLASS.with(|c| inner.set_attribute("class", c.sexp));
