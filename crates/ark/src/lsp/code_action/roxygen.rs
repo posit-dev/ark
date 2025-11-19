@@ -186,6 +186,10 @@ mod tests {
         }
     }
 
+    fn roxygen_point_and_offset_from_cursor(text: &str) -> (String, Point, usize) {
+        point_and_offset_from_cursor(text, b'@')
+    }
+
     fn roxygen_documentation_test(text: &str, position: Position) -> String {
         let mut actions = CodeActions::new();
 
@@ -195,7 +199,7 @@ mod tests {
             .with_code_action_literal_support(true)
             .with_workspace_edit_document_changes(true);
 
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
@@ -301,7 +305,7 @@ outer <- function(a, b = 2) {
 }
         ";
 
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
@@ -330,7 +334,7 @@ outer <- function(a, b = 2) {
 f@n <- function(a, b) {}
         ";
 
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
@@ -359,7 +363,7 @@ f@n <- function(a, b) {}
 fn@ <- function(a, b) {}
         ";
 
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
@@ -388,7 +392,7 @@ fn@ <- function(a, b) {}
 f@n <- function(a, b) {}
         ";
 
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(
@@ -417,7 +421,7 @@ f@n <- function(a, b) {}
 f@n <- function(a, b) {}
         ";
 
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = roxygen_point_and_offset_from_cursor(text);
         let document = Document::new(&text, None);
 
         roxygen_documentation(

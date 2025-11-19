@@ -37,23 +37,25 @@ pub(crate) fn r_test_init() {
 }
 
 pub fn point_from_cursor(x: &str) -> (String, Point) {
-    let (text, point, _offset) = point_and_offset_from_cursor(x);
+    // i.e. looking for `@` in something like `fn(x = @1, y = 2)`, and it treats the
+    // `@` as the cursor position
+    let (text, point, _offset) = point_and_offset_from_cursor(x, b'@');
     (text, point)
 }
 
-pub fn point_and_offset_from_cursor(x: &str) -> (String, Point, usize) {
+/// Looks for `cursor` in the text and interprets it as the user's cursor position
+pub fn point_and_offset_from_cursor(x: &str, cursor: u8) -> (String, Point, usize) {
     let lines = x.split("\n").collect::<Vec<&str>>();
 
-    // i.e. looking for `@` in something like `fn(x = @1, y = 2)`, and it treats the
-    // `@` as the cursor position
-    let cursor = b'@';
-
     let mut offset = 0;
+
+    let cursor_for_replace = [cursor];
+    let cursor_for_replace = str::from_utf8(&cursor_for_replace).unwrap();
 
     for (line_row, line) in lines.into_iter().enumerate() {
         for (char_column, char) in line.as_bytes().into_iter().enumerate() {
             if char == &cursor {
-                let x = x.replace("@", "");
+                let x = x.replace(cursor_for_replace, "");
                 let point = Point {
                     row: line_row,
                     column: char_column,
@@ -122,7 +124,7 @@ mod tests {
     #[test]
     #[rustfmt::skip]
     fn test_point_and_offset_from_cursor() {
-        let (text, point, offset) = point_and_offset_from_cursor("1@ + 2");
+        let (text, point, offset) = point_and_offset_from_cursor("1@ + 2", b'@');
         assert_eq!(text, "1 + 2".to_string());
         assert_eq!(point, Point::new(0, 1));
         assert_eq!(offset, 1);
@@ -135,7 +137,7 @@ mod tests {
 "fn(
   arg = 3
 )";
-        let (text, point, offset) = point_and_offset_from_cursor(text);
+        let (text, point, offset) = point_and_offset_from_cursor(text, b'@');
         assert_eq!(text, expect);
         assert_eq!(point, Point::new(1, 7));
         assert_eq!(offset, 11);
