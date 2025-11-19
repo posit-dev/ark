@@ -1408,11 +1408,16 @@ impl RMain {
 
             // The global source reference is stored in this global variable by
             // the R REPL before evaluation. We do the same here.
+            let old_srcref = libr::Rf_protect(libr::get(libr::R_Srcref));
             libr::set(libr::R_Srcref, srcref);
 
             // Evaluate the expression. Beware: this may throw an R longjump.
             let value = libr::Rf_eval(expr, frame);
             libr::Rf_protect(value);
+
+            // Restore `R_Srcref`, necessary at least to avoid messing with
+            // DAP's last frame info
+            libr::set(libr::R_Srcref, old_srcref);
 
             // Store in the base environment for robust access from (almost) any
             // evaluation environment. We only require the presence of `::` so
@@ -1421,7 +1426,7 @@ impl RMain {
             // is stored in the `value` field of symbols, i.e. their "CDR".
             libr::SETCDR(r_symbol!(".ark_last_value"), value);
 
-            libr::Rf_unprotect(2);
+            libr::Rf_unprotect(3);
             value
         };
 
