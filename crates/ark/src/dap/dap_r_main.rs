@@ -27,7 +27,7 @@ use libr::INTSXP;
 use libr::SET_INTEGER_ELT;
 use libr::SEXP;
 use libr::VECTOR_ELT;
-use stdext::log_error;
+use stdext::result::ResultExt;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
@@ -180,7 +180,7 @@ impl RMainDap {
     pub fn send_dap(&self, event: DapBackendEvent) {
         let dap = self.dap.lock().unwrap();
         if let Some(tx) = &dap.backend_events_tx {
-            log_error!(tx.send(event));
+            tx.send(event).log_err();
         }
     }
 

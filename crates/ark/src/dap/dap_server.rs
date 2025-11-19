@@ -28,7 +28,7 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::spawn;
 
 use super::dap::Dap;
@@ -73,7 +73,7 @@ pub fn start_dap(
     // Send the port back to `Shell` and eventually out to the frontend so it can connect
     server_started_tx
         .send(ServerStartedMessage::new(port))
-        .or_log_error("DAP: Can't send init notification");
+        .log_err();
 
     loop {
         log::trace!("DAP: Waiting for client");

@@ -7,13 +7,14 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm_rpc_message;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use anyhow::Context;
 use crossbeam::channel::Sender;
 use harp::utils::r_is_null;
 use harp::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
 use serde_json::json;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
@@ -63,15 +64,13 @@ impl ReticulateService {
                 "reticulate_id": (*RETICULATE_ID).clone(),
             }),
         );
-        service
-            .comm_manager_tx
-            .send(event)
-            .or_log_error("Reticulate: Could not open comm.");
+        service.comm_manager_tx.send(event).log_err();
 
         spawn!(format!("ark-reticulate-{}", comm_id), move || {
             service
                 .handle_messages()
-                .or_log_error("Reticulate: Error handling messages");
+                .context("Reticulate: Error handling messages")
+                .log_err();
         });
 
         Ok(())
@@ -92,10 +91,7 @@ impl ReticulateService {
         }
 
         // before finalizing the thread we make sure to send a close message to the front end
-        self.comm
-            .outgoing_tx
-            .send(CommMsg::Close)
-            .or_log_error("Reticulate: Could not send close message to the front-end");
+        self.comm.outgoing_tx.send(CommMsg::Close).log_err();
 
         // Reset the global soccket before closing
         log::info!("Reticulate Thread closing {:?}", self.comm.comm_id);

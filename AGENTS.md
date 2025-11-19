@@ -95,6 +95,8 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 - Use fully qualified result types (`anyhow::Result`) instead of importing them.
 
+- You can log `Result::Err` by using the `.log_err()` method from the extension trait `stdext::ResultExt`. Add some `.context()` if that would be helpful, but never do it for errors that are quite unexpected, such as from `.send()` to a channel (that would be too verbose).
+
 - When writing tests, prefer simple assertion macros without custom error messages:
     - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
     - Use `assert!(condition);` instead of `assert!(condition, "custom message");`

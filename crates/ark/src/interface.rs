@@ -87,7 +87,7 @@ use libr::SEXP;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
@@ -440,7 +440,8 @@ impl RMain {
             // Optionally run a frontend specified R startup script (after harp init)
             if let Some(file) = &startup_file {
                 harp::source(file)
-                    .or_log_error(&format!("Failed to source startup file '{file}' due to"));
+                    .context(format!("Failed to source startup file '{file}' due to"))
+                    .log_err();
             }
 
             // Initialize support functions (after routine registration, after r_task initialization)
