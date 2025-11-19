@@ -271,22 +271,21 @@ impl RHelp {
             let env = (|| {
                 #[cfg(not(test))]
                 if RMain::is_initialized() {
-                    if let Some(debug_env) = &RMain::get().debug_env() {
-                        // Mem-Safety: Object protected by `RMain` for the duration of the `r_task()`
-                        return debug_env.sexp;
+                    if let Ok(debug_env) = &RMain::get().read_console_frame.try_borrow() {
+                        return (*debug_env).clone();
                     }
                 }
 
-                R_GlobalEnv
+                RObject::from(R_GlobalEnv)
             })();
 
-            let obj = harp::parse_eval0(topic.as_str(), env)?;
+            let obj = harp::parse_eval0(topic.as_str(), env.sexp)?;
             let handler: Option<RObject> =
                 ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
 
             if let Some(handler) = handler {
                 let mut fun = RFunction::new_inlined(handler);
-                match fun.call_in(env) {
+                match fun.call_in(env.sexp) {
                     Err(err) => {
                         log::error!("Error calling help handler: {:?}", err);
                         return Err(anyhow!("Error calling help handler: {:?}", err));

@@ -289,7 +289,7 @@ pub struct RMain {
     read_console_shutdown: Cell<bool>,
 
     /// Current topmost environment on the stack while waiting for input in ReadConsole
-    read_console_frame: RefCell<RObject>,
+    pub(crate) read_console_frame: RefCell<RObject>,
 }
 
 /// Stack of pending inputs
