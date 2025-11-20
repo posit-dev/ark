@@ -1466,14 +1466,14 @@ impl RMain {
     /// https://github.com/rstudio/renv/blob/5d0d52c395e569f7f24df4288d949cef95efca4e/inst/resources/activate.R#L85-L87
     fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
         if let Some(input) = Self::renv_autoloader_reply() {
-            log::info!("Detected `readline()` call in renv autoloader. Returning `'{input}'`.");
+            log::warn!("Detected `readline()` call in renv autoloader. Returning `'{input}'`.");
             match Self::on_console_input(buf, buflen, input) {
                 Ok(()) => return ConsoleResult::NewInput,
                 Err(err) => return ConsoleResult::Error(format!("{err}")),
             }
         }
 
-        log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
+        log::warn!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
 
         let message = vec![
             "Can't request input from the user at this time.",

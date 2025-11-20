@@ -201,7 +201,33 @@ invoke_option_error_handler <- function() {
     }
 
     for (hnd in handler) {
-        eval(hnd, globalenv())
+        err <- tryCatch(
+            {
+                eval(hnd, globalenv())
+                NULL
+            },
+            error = identity
+        )
+
+        if (!is.null(err)) {
+            # Disable error handler to avoid cascading errors
+            options(error = NULL)
+
+            # We don't let the error propagate to avoid a confusing sequence of
+            # error messages from R, such as "Error during wrapup"
+            writeLines(
+                c(
+                    "The `getOption(\"error\")` handler failed.",
+                    "This option was unset to avoid cascading errors.",
+                    "Caused by:",
+                    conditionMessage(err)
+                ),
+                con = stderr()
+            )
+
+            # Bail early
+            return()
+        }
     }
 }
 
