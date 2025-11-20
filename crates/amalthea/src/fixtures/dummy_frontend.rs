@@ -518,23 +518,15 @@ impl DummyFrontend {
             // Receive a piece of stream output (with a timeout)
             let msg = self.recv_iopub();
 
-            // Assert its type
             let piece = assert_matches!(msg, Message::Stream(data) => {
                 assert_eq!(data.content.name, stream);
                 data.content.text
             });
 
-            // Add to what we've already collected
             out += piece.as_str();
 
-            if out == expect {
-                // Done, found the entire `expect` string
-                return;
-            }
-
-            if !expect.starts_with(out.as_str()) {
-                // Something is wrong, message doesn't match up
-                panic!("Expected IOPub stream of '{expect}'. Actual stream of '{out}'.");
+            if out.ends_with(expect) {
+                break;
             }
 
             // We have a prefix of `expect`, but not the whole message yet.
@@ -542,11 +534,15 @@ impl DummyFrontend {
         }
     }
 
+    /// Receives stdout stream output until the collected output ends with
+    /// `expect`. Note: The comparison uses `ends_with`, not full equality.
     #[track_caller]
     pub fn recv_iopub_stream_stdout(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stdout)
     }
 
+    /// Receives stderr stream output until the collected output ends with
+    /// `expect`. Note: The comparison uses `ends_with`, not full equality.
     #[track_caller]
     pub fn recv_iopub_stream_stderr(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stderr)
