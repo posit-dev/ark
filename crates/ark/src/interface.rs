@@ -907,6 +907,20 @@ impl RMain {
         }
 
         if let Some(exception) = self.take_exception() {
+            // We might get an input request if `readline()` or `menu()` is
+            // called in `options(error = )`. We respond to this with an error
+            // as this is not supported by Ark.
+            if matches!(info.kind, PromptKind::InputRequest) {
+                // Reset error so we can handle it when we recurse here after
+                // the error aborts the readline. Note it's better to first emit
+                // the R invalid input request error, and then handle
+                // `exception` within the context of a new `ReadConsole`
+                // instance, so that we emit the proper execution prompts as
+                // part of the response, and not the readline prompt.
+                self.last_error = Some(exception);
+                return self.handle_invalid_input_request_after_error();
+            }
+
             // Clear any pending inputs, if any
             self.pending_inputs = None;
 
@@ -1479,6 +1493,18 @@ impl RMain {
             "Can't request input from the user at this time.",
             "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
         ].join("\n");
+
+        return ConsoleResult::Error(message);
+    }
+
+    fn handle_invalid_input_request_after_error(&self) -> ConsoleResult {
+        log::warn!("Detected invalid `input_request` after error (probably from `getOption('error')`). Preparing to throw an R error.");
+
+        let message = vec![
+            "Can't request input from the user at this time.",
+            "Are you calling `readline()` or `menu()` from `options(error = )`?",
+        ]
+        .join("\n");
 
         return ConsoleResult::Error(message);
     }
