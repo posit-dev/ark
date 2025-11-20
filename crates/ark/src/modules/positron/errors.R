@@ -200,34 +200,40 @@ invoke_option_error_handler <- function() {
         handler <- as.expression(list(handler))
     }
 
+    delayedAssign("non_local_return", return())
+
     for (hnd in handler) {
-        err <- tryCatch(
+        # Use `withCallingHandlers()` instead of `tryCatch()` to avoid making
+        # the call stack too complex. We might be running `options(error = browser())`
+        withCallingHandlers(
             {
-                eval(hnd, globalenv())
-                NULL
+                # Evaluate from a promise to keep a simple call stack.
+                # We do evaluate from a closure wrapped in `handler()` so that R
+                # can infer a named call, for instance in the "Called from:"
+                # output of `browser()`.
+                error_handler <- eval(bquote(function() .(hnd)))
+                error_handler()
             },
-            error = identity
+            error = function(err) {
+                # Disable error handler to avoid cascading errors
+                options(error = NULL)
+
+                # We don't let the error propagate to avoid a confusing sequence of
+                # error messages from R, such as "Error during wrapup"
+                writeLines(
+                    c(
+                        "The `getOption(\"error\")` handler failed.",
+                        "This option was unset to avoid cascading errors.",
+                        "Caused by:",
+                        conditionMessage(err)
+                    ),
+                    con = stderr()
+                )
+
+                # Bail early
+                non_local_return
+            }
         )
-
-        if (!is.null(err)) {
-            # Disable error handler to avoid cascading errors
-            options(error = NULL)
-
-            # We don't let the error propagate to avoid a confusing sequence of
-            # error messages from R, such as "Error during wrapup"
-            writeLines(
-                c(
-                    "The `getOption(\"error\")` handler failed.",
-                    "This option was unset to avoid cascading errors.",
-                    "Caused by:",
-                    conditionMessage(err)
-                ),
-                con = stderr()
-            )
-
-            # Bail early
-            return()
-        }
     }
 }
 
