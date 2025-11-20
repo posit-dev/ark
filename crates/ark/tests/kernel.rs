@@ -892,6 +892,34 @@ Are you calling `readline()` or `menu()` from `options(error = )`?
 }
 
 #[test]
+fn test_execute_request_error_recover() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = r#"
+f <- function() g()
+g <- function() h()
+h <- function() stop("foo")
+options(error = recover)
+"#;
+    frontend.execute_request_invisibly(code);
+
+    frontend.send_execute_request("f()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, "f()");
+
+    // We set up the call stack to show a simple `error_handler()`
+    frontend.recv_iopub_stream_stdout("Called from: ark_recover()\n");
+
+    assert!(frontend.recv_iopub_execute_error().contains("foo"));
+
+    frontend.recv_iopub_idle();
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+}
+
 /// Install a SIGINT handler for shutdown tests. This overrides the test runner
 /// handler so it doesn't cancel our test.
 fn install_sigint_handler() {

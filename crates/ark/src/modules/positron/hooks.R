@@ -14,6 +14,14 @@ register_hooks <- function() {
         new_ark_debug(base::debugonce),
         namespace = TRUE
     )
+
+    rebind(
+        "utils",
+        "recover",
+        # Keep this wrapped up this way for a better "Called from:" call
+        function(...) ark_recover(),
+        namespace = TRUE
+    )
     register_getHook_hook()
 }
 
@@ -150,4 +158,12 @@ check_version <- function(pkg) {
             ))
         }
     )
+}
+
+# We don't support `utils::recover()` in Ark, but the same functionality is
+# provided via the call stack pane of IDEs. So replace it by `browser()` so that
+# people can enter the debugger on error using the familiar `options(error =
+# recover)` gesture.
+ark_recover <- function(...) {
+    browser()
 }
