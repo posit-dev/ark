@@ -56,10 +56,12 @@ impl Environment {
         Self::new_filtered(env, EnvironmentFilter::default())
     }
 
-    pub fn new_empty() -> anyhow::Result<Self> {
-        Ok(Self::new(harp::parse_eval_base(
-            "new.env(parent = emptyenv())",
-        )?))
+    /// Creates hashed environment of default size inheriting from the empty
+    /// environment
+    pub fn new_empty() -> Self {
+        // Passing `size = 0` causes default size to be picked up
+        let env = unsafe { libr::R_NewEnv(R_ENVS.empty, 1, 0) };
+        Self::new(RObject::new(env))
     }
 
     pub fn new_filtered(env: RObject, filter: EnvironmentFilter) -> Self {

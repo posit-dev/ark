@@ -19,6 +19,8 @@ use crate::types::*;
 // Functions and globals
 
 functions::generate! {
+    pub fn R_NewEnv(enclos: SEXP, hash: std::ffi::c_int, size: std::ffi::c_int) -> SEXP;
+
     pub fn Rf_initialize_R(ac: std::ffi::c_int, av: *mut *mut std::ffi::c_char) -> std::ffi::c_int;
 
     pub fn run_Rmainloop();
@@ -98,6 +100,13 @@ functions::generate! {
         data: *mut std::ffi::c_void
     ) -> Rboolean;
 
+    pub fn R_ExecWithCleanup(
+        fun: Option<unsafe extern "C-unwind" fn(data: *mut std::ffi::c_void) -> SEXP>,
+        data: *mut std::ffi::c_void,
+        cleanfun: Option<unsafe extern "C-unwind" fn(cleandata: *mut std::ffi::c_void)>,
+        cleandata: *mut std::ffi::c_void
+    ) -> SEXP;
+
     pub fn R_withCallingErrorHandler(
         body: Option<unsafe extern "C-unwind" fn(args: *mut std::ffi::c_void) -> SEXP>,
         bdata: *mut std::ffi::c_void,
@@ -135,7 +144,7 @@ functions::generate! {
 
     pub fn Rf_cons(arg1: SEXP, arg2: SEXP) -> SEXP;
 
-    pub fn Rf_defineVar(arg1: SEXP, arg2: SEXP, arg3: SEXP);
+    pub fn Rf_defineVar(sym: SEXP, value: SEXP, env: SEXP);
 
     pub fn Rf_eval(arg1: SEXP, arg2: SEXP) -> SEXP;
 
@@ -617,6 +626,14 @@ constant_globals::generate! {
     #[default = std::ptr::null_mut()]
     pub static R_TripleColonSymbol: SEXP;
 
+    #[doc = "\"srcfile\""]
+    #[default = std::ptr::null_mut()]
+    pub static R_SrcfileSymbol: SEXP;
+
+    #[doc = "\"srcref\""]
+    #[default = std::ptr::null_mut()]
+    pub static R_SrcrefSymbol: SEXP;
+
     #[doc = "\"tsp\""]
     #[default = std::ptr::null_mut()]
     pub static R_TspSymbol: SEXP;
@@ -689,6 +706,8 @@ mutable_globals::generate! {
 
     pub static mut R_Srcref: SEXP;
 
+    pub static mut R_Visible: Rboolean;
+
     // -----------------------------------------------------------------------------------
     // Unix
 
@@ -742,6 +761,9 @@ mutable_globals::generate! {
 
     #[cfg(target_family = "unix")]
     pub static mut ptr_R_Suicide: Option<unsafe extern "C-unwind" fn(arg1: *const std::ffi::c_char)>;
+
+    #[cfg(target_family = "unix")]
+    pub static mut ptr_R_CleanUp: Option<unsafe extern "C-unwind" fn(std::ffi::c_int, std::ffi::c_int, std::ffi::c_int)>;
 
     // -----------------------------------------------------------------------------------
     // Windows
