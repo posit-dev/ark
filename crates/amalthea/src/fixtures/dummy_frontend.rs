@@ -453,30 +453,63 @@ impl DummyFrontend {
         assert_matches!(msg, Message::UpdateDisplayData(_))
     }
 
+    /// Receive from IOPub Stream
+    ///
+    /// Stdout and Stderr Stream messages are buffered, so to reliably test
+    /// against them we have to collect the messages in batches on the receiving
+    /// end and compare against an expected message.
+    ///
+    /// The comparison is done with an assertive closure: we'll wait for more
+    /// output as long as the closure panics.
+    ///
+    /// Because closures can't track callers yet, the `recv_iopub_stream()`
+    /// variant is more ergonomic and should be preferred.
+    /// See <https://github.com/rust-lang/rust/issues/87417> for tracking issue.
     #[track_caller]
-    pub fn recv_iopub_stream_stdout(&self, expect: &str) {
-        self.recv_iopub_stream(expect, Stream::Stdout)
+    fn recv_iopub_stream_with<F>(&self, stream: Stream, mut f: F)
+    where
+        F: FnMut(&str),
+    {
+        let mut out = String::new();
+
+        loop {
+            let msg = self.recv_iopub();
+            let piece = assert_matches!(msg, Message::Stream(data) => {
+                assert_eq!(data.content.name, stream);
+                data.content.text
+            });
+            out.push_str(&piece);
+
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                f(&out);
+            })) {
+                Ok(_) => break,
+                Err(_) => continue,
+            };
+        }
     }
 
     #[track_caller]
-    pub fn recv_iopub_stream_stderr(&self, expect: &str) {
-        self.recv_iopub_stream(expect, Stream::Stderr)
+    pub fn recv_iopub_stream_stdout_with<F>(&self, f: F)
+    where
+        F: FnMut(&str),
+    {
+        self.recv_iopub_stream_with(Stream::Stdout, f)
     }
 
     #[track_caller]
-    pub fn recv_iopub_comm_close(&self) -> String {
-        let msg = self.recv_iopub();
-
-        assert_matches!(msg, Message::CommClose(data) => {
-            data.content.comm_id
-        })
+    pub fn recv_iopub_stream_stderr_with<F>(&self, f: F)
+    where
+        F: FnMut(&str),
+    {
+        self.recv_iopub_stream_with(Stream::Stderr, f)
     }
 
     /// Receive from IOPub Stream
     ///
-    /// Stdout and Stderr Stream messages are buffered, so to reliably test against them
-    /// we have to collect the messages in batches on the receiving end and compare against
-    /// an expected message.
+    /// This variant compares the stream against its expected _last_ output.
+    /// We can't use `recv_iopub_stream_with()` here because closures
+    /// can't track callers.
     #[track_caller]
     fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
         let mut out = String::new();
@@ -507,6 +540,25 @@ impl DummyFrontend {
             // We have a prefix of `expect`, but not the whole message yet.
             // Wait on the next IOPub Stream message.
         }
+    }
+
+    #[track_caller]
+    pub fn recv_iopub_stream_stdout(&self, expect: &str) {
+        self.recv_iopub_stream(expect, Stream::Stdout)
+    }
+
+    #[track_caller]
+    pub fn recv_iopub_stream_stderr(&self, expect: &str) {
+        self.recv_iopub_stream(expect, Stream::Stderr)
+    }
+
+    #[track_caller]
+    pub fn recv_iopub_comm_close(&self) -> String {
+        let msg = self.recv_iopub();
+
+        assert_matches!(msg, Message::CommClose(data) => {
+            data.content.comm_id
+        })
     }
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory
