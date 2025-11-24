@@ -62,6 +62,11 @@ fn source_r_profile(path: &PathBuf) {
 
     log::info!("Found R profile at '{path}', sourcing now");
 
+    if !std::path::Path::new(path).exists() {
+        log::warn!("R profile at '{path}' does not exist, skipping source");
+        return;
+    }
+
     // Must source with `top_level_exec()` rather than just calling `call()`.
     // In particular, can't source with the typical `r_safe_eval()` because it
     // wraps in `withCallingHandlers()`, which prevents
