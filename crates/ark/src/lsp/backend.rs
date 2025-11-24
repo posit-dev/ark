@@ -14,9 +14,10 @@ use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::comm::ui_comm::ShowMessageParams as UiShowMessageParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
+use anyhow::Context;
 use crossbeam::channel::Sender;
 use serde_json::Value;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
@@ -501,7 +502,8 @@ pub fn start_lsp(
         // Send the port back to `Shell` and eventually out to the frontend so it can connect
         server_started_tx
             .send(ServerStartedMessage::new(port))
-            .or_log_error("LSP: Can't send server started notification");
+            .context("LSP: Can't send server started notification")
+            .log_err();
 
         log::trace!("LSP: Waiting for client");
         let (stream, address) = listener.accept().await.unwrap();

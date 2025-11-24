@@ -14,7 +14,7 @@ use std::sync::Mutex;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
-use stdext::result::ResultOrLog;
+use stdext::result::ResultExt;
 
 use crate::comm::comm_channel::comm_rpc_message;
 use crate::comm::comm_channel::Comm;
@@ -429,10 +429,7 @@ impl Shell {
         // comm has been opened
         self.comm_manager_tx
             .send(CommManagerEvent::Opened(comm_socket.clone(), comm_data))
-            .or_log_warning(&format!(
-                "Failed to send '{}' comm open notification to listener thread",
-                comm_socket.comm_name
-            ));
+            .log_err();
 
         // If the comm wraps a server, send notification once the server is ready to
         // accept connections. This also sends back the port number to connect on. Failing
