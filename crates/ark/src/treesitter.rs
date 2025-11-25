@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::anyhow;
+use streaming_iterator::StreamingIterator;
 use tree_sitter::Node;
 
 use crate::lsp::traits::node::NodeExt;
