@@ -36,17 +36,20 @@ fn compute_point(point: Point, text: &str) -> Point {
 
 #[derive(Clone)]
 pub struct Document {
-    // The document's textual contents.
+    /// The document's textual contents.
     pub contents: Rope,
 
-    // The document's AST.
+    /// The document's AST.
     pub ast: Tree,
 
-    // The version of the document we last synchronized with.
-    // None if the document hasn't been synchronized yet.
+    /// The Rowan R syntax tree.
+    pub parse: aether_parser::Parse,
+
+    /// The version of the document we last synchronized with.
+    /// None if the document hasn't been synchronized yet.
     pub version: Option<i32>,
 
-    // Configuration of the document, such as indentation settings.
+    /// Configuration of the document, such as indentation settings.
     pub config: DocumentConfig,
 }
 
@@ -55,6 +58,7 @@ impl std::fmt::Debug for Document {
         f.debug_struct("Document")
             .field("contents", &self.contents)
             .field("ast", &self.ast)
+            .field("parse", &self.parse)
             .finish()
     }
 }
@@ -74,11 +78,13 @@ impl Document {
     pub fn new_with_parser(contents: &str, parser: &mut Parser, version: Option<i32>) -> Self {
         let document = Rope::from(contents);
         let ast = parser.parse(contents, None).unwrap();
+        let parse = aether_parser::parse(contents, Default::default());
 
         Self {
             contents: document,
             version,
             ast,
+            parse,
             config: Default::default(),
         }
     }
@@ -164,6 +170,9 @@ impl Document {
         let ast = parser.parse_with(callback, Some(&self.ast));
         self.ast = ast.unwrap();
 
+        // Update the Rowan syntax tree (full reparse)
+        self.parse = aether_parser::parse(&self.contents.to_string(), Default::default());
+
         Ok(())
     }
 
@@ -199,6 +208,12 @@ impl Document {
 
         slice.as_bytes()
     }
+
+    /// Accessor that returns an annotated `RSyntaxNode` type.
+    /// More convenient than the generic `biome_rowan::SyntaxNode<L>` type.
+    pub fn syntax(&self) -> aether_syntax::RSyntaxNode {
+        self.parse.syntax()
+    }
 }
 
 #[cfg(test)]
@@ -231,5 +246,22 @@ mod tests {
         let document = Document::new("\n\n# hi there", None);
         let root = document.ast.root_node();
         assert_eq!(root.start_position(), Point::new(0, 0));
+    }
+
+    #[test]
+    fn test_aether_syntax_integration() {
+        let document = Document::new("foo <- 1 + 2", None);
+
+        let syntax = document.parse.syntax();
+        let len: u32 = syntax.text_range_with_trivia().len().into();
+        assert!(len > 0);
+
+        let syntax2 = document.syntax();
+        assert_eq!(
+            syntax.text_range_with_trivia(),
+            syntax2.text_range_with_trivia()
+        );
+
+        assert!(!document.parse.has_error());
     }
 }
