@@ -150,7 +150,19 @@ fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {
 fn find_user_r_profile() -> Option<PathBuf> {
     // Try from env var first
     match std::env::var("R_PROFILE_USER") {
-        Ok(path) => return PathBuf::from_str(path.as_str()).ok(),
+        Ok(path) => {
+            if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {
+                if !path.exists() {
+                    log::warn!(
+                        "`R_PROFILE_USER` detected but '{path}' does not exist",
+                        path = path.to_string_lossy()
+                    );
+                    return None;
+                } else {
+                    return Some(path);
+                }
+            }
+        },
         Err(_) => (),
     };
 
