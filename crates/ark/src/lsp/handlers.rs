@@ -361,9 +361,7 @@ pub(crate) fn handle_statement_range(
     let position = params.position;
     let point = convert_position_to_point(contents, position);
 
-    let row = point.row;
-
-    statement_range(root, contents, point, row)
+    statement_range(root, contents, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
