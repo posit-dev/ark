@@ -2088,6 +2088,25 @@ x %>%
     }
 
     #[test]
+    fn test_statement_range_roxygen_multiple_spaces_before_the_next_tag() {
+        let text = "
+#' Hi
+#' @param x foo
+#' @examples
+#' 1 + 1^
+#'     @returns
+2 + 2
+";
+        let (text, point) = statement_range_point_from_cursor(text);
+        let document = Document::new(&text, None);
+        let root = document.ast.root_node();
+        let contents = &document.contents;
+        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        assert_eq!(get_text(range, contents), String::from("#' 1 + 1"));
+        assert_eq!(code.unwrap(), String::from("1 + 1"));
+    }
+
+    #[test]
     fn test_statement_range_roxygen_parse_errors_in_examples() {
         // Still sends "just that line" to avoid jumping around
         let text = "
