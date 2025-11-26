@@ -161,6 +161,8 @@ fn find_roxygen_examples_section(node: Node, contents: &Rope) -> Option<tree_sit
     let text = text.trim_start();
 
     // Do we happen to be on an `@` tag line already?
+    // (This is a rough heuristic that we are starting a roxygen tag line. To be more
+    // robust we'd need a full roxygen2 parser.)
     if text.starts_with("@") {
         return None;
     }
