@@ -15,6 +15,7 @@ use harp::environment::R_ENVS;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use libr::Rf_eval;
+use stdext::result::ResultExt;
 
 use crate::interface::RMain;
 use crate::sys;
@@ -110,7 +111,19 @@ fn source_r_profile(path: &PathBuf) {
 fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {
     // Try from env var first
     match std::env::var("R_PROFILE") {
-        Ok(path) => return PathBuf::from_str(path.as_str()).ok(),
+        Ok(path) => {
+            if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {
+                if !path.exists() {
+                    log::warn!(
+                        "`R_PROFILE` detected but '{path}' does not exist",
+                        path = path.to_string_lossy()
+                    );
+                    return None;
+                } else {
+                    return Some(path);
+                }
+            }
+        },
         Err(_) => (),
     };
 
