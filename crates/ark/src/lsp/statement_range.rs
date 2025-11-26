@@ -267,7 +267,8 @@ fn find_roxygen_examples_range(
         .lines()
         .map(|line| {
             // Trim `#'` and at most 1 leading whitespace character. Don't trim more
-            // whitespace because that would trim intentional indentation too.
+            // whitespace because that would trim intentional indentation and whitespace
+            // in multiline strings.
             let line = RE_ROXYGEN2_COMMENT.replace(line, "");
             line.strip_prefix(" ")
                 .map(str::to_string)
