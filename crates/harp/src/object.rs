@@ -238,10 +238,6 @@ pub fn r_list_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
     }
 }
 
-pub fn r_list_get(x: SEXP, i: R_xlen_t) -> RObject {
-    unsafe { RObject::new(VECTOR_ELT(x, i)) }
-}
-
 pub fn r_lgl_begin(x: SEXP) -> *mut i32 {
     unsafe { LOGICAL(x) }
 }

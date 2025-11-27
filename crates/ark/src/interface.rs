@@ -392,7 +392,7 @@ impl PendingInputs {
             return None;
         }
 
-        let expr = harp::r_list_get(self.exprs.sexp, self.index);
+        let expr = RObject::new(harp::list_get(self.exprs.sexp, self.index));
 
         let srcref = self
             .srcrefs
