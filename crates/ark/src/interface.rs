@@ -289,6 +289,11 @@ pub struct RMain {
     /// Incremented when entering `r_read_console(),` decremented on exit.
     read_console_depth: Cell<usize>,
 
+    /// Set to true when `r_read_console()` exits via an error longjump. Used to
+    /// detect if we need to go return from `r_read_console()` with a dummy
+    /// evaluation to reset things like `R_EvalDepth`.
+    read_console_threw_error: Cell<bool>,
+
     /// Set to true when `r_read_console()` exits. Reset to false at the start
     /// of each `r_read_console()` call. Used to detect if `eval()` returned
     /// from a nested REPL (the flag will be true when the evaluation returns).
@@ -296,14 +301,9 @@ pub struct RMain {
     /// evaluation to reset things like `R_ConsoleIob`.
     read_console_nested_return: Cell<bool>,
 
-    /// Set to true when `r_read_console()` exits via an error longjump. Used to
-    /// detect if we need to go return from `r_read_console()` with a dummy
-    /// evaluation to reset things like `R_EvalDepth`.
-    read_console_threw_error: Cell<bool>,
-
     /// Used to track an input to evaluate upon returning to `r_read_console()`,
     /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
-    read_console_next_input: Cell<Option<String>>,
+    read_console_nested_return_next_input: Cell<Option<String>>,
 
     /// We've received a Shutdown signal and need to return EOF from all nested
     /// consoles to get R to shut down
@@ -787,7 +787,7 @@ impl RMain {
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
-            read_console_next_input: Cell::new(None),
+            read_console_nested_return_next_input: Cell::new(None),
             read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
             read_console_shutdown: Cell::new(false),
         }
@@ -2417,7 +2417,7 @@ pub extern "C-unwind" fn r_read_console(
 
     // We've finished evaluating a dummy value to reset state in R's REPL,
     // and are now ready to evaluate the actual input
-    if let Some(next_input) = main.read_console_next_input.take() {
+    if let Some(next_input) = main.read_console_nested_return_next_input.take() {
         RMain::on_console_input(buf, buflen, next_input).unwrap();
         return 1;
     }
@@ -2525,7 +2525,8 @@ fn r_read_console_impl(
                 // a dummy value causing a `PARSE_NULL` event.
                 if main.read_console_nested_return.get() {
                     let next_input = RMain::console_input(buf, buflen);
-                    main.read_console_next_input.set(Some(next_input));
+                    main.read_console_nested_return_next_input
+                        .set(Some(next_input));
 
                     // Evaluating a space causes a `PARSE_NULL` event. Don't
                     // evaluate a newline, that would cause a parent debug REPL
