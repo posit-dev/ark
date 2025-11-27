@@ -1211,14 +1211,16 @@ impl RMain {
             // push a tree too far to the right.
             let traceback = r_traceback();
 
-            // Reset error buffer so we don't display this message again
-            let _ = RFunction::new("base", "stop").call();
-
-            Exception {
+            let exception = Exception {
                 ename: String::from(""),
                 evalue: r_peek_error_buffer(),
                 traceback,
-            }
+            };
+
+            // Reset error buffer so we don't display this message again
+            let _ = RFunction::new("base", "stop").call();
+
+            exception
         } else {
             return None;
         };
