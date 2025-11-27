@@ -97,8 +97,6 @@ use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
 use crate::dap::dap::DapBackendEvent;
-use crate::dap::dap_r_main::FrameInfoId;
-use crate::dap::dap_r_main::RMainDap;
 use crate::dap::Dap;
 use crate::errors;
 use crate::errors::stack_overflow_occurred;
@@ -120,6 +118,7 @@ use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
+use crate::repl_debug::FrameInfoId;
 use crate::repos::apply_default_repos;
 use crate::repos::DefaultRepos;
 use crate::request::debug_request_command;
@@ -128,7 +127,6 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
-use crate::srcref::ark_uri;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
@@ -150,6 +148,13 @@ pub enum SessionMode {
 
     /// A background session, typically not connected to any UI.
     Background,
+}
+
+#[derive(Clone, Debug)]
+pub enum DebugCallText {
+    None,
+    Capturing(String),
+    Finalized(String),
 }
 
 // --- Globals ---
@@ -234,8 +239,6 @@ pub struct RMain {
     /// initially connects and after an LSP restart.
     lsp_virtual_documents: HashMap<String, String>,
 
-    dap: RMainDap,
-
     pub positron_ns: Option<RObject>,
 
     pending_inputs: Option<PendingInputs>,
@@ -258,13 +261,29 @@ pub struct RMain {
     /// See https://github.com/posit-dev/positron/issues/3151.
     debug_preserve_focus: bool,
 
+    /// Underlying dap state. Shared with the DAP server thread.
+    pub(crate) debug_dap: Arc<Mutex<Dap>>,
+
+    /// Whether or not we are currently in a debugging state.
+    pub(crate) debug_is_debugging: bool,
+
+    /// The current call emitted by R as `debug: <call-text>`.
+    pub(crate) debug_call_text: DebugCallText,
+
+    /// The last known `start_line` for the active context frame.
+    pub(crate) debug_last_line: Option<i64>,
+
     /// The stack of frames we saw the last time we stopped. Used as a mostly
     /// reliable indication of whether we moved since last time.
-    debug_last_stack: Vec<FrameInfoId>,
+    pub(crate) debug_last_stack: Vec<FrameInfoId>,
 
     /// Ever increasing debug session index. Used to create URIs that are only
     /// valid for a single session.
-    debug_session_index: u32,
+    pub(crate) debug_session_index: u32,
+
+    /// The current frame `id`. Unique across all frames within a single debug session.
+    /// Reset after `stop_debug()`, not between debug steps.
+    pub(crate) debug_current_frame_id: i64,
 
     /// Tracks how many nested `r_read_console()` calls are on the stack.
     /// Incremented when entering `r_read_console(),` decremented on exit.
@@ -748,7 +767,8 @@ impl RMain {
             help_port: None,
             lsp_events_tx: None,
             lsp_virtual_documents: HashMap::new(),
-            dap: RMainDap::new(dap),
+            debug_dap: dap,
+            debug_is_debugging: false,
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
@@ -757,9 +777,12 @@ impl RMain {
             banner: None,
             r_error_buffer: None,
             captured_output: String::new(),
+            debug_call_text: DebugCallText::None,
+            debug_last_line: None,
             debug_preserve_focus: false,
             debug_last_stack: vec![],
             debug_session_index: 1,
+            debug_current_frame_id: 0,
             pending_inputs: None,
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
@@ -880,7 +903,7 @@ impl RMain {
     /// - Move the Console state machine to the next state:
     ///   - Wait for input
     ///   - Set an active execute request and a list of pending expressions
-    ///   - Set `self.dap.is_debugging()` depending on presence or absence of debugger prompt
+    ///   - Set `self.debug_is_debugging` depending on presence or absence of debugger prompt
     ///   - Evaluate next pending expression
     ///   - Close active execute request if pending list is empty
     /// - Run an event loop while waiting for input
@@ -891,21 +914,23 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        self.dap.handle_read_console();
+        self.debug_handle_read_console();
 
         // State machine part of ReadConsole
 
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
-        // Invariant: If we detect a browser prompt, `self.dap.is_debugging()`
+        // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
         if matches!(info.kind, PromptKind::Browser) {
             // Start or continue debugging with the `debug_preserve_focus` hint
             // from the last expression we evaluated
-            self.start_debug(self.debug_preserve_focus);
-        } else if self.dap.is_debugging() {
-            self.stop_debug();
+            self.debug_is_debugging = true;
+            self.debug_start(self.debug_preserve_focus);
+        } else if self.debug_is_debugging {
+            self.debug_is_debugging = false;
+            self.debug_stop();
         }
 
         if let Some(exception) = self.take_exception() {
@@ -948,7 +973,7 @@ impl RMain {
         // often. We'd still push a `DidChangeConsoleInputs` notification from
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
-        if !self.dap.is_debugging() && !matches!(info.kind, PromptKind::InputRequest) {
+        if !self.debug_is_debugging && !matches!(info.kind, PromptKind::InputRequest) {
             self.refresh_lsp();
         }
 
@@ -1282,7 +1307,7 @@ impl RMain {
 
             RRequest::DebugCommand(cmd) => {
                 // Just ignore command in case we left the debugging state already
-                if !self.dap.is_debugging() {
+                if !self.debug_is_debugging {
                     return None;
                 }
 
@@ -1359,7 +1384,7 @@ impl RMain {
         // https://github.com/posit-dev/positron/issues/3151
         self.debug_preserve_focus = true;
 
-        if self.dap.is_debugging() {
+        if self.debug_is_debugging {
             // Try to interpret this pending input as a symbol (debug commands
             // are entered as symbols). Whether or not it parses as a symbol,
             // if we're currently debugging we must set `debug_preserve_focus`.
@@ -1382,7 +1407,7 @@ impl RMain {
                         self.debug_preserve_focus = false;
 
                         // Let the DAP client know that execution is now continuing
-                        self.dap.send_dap(DapBackendEvent::Continued);
+                        self.debug_send_dap(DapBackendEvent::Continued);
                     }
 
                     // All debug commands are forwarded to the base REPL as
@@ -1511,40 +1536,6 @@ impl RMain {
         return ConsoleResult::Error(message);
     }
 
-    fn start_debug(&mut self, debug_preserve_focus: bool) {
-        match self.dap.stack_info() {
-            Ok(stack) => {
-                // Figure out whether we changed location since last time,
-                // e.g. because the user evaluated an expression that hit
-                // another breakpoint. In that case we do want to move
-                // focus, even though the user didn't explicitly used a step
-                // gesture. Our indication that we changed location is
-                // whether the call stack looks the same as last time. This
-                // is not 100% reliable as this heuristic might have false
-                // negatives, e.g. if the control flow exited the current
-                // context via condition catching and jumped back in the
-                // debugged function.
-                let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
-                let same_stack = stack_id == self.debug_last_stack;
-
-                // Initialize fallback sources for this stack
-                let fallback_sources = self.load_fallback_sources(&stack);
-
-                self.debug_last_stack = stack_id;
-                self.dap
-                    .start_debug(stack, same_stack && debug_preserve_focus, fallback_sources);
-            },
-            Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
-        };
-    }
-
-    fn stop_debug(&mut self) {
-        self.debug_last_stack = vec![];
-        self.clear_fallback_sources();
-        self.debug_session_index += 1;
-        self.dap.stop_debug();
-    }
-
     /// Load `fallback_sources` with this stack's text sources
     /// @returns Map of `source` -> `source_reference` used for frames that don't have
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
@@ -1552,12 +1543,12 @@ impl RMain {
     /// in duplicate virtual editors being opened on the client side.
     pub fn load_fallback_sources(
         &mut self,
-        stack: &Vec<crate::dap::dap_r_main::FrameInfo>,
+        stack: &Vec<crate::repl_debug::FrameInfo>,
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
         for frame in stack.iter() {
-            if let crate::dap::dap_r_main::FrameSource::Text(source) = &frame.source {
+            if let crate::repl_debug::FrameSource::Text(source) = &frame.source {
                 let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
 
                 if self.has_virtual_document(&uri) {
@@ -1586,31 +1577,6 @@ impl RMain {
         for uri in debug_uris {
             self.remove_virtual_document(uri);
         }
-    }
-
-    fn ark_debug_uri(debug_session_index: u32, source_name: &str, source: &str) -> String {
-        // Hash the source to generate a unique identifier used in
-        // the URI. This is needed to disambiguate frames that have
-        // the same source name (used as file name in the URI) but
-        // different sources.
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hash;
-        use std::hash::Hasher;
-        let mut hasher = DefaultHasher::new();
-        source.hash(&mut hasher);
-        let hash = format!("{:x}", hasher.finish());
-
-        ark_uri(&format!(
-            "debug/session{i}/{hash}/{source_name}.R",
-            i = debug_session_index,
-        ))
-    }
-
-    // Doesn't expect `ark:` scheme, used for checking keys in our vdoc map
-    fn is_ark_debug_path(uri: &str) -> bool {
-        static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-        let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
-        re.is_match(uri)
     }
 
     fn renv_autoloader_reply() -> Option<String> {
@@ -2050,7 +2016,7 @@ impl RMain {
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        r_main.dap.handle_write_console(&content);
+        r_main.debug_handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
