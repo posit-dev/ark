@@ -220,7 +220,7 @@ mod tests {
                 Ok(ParseResult::Incomplete)
             );
 
-            // Error
+            // Syntax error (error longjump thrown by parser)
             assert_match!(
                 parse_status(&ParseInput::Text("42 + _")),
                 Ok(ParseResult::SyntaxError { message }) => {
@@ -228,7 +228,7 @@ mod tests {
                 }
             );
 
-            // "normal" syntax error
+            // Syntax error (error code returned by parser)
             assert_match!(
                 parse_status(&ParseInput::Text("1+1\n*42")),
                 Ok(ParseResult::SyntaxError { message }) => {

@@ -83,10 +83,6 @@ fn main() -> anyhow::Result<()> {
     let mut capture_streams = true;
     let mut default_repos = DefaultRepos::Auto;
 
-    // We don't support the asking the user whether to save the workspace data
-    // on exit because calling readline during shutdown puts in a precarious
-    // position. So effectively we're implementing "no-save" by default.
-    // Process remaining arguments. TODO: Need an argument that can passthrough args to R
     while let Some(arg) = argv.next() {
         match arg.as_str() {
             "--connection_file" => {

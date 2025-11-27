@@ -309,7 +309,8 @@ pub struct RMain {
     /// consoles to get R to shut down
     read_console_shutdown: Cell<bool>,
 
-    /// Current topmost environment on the stack while waiting for input in ReadConsole
+    /// Current topmost environment on the stack while waiting for input in ReadConsole.
+    /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
     pub(crate) read_console_frame: RefCell<RObject>,
 }
 
@@ -344,7 +345,6 @@ impl PendingInputs {
         let status = match harp::parse_status(&input) {
             Err(err) => {
                 // Failed to even attempt to parse the input, something is seriously wrong
-                // FIXME: There are some valid syntax errors going through here, e.g. `identity |> _(1)`.
                 return Ok(ParseResult::SyntaxError(format!("{err}")));
             },
             Ok(status) => status,
@@ -353,7 +353,7 @@ impl PendingInputs {
         // - Incomplete inputs put R into a state where it expects more input that will never come, so we
         //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
         // - Complete statements are obviously fine.
-        // - Syntax errors will cause R to throw an error, which is expected.
+        // - Syntax errors will get bubbled up as R errors via an `ConsoleResult::Error`.
         let exprs = match status {
             harp::ParseResult::Complete(exprs) => exprs,
             harp::ParseResult::Incomplete => {
@@ -793,6 +793,7 @@ impl RMain {
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             read_console_nested_return_next_input: Cell::new(None),
+            // Can't use `R_ENVS.global` here as it isn't initialised yet
             read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
             read_console_shutdown: Cell::new(false),
         }
@@ -956,16 +957,17 @@ impl RMain {
             // Clear any pending inputs, if any
             self.pending_inputs = None;
 
-            // Reply to active request with error
+            // Reply to active request with error, then fall through to event loop
             self.handle_active_request(&info, ConsoleValue::Error(exception));
         } else if matches!(info.kind, PromptKind::InputRequest) {
-            // Request input reply to the frontend and return it to R
+            // Request input from the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
         } else if let Some(input) = self.pop_pending() {
             // Evaluate pending expression if there is any remaining
             return self.handle_pending_input(input, buf, buflen);
         } else {
-            // Otherwise reply to active request with accumulated result
+            // Otherwise reply to active request with accumulated result, then
+            // fall through to event loop
             let result = self.take_result();
             self.handle_active_request(&info, ConsoleValue::Success(result));
         }
@@ -1029,12 +1031,12 @@ impl RMain {
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
         let polled_events_index = select.recv(&polled_events_rx);
 
-        // Don't process idle tasks unless at top level. We currently don't want
-        // idle tasks (e.g. for srcref generation) to run when the call stack is
-        // not empty. We could make this configurable though if needed, i.e. some
-        // idle tasks would be able to run in the browser. Those should be sent
-        // to a dedicated channel that would always be included in the set of
-        // recv channels.
+        // Only process idle at top level. We currently don't want idle tasks
+        // (e.g. for srcref generation) to run when the call stack is not empty.
+        // We could make this configurable though if needed, i.e. some idle
+        // tasks would be able to run in the browser. Those should be sent to a
+        // dedicated channel that would always be included in the set of recv
+        // channels.
         let tasks_idle_index = if matches!(info.kind, PromptKind::TopLevel) {
             Some(select.recv(&tasks_idle_rx))
         } else {
@@ -1175,8 +1177,7 @@ impl RMain {
 
         if autoprint.ends_with('\n') {
             // Remove the trailing newlines that R adds to outputs but that
-            // Jupyter frontends are not expecting. Is it worth taking a
-            // mutable self ref across calling methods to avoid the clone?
+            // Jupyter frontends are not expecting
             autoprint.pop();
         }
         if autoprint.len() != 0 {
@@ -1249,9 +1250,6 @@ impl RMain {
         Some(exception)
     }
 
-    /// Returns:
-    /// - `None` if we should fall through to the event loop to wait for more user input
-    /// - `Some(ConsoleResult)` if we should immediately exit `read_console()`
     fn handle_active_request(&mut self, info: &PromptInfo, value: ConsoleValue) {
         // If we get here we finished evaluating all pending inputs. Check if we
         // have an active request from a previous `read_console()` iteration. If
@@ -2423,7 +2421,8 @@ pub extern "C-unwind" fn r_read_console(
     }
 
     // We've finished evaluating a dummy value to reset state in R's REPL,
-    // and are now ready to evaluate the actual input
+    // and are now ready to evaluate the actual input, which is typically
+    // just `.ark_last_value`.
     if let Some(next_input) = main.read_console_nested_return_next_input.take() {
         RMain::on_console_input(buf, buflen, next_input).unwrap();
         return 1;

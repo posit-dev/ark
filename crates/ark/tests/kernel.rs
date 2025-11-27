@@ -5,9 +5,6 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use ark::fixtures::DummyArkFrontend;
 use stdext::assert_match;
 
-// Avoids our global calling handler from rlangifying errors.
-// This causes some test instability across configs.
-
 #[test]
 fn test_kernel_info() {
     let frontend = DummyArkFrontend::lock();
@@ -424,8 +421,8 @@ fn test_execute_request_error() {
 
 #[test]
 fn test_execute_request_error_with_accumulated_output() {
-    // Test that when the very last input output and then throws an error,
-    // the accumulated output is flushed before the error is reported.
+    // Test that when the very last input throws an error after producing
+    // output, the accumulated output is flushed before the error is reported.
     // This tests the autoprint buffer flush logic in error handling.
     let frontend = DummyArkFrontend::lock();
 

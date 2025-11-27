@@ -73,12 +73,15 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
 
+        // Install a CleanUp hook for integration tests that test the shutdown process.
+        // We confirm that shutdown occurs by waiting in the test until `CLEANUP_SIGNAL`'s
+        // condition variable sends a notification, which occurs in this cleanup method
+        // that is called during R's shutdown process.
         if stdext::IS_TESTING {
-            use libr::ptr_R_CleanUp;
-
-            use crate::interface::r_cleanup_for_tests;
-
-            libr::set(ptr_R_CleanUp, Some(r_cleanup_for_tests));
+            libr::set(
+                libr::ptr_R_CleanUp,
+                Some(crate::interface::r_cleanup_for_tests),
+            );
         }
 
         // In tests R may be run from various threads. This confuses R's stack
