@@ -388,7 +388,7 @@ impl PendingInputs {
     }
 
     pub(crate) fn pop(&mut self) -> Option<PendingInput> {
-        if self.index >= self.len {
+        if self.is_empty() {
             return None;
         }
 
