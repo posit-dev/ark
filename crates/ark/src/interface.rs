@@ -1343,15 +1343,15 @@ impl RMain {
 
                 // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
-                    return Some(self.handle_pending_input(input, buf, buflen));
+                    Some(self.handle_pending_input(input, buf, buflen))
+                } else {
+                    // Otherwise we got an empty input, e.g. `""` and there's
+                    // nothing to do. Close active request.
+                    self.handle_active_request(info, ConsoleValue::Success(Default::default()));
+
+                    // And return to event loop
+                    None
                 }
-
-                // Otherwise we got an empty input, e.g. `""` and there's
-                // nothing to do. Close active request.
-                self.handle_active_request(info, ConsoleValue::Success(Default::default()));
-
-                // And return to event loop
-                None
             },
 
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
