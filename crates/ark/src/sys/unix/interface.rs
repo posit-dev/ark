@@ -7,6 +7,8 @@
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::sync::Condvar;
+use std::sync::Mutex;
 
 use libr::ptr_R_Busy;
 use libr::ptr_R_ReadConsole;
@@ -37,6 +39,9 @@ use crate::interface::r_suicide;
 use crate::interface::r_write_console;
 use crate::interface::RMain;
 use crate::signals::initialize_signal_handlers;
+
+// For shutdown signal in integration tests
+pub static CLEANUP_SIGNAL: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
 
 pub fn setup_r(args: &Vec<String>) {
     unsafe {
@@ -72,6 +77,14 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_ShowMessage, Some(r_show_message));
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
+
+        // Install a CleanUp hook for integration tests that test the shutdown process.
+        // We confirm that shutdown occurs by waiting in the test until `CLEANUP_SIGNAL`'s
+        // condition variable sends a notification, which occurs in this cleanup method
+        // that is called during R's shutdown process.
+        if stdext::IS_TESTING {
+            libr::set(libr::ptr_R_CleanUp, Some(r_cleanup_for_tests));
+        }
 
         // In tests R may be run from various threads. This confuses R's stack
         // overflow checks so we disable those. This should not make it in
@@ -121,4 +134,22 @@ pub fn run_activity_handlers() {
             fdset = R_checkActivity(0, 1);
         }
     }
+}
+
+#[no_mangle]
+pub extern "C-unwind" fn r_cleanup_for_tests(_save_act: i32, _status: i32, _run_last: i32) {
+    // Signal that cleanup has started
+    let (lock, cvar) = &CLEANUP_SIGNAL;
+
+    let mut started = lock.lock().unwrap();
+    *started = true;
+
+    cvar.notify_all();
+    drop(started);
+
+    // Sleep to give tests time to complete before we panic
+    std::thread::sleep(std::time::Duration::from_secs(5));
+
+    // Fallthrough to R which will call `exit()`. Note that panicking from here
+    // would be UB, we can't panic over a C stack.
 }

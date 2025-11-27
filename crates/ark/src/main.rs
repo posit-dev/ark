@@ -83,7 +83,6 @@ fn main() -> anyhow::Result<()> {
     let mut capture_streams = true;
     let mut default_repos = DefaultRepos::Auto;
 
-    // Process remaining arguments. TODO: Need an argument that can passthrough args to R
     while let Some(arg) = argv.next() {
         match arg.as_str() {
             "--connection_file" => {
@@ -324,6 +323,20 @@ fn main() -> anyhow::Result<()> {
     if r_args.is_empty() {
         r_args.push(String::from("--interactive"));
     }
+
+    // Prepend the vector of arguments with our default. These can be overridden
+    // by user arguments (last one wins).
+    r_args.splice(0..0, [
+        // We don't support the asking the user whether to save the workspace
+        // data on exit because calling readline during shutdown puts in a
+        // precarious position. So effectively we're implementing "no-save" by
+        // default. Note that there is no argument to opt into the "ask"
+        // behaviour, so it can't be reenabled by the user.
+        String::from("--no-save"),
+        // Since we don't save by default, we also don't restore by default for
+        // consistency
+        String::from("--no-restore-data"),
+    ]);
 
     // This causes panics on background threads to propagate on the main
     // thread. If we don't propagate a background thread panic, the program

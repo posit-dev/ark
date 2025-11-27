@@ -102,6 +102,11 @@ impl Control {
         H: FnOnce(JupyterMessage<T>) -> Result<(), Error>,
     {
         // Enter the kernel-busy state in preparation for handling the message.
+        // The protocol specification is vague about status messages for
+        // Control, we mostly emit them for compatibility with ipykernel:
+        // https://github.com/ipython/ipykernel/pull/585. These status messages
+        // can be discriminated from those on Shell by examining the parent
+        // header.
         if let Err(err) = self.send_state(req.clone(), ExecutionState::Busy) {
             warn!("Failed to change kernel status to busy: {err}");
         }

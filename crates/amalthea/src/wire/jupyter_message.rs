@@ -46,6 +46,7 @@ use crate::wire::is_complete_reply::IsCompleteReply;
 use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
+use crate::wire::shutdown_reply::ShutdownReply;
 use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::KernelStatus;
 use crate::wire::wire_message::WireMessage;
@@ -101,6 +102,7 @@ pub enum Message {
     // Control
     InterruptReply(JupyterMessage<InterruptReply>),
     InterruptRequest(JupyterMessage<InterruptRequest>),
+    ShutdownReply(JupyterMessage<ShutdownReply>),
     ShutdownRequest(JupyterMessage<ShutdownRequest>),
     // Registration
     HandshakeRequest(JupyterMessage<HandshakeRequest>),
@@ -163,6 +165,7 @@ impl TryFrom<&Message> for WireMessage {
             Message::IsCompleteRequest(msg) => WireMessage::try_from(msg),
             Message::KernelInfoReply(msg) => WireMessage::try_from(msg),
             Message::KernelInfoRequest(msg) => WireMessage::try_from(msg),
+            Message::ShutdownReply(msg) => WireMessage::try_from(msg),
             Message::ShutdownRequest(msg) => WireMessage::try_from(msg),
             Message::Status(msg) => WireMessage::try_from(msg),
             Message::CommInfoReply(msg) => WireMessage::try_from(msg),
@@ -244,6 +247,9 @@ impl TryFrom<&WireMessage> for Message {
         }
         if kind == UpdateDisplayData::message_type() {
             return Ok(Message::UpdateDisplayData(JupyterMessage::try_from(msg)?));
+        }
+        if kind == ShutdownReply::message_type() {
+            return Ok(Message::ShutdownReply(JupyterMessage::try_from(msg)?));
         }
         if kind == ShutdownRequest::message_type() {
             return Ok(Message::ShutdownRequest(JupyterMessage::try_from(msg)?));

@@ -19,6 +19,7 @@ use amalthea::wire::comm_info_request::CommInfoRequest;
 use amalthea::wire::comm_msg::CommWireMsg;
 use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
 use assert_matches::assert_matches;
@@ -60,6 +61,31 @@ fn test_amalthea_execute_request() {
     assert_eq!(frontend.recv_iopub_execute_result(), "42");
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
+    frontend.recv_iopub_idle();
+}
+
+#[test]
+fn test_amalthea_shutdown_request() {
+    let frontend = DummyAmaltheaFrontend::lock();
+
+    // Send a shutdown request with restart = false
+    frontend.send_shutdown_request(false);
+    frontend.recv_iopub_busy();
+
+    let reply = frontend.recv_control_shutdown_reply();
+    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(reply.restart, false);
+    frontend.recv_iopub_idle();
+
+    // Test again with restart = true.
+    // Although the R thread has shut down, the Amalthea thread keeps running
+    // and is able to reply.
+    frontend.send_shutdown_request(true);
+    frontend.recv_iopub_busy();
+
+    let reply = frontend.recv_control_shutdown_reply();
+    assert_eq!(reply.status, Status::Ok);
+    assert_eq!(reply.restart, true);
     frontend.recv_iopub_idle();
 }
 

@@ -10,6 +10,7 @@
 // The frontend methods called by R are forwarded to the corresponding
 // `RMain` methods via `R_MAIN`.
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
@@ -59,12 +60,12 @@ use harp::command::r_home_setup;
 use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
+use harp::exec::exec_with_cleanup;
 use harp::exec::r_check_stack;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use harp::exec::RE_STACK_OVERFLOW;
 use harp::library::RLibraries;
 use harp::line_ending::convert_line_endings;
 use harp::line_ending::LineEnding;
@@ -73,6 +74,9 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
+use harp::srcref::get_srcref_list;
+use harp::srcref::srcref_list_get;
+use harp::srcref::SrcFile;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
@@ -93,10 +97,9 @@ use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
 use crate::dap::dap::DapBackendEvent;
-use crate::dap::dap_r_main::FrameInfoId;
-use crate::dap::dap_r_main::RMainDap;
 use crate::dap::Dap;
 use crate::errors;
+use crate::errors::stack_overflow_occurred;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
@@ -115,6 +118,7 @@ use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
+use crate::repl_debug::FrameInfoId;
 use crate::repos::apply_default_repos;
 use crate::repos::DefaultRepos;
 use crate::request::debug_request_command;
@@ -123,11 +127,9 @@ use crate::request::RRequest;
 use crate::signals::initialize_signal_handlers;
 use crate::signals::interrupts_pending;
 use crate::signals::set_interrupts_pending;
-use crate::srcref::ark_uri;
 use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
-use crate::strings::lines;
 use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
@@ -146,6 +148,13 @@ pub enum SessionMode {
 
     /// A background session, typically not connected to any UI.
     Background,
+}
+
+#[derive(Clone, Debug)]
+pub enum DebugCallText {
+    None,
+    Capturing(String),
+    Finalized(String),
 }
 
 // --- Globals ---
@@ -214,10 +223,9 @@ pub struct RMain {
     /// by forwarding them through the UI comm. Optional, and really Positron specific.
     ui_comm_tx: Option<UiCommSender>,
 
-    /// Represents whether an error occurred during R code execution.
-    pub error_occurred: bool,
-    pub error_message: String, // `evalue` in the Jupyter protocol
-    pub error_traceback: Vec<String>,
+    /// Error captured by our global condition handler during the last iteration
+    /// of the REPL.
+    pub(crate) last_error: Option<Exception>,
 
     /// Channel to communicate with the Help thread
     help_event_tx: Option<Sender<HelpEvent>>,
@@ -231,11 +239,9 @@ pub struct RMain {
     /// initially connects and after an LSP restart.
     lsp_virtual_documents: HashMap<String, String>,
 
-    dap: RMainDap,
-
     pub positron_ns: Option<RObject>,
 
-    pending_lines: Vec<String>,
+    pending_inputs: Option<PendingInputs>,
 
     /// Banner output accumulated during startup, but set to `None` after we complete
     /// the initialization procedure and forward the banner on
@@ -255,18 +261,165 @@ pub struct RMain {
     /// See https://github.com/posit-dev/positron/issues/3151.
     debug_preserve_focus: bool,
 
+    /// Underlying dap state. Shared with the DAP server thread.
+    pub(crate) debug_dap: Arc<Mutex<Dap>>,
+
+    /// Whether or not we are currently in a debugging state.
+    pub(crate) debug_is_debugging: bool,
+
+    /// The current call emitted by R as `debug: <call-text>`.
+    pub(crate) debug_call_text: DebugCallText,
+
+    /// The last known `start_line` for the active context frame.
+    pub(crate) debug_last_line: Option<i64>,
+
     /// The stack of frames we saw the last time we stopped. Used as a mostly
     /// reliable indication of whether we moved since last time.
-    debug_last_stack: Vec<FrameInfoId>,
-
-    /// Current topmost environment on the stack while waiting for input in the
-    /// debugger. This is `Some()` only when R is idle and in a `browser()`
-    /// prompt.
-    debug_env: Option<RObject>,
+    pub(crate) debug_last_stack: Vec<FrameInfoId>,
 
     /// Ever increasing debug session index. Used to create URIs that are only
     /// valid for a single session.
-    debug_session_index: u32,
+    pub(crate) debug_session_index: u32,
+
+    /// The current frame `id`. Unique across all frames within a single debug session.
+    /// Reset after `stop_debug()`, not between debug steps.
+    pub(crate) debug_current_frame_id: i64,
+
+    /// Tracks how many nested `r_read_console()` calls are on the stack.
+    /// Incremented when entering `r_read_console(),` decremented on exit.
+    read_console_depth: Cell<usize>,
+
+    /// Set to true when `r_read_console()` exits via an error longjump. Used to
+    /// detect if we need to go return from `r_read_console()` with a dummy
+    /// evaluation to reset things like `R_EvalDepth`.
+    read_console_threw_error: Cell<bool>,
+
+    /// Set to true when `r_read_console()` exits. Reset to false at the start
+    /// of each `r_read_console()` call. Used to detect if `eval()` returned
+    /// from a nested REPL (the flag will be true when the evaluation returns).
+    /// In these cases, we need to return from `r_read_console()` with a dummy
+    /// evaluation to reset things like `R_ConsoleIob`.
+    read_console_nested_return: Cell<bool>,
+
+    /// Used to track an input to evaluate upon returning to `r_read_console()`,
+    /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
+    read_console_nested_return_next_input: Cell<Option<String>>,
+
+    /// We've received a Shutdown signal and need to return EOF from all nested
+    /// consoles to get R to shut down
+    read_console_shutdown: Cell<bool>,
+
+    /// Current topmost environment on the stack while waiting for input in ReadConsole.
+    /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
+    pub(crate) read_console_frame: RefCell<RObject>,
+}
+
+/// Stack of pending inputs
+struct PendingInputs {
+    /// EXPRSXP vector of parsed expressions
+    exprs: RObject,
+    /// List of srcrefs if any, the same length as `exprs`
+    srcrefs: Option<RObject>,
+    /// Length of `exprs` and `srcrefs`
+    len: isize,
+    /// Index into the stack
+    index: isize,
+}
+
+enum ParseResult<T> {
+    Success(Option<T>),
+    SyntaxError(String),
+}
+
+impl PendingInputs {
+    pub(crate) fn read(input: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
+        let mut _srcfile = None;
+
+        let input = if harp::get_option_bool("keep.source") {
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(input.into()));
+            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+        } else {
+            harp::ParseInput::Text(input)
+        };
+
+        let status = match harp::parse_status(&input) {
+            Err(err) => {
+                // Failed to even attempt to parse the input, something is seriously wrong
+                return Ok(ParseResult::SyntaxError(format!("{err}")));
+            },
+            Ok(status) => status,
+        };
+
+        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
+        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
+        // - Complete statements are obviously fine.
+        // - Syntax errors will get bubbled up as R errors via an `ConsoleResult::Error`.
+        let exprs = match status {
+            harp::ParseResult::Complete(exprs) => exprs,
+            harp::ParseResult::Incomplete => {
+                return Ok(ParseResult::SyntaxError(format!(
+                    "Can't parse incomplete input"
+                )));
+            },
+            harp::ParseResult::SyntaxError { message, .. } => {
+                return Ok(ParseResult::SyntaxError(format!("Syntax error: {message}")));
+            },
+        };
+
+        let srcrefs = get_srcref_list(exprs.sexp);
+
+        let len = exprs.length();
+        let index = 0;
+
+        if len == 0 {
+            return Ok(ParseResult::Success(None));
+        }
+
+        Ok(ParseResult::Success(Some(Self {
+            exprs,
+            srcrefs,
+            len,
+            index,
+        })))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.index >= self.len
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<PendingInput> {
+        if self.is_empty() {
+            return None;
+        }
+
+        let expr = RObject::new(harp::list_get(self.exprs.sexp, self.index));
+
+        let srcref = self
+            .srcrefs
+            .as_ref()
+            .map(|xs| srcref_list_get(xs.sexp, self.index))
+            .unwrap_or(RObject::null());
+
+        self.index += 1;
+        Some(PendingInput { expr, srcref })
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingInput {
+    expr: RObject,
+    srcref: RObject,
+}
+
+#[derive(Debug, Clone)]
+enum ConsoleValue {
+    Success(serde_json::Map<String, serde_json::Value>),
+    Error(Exception),
+}
+
+enum WaitFor {
+    InputReply,
+    ExecuteRequest,
 }
 
 /// Represents the currently active execution request from the frontend. It
@@ -287,6 +440,19 @@ pub struct KernelInfo {
     pub continuation_prompt: Option<String>,
 }
 
+/// The kind of prompt we're handling in the REPL.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptKind {
+    /// A top-level REPL prompt
+    TopLevel,
+
+    /// A `browser()` debugging prompt
+    Browser,
+
+    /// A user input request from code, e.g., via `readline()`
+    InputRequest,
+}
+
 /// This struct represents the data that we wish R would pass to
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
@@ -298,7 +464,7 @@ pub struct PromptInfo {
     input_prompt: String,
 
     /// The continuation prompt string when user supplies incomplete
-    /// inputs. This always corresponds to `getOption("continue"). We send
+    /// inputs. This always corresponds to `getOption("continue")`. We send
     /// it to frontends along with `prompt` because some frontends such as
     /// Positron do not send incomplete inputs to Ark and take charge of
     /// continuation prompts themselves. For frontends that can send
@@ -306,16 +472,8 @@ pub struct PromptInfo {
     /// error on them rather than requesting that this be shown.
     continuation_prompt: String,
 
-    /// Whether this is a `browser()` prompt. A browser prompt can be
-    /// incomplete but is never a user request.
-    browser: bool,
-
-    /// Whether the last input didn't fully parse and R is waiting for more input
-    incomplete: bool,
-
-    /// Whether this is a prompt from a fresh REPL iteration (browser or
-    /// top level) or a prompt from some user code, e.g. via `readline()`
-    input_request: bool,
+    /// The kind of prompt we're handling.
+    kind: PromptKind,
 }
 
 pub enum ConsoleInput {
@@ -323,11 +481,13 @@ pub enum ConsoleInput {
     Input(String),
 }
 
-pub enum ConsoleResult {
+#[derive(Debug)]
+pub(crate) enum ConsoleResult {
     NewInput,
+    NewPendingInput(PendingInput),
     Interrupt,
     Disconnected,
-    Error(amalthea::Error),
+    Error(String),
 }
 
 impl RMain {
@@ -476,6 +636,9 @@ impl RMain {
             if let Err(err) = apply_default_repos(default_repos) {
                 log::error!("Error setting default repositories: {err:?}");
             }
+
+            // Initialise Ark's last value
+            libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
         }
 
         // Now that R has started (emitting any startup messages that we capture in the
@@ -604,27 +767,35 @@ impl RMain {
             execution_count: 0,
             autoprint_output: String::new(),
             ui_comm_tx: None,
-            error_occurred: false,
-            error_message: String::new(),
-            error_traceback: Vec::new(),
+            last_error: None,
             help_event_tx: None,
             help_port: None,
             lsp_events_tx: None,
             lsp_virtual_documents: HashMap::new(),
-            dap: RMainDap::new(dap),
+            debug_dap: dap,
+            debug_is_debugging: false,
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
-            pending_lines: Vec::new(),
             banner: None,
             r_error_buffer: None,
             captured_output: String::new(),
+            debug_call_text: DebugCallText::None,
+            debug_last_line: None,
             debug_preserve_focus: false,
             debug_last_stack: vec![],
-            debug_env: None,
             debug_session_index: 1,
+            debug_current_frame_id: 0,
+            pending_inputs: None,
+            read_console_depth: Cell::new(0),
+            read_console_nested_return: Cell::new(false),
+            read_console_threw_error: Cell::new(false),
+            read_console_nested_return_next_input: Cell::new(None),
+            // Can't use `R_ENVS.global` here as it isn't initialised yet
+            read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
+            read_console_shutdown: Cell::new(false),
         }
     }
 
@@ -732,11 +903,16 @@ impl RMain {
     /// * `prompt` - The prompt shown to the user
     /// * `buf`    - Pointer to buffer to receive the user's input (type `CONSOLE_BUFFER_CHAR`)
     /// * `buflen` - Size of the buffer to receiver user's input
-    /// * `hist`   - Whether to add the input to the history (1) or not (0)
+    /// * `_hist`   - Whether to add the input to the history (1) or not (0)
     ///
-    /// Returns a tuple. First value is to be passed on to `ReadConsole()` and
-    /// indicates whether new input is available. Second value indicates whether
-    /// we need to call `Rf_onintr()` to process an interrupt.
+    /// This does two things:
+    /// - Move the Console state machine to the next state:
+    ///   - Wait for input
+    ///   - Set an active execute request and a list of pending expressions
+    ///   - Set `self.debug_is_debugging` depending on presence or absence of debugger prompt
+    ///   - Evaluate next pending expression
+    ///   - Close active execute request if pending list is empty
+    /// - Run an event loop while waiting for input
     fn read_console(
         &mut self,
         prompt: *const c_char,
@@ -744,54 +920,57 @@ impl RMain {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
+        self.debug_handle_read_console();
+
+        // State machine part of ReadConsole
+
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
-        // Upon entering read-console, finalize any debug call text that we were capturing.
-        // At this point, the user can either advance the debugger, causing us to capture
-        // a new expression, or execute arbitrary code, where we will reuse a finalized
-        // debug call text to maintain the debug state.
-        self.dap.finalize_call_text();
+        // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
+        // is true. Otherwise it is false.
+        if matches!(info.kind, PromptKind::Browser) {
+            // Start or continue debugging with the `debug_preserve_focus` hint
+            // from the last expression we evaluated
+            self.debug_is_debugging = true;
+            self.debug_start(self.debug_preserve_focus);
+        } else if self.debug_is_debugging {
+            self.debug_is_debugging = false;
+            self.debug_stop();
+        }
 
-        // We get called here everytime R needs more input. This handler
-        // represents the driving event of a small state machine that manages
-        // communication between R and the frontend. In the following order:
-        //
-        // - If we detect an input request prompt, then we forward the request
-        //   on to the frontend and then fall through to the event loop to wait
-        //   on the input reply.
-        //
-        // - If the vector of pending lines is not empty, R might be waiting for
-        //   us to complete an incomplete expression, or we might just have
-        //   completed an intermediate expression (e.g. from an ExecuteRequest
-        //   like `foo\nbar` where `foo` is intermediate and `bar` is final).
-        //   Send the next line to R.
-        //
-        // - If the vector of pending lines is empty, and if the prompt is for
-        //   new R code, we close the active ExecuteRequest and send an
-        //   ExecuteReply to the frontend. We then fall through to the event
-        //   loop to wait for more input.
-        //
-        // This state machine depends on being able to reliably distinguish
-        // between readline prompts (from `readline()`, `scan()`, or `menu()`),
-        // and actual R code prompts (either top-level or from a nested debug
-        // REPL).  A readline prompt should never change our state (in
-        // particular our vector of pending inputs). We think we are making this
-        // distinction sufficiently robustly but ideally R would let us know the
-        // prompt type so there is no ambiguity at all.
-        //
-        // R might throw an error at any time while we are working on our vector
-        // of pending lines, either from a syntax error or from an evaluation
-        // error. When this happens, we abort evaluation and clear the pending
-        // lines.
-        //
-        // If the vector of pending lines is empty and we detect an incomplete
-        // prompt, this is a panic. We check ahead of time for complete
-        // expressions before breaking up an ExecuteRequest in multiple lines,
-        // so this should not happen.
-        if let Some(console_result) = self.handle_active_request(&info, buf, buflen) {
-            return console_result;
-        };
+        if let Some(exception) = self.take_exception() {
+            // We might get an input request if `readline()` or `menu()` is
+            // called in `options(error = )`. We respond to this with an error
+            // as this is not supported by Ark.
+            if matches!(info.kind, PromptKind::InputRequest) {
+                // Reset error so we can handle it when we recurse here after
+                // the error aborts the readline. Note it's better to first emit
+                // the R invalid input request error, and then handle
+                // `exception` within the context of a new `ReadConsole`
+                // instance, so that we emit the proper execution prompts as
+                // part of the response, and not the readline prompt.
+                self.last_error = Some(exception);
+                return self.handle_invalid_input_request_after_error();
+            }
+
+            // Clear any pending inputs, if any
+            self.pending_inputs = None;
+
+            // Reply to active request with error, then fall through to event loop
+            self.handle_active_request(&info, ConsoleValue::Error(exception));
+        } else if matches!(info.kind, PromptKind::InputRequest) {
+            // Request input from the frontend and return it to R
+            return self.handle_input_request(&info, buf, buflen);
+        } else if let Some(input) = self.pop_pending() {
+            // Evaluate pending expression if there is any remaining
+            return self.handle_pending_input(input, buf, buflen);
+        } else {
+            // Otherwise reply to active request with accumulated result, then
+            // fall through to event loop
+            let result = self.take_result();
+            self.handle_active_request(&info, ConsoleValue::Success(result));
+        }
 
         // In the future we'll also send browser information, see
         // https://github.com/posit-dev/positron/issues/3001. Currently this is
@@ -801,21 +980,30 @@ impl RMain {
         // often. We'd still push a `DidChangeConsoleInputs` notification from
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
-        if !info.browser && !info.incomplete && !info.input_request {
+        if !self.debug_is_debugging && !matches!(info.kind, PromptKind::InputRequest) {
             self.refresh_lsp();
         }
 
         // Signal prompt
         EVENTS.console_prompt.emit(());
 
-        if info.browser {
-            self.start_debug();
-        } else {
-            if self.dap.is_debugging() {
-                self.stop_debug();
-            }
-        }
+        self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
+    }
 
+    /// Runs the ReadConsole event loop.
+    /// This handles events for:
+    /// - Reception of either input replies or execute requests (as determined
+    ///   by `wait_for`)
+    /// - Idle-time and interrupt-time tasks
+    /// - Requests from the frontend (currently only used for establishing UI comm)
+    /// - R's polled events
+    fn run_event_loop(
+        &mut self,
+        info: &PromptInfo,
+        buf: *mut c_uchar,
+        buflen: c_int,
+        wait_for: WaitFor,
+    ) -> ConsoleResult {
         let mut select = crossbeam::channel::Select::new();
 
         // Cloning is necessary to avoid a double mutable borrow error
@@ -831,22 +1019,28 @@ impl RMain {
         // package. 50ms seems to be more in line with RStudio (posit-dev/positron#7235).
         let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
-        let r_request_index = select.recv(&r_request_rx);
-        let stdin_reply_index = select.recv(&stdin_reply_rx);
+        // This is the main kind of message from the frontend that we are expecting.
+        // We either wait for `input_reply` messages on StdIn, or for
+        // `execute_request` on Shell.
+        let (r_request_index, stdin_reply_index) = match wait_for {
+            WaitFor::ExecuteRequest => (Some(select.recv(&r_request_rx)), None),
+            WaitFor::InputReply => (None, Some(select.recv(&stdin_reply_rx))),
+        };
+
         let kernel_request_index = select.recv(&kernel_request_rx);
         let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
         let polled_events_index = select.recv(&polled_events_rx);
 
-        // Don't process idle tasks in browser prompts. We currently don't want
-        // idle tasks (e.g. for srcref generation) to run when the call stack is
-        // empty. We could make this configurable though if needed, i.e. some
-        // idle tasks would be able to run in the browser. Those should be sent
-        // to a dedicated channel that would always be included in the set of
-        // recv channels.
-        let tasks_idle_index = if info.browser {
-            None
-        } else {
+        // Only process idle at top level. We currently don't want idle tasks
+        // (e.g. for srcref generation) to run when the call stack is not empty.
+        // We could make this configurable though if needed, i.e. some idle
+        // tasks would be able to run in the browser. Those should be sent to a
+        // dedicated channel that would always be included in the set of recv
+        // channels.
+        let tasks_idle_index = if matches!(info.kind, PromptKind::TopLevel) {
             Some(select.recv(&tasks_idle_rx))
+        } else {
+            None
         };
 
         loop {
@@ -858,7 +1052,7 @@ impl RMain {
             // `UserBreak`, but won't actually fire the interrupt b/c
             // we have them disabled, so it would end up swallowing the
             // user interrupt request.
-            if info.input_request && interrupts_pending() {
+            if matches!(info.kind, PromptKind::InputRequest) && interrupts_pending() {
                 return ConsoleResult::Interrupt;
             }
 
@@ -867,17 +1061,13 @@ impl RMain {
             // reset the flag
             set_interrupts_pending(false);
 
-            // FIXME: Race between interrupt and new code request. To fix
-            // this, we could manage the Shell and Control sockets on the
-            // common message event thread. The Control messages would need
-            // to be handled in a blocking way to ensure subscribers are
-            // notified before the next incoming message is processed.
-
             // First handle execute requests outside of `select` to ensure they
             // have priority. `select` chooses at random.
-            if let Ok(req) = r_request_rx.try_recv() {
-                if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
-                    return input;
+            if let WaitFor::ExecuteRequest = wait_for {
+                if let Ok(req) = r_request_rx.try_recv() {
+                    if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
+                        return input;
+                    }
                 }
             }
 
@@ -885,7 +1075,7 @@ impl RMain {
 
             match oper.index() {
                 // We've got an execute request from the frontend
-                i if i == r_request_index => {
+                i if Some(i) == r_request_index => {
                     let req = oper.recv(&r_request_rx);
                     let Ok(req) = req else {
                         // The channel is disconnected and empty
@@ -898,7 +1088,7 @@ impl RMain {
                 },
 
                 // We've got a reply for readline
-                i if i == stdin_reply_index => {
+                i if Some(i) == stdin_reply_index => {
                     let reply = oper.recv(&stdin_reply_rx).unwrap();
                     return self.handle_input_reply(reply, buf, buflen);
                 },
@@ -942,8 +1132,9 @@ impl RMain {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
+        // Sent to the frontend after each top-level command so users can
+        // customise their prompts
         let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-        let matches_continuation = prompt == continuation_prompt;
 
         // Detect browser prompt by matching the prompt string
         // https://github.com/posit-dev/positron/issues/4742.
@@ -951,99 +1142,122 @@ impl RMain {
         // `options(prompt =, continue = ` to something that looks like
         // a browser prompt, or doing the same with `readline()`. We have
         // chosen to not support these edge cases.
-        // Additionally, we send code to R one line at a time, so even if we are debugging
-        // it can look like we are in a continuation state. To try and detect that, we
-        // detect if we matched the continuation prompt while the DAP is active.
-        let browser =
-            RE_DEBUG_PROMPT.is_match(&prompt) || (self.dap.is_debugging() && matches_continuation);
+        let browser = RE_DEBUG_PROMPT.is_match(&prompt);
 
-        // If there are frames on the stack and we're not in a browser prompt,
-        // this means some user code is requesting input, e.g. via `readline()`
-        let user_request = !browser && n_frame > 0;
-
-        // The request is incomplete if we see the continue prompt, except if
-        // we're in a user request, e.g. `readline("+ ")`. To guard against
-        // this, we check that we are at top-level (call stack is empty or we
-        // have a debug prompt).
-        let top_level = n_frame == 0 || browser;
-        let incomplete = matches_continuation && top_level;
+        // Determine the prompt kind based on context
+        let kind = if browser {
+            PromptKind::Browser
+        } else if n_frame > 0 {
+            // If there are frames on the stack and we're not in a browser prompt,
+            // this means some user code is requesting input, e.g. via `readline()`
+            PromptKind::InputRequest
+        } else {
+            PromptKind::TopLevel
+        };
 
         return PromptInfo {
             input_prompt: prompt,
             continuation_prompt,
-            browser,
-            incomplete,
-            input_request: user_request,
+            kind,
         };
     }
 
-    fn read_console_cleanup(&mut self) {
-        // The debug environment is only valid while R is idle
-        self.debug_env = None;
+    /// Take result from `self.autoprint_output` and R's `.Last.value` object
+    fn take_result(&mut self) -> serde_json::Map<String, serde_json::Value> {
+        // TODO: Implement rich printing of certain outputs.
+        // Will we need something similar to the RStudio model,
+        // where we implement custom print() methods? Or can
+        // we make the stub below behave sensibly even when
+        // streaming R output?
+        let mut data = serde_json::Map::new();
+
+        // The output generated by autoprint is emitted as an
+        // `execute_result` message.
+        let mut autoprint = std::mem::take(&mut self.autoprint_output);
+
+        if autoprint.ends_with('\n') {
+            // Remove the trailing newlines that R adds to outputs but that
+            // Jupyter frontends are not expecting
+            autoprint.pop();
+        }
+        if autoprint.len() != 0 {
+            data.insert("text/plain".to_string(), json!(autoprint));
+        }
+
+        // Include HTML representation of data.frame
+        unsafe {
+            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
+            if r_is_data_frame(value) {
+                match to_html(value) {
+                    Ok(html) => {
+                        data.insert("text/html".to_string(), json!(html));
+                    },
+                    Err(err) => {
+                        log::error!("{:?}", err);
+                    },
+                };
+            }
+        }
+
+        data
     }
 
-    /// Returns:
-    /// - `None` if we should fall through to the event loop to wait for more user input
-    /// - `Some(ConsoleResult)` if we should immediately exit `read_console()`
-    fn handle_active_request(
-        &mut self,
-        info: &PromptInfo,
-        buf: *mut c_uchar,
-        buflen: c_int,
-    ) -> Option<ConsoleResult> {
-        // TODO: Can we remove this below code?
-        // If the prompt begins with "Save workspace", respond with (n)
-        // and allow R to immediately exit.
-        //
-        // NOTE: Should be able to overwrite the `Cleanup` frontend method.
-        // This would also help with detecting normal exits versus crashes.
-        if info.input_prompt.starts_with("Save workspace") {
-            match Self::on_console_input(buf, buflen, String::from("n")) {
-                Ok(()) => return Some(ConsoleResult::NewInput),
-                Err(err) => return Some(ConsoleResult::Error(err)),
-            }
+    fn take_exception(&mut self) -> Option<Exception> {
+        let mut exception = if let Some(exception) = self.last_error.take() {
+            exception
+        } else if stack_overflow_occurred() {
+            // Call `base::traceback()` since we don't have a handled error
+            // object carrying a backtrace. This won't be formatted as a
+            // tree which is just as well since the recursive calls would
+            // push a tree too far to the right.
+            let traceback = r_traceback();
+
+            let exception = Exception {
+                ename: String::from(""),
+                evalue: r_peek_error_buffer(),
+                traceback,
+            };
+
+            // Reset error buffer so we don't display this message again
+            let _ = RFunction::new("base", "stop").call();
+
+            exception
+        } else {
+            return None;
+        };
+
+        // Flush any accumulated output to StdOut. This can happen if
+        // the last input errors out during autoprint.
+        let autoprint = std::mem::take(&mut self.autoprint_output);
+        if !autoprint.is_empty() {
+            let message = IOPubMessage::Stream(StreamOutput {
+                name: Stream::Stdout,
+                text: autoprint,
+            });
+            self.iopub_tx.send(message).unwrap();
         }
 
-        // First check if we are inside request for user input, like a `readline()` or `menu()`.
-        // It's entirely possible that we still have more pending lines, but an intermediate line
-        // put us into an `input_request` state. We must respond to that request before processing
-        // the rest of the pending lines.
-        if info.input_request {
-            if let Some(req) = &self.active_request {
-                // Send request to frontend. We'll wait for an `input_reply`
-                // from the frontend in the event loop in `read_console()`.
-                // The active request remains active.
-                self.request_input(req.originator.clone(), info.input_prompt.to_string());
-                return None;
-            } else {
-                // Invalid input request, propagate error to R
-                return Some(self.handle_invalid_input_request(buf, buflen));
-            }
+        // Jupyter clients typically discard the `evalue` when a `traceback` is
+        // present.  Jupyter-Console even disregards `evalue` in all cases. So
+        // include it here if we are in Notebook mode. But should Positron
+        // implement similar behaviour as the other frontends eventually? The
+        // first component of `traceback` could be compared to `evalue` and
+        // discarded from the traceback if the same.
+        if let SessionMode::Notebook = self.session_mode {
+            exception.traceback.insert(0, exception.evalue.clone());
         }
 
-        // An incomplete prompt when we no longer have any inputs to send should
-        // never happen because we check for incomplete inputs ahead of time and
-        // respond to the frontend with an error.
-        if info.incomplete && self.pending_lines.is_empty() {
-            unreachable!("Incomplete input in `ReadConsole` handler");
-        }
+        Some(exception)
+    }
 
-        // Next check if we have any pending lines. If we do, we are in the middle of
-        // evaluating a multi line selection, so immediately write the next line into R's buffer.
-        // The active request remains active.
-        if let Some(console_result) = self.handle_pending_line(buf, buflen) {
-            return Some(console_result);
-        }
-
-        // Finally, check if we have an active request from a previous `read_console()`
-        // iteration. If so, we `take()` and clear the `active_request` as we're about
-        // to complete it and send a reply to unblock the active Shell
-        // request.
+    fn handle_active_request(&mut self, info: &PromptInfo, value: ConsoleValue) {
+        // If we get here we finished evaluating all pending inputs. Check if we
+        // have an active request from a previous `read_console()` iteration. If
+        // so, we `take()` and clear the `active_request` as we're about to
+        // complete it and send a reply to unblock the active Shell request.
         if let Some(req) = std::mem::take(&mut self.active_request) {
-            // FIXME: Race condition between the comm and shell socket threads.
-            //
-            // Perform a refresh of the frontend state
-            // (Prompts, working directory, etc)
+            // Perform a refresh of the frontend state (Prompts, working
+            // directory, etc)
             self.with_mut_ui_comm_tx(|ui_comm_tx| {
                 let input_prompt = info.input_prompt.clone();
                 let continuation_prompt = info.continuation_prompt.clone();
@@ -1058,13 +1272,15 @@ impl RMain {
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
-            self.reply_execute_request(req, &info);
+            Self::reply_execute_request(&self.iopub_tx, req, &info, value);
+        } else {
+            log::info!("No active request to handle, discarding: {value:?}");
         }
-
-        // Prepare for the next user input
-        None
     }
 
+    // Called from Ark's ReadConsole event loop when we get a new execute
+    // request. It's not possible to get one while an active request is ongoing
+    // because of Jupyter's queueing of Shell messages.
     fn handle_execute_request(
         &mut self,
         req: RRequest,
@@ -1072,7 +1288,7 @@ impl RMain {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> Option<ConsoleResult> {
-        if info.input_request {
+        if matches!(info.kind, PromptKind::InputRequest) {
             panic!("Unexpected `execute_request` while waiting for `input_reply`.");
         }
 
@@ -1096,7 +1312,7 @@ impl RMain {
 
             RRequest::DebugCommand(cmd) => {
                 // Just ignore command in case we left the debugging state already
-                if !self.dap.is_debugging() {
+                if !self.debug_is_debugging {
                     return None;
                 }
 
@@ -1106,46 +1322,169 @@ impl RMain {
             },
         };
 
-        // Clear error flag
-        self.error_occurred = false;
-
         match input {
             ConsoleInput::Input(code) => {
-                // Handle commands for the debug interpreter
-                if self.dap.is_debugging() {
-                    let continue_cmds = vec!["n", "f", "c", "cont"];
-                    if continue_cmds.contains(&&code[..]) {
-                        // We're stepping so we want to focus the next location we stop at
-                        self.debug_preserve_focus = false;
-                        self.dap.send_dap(DapBackendEvent::Continued);
-                    } else {
-                        // The user is evaluating some other expression so preserve current focus
-                        // https://github.com/posit-dev/positron/issues/3151
-                        self.debug_preserve_focus = true;
-                    }
+                // Parse input into pending expressions
+                match PendingInputs::read(&code) {
+                    Ok(ParseResult::Success(inputs)) => {
+                        self.pending_inputs = inputs;
+                    },
+                    Ok(ParseResult::SyntaxError(message)) => {
+                        return Some(ConsoleResult::Error(message))
+                    },
+                    Err(err) => {
+                        return Some(ConsoleResult::Error(format!(
+                            "Error while parsing input: {err:?}"
+                        )))
+                    },
                 }
 
-                // If the input is invalid (e.g. incomplete), don't send it to R
-                // at all, reply with an error right away
-                if let Err(err) = Self::check_console_input(code.as_str()) {
-                    return Some(ConsoleResult::Error(err));
-                }
+                // Evaluate first expression if there is one
+                if let Some(input) = self.pop_pending() {
+                    Some(self.handle_pending_input(input, buf, buflen))
+                } else {
+                    // Otherwise we got an empty input, e.g. `""` and there's
+                    // nothing to do. Close active request.
+                    self.handle_active_request(info, ConsoleValue::Success(Default::default()));
 
-                // Split input by lines, retrieve first line, and store
-                // remaining lines in a buffer. This helps with long inputs
-                // because R has a fixed input buffer size of 4096 bytes at the
-                // time of writing.
-                let code = self.buffer_console_input(code.as_str());
-
-                // Store input in R's buffer and return sentinel indicating some
-                // new input is ready
-                match Self::on_console_input(buf, buflen, code) {
-                    Ok(()) => Some(ConsoleResult::NewInput),
-                    Err(err) => Some(ConsoleResult::Error(err)),
+                    // And return to event loop
+                    None
                 }
             },
+
             ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
         }
+    }
+
+    /// Handles user input requests (e.g., readline, menu) and special prompts.
+    /// Runs the ReadConsole event loop until a reply comes in.
+    fn handle_input_request(
+        &mut self,
+        info: &PromptInfo,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> ConsoleResult {
+        if let Some(req) = &self.active_request {
+            // Send request to frontend. We'll wait for an `input_reply`
+            // from the frontend in the event loop in `read_console()`.
+            // The active request remains active.
+            self.request_input(req.originator.clone(), String::from(&info.input_prompt));
+
+            // Run the event loop, waiting for stdin replies but not execute requests
+            self.run_event_loop(info, buf, buflen, WaitFor::InputReply)
+        } else {
+            // Invalid input request, propagate error to R
+            self.handle_invalid_input_request(buf, buflen)
+        }
+    }
+
+    fn handle_pending_input(
+        &mut self,
+        input: PendingInput,
+        buf: *mut c_uchar,
+        buflen: c_int,
+    ) -> ConsoleResult {
+        // Default: preserve current focus for evaluated expressions.
+        // This only has an effect if we're debugging.
+        // https://github.com/posit-dev/positron/issues/3151
+        self.debug_preserve_focus = true;
+
+        if self.debug_is_debugging {
+            // Try to interpret this pending input as a symbol (debug commands
+            // are entered as symbols). Whether or not it parses as a symbol,
+            // if we're currently debugging we must set `debug_preserve_focus`.
+            if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
+                // All debug commands as documented in `?browser`
+                const DEBUG_COMMANDS: &[&str] =
+                    &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
+
+                // The subset of debug commands that continue execution
+                const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+
+                let sym = String::from(sym);
+
+                if DEBUG_COMMANDS.contains(&&sym[..]) {
+                    if DEBUG_COMMANDS_CONTINUE.contains(&&sym[..]) {
+                        // For continue-like commands, we do not preserve focus,
+                        // i.e. we let the cursor jump to the stopped
+                        // position. Set the preserve focus hint for the
+                        // next iteration of ReadConsole.
+                        self.debug_preserve_focus = false;
+
+                        // Let the DAP client know that execution is now continuing
+                        self.debug_send_dap(DapBackendEvent::Continued);
+                    }
+
+                    // All debug commands are forwarded to the base REPL as
+                    // is so that R can interpret them.
+                    // Unwrap safety: A debug command fits in the buffer.
+                    Self::on_console_input(buf, buflen, sym).unwrap();
+                    return ConsoleResult::NewInput;
+                }
+            }
+        }
+
+        ConsoleResult::NewPendingInput(input)
+    }
+
+    fn pop_pending(&mut self) -> Option<PendingInput> {
+        let Some(pending_inputs) = self.pending_inputs.as_mut() else {
+            return None;
+        };
+
+        let Some(input) = pending_inputs.pop() else {
+            self.pending_inputs = None;
+            return None;
+        };
+
+        if pending_inputs.is_empty() {
+            self.pending_inputs = None;
+        }
+
+        Some(input)
+    }
+
+    // SAFETY: Call this from a POD frame. Inputs must be protected.
+    unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
+        let frame = harp::r_current_frame();
+
+        // SAFETY: This may jump in case of error, keep this POD
+        unsafe {
+            let frame = libr::Rf_protect(frame.into());
+
+            // The global source reference is stored in this global variable by
+            // the R REPL before evaluation. We do the same here.
+            let old_srcref = libr::Rf_protect(libr::get(libr::R_Srcref));
+            libr::set(libr::R_Srcref, srcref);
+
+            // Evaluate the expression. Beware: this may throw an R longjump.
+            let value = libr::Rf_eval(expr, frame);
+            libr::Rf_protect(value);
+
+            // Restore `R_Srcref`, necessary at least to avoid messing with
+            // DAP's last frame info
+            libr::set(libr::R_Srcref, old_srcref);
+
+            // Store in the base environment for robust access from (almost) any
+            // evaluation environment. We only require the presence of `::` so
+            // we can reach into base. Note that unlike regular environments
+            // which are stored in pairlists or hash tables, the base environment
+            // is stored in the `value` field of symbols, i.e. their "CDR".
+            libr::SETCDR(r_symbol!(".ark_last_value"), value);
+
+            libr::Rf_unprotect(3);
+            value
+        };
+
+        // Back in business, Rust away
+        let code = if unsafe { libr::get(libr::R_Visible) == 1 } {
+            String::from("base::.ark_last_value")
+        } else {
+            String::from("base::invisible(base::.ark_last_value)")
+        };
+
+        // Unwrap safety: The input always fits in the buffer
+        Self::on_console_input(buf, buflen, code).unwrap();
     }
 
     /// Handle an `input_request` received outside of an `execute_request` context
@@ -1173,65 +1512,33 @@ impl RMain {
     /// https://github.com/rstudio/renv/blob/5d0d52c395e569f7f24df4288d949cef95efca4e/inst/resources/activate.R#L85-L87
     fn handle_invalid_input_request(&self, buf: *mut c_uchar, buflen: c_int) -> ConsoleResult {
         if let Some(input) = Self::renv_autoloader_reply() {
-            log::info!("Detected `readline()` call in renv autoloader. Returning `'{input}'`.");
+            log::warn!("Detected `readline()` call in renv autoloader. Returning `'{input}'`.");
             match Self::on_console_input(buf, buflen, input) {
                 Ok(()) => return ConsoleResult::NewInput,
-                Err(err) => return ConsoleResult::Error(err),
+                Err(err) => return ConsoleResult::Error(format!("{err}")),
             }
         }
 
-        log::info!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
+        log::warn!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
 
         let message = vec![
             "Can't request input from the user at this time.",
             "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
         ].join("\n");
 
-        return ConsoleResult::Error(Error::InvalidInputRequest(message));
+        return ConsoleResult::Error(message);
     }
 
-    fn start_debug(&mut self) {
-        match self.dap.stack_info() {
-            Ok(stack) => {
-                if let Some(frame) = stack.first() {
-                    if let Some(ref env) = frame.environment {
-                        // This is reset on exit in the cleanup phase, see `r_read_console()`
-                        self.debug_env = Some(env.get().clone());
-                    }
-                }
+    fn handle_invalid_input_request_after_error(&self) -> ConsoleResult {
+        log::warn!("Detected invalid `input_request` after error (probably from `getOption('error')`). Preparing to throw an R error.");
 
-                // Figure out whether we changed location since last time,
-                // e.g. because the user evaluated an expression that hit
-                // another breakpoint. In that case we do want to move
-                // focus, even though the user didn't explicitly used a step
-                // gesture. Our indication that we changed location is
-                // whether the call stack looks the same as last time. This
-                // is not 100% reliable as this heuristic might have false
-                // negatives, e.g. if the control flow exited the current
-                // context via condition catching and jumped back in the
-                // debugged function.
-                let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
-                let same_stack = stack_id == self.debug_last_stack;
+        let message = vec![
+            "Can't request input from the user at this time.",
+            "Are you calling `readline()` or `menu()` from `options(error = )`?",
+        ]
+        .join("\n");
 
-                // Initialize fallback sources for this stack
-                let fallback_sources = self.load_fallback_sources(&stack);
-
-                self.debug_last_stack = stack_id;
-                self.dap.start_debug(
-                    stack,
-                    same_stack && self.debug_preserve_focus,
-                    fallback_sources,
-                );
-            },
-            Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
-        };
-    }
-
-    fn stop_debug(&mut self) {
-        self.debug_last_stack = vec![];
-        self.clear_fallback_sources();
-        self.debug_session_index += 1;
-        self.dap.stop_debug();
+        return ConsoleResult::Error(message);
     }
 
     /// Load `fallback_sources` with this stack's text sources
@@ -1241,12 +1548,12 @@ impl RMain {
     /// in duplicate virtual editors being opened on the client side.
     pub fn load_fallback_sources(
         &mut self,
-        stack: &Vec<crate::dap::dap_r_main::FrameInfo>,
+        stack: &Vec<crate::repl_debug::FrameInfo>,
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
         for frame in stack.iter() {
-            if let crate::dap::dap_r_main::FrameSource::Text(source) = &frame.source {
+            if let crate::repl_debug::FrameSource::Text(source) = &frame.source {
                 let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
 
                 if self.has_virtual_document(&uri) {
@@ -1275,31 +1582,6 @@ impl RMain {
         for uri in debug_uris {
             self.remove_virtual_document(uri);
         }
-    }
-
-    fn ark_debug_uri(debug_session_index: u32, source_name: &str, source: &str) -> String {
-        // Hash the source to generate a unique identifier used in
-        // the URI. This is needed to disambiguate frames that have
-        // the same source name (used as file name in the URI) but
-        // different sources.
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::Hash;
-        use std::hash::Hasher;
-        let mut hasher = DefaultHasher::new();
-        source.hash(&mut hasher);
-        let hash = format!("{:x}", hasher.finish());
-
-        ark_uri(&format!(
-            "debug/session{i}/{hash}/{source_name}.R",
-            i = debug_session_index,
-        ))
-    }
-
-    // Doesn't expect `ark:` scheme, used for checking keys in our vdoc map
-    fn is_ark_debug_path(uri: &str) -> bool {
-        static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-        let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
-        re.is_match(uri)
     }
 
     fn renv_autoloader_reply() -> Option<String> {
@@ -1354,10 +1636,10 @@ impl RMain {
                 let input = convert_line_endings(&input.value, LineEnding::Posix);
                 match Self::on_console_input(buf, buflen, input) {
                     Ok(()) => ConsoleResult::NewInput,
-                    Err(err) => ConsoleResult::Error(err),
+                    Err(err) => ConsoleResult::Error(format!("{err:?}")),
                 }
             },
-            Err(err) => ConsoleResult::Error(err),
+            Err(err) => ConsoleResult::Error(format!("{err:?}")),
         }
     }
 
@@ -1545,63 +1827,6 @@ impl RMain {
         self.get_ui_comm_tx().is_some()
     }
 
-    fn handle_pending_line(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
-        if self.error_occurred {
-            // If an error has occurred, we've already sent a complete expression that resulted in
-            // an error. Flush the remaining lines and return to `read_console()`, who will handle
-            // that error.
-            self.pending_lines.clear();
-            return None;
-        }
-
-        let Some(input) = self.pending_lines.pop() else {
-            // No pending lines
-            return None;
-        };
-
-        match Self::on_console_input(buf, buflen, input) {
-            Ok(()) => Some(ConsoleResult::NewInput),
-            Err(err) => Some(ConsoleResult::Error(err)),
-        }
-    }
-
-    fn check_console_input(input: &str) -> amalthea::Result<()> {
-        let status = unwrap!(harp::parse_status(&harp::ParseInput::Text(input)), Err(err) => {
-            // Failed to even attempt to parse the input, something is seriously wrong
-            return Err(Error::InvalidConsoleInput(format!(
-                "Failed to parse input: {err:?}"
-            )));
-        });
-
-        // - Incomplete inputs put R into a state where it expects more input that will never come, so we
-        //   immediately reject them. Positron should never send us these, but Jupyter Notebooks may.
-        // - Complete statements are obviously fine.
-        // - Syntax errors will cause R to throw an error, which is expected.
-        match status {
-            harp::ParseResult::Incomplete => Err(Error::InvalidConsoleInput(format!(
-                "Can't execute incomplete input:\n{input}"
-            ))),
-            harp::ParseResult::Complete(_) => Ok(()),
-            harp::ParseResult::SyntaxError { .. } => Ok(()),
-        }
-    }
-
-    fn buffer_console_input(&mut self, input: &str) -> String {
-        // Split into lines and reverse them to be able to `pop()` from the front
-        let mut lines: Vec<String> = lines(input).rev().map(String::from).collect();
-
-        // SAFETY: There is always at least one line because:
-        // - `lines("")` returns 1 element containing `""`
-        // - `lines("\n")` returns 2 elements containing `""`
-        let first = lines.pop().unwrap();
-
-        // No-op if `lines` is empty
-        assert!(self.pending_lines.is_empty());
-        self.pending_lines.append(&mut lines);
-
-        first
-    }
-
     /// Copy console input into R's internal input buffer
     ///
     /// Supposedly `buflen` is "the maximum length, in bytes, including the
@@ -1651,6 +1876,13 @@ impl RMain {
         Ok(())
     }
 
+    fn console_input(buf: *mut c_uchar, _buflen: c_int) -> String {
+        unsafe {
+            let cstr = CStr::from_ptr(buf as *const c_char);
+            cstr.to_string_lossy().into_owned()
+        }
+    }
+
     // Hitting this means a SINGLE line from the user was longer than the buffer size (>4000 characters)
     fn buffer_overflow_error() -> amalthea::Error {
         Error::InvalidConsoleInput(String::from(
@@ -1660,142 +1892,56 @@ impl RMain {
 
     // Reply to the previously active request. The current prompt type and
     // whether an error has occurred defines the reply kind.
-    fn reply_execute_request(&mut self, req: ActiveReadConsoleRequest, prompt_info: &PromptInfo) {
+    fn reply_execute_request(
+        iopub_tx: &Sender<IOPubMessage>,
+        req: ActiveReadConsoleRequest,
+        prompt_info: &PromptInfo,
+        value: ConsoleValue,
+    ) {
         let prompt = &prompt_info.input_prompt;
 
-        let (reply, result) = if prompt_info.incomplete {
-            log::trace!("Got prompt {} signaling incomplete request", prompt);
-            (new_incomplete_reply(&req.request, req.exec_count), None)
-        } else if prompt_info.input_request {
-            unreachable!();
-        } else {
-            log::trace!("Got R prompt '{}', completing execution", prompt);
+        log::trace!("Got R prompt '{}', completing execution", prompt);
 
-            self.make_execute_reply_error(req.exec_count)
-                .unwrap_or_else(|| self.make_execute_reply(req.exec_count))
+        let exec_count = req.exec_count;
+
+        let (reply, result) = match value {
+            ConsoleValue::Success(data) => {
+                let reply = Ok(ExecuteReply {
+                    status: Status::Ok,
+                    execution_count: exec_count,
+                    user_expressions: json!({}),
+                });
+
+                let result = if data.len() > 0 {
+                    Some(IOPubMessage::ExecuteResult(ExecuteResult {
+                        execution_count: exec_count,
+                        data: serde_json::Value::Object(data),
+                        metadata: json!({}),
+                    }))
+                } else {
+                    None
+                };
+
+                (reply, result)
+            },
+
+            ConsoleValue::Error(exception) => {
+                let reply = Err(amalthea::Error::ShellErrorExecuteReply(
+                    exception.clone(),
+                    exec_count,
+                ));
+                let result = IOPubMessage::ExecuteError(ExecuteError { exception });
+
+                (reply, Some(result))
+            },
         };
 
         if let Some(result) = result {
-            self.iopub_tx.send(result).unwrap();
+            iopub_tx.send(result).unwrap();
         }
 
         log::trace!("Sending `execute_reply`: {reply:?}");
         req.reply_tx.send(reply).unwrap();
-    }
-
-    fn make_execute_reply_error(
-        &mut self,
-        exec_count: u32,
-    ) -> Option<(amalthea::Result<ExecuteReply>, Option<IOPubMessage>)> {
-        // Save and reset error occurred flag
-        let error_occurred = self.error_occurred;
-        self.error_occurred = false;
-
-        // Error handlers are not called on stack overflow so the error flag
-        // isn't set. Instead we detect stack overflows by peeking at the error
-        // buffer. The message is explicitly not translated to save stack space
-        // so the matching should be reliable.
-        let err_buf = r_peek_error_buffer();
-        let stack_overflow_occurred = RE_STACK_OVERFLOW.is_match(&err_buf);
-
-        // Reset error buffer so we don't display this message again
-        if stack_overflow_occurred {
-            let _ = RFunction::new("base", "stop").call();
-        }
-
-        // Send the reply to the frontend
-        if !error_occurred && !stack_overflow_occurred {
-            return None;
-        }
-
-        // We don't fill out `ename` with anything meaningful because typically
-        // R errors don't have names. We could consider using the condition class
-        // here, which r-lib/tidyverse packages have been using more heavily.
-        let mut exception = if error_occurred {
-            Exception {
-                ename: String::from(""),
-                evalue: self.error_message.clone(),
-                traceback: self.error_traceback.clone(),
-            }
-        } else {
-            // Call `base::traceback()` since we don't have a handled error
-            // object carrying a backtrace. This won't be formatted as a
-            // tree which is just as well since the recursive calls would
-            // push a tree too far to the right.
-            let traceback = r_traceback();
-            Exception {
-                ename: String::from(""),
-                evalue: err_buf.clone(),
-                traceback,
-            }
-        };
-
-        // Jupyter clients typically discard the `evalue` when a `traceback` is
-        // present.  Jupyter-Console even disregards `evalue` in all cases. So
-        // include it here if we are in Notebook mode. But should Positron
-        // implement similar behaviour as the other frontends eventually? The
-        // first component of `traceback` could be compared to `evalue` and
-        // discarded from the traceback if the same.
-        if let SessionMode::Notebook = self.session_mode {
-            exception.traceback.insert(0, exception.evalue.clone())
-        }
-
-        let reply = new_execute_reply_error(exception.clone(), exec_count);
-        let result = IOPubMessage::ExecuteError(ExecuteError { exception });
-
-        Some((reply, Some(result)))
-    }
-
-    fn make_execute_reply(
-        &mut self,
-        exec_count: u32,
-    ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
-        // TODO: Implement rich printing of certain outputs.
-        // Will we need something similar to the RStudio model,
-        // where we implement custom print() methods? Or can
-        // we make the stub below behave sensibly even when
-        // streaming R output?
-        let mut data = serde_json::Map::new();
-
-        // The output generated by autoprint is emitted as an
-        // `execute_result` message.
-        let mut autoprint = std::mem::take(&mut self.autoprint_output);
-
-        if autoprint.ends_with('\n') {
-            // Remove the trailing newlines that R adds to outputs but that
-            // Jupyter frontends are not expecting. Is it worth taking a
-            // mutable self ref across calling methods to avoid the clone?
-            autoprint.pop();
-        }
-        if autoprint.len() != 0 {
-            data.insert("text/plain".to_string(), json!(autoprint));
-        }
-
-        // Include HTML representation of data.frame
-        unsafe {
-            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
-            if r_is_data_frame(value) {
-                match to_html(value) {
-                    Ok(html) => data.insert("text/html".to_string(), json!(html)),
-                    Err(err) => {
-                        log::error!("{:?}", err);
-                        None
-                    },
-                };
-            }
-        }
-
-        let reply = new_execute_reply(exec_count);
-
-        let result = (data.len() > 0).then(|| {
-            IOPubMessage::ExecuteResult(ExecuteResult {
-                execution_count: exec_count,
-                data: serde_json::Value::Object(data),
-                metadata: json!({}),
-            })
-        });
-
-        (reply, result)
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
@@ -1875,7 +2021,7 @@ impl RMain {
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        r_main.dap.handle_stdout(&content);
+        r_main.debug_handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -1918,7 +2064,7 @@ impl RMain {
             // https://github.com/posit-dev/positron/issues/1881
 
             // Handle last expression
-            if r_main.pending_lines.is_empty() {
+            if r_main.pending_inputs.is_none() {
                 r_main.autoprint_output.push_str(&content);
                 return;
             }
@@ -2211,40 +2357,10 @@ impl RMain {
         }
     }
 
-    fn propagate_error(&mut self, err: anyhow::Error) -> ! {
-        // Save error message to `RMain`'s buffer to avoid leaking memory when `Rf_error()` jumps.
-        // Some gymnastics are required to deal with the possibility of `CString` conversion failure
-        // since the error message comes from the frontend and might be corrupted.
-        self.r_error_buffer = Some(new_cstring(format!("\n{err}")));
-        unsafe { Rf_error(self.r_error_buffer.as_ref().unwrap().as_ptr()) }
-    }
-
     #[cfg(not(test))] // Avoid warnings in unit test
-    pub(crate) fn debug_env(&self) -> Option<RObject> {
-        self.debug_env.clone()
+    pub(crate) fn read_console_frame(&self) -> RObject {
+        self.read_console_frame.borrow().clone()
     }
-}
-
-/// Report an incomplete request to the frontend
-fn new_incomplete_reply(req: &ExecuteRequest, exec_count: u32) -> amalthea::Result<ExecuteReply> {
-    let error = Exception {
-        ename: "IncompleteInput".to_string(),
-        evalue: format!("Code fragment is not complete: {}", req.code),
-        traceback: vec![],
-    };
-    Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
-}
-
-fn new_execute_reply(exec_count: u32) -> amalthea::Result<ExecuteReply> {
-    Ok(ExecuteReply {
-        status: Status::Ok,
-        execution_count: exec_count,
-        user_expressions: json!({}),
-    })
-}
-
-fn new_execute_reply_error(error: Exception, exec_count: u32) -> amalthea::Result<ExecuteReply> {
-    Err(amalthea::Error::ShellErrorExecuteReply(error, exec_count))
 }
 
 /// Converts a data frame to HTML
@@ -2288,9 +2404,107 @@ pub extern "C-unwind" fn r_read_console(
     buflen: c_int,
     hist: c_int,
 ) -> i32 {
+    // In this entry point we handle two kinds of state:
+    // - The number of nested REPLs `read_console_depth`
+    // - A bunch of flags that help us reset the calling R REPL
+    //
+    // The second kind is unfortunate and due to us taking charge of parsing and
+    // evaluation. Ideally R would extend their frontend API so that this would
+    // only be necessary for backward compatibility with old versions of R.
+
     let main = RMain::get_mut();
+
+    // Propagate an EOF event (e.g. from a Shutdown request). We need to exit
+    // from all consoles on the stack to let R shut down with an `exit()`.
+    if main.read_console_shutdown.get() {
+        return 0;
+    }
+
+    // We've finished evaluating a dummy value to reset state in R's REPL,
+    // and are now ready to evaluate the actual input, which is typically
+    // just `.ark_last_value`.
+    if let Some(next_input) = main.read_console_nested_return_next_input.take() {
+        RMain::on_console_input(buf, buflen, next_input).unwrap();
+        return 1;
+    }
+
+    // In case of error, we haven't had a chance to evaluate ".ark_last_value".
+    // So we return to the R REPL to give R a chance to run the state
+    // restoration that occurs between `R_ReadConsole()` and `eval()`:
+    // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
+    // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+    //
+    // Technically this also resets time limits (see `base::setTimeLimit()`) but
+    // these aren't supported in Ark because they cause errors when we poll R
+    // events.
+    if main.last_error.is_some() && main.read_console_threw_error.get() {
+        main.read_console_threw_error.set(false);
+
+        // Evaluate last value so that `base::.Last.value` remains the same
+        RMain::on_console_input(
+            buf,
+            buflen,
+            String::from("base::invisible(base::.Last.value)"),
+        )
+        .unwrap();
+        return 1;
+    }
+
+    // Keep track of state that we care about
+
+    // - Track nesting depth of ReadConsole REPLs
+    main.read_console_depth
+        .set(main.read_console_depth.get() + 1);
+
+    // - Set current frame environment
+    let old_current_frame = main.read_console_frame.replace(harp::r_current_frame());
+
+    // Keep track of state that we use for workarounds while interacting
+    // with the R REPL and force it to reset state
+
+    // - Reset flag that helps us figure out when a nested REPL returns
+    main.read_console_nested_return.set(false);
+
+    // - Reset flag that helps us figure out when an error occurred and needs a
+    //   reset of `R_EvalDepth` and friends
+    main.read_console_threw_error.set(true);
+
+    exec_with_cleanup(
+        || {
+            let main = RMain::get_mut();
+            let result = r_read_console_impl(main, prompt, buf, buflen, hist);
+
+            // If we get here, there was no error
+            main.read_console_threw_error.set(false);
+
+            result
+        },
+        || {
+            let main = RMain::get_mut();
+
+            // We're exiting, decrease depth of nested consoles
+            main.read_console_depth
+                .set(main.read_console_depth.get() - 1);
+
+            // Set flag so that parent read console, if any, can detect that a
+            // nested console returned (if it indeed returns instead of looping
+            // for another iteration)
+            main.read_console_nested_return.set(true);
+
+            // Restore current frame
+            main.read_console_frame.replace(old_current_frame);
+        },
+    )
+}
+
+fn r_read_console_impl(
+    main: &mut RMain,
+    prompt: *const c_char,
+    buf: *mut c_uchar,
+    buflen: c_int,
+    hist: c_int,
+) -> i32 {
     let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
-    main.read_console_cleanup();
 
     let result = unwrap!(result, Err(err) => {
         panic!("Unexpected longjump while reading from console: {err:?}");
@@ -2300,8 +2514,49 @@ pub extern "C-unwind" fn r_read_console(
     // destructors. We're longjumping from here in case of interrupt.
 
     match result {
-        ConsoleResult::NewInput => return 1,
-        ConsoleResult::Disconnected => return 0,
+        ConsoleResult::NewPendingInput(input) => {
+            let PendingInput { expr, srcref } = input;
+
+            unsafe {
+                // The pointer protection stack is restored by `run_Rmainloop()`
+                // after a longjump to top-level, so it's safe to protect here
+                // even if the evaluation throws
+                let expr = libr::Rf_protect(expr.into());
+                let srcref = libr::Rf_protect(srcref.into());
+
+                RMain::eval(expr, srcref, buf, buflen);
+
+                // Check if a nested read_console() just returned. If that's the
+                // case, we need to reset the `R_ConsoleIob` by first returning
+                // a dummy value causing a `PARSE_NULL` event.
+                if main.read_console_nested_return.get() {
+                    let next_input = RMain::console_input(buf, buflen);
+                    main.read_console_nested_return_next_input
+                        .set(Some(next_input));
+
+                    // Evaluating a space causes a `PARSE_NULL` event. Don't
+                    // evaluate a newline, that would cause a parent debug REPL
+                    // to interpret it as `n`, causing it to exit instead of
+                    // being a no-op.
+                    RMain::on_console_input(buf, buflen, String::from(" ")).unwrap();
+                    main.read_console_nested_return.set(false);
+                }
+
+                libr::Rf_unprotect(2);
+                return 1;
+            }
+        },
+
+        ConsoleResult::NewInput => {
+            return 1;
+        },
+
+        ConsoleResult::Disconnected => {
+            // Cause parent consoles to shutdown too
+            main.read_console_shutdown.set(true);
+            return 0;
+        },
+
         ConsoleResult::Interrupt => {
             log::trace!("Interrupting `ReadConsole()`");
             unsafe {
@@ -2312,8 +2567,14 @@ pub extern "C-unwind" fn r_read_console(
             log::error!("`Rf_onintr()` did not longjump");
             return 0;
         },
-        ConsoleResult::Error(err) => {
-            main.propagate_error(anyhow::anyhow!("{err}"));
+
+        ConsoleResult::Error(message) => {
+            // Save error message in `RMain` to avoid leaking memory when
+            // `Rf_error()` jumps. Some gymnastics are required to deal with the
+            // possibility of `CString` conversion failure since the error
+            // message comes from the frontend and might be corrupted.
+            main.r_error_buffer = Some(new_cstring(message));
+            unsafe { Rf_error(main.r_error_buffer.as_ref().unwrap().as_ptr()) }
         },
     };
 }
@@ -2411,7 +2672,10 @@ fn do_resource_namespaces() -> bool {
 fn is_auto_printing() -> bool {
     let n_frame = harp::session::r_n_frame().unwrap();
 
-    // The call-stack is empty so this must be R auto-printing an unclassed object
+    // The call-stack is empty so this must be R auto-printing an unclassed
+    // object. Note that this might wrongly return true in debug REPLs. Ideally
+    // we'd take note of the number of frames on the stack when we enter
+    // `r_read_console()`, and compare against that.
     if n_frame == 0 {
         return true;
     }

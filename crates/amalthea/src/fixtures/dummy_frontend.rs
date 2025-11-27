@@ -21,6 +21,8 @@ use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
 use crate::wire::jupyter_message::Status;
+use crate::wire::shutdown_reply::ShutdownReply;
+use crate::wire::shutdown_request::ShutdownRequest;
 use crate::wire::status::ExecutionState;
 use crate::wire::stream::Stream;
 use crate::wire::wire_message::WireMessage;
@@ -36,7 +38,7 @@ pub struct DummyConnection {
 }
 
 pub struct DummyFrontend {
-    pub _control_socket: Socket,
+    pub control_socket: Socket,
     pub shell_socket: Socket,
     pub iopub_socket: Socket,
     pub stdin_socket: Socket,
@@ -132,7 +134,7 @@ impl DummyFrontend {
         // the Jupyter specification, these must share a ZeroMQ identity.
         let shell_id = rand::thread_rng().gen::<[u8; 16]>();
 
-        let _control_socket = Socket::new(
+        let control_socket = Socket::new(
             connection.session.clone(),
             connection.ctx.clone(),
             String::from("Control"),
@@ -198,7 +200,7 @@ impl DummyFrontend {
         });
 
         Self {
-            _control_socket,
+            control_socket,
             shell_socket,
             iopub_socket,
             stdin_socket,
@@ -207,10 +209,20 @@ impl DummyFrontend {
         }
     }
 
+    /// Sends a Jupyter message on the Control socket; returns the ID of the newly
+    /// created message
+    pub fn send_control<T: ProtocolMessage>(&self, msg: T) -> String {
+        Self::send(&self.control_socket, &self.session, msg)
+    }
+
     /// Sends a Jupyter message on the Shell socket; returns the ID of the newly
     /// created message
     pub fn send_shell<T: ProtocolMessage>(&self, msg: T) -> String {
         Self::send(&self.shell_socket, &self.session, msg)
+    }
+
+    pub fn send_shutdown_request(&self, restart: bool) -> String {
+        self.send_control(ShutdownRequest { restart })
     }
 
     pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
@@ -222,6 +234,77 @@ impl DummyFrontend {
             allow_stdin: options.allow_stdin,
             stop_on_error: false,
         })
+    }
+
+    /// Sends an execute request and handles the standard message flow:
+    /// busy -> execute_input -> idle -> execute_reply.
+    /// Asserts that the input code matches and returns the execution count.
+    #[track_caller]
+    pub fn execute_request_invisibly(&self, code: &str) -> u32 {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        self.recv_iopub_idle();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        execution_count
+    }
+
+    /// Sends an execute request and handles the standard message flow with a result:
+    /// busy -> execute_input -> execute_result -> idle -> execute_reply.
+    /// Asserts that the input code matches and passes the result to the callback.
+    /// Returns the execution count.
+    #[track_caller]
+    pub fn execute_request<F>(&self, code: &str, result_check: F) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let result = self.recv_iopub_execute_result();
+        result_check(result);
+
+        self.recv_iopub_idle();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        execution_count
+    }
+
+    /// Sends an execute request that produces an error and handles the standard message flow:
+    /// busy -> execute_input -> execute_error -> idle -> execute_reply_exception.
+    /// Passes the error message to the callback for custom assertions.
+    /// Returns the execution count.
+    #[track_caller]
+    pub fn execute_request_error<F>(&self, code: &str, error_check: F) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let error_msg = self.recv_iopub_execute_error();
+        error_check(error_msg);
+
+        self.recv_iopub_idle();
+
+        let execution_count = self.recv_shell_execute_reply_exception();
+        assert_eq!(execution_count, input.execution_count);
+
+        execution_count
     }
 
     /// Sends a Jupyter message on the Stdin socket
@@ -236,6 +319,7 @@ impl DummyFrontend {
         id
     }
 
+    #[track_caller]
     pub fn recv(socket: &Socket) -> Message {
         // It's important to wait with a timeout because the kernel thread might have
         // panicked, preventing it from sending the expected message. The tests would then
@@ -246,6 +330,8 @@ impl DummyFrontend {
         //
         // Note that the panic hook will still have run to record the panic, so we'll get
         // expected panic information in the test output.
+        //
+        // If you're debugging tests, you'll need to bump this timeout to a large value.
         if socket.poll_incoming(10000).unwrap() {
             return Message::read_from_socket(socket).unwrap();
         }
@@ -253,19 +339,37 @@ impl DummyFrontend {
         panic!("Timeout while expecting message on socket {}", socket.name);
     }
 
+    /// Receives a Jupyter message from the Control socket
+    #[track_caller]
+    pub fn recv_control(&self) -> Message {
+        Self::recv(&self.control_socket)
+    }
+
     /// Receives a Jupyter message from the Shell socket
+    #[track_caller]
     pub fn recv_shell(&self) -> Message {
         Self::recv(&self.shell_socket)
     }
 
     /// Receives a Jupyter message from the IOPub socket
+    #[track_caller]
     pub fn recv_iopub(&self) -> Message {
         Self::recv(&self.iopub_socket)
     }
 
     /// Receives a Jupyter message from the Stdin socket
+    #[track_caller]
     pub fn recv_stdin(&self) -> Message {
         Self::recv(&self.stdin_socket)
+    }
+
+    /// Receive from Control and assert `ShutdownReply` message.
+    #[track_caller]
+    pub fn recv_control_shutdown_reply(&self) -> ShutdownReply {
+        let message = self.recv_control();
+        assert_matches!(message, Message::ShutdownReply(message) => {
+            message.content
+        })
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.
@@ -349,11 +453,96 @@ impl DummyFrontend {
         assert_matches!(msg, Message::UpdateDisplayData(_))
     }
 
+    /// Receive from IOPub Stream
+    ///
+    /// Stdout and Stderr Stream messages are buffered, so to reliably test
+    /// against them we have to collect the messages in batches on the receiving
+    /// end and compare against an expected message.
+    ///
+    /// The comparison is done with an assertive closure: we'll wait for more
+    /// output as long as the closure panics.
+    ///
+    /// Because closures can't track callers yet, the `recv_iopub_stream()`
+    /// variant is more ergonomic and should be preferred.
+    /// See <https://github.com/rust-lang/rust/issues/87417> for tracking issue.
+    #[track_caller]
+    fn recv_iopub_stream_with<F>(&self, stream: Stream, mut f: F)
+    where
+        F: FnMut(&str),
+    {
+        let mut out = String::new();
+
+        loop {
+            let msg = self.recv_iopub();
+            let piece = assert_matches!(msg, Message::Stream(data) => {
+                assert_eq!(data.content.name, stream);
+                data.content.text
+            });
+            out.push_str(&piece);
+
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                f(&out);
+            })) {
+                Ok(_) => break,
+                Err(_) => continue,
+            };
+        }
+    }
+
+    #[track_caller]
+    pub fn recv_iopub_stream_stdout_with<F>(&self, f: F)
+    where
+        F: FnMut(&str),
+    {
+        self.recv_iopub_stream_with(Stream::Stdout, f)
+    }
+
+    #[track_caller]
+    pub fn recv_iopub_stream_stderr_with<F>(&self, f: F)
+    where
+        F: FnMut(&str),
+    {
+        self.recv_iopub_stream_with(Stream::Stderr, f)
+    }
+
+    /// Receive from IOPub Stream
+    ///
+    /// This variant compares the stream against its expected _last_ output.
+    /// We can't use `recv_iopub_stream_with()` here because closures
+    /// can't track callers.
+    #[track_caller]
+    fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
+        let mut out = String::new();
+
+        loop {
+            // Receive a piece of stream output (with a timeout)
+            let msg = self.recv_iopub();
+
+            let piece = assert_matches!(msg, Message::Stream(data) => {
+                assert_eq!(data.content.name, stream);
+                data.content.text
+            });
+
+            out += piece.as_str();
+
+            if out.ends_with(expect) {
+                break;
+            }
+
+            // We have a prefix of `expect`, but not the whole message yet.
+            // Wait on the next IOPub Stream message.
+        }
+    }
+
+    /// Receives stdout stream output until the collected output ends with
+    /// `expect`. Note: The comparison uses `ends_with`, not full equality.
     #[track_caller]
     pub fn recv_iopub_stream_stdout(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stdout)
     }
 
+    /// Receives stderr stream output until the collected output ends with
+    /// `expect`. Note: The comparison uses `ends_with`, not full equality.
     #[track_caller]
     pub fn recv_iopub_stream_stderr(&self, expect: &str) {
         self.recv_iopub_stream(expect, Stream::Stderr)
@@ -366,43 +555,6 @@ impl DummyFrontend {
         assert_matches!(msg, Message::CommClose(data) => {
             data.content.comm_id
         })
-    }
-
-    /// Receive from IOPub Stream
-    ///
-    /// Stdout and Stderr Stream messages are buffered, so to reliably test against them
-    /// we have to collect the messages in batches on the receiving end and compare against
-    /// an expected message.
-    #[track_caller]
-    fn recv_iopub_stream(&self, expect: &str, stream: Stream) {
-        let mut out = String::new();
-
-        loop {
-            // Receive a piece of stream output (with a timeout)
-            let msg = self.recv_iopub();
-
-            // Assert its type
-            let piece = assert_matches!(msg, Message::Stream(data) => {
-                assert_eq!(data.content.name, stream);
-                data.content.text
-            });
-
-            // Add to what we've already collected
-            out += piece.as_str();
-
-            if out == expect {
-                // Done, found the entire `expect` string
-                return;
-            }
-
-            if !expect.starts_with(out.as_str()) {
-                // Something is wrong, message doesn't match up
-                panic!("Expected IOPub stream of '{expect}'. Actual stream of '{out}'.");
-            }
-
-            // We have a prefix of `expect`, but not the whole message yet.
-            // Wait on the next IOPub Stream message.
-        }
     }
 
     /// Receive from IOPub and assert ExecuteResult message. Returns compulsory

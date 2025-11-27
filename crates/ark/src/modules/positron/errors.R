@@ -33,6 +33,14 @@
 
 #' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
+    # Unlike C stack overflow errors, expressions nested too deeply errors allow
+    # calling handlers. But since we run R code, we need to temporarily bump the
+    # threshold to give a little room while we handle the error.
+    if (inherits(cnd, "expressionStackOverflowError")) {
+        old <- options(expressions = getOption("expressions") + 500)
+        defer(options(old))
+    }
+
     # This reproduces the behaviour of R's default error handler:
     # - Invoke `getOption("error")`
     # - Save backtrace for `traceback()`
@@ -192,8 +200,40 @@ invoke_option_error_handler <- function() {
         handler <- as.expression(list(handler))
     }
 
+    delayedAssign("non_local_return", return())
+
     for (hnd in handler) {
-        eval(hnd, globalenv())
+        # Use `withCallingHandlers()` instead of `tryCatch()` to avoid making
+        # the call stack too complex. We might be running `options(error = browser())`
+        withCallingHandlers(
+            {
+                # Evaluate from a promise to keep a simple call stack.
+                # We do evaluate from a closure wrapped in `handler()` so that R
+                # can infer a named call, for instance in the "Called from:"
+                # output of `browser()`.
+                error_handler <- eval(bquote(function() .(hnd)))
+                error_handler()
+            },
+            error = function(err) {
+                # Disable error handler to avoid cascading errors
+                options(error = NULL)
+
+                # We don't let the error propagate to avoid a confusing sequence of
+                # error messages from R, such as "Error during wrapup"
+                writeLines(
+                    c(
+                        "The `getOption(\"error\")` handler failed.",
+                        "This option was unset to avoid cascading errors.",
+                        "Caused by:",
+                        conditionMessage(err)
+                    ),
+                    con = stderr()
+                )
+
+                # Bail early
+                non_local_return
+            }
+        )
     }
 }
 

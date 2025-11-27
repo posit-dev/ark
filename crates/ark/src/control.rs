@@ -36,6 +36,12 @@ impl ControlHandler for Control {
     ) -> Result<ShutdownReply, Exception> {
         log::info!("Received shutdown request: {msg:?}");
 
+        // Interrupt any ongoing computation. We shut down from ReadConsole when
+        // R has become idle again. Note that Positron will have interrupted us
+        // beforehand, but another frontend might not have, and it's good to
+        // have this as a defensive measure in any case.
+        crate::sys::control::handle_interrupt_request();
+
         // According to the Jupyter protocol we should block here until the
         // shutdown is complete. However AFAICS ipykernel doesn't wait
         // until complete shutdown before replying and instead just signals

@@ -72,7 +72,7 @@ fn test_notebook_execute_request_incomplete() {
 
     assert!(frontend
         .recv_iopub_execute_error()
-        .contains("Can't execute incomplete input"));
+        .contains("Can't parse incomplete input"));
 
     frontend.recv_iopub_idle();
 
@@ -95,7 +95,7 @@ fn test_notebook_execute_request_incomplete_multiple_lines() {
 
     assert!(frontend
         .recv_iopub_execute_error()
-        .contains("Can't execute incomplete input"));
+        .contains("Can't parse incomplete input"));
 
     frontend.recv_iopub_idle();
 

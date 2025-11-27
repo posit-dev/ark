@@ -43,7 +43,6 @@ pub enum Error {
     UnknownCommName(String),
     UnknownCommId(String),
     InvalidCommMessage(String, String, String),
-    InvalidInputRequest(String),
     InvalidConsoleInput(String),
     Anyhow(anyhow::Error),
     ShellErrorReply(Exception),
@@ -196,9 +195,6 @@ impl fmt::Display for Error {
                     msg, id, err
                 )
             },
-            Error::InvalidInputRequest(message) => {
-                write!(f, "{message}")
-            },
             Error::InvalidConsoleInput(message) => {
                 write!(f, "{message}")
             },
@@ -228,6 +224,6 @@ impl<T: std::fmt::Debug> From<SendError<T>> for Error {
 macro_rules! anyhow {
     ($($rest: expr),*) => {{
         let message = anyhow::anyhow!($($rest, )*);
-        crate::error::Error::Anyhow(message)
+        $crate::error::Error::Anyhow(message)
     }}
 }

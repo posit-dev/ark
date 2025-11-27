@@ -28,9 +28,10 @@ pub struct RParseOptions {
 pub enum ParseResult {
     Complete(RObject),
     Incomplete,
-    SyntaxError { message: String, line: i32 },
+    SyntaxError { message: String },
 }
 
+#[derive(Clone, Debug)]
 pub enum ParseInput<'a> {
     Text(&'a str),
     SrcFile(&'a srcref::SrcFile),
@@ -67,7 +68,7 @@ pub fn parse_exprs(text: &str) -> crate::Result<RObject> {
 
 /// Same but creates srcrefs
 pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
-    let srcfile = srcref::SrcFile::try_from(text)?;
+    let srcfile = srcref::SrcFile::from(text);
     parse_exprs_ext(&ParseInput::SrcFile(&srcfile))
 }
 
@@ -79,14 +80,12 @@ pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
             code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),
         }),
-        ParseResult::SyntaxError { message, line } => {
-            Err(crate::Error::ParseSyntaxError { message, line })
-        },
+        ParseResult::SyntaxError { message } => Err(crate::Error::ParseSyntaxError { message }),
     }
 }
 
 pub fn parse_with_parse_data(text: &str) -> crate::Result<(ParseResult, ParseData)> {
-    let srcfile = srcref::SrcFile::try_from(text)?;
+    let srcfile = srcref::SrcFile::from(text);
 
     // Fill parse data in `srcfile` by side effect
     let status = parse_status(&ParseInput::SrcFile(&srcfile))?;
@@ -109,17 +108,34 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
             ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.clone()),
         };
 
-        let result: RObject =
-            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into())?;
+        let result =
+            try_catch(|| libr::R_ParseVector(text.sexp, -1, &mut status, srcfile.sexp).into());
+
+        let value = match result {
+            Ok(value) => value,
+            Err(err) => match err {
+                // The parser sometimes throws errors instead of returning an
+                // error flag. Convert these errors to proper syntax errors so
+                // we don't leak a backtrace making it seem like an internal
+                // error.
+                // https://github.com/posit-dev/ark/issues/598
+                // https://github.com/posit-dev/ark/issues/722
+                crate::Error::TryCatchError { message, .. } => {
+                    return Ok(ParseResult::SyntaxError { message });
+                },
+                _ => {
+                    return Err(err);
+                },
+            },
+        };
 
         match status {
-            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(result)),
+            libr::ParseStatus_PARSE_OK => Ok(ParseResult::Complete(value)),
             libr::ParseStatus_PARSE_INCOMPLETE => Ok(ParseResult::Incomplete),
             libr::ParseStatus_PARSE_ERROR => Ok(ParseResult::SyntaxError {
                 message: CStr::from_ptr(libr::get(libr::R_ParseErrorMsg).as_ptr())
                     .to_string_lossy()
                     .to_string(),
-                line: libr::get(libr::R_ParseError) as i32,
             }),
             _ => {
                 // Should not get here
@@ -204,18 +220,19 @@ mod tests {
                 Ok(ParseResult::Incomplete)
             );
 
-            // Error
+            // Syntax error (error longjump thrown by parser)
             assert_match!(
                 parse_status(&ParseInput::Text("42 + _")),
-                Err(_) => {}
+                Ok(ParseResult::SyntaxError { message }) => {
+                    assert!(message.contains("invalid use of pipe placeholder"));
+                }
             );
 
-            // "normal" syntax error
+            // Syntax error (error code returned by parser)
             assert_match!(
                 parse_status(&ParseInput::Text("1+1\n*42")),
-                Ok(ParseResult::SyntaxError {message, line}) => {
+                Ok(ParseResult::SyntaxError { message }) => {
                     assert!(message.contains("unexpected"));
-                    assert_eq!(line, 2);
                 }
             );
 
