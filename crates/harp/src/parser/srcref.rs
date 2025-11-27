@@ -169,7 +169,7 @@ impl From<&harp::CharacterVector> for SrcFile {
     }
 }
 
-pub fn get_srcref(srcrefs: libr::SEXP, ind: isize) -> RObject {
+pub fn srcref_list_get(srcrefs: libr::SEXP, ind: isize) -> RObject {
     if crate::r_is_null(srcrefs) {
         return RObject::null();
     }
@@ -195,14 +195,17 @@ pub fn get_srcref(srcrefs: libr::SEXP, ind: isize) -> RObject {
     RObject::new(result)
 }
 
-pub fn get_block_srcrefs(call: libr::SEXP) -> RObject {
+// Some objects, such as calls to `{` and expression vectors returned by
+// `parse()`, have a list of `srcref` objects attached as `srcref` attribute.
+// This helper retrieves them if they exist.
+pub fn get_srcref_list(call: libr::SEXP) -> Option<RObject> {
     let srcrefs = unsafe { libr::Rf_getAttrib(call, libr::R_SrcrefSymbol) };
 
     if unsafe { libr::TYPEOF(srcrefs) as u32 } == libr::VECSXP {
-        return RObject::new(srcrefs);
+        return Some(RObject::new(srcrefs));
     }
 
-    RObject::null()
+    None
 }
 
 #[cfg(test)]

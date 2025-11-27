@@ -74,8 +74,8 @@ use harp::object::RObject;
 use harp::r_symbol;
 use harp::routines::r_register_routines;
 use harp::session::r_traceback;
-use harp::srcref::get_block_srcrefs;
-use harp::srcref::get_srcref;
+use harp::srcref::get_srcref_list;
+use harp::srcref::srcref_list_get;
 use harp::srcref::SrcFile;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
@@ -317,8 +317,8 @@ pub struct RMain {
 struct PendingInputs {
     /// EXPRSXP vector of parsed expressions
     exprs: RObject,
-    /// List of srcrefs, the same length as `exprs`
-    srcrefs: RObject,
+    /// List of srcrefs if any, the same length as `exprs`
+    srcrefs: Option<RObject>,
     /// Length of `exprs` and `srcrefs`
     len: isize,
     /// Index into the stack
@@ -366,7 +366,7 @@ impl PendingInputs {
             },
         };
 
-        let srcrefs = get_block_srcrefs(exprs.sexp);
+        let srcrefs = get_srcref_list(exprs.sexp);
 
         let len = exprs.length();
         let index = 0;
@@ -392,8 +392,13 @@ impl PendingInputs {
             return None;
         }
 
-        let srcref = get_srcref(self.srcrefs.sexp, self.index);
         let expr = harp::r_list_get(self.exprs.sexp, self.index);
+
+        let srcref = self
+            .srcrefs
+            .as_ref()
+            .map(|xs| srcref_list_get(xs.sexp, self.index))
+            .unwrap_or(RObject::null());
 
         self.index += 1;
         Some(PendingInput { expr, srcref })
