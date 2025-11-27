@@ -102,8 +102,8 @@ impl Control {
         H: FnOnce(JupyterMessage<T>) -> Result<(), Error>,
     {
         // Enter the kernel-busy state in preparation for handling the message.
-        // The protocol specification does not mandate status messages for
-        // Control, but we emit them for compatibility with ipykernel:
+        // The protocol specification is vague about status messages for
+        // Control, we mostly emit them for compatibility with ipykernel:
         // https://github.com/ipython/ipykernel/pull/585. These status messages
         // can be discriminated from those on Shell by examining the parent
         // header.

@@ -70,25 +70,22 @@ fn test_amalthea_shutdown_request() {
 
     // Send a shutdown request with restart = false
     frontend.send_shutdown_request(false);
-
-    // Shutdown requests generate busy/idle status messages on IOPub
     frontend.recv_iopub_busy();
 
-    // Receive the shutdown reply
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
     assert_eq!(reply.restart, false);
-
     frontend.recv_iopub_idle();
 
-    // Test with restart = true
+    // Test again with restart = true.
+    // Although the R thread has shut down, the Amalthea thread keeps running
+    // and is able to reply.
     frontend.send_shutdown_request(true);
     frontend.recv_iopub_busy();
 
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
     assert_eq!(reply.restart, true);
-
     frontend.recv_iopub_idle();
 }
 

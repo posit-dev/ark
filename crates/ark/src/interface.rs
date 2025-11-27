@@ -273,9 +273,11 @@ pub struct RMain {
     /// Set to true when `r_read_console()` exits. Reset to false at the start
     /// of each `r_read_console()` call. Used to detect if `eval()` returned
     /// from a nested REPL (the flag will be true when the evaluation returns).
+    /// In these cases, we need to return from `r_read_console()` with a dummy
+    /// evaluation to reset things like `R_ConsoleIob`.
     read_console_nested_return: Cell<bool>,
 
-    /// Set to true `r_read_console()` exits via an error longjump. Used to
+    /// Set to true when `r_read_console()` exits via an error longjump. Used to
     /// detect if we need to go return from `r_read_console()` with a dummy
     /// evaluation to reset things like `R_EvalDepth`.
     read_console_threw_error: Cell<bool>,
