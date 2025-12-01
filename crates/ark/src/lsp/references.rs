@@ -21,8 +21,8 @@ use walkdir::WalkDir;
 
 use crate::lsp;
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
+use crate::lsp::encoding::tree_sitter_point_from_lsp_position;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::state::with_document;
 use crate::lsp::state::WorldState;
@@ -81,8 +81,8 @@ fn add_reference(
     path: &Path,
     locations: &mut Vec<Location>,
 ) {
-    let start = convert_point_to_position(contents, line_index, node.start_position());
-    let end = convert_point_to_position(contents, line_index, node.end_position());
+    let start = lsp_position_from_tree_sitter_point(contents, line_index, node.start_position());
+    let end = lsp_position_from_tree_sitter_point(contents, line_index, node.end_position());
 
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
@@ -113,7 +113,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
         let ast = &document.ast;
         let contents = document.contents.as_str();
         let line_index = &document.line_index;
-        let point = convert_position_to_point(contents, line_index, position);
+        let point = tree_sitter_point_from_lsp_position(contents, line_index, position);
 
         let mut node = ast
             .root_node()

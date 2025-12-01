@@ -15,7 +15,7 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp::config::DocumentConfig;
-use crate::lsp::encoding::convert_lsp_range_to_tree_sitter_range;
+use crate::lsp::encoding::tree_sitter_range_from_lsp_range;
 
 fn compute_point(point: Point, text: &str) -> Point {
     // figure out where the newlines in this edit are
@@ -148,7 +148,7 @@ impl Document {
             end_byte: old_end_byte,
             start_point,
             end_point: old_end_point,
-        } = convert_lsp_range_to_tree_sitter_range(&self.contents, &self.line_index, range);
+        } = tree_sitter_range_from_lsp_range(&self.contents, &self.line_index, range);
 
         let new_end_point = compute_point(start_point, &change.text);
         let new_end_byte = start_byte + change.text.as_bytes().len();

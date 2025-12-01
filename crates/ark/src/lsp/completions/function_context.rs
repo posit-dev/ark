@@ -10,8 +10,8 @@ use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
+use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
+use crate::lsp::encoding::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::BinaryOperatorType;
@@ -62,7 +62,7 @@ impl FunctionContext {
             // We shouldn't ever attempt to instantiate a FunctionContext or
             // function-flavored CompletionItem in this degenerate case, but we
             // return a dummy FunctionContext just to be safe.
-            let node_end = convert_point_to_position(
+            let node_end = lsp_position_from_tree_sitter_point(
                 &document_context.document.contents,
                 &document_context.document.line_index,
                 completion_node.range().end_point,
@@ -115,14 +115,14 @@ impl FunctionContext {
         Self {
             name,
             range: match function_name_node {
-                Some(node) => convert_tree_sitter_range_to_lsp_range(
+                Some(node) => lsp_range_from_tree_sitter_range(
                     &document_context.document.contents,
                     &document_context.document.line_index,
                     node.range(),
                 ),
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
-                    let node_end = convert_point_to_position(
+                    let node_end = lsp_position_from_tree_sitter_point(
                         &document_context.document.contents,
                         &document_context.document.line_index,
                         effective_function_node.range().end_point,

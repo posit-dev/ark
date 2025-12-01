@@ -42,26 +42,26 @@ pub fn get_position_encoding_kind() -> tower_lsp::lsp_types::PositionEncodingKin
     tower_lsp::lsp_types::PositionEncodingKind::UTF16
 }
 
-pub fn convert_tree_sitter_range_to_lsp_range(
+pub fn lsp_range_from_tree_sitter_range(
     contents: &str,
     line_index: &LineIndex,
     range: tree_sitter::Range,
 ) -> tower_lsp::lsp_types::Range {
-    let start = convert_point_to_position(contents, line_index, range.start_point);
-    let end = convert_point_to_position(contents, line_index, range.end_point);
+    let start = lsp_position_from_tree_sitter_point(contents, line_index, range.start_point);
+    let end = lsp_position_from_tree_sitter_point(contents, line_index, range.end_point);
     tower_lsp::lsp_types::Range::new(start, end)
 }
 
-pub fn convert_lsp_range_to_tree_sitter_range(
+pub fn tree_sitter_range_from_lsp_range(
     contents: &str,
     line_index: &LineIndex,
     range: tower_lsp::lsp_types::Range,
 ) -> tree_sitter::Range {
-    let start_point = convert_position_to_point(contents, line_index, range.start);
-    let start_byte = point_to_byte(line_index, start_point);
+    let start_point = tree_sitter_point_from_lsp_position(contents, line_index, range.start);
+    let start_byte = byte_offset_from_tree_sitter_point(line_index, start_point);
 
-    let end_point = convert_position_to_point(contents, line_index, range.end);
-    let end_byte = point_to_byte(line_index, end_point);
+    let end_point = tree_sitter_point_from_lsp_position(contents, line_index, range.end);
+    let end_byte = byte_offset_from_tree_sitter_point(line_index, end_point);
 
     tree_sitter::Range {
         start_byte,
@@ -71,7 +71,7 @@ pub fn convert_lsp_range_to_tree_sitter_range(
     }
 }
 
-pub fn convert_position_to_point(
+pub fn tree_sitter_point_from_lsp_position(
     contents: &str,
     line_index: &LineIndex,
     position: lsp_types::Position,
@@ -84,13 +84,13 @@ pub fn convert_position_to_point(
         line_index,
         line,
         character,
-        convert_character_from_utf16_to_utf8,
+        utf8_offset_from_utf16_offset,
     );
 
     tree_sitter::Point::new(line, character)
 }
 
-pub fn convert_point_to_position(
+pub fn lsp_position_from_tree_sitter_point(
     contents: &str,
     line_index: &LineIndex,
     point: tree_sitter::Point,
@@ -103,7 +103,7 @@ pub fn convert_point_to_position(
         line_index,
         line,
         character,
-        convert_character_from_utf8_to_utf16,
+        utf16_offset_from_utf8_offset,
     );
 
     let line = line as u32;
@@ -112,7 +112,7 @@ pub fn convert_point_to_position(
     lsp_types::Position::new(line, character)
 }
 
-fn point_to_byte(line_index: &LineIndex, point: tree_sitter::Point) -> usize {
+fn byte_offset_from_tree_sitter_point(line_index: &LineIndex, point: tree_sitter::Point) -> usize {
     let line_start = match line_index.newlines.get(point.row) {
         Some(offset) => *offset,
         None => {
@@ -167,15 +167,15 @@ where
 }
 
 /// Converts a character offset into a particular line from UTF-16 to UTF-8
-fn convert_character_from_utf16_to_utf8(x: &str, character: usize) -> usize {
+fn utf8_offset_from_utf16_offset(x: &str, utf16_offset: usize) -> usize {
     if x.is_ascii() {
         // Fast pass
-        return character;
+        return utf16_offset;
     }
 
     // Initial check, since loop would skip this case
-    if character == 0 {
-        return character;
+    if utf16_offset == 0 {
+        return utf16_offset;
     }
 
     let mut n = 0;
@@ -190,31 +190,31 @@ fn convert_character_from_utf16_to_utf8(x: &str, character: usize) -> usize {
     for (pos, char) in x.char_indices() {
         n += char.len_utf16();
 
-        if n == character {
+        if n == utf16_offset {
             return pos + char.len_utf8();
         }
     }
 
-    log::error!("Failed to locate UTF-16 offset of {character}. Line: '{x}'.");
+    log::error!("Failed to locate UTF-16 offset of {utf16_offset}. Line: '{x}'.");
     return 0;
 }
 
 /// Converts a character offset into a particular line from UTF-8 to UTF-16
-fn convert_character_from_utf8_to_utf16(x: &str, character: usize) -> usize {
+fn utf16_offset_from_utf8_offset(x: &str, utf8_offset: usize) -> usize {
     if x.is_ascii() {
         // Fast pass
-        return character;
+        return utf8_offset;
     }
 
     // The UTF-8 -> UTF-16 case is slightly simpler. We just slice into `x`
     // using our existing UTF-8 offset, reencode the slice as a UTF-16 based
     // iterator, and count up the pieces.
-    match x.get(..character) {
+    match x.get(..utf8_offset) {
         Some(x) => x.encode_utf16().count(),
         None => {
             let n = x.len();
             log::error!(
-                "Tried to take UTF-8 character {character}, but only {n} characters exist. Line: '{x}'."
+                "Tried to take UTF-8 character {utf8_offset}, but only {n} characters exist. Line: '{x}'."
             );
             0
         },

@@ -20,7 +20,7 @@ use tree_sitter::Node;
 use tree_sitter::Point;
 
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
+use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -88,8 +88,8 @@ fn new_statement_range_response(
     let end = range.end_point;
 
     // To LSP `Position`s
-    let start = convert_point_to_position(contents, line_index, start);
-    let end = convert_point_to_position(contents, line_index, end);
+    let start = lsp_position_from_tree_sitter_point(contents, line_index, start);
+    let end = lsp_position_from_tree_sitter_point(contents, line_index, end);
 
     let range = lsp_types::Range { start, end };
 
