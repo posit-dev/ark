@@ -45,6 +45,11 @@ pub struct Document {
     /// The Rowan R syntax tree.
     pub parse: aether_parser::Parse,
 
+    /// Index of new lines and non-UTF-8 characters in `contents`. Used for converting
+    /// between line/col [tower_lsp::Position]s with a specified [PositionEncoding] to
+    /// [biome_text_size::TextSize] offsets.
+    pub line_index: biome_line_index::LineIndex,
+
     /// The version of the document we last synchronized with.
     /// None if the document hasn't been synchronized yet.
     pub version: Option<i32>,
@@ -79,12 +84,14 @@ impl Document {
         let document = Rope::from(contents);
         let ast = parser.parse(contents, None).unwrap();
         let parse = aether_parser::parse(contents, Default::default());
+        let line_index = biome_line_index::LineIndex::new(&contents);
 
         Self {
             contents: document,
             version,
             ast,
             parse,
+            line_index,
             config: Default::default(),
         }
     }

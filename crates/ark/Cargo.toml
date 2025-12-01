@@ -16,6 +16,7 @@ amalthea = { path = "../amalthea" }
 anyhow = "1.0.80"
 async-trait = "0.1.66"
 base64 = "0.21.0"
+biome_line_index.workspace = true
 bus = "2.3.0"
 cfg-if = "1.0.0"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
