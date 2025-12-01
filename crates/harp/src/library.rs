@@ -1,16 +1,35 @@
 //
 // library.rs
 //
-// Copyright (C) 2024 by Posit Software, PBC
+// Copyright (C) 2024-2025 by Posit Software, PBC
 //
 //
 
 use std::env::consts::DLL_PREFIX;
 use std::env::consts::DLL_SUFFIX;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use crate::sys;
 pub use crate::sys::library::RLibraries;
+
+/// When true, use the standard Windows DLL search path instead of the restricted
+/// search path (DLL load dir + system32). This is a Windows-only setting.
+static USE_STANDARD_DLL_SEARCH_PATH: AtomicBool = AtomicBool::new(false);
+
+/// Set whether to use the standard Windows DLL search path when loading R libraries.
+/// When set to true, the DLL loading will use the default search order instead of
+/// restricting to the DLL's directory and system32.
+/// This must be called before `RLibraries::from_r_home_path()`.
+pub fn set_use_standard_dll_search_path(value: bool) {
+    USE_STANDARD_DLL_SEARCH_PATH.store(value, Ordering::SeqCst);
+}
+
+/// Get whether to use the standard Windows DLL search path.
+pub(crate) fn use_standard_dll_search_path() -> bool {
+    USE_STANDARD_DLL_SEARCH_PATH.load(Ordering::SeqCst)
+}
 
 /// Open an R shared library located at the specified `path`.
 /// Returned with `'static` lifetime because we `Box::leak()` the `Library`.

@@ -1,7 +1,7 @@
 //
 // main.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -30,7 +30,7 @@ thread_local! {
 
 fn print_usage() {
     println!("Ark {}, an R Kernel.", env!("CARGO_PKG_VERSION"));
-    println!(
+    print!(
         r#"
 Usage: ark [OPTIONS]
 
@@ -53,10 +53,21 @@ Available options:
 --version                Print the version of Ark
 --log FILE               Log to the given file (if not specified, stdout/stderr
                          will be used)
---install                Install the kernel spec for Ark
+--install                Install the kernel spec for Ark"#);
+
+    // Windows-specific options
+    #[cfg(target_os = "windows")]
+    print!(r#"
+--dll-search-path        Use the standard Windows DLL search path (including the PATH environment
+                         variable) when loading R. Useful for R installations that depend on DLLs
+                         other than those in system folders and R install folder, such as Conda.
+                         The R shared library folder must be on the PATH for this to work."#);
+
+    print!(r#"
 --help                   Print this help message
-"#
-    );
+
+"#);
+
 }
 
 fn main() -> anyhow::Result<()> {
@@ -82,6 +93,8 @@ fn main() -> anyhow::Result<()> {
     let mut has_action = false;
     let mut capture_streams = true;
     let mut default_repos = DefaultRepos::Auto;
+    #[cfg(target_os = "windows")]
+    let mut use_windows_dll_search_path = false;
 
     while let Some(arg) = argv.next() {
         match arg.as_str() {
@@ -136,6 +149,8 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             },
             "--no-capture-streams" => capture_streams = false,
+            #[cfg(target_os = "windows")]
+            "--dll-search-path" => use_windows_dll_search_path = true,
             "--default-repos" => {
                 if let Some(repos) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
@@ -407,6 +422,13 @@ fn main() -> anyhow::Result<()> {
 
     // Parse the connection file
     let (connection_file, registration_file) = kernel::read_connection(connection_file.as_str());
+
+    // Set Windows DLL search path option before starting the kernel
+    // (this must be done before R libraries are loaded)
+    #[cfg(target_os = "windows")]
+    if use_windows_dll_search_path {
+        harp::library::set_use_standard_dll_search_path(true);
+    }
 
     // Connect the Jupyter kernel and start R.
     // Does not return!

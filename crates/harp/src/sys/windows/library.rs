@@ -1,7 +1,7 @@
 /*
  * library.rs
  *
- * Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -74,6 +74,18 @@ impl RLibraries {
 }
 
 pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libloading::Error> {
+    // Check if we should use the standard DLL search path. Note that Windows' standard DLL
+    // search path includes the PATH environment variable, so this is useful for R installations
+    // that depend on DLLs other than those in system folders and R install folder, such as Conda.
+    //
+    // However, this does _not_ work for typical R installations because they rely on DLLs in R's own
+    // shared library folder, which is not part of Windows' standard DLL search heuristic.
+    if crate::library::use_standard_dll_search_path() {
+        // Use the standard DLL search order (no special flags)
+        let library = unsafe { Library::new(path) };
+        return library.map(|library| library.into());
+    }
+
     // Each R shared library may have its own set of DLL dependencies. For example,
     // `R.dll` depends on `Rblas.dll` and some DLLs in system32. For each of the R DLLs we load,
     // the combination of R's DLL folder (i.e. `bin/x64`) and the system32 folder are enough to
