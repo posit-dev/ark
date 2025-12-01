@@ -107,7 +107,11 @@ pub fn convert_selection_range_from_tree_sitter_to_lsp(
     selection: SelectionRange,
     document: &crate::lsp::documents::Document,
 ) -> tower_lsp::lsp_types::SelectionRange {
-    let range = convert_tree_sitter_range_to_lsp_range(&document.contents, selection.range);
+    let range = convert_tree_sitter_range_to_lsp_range(
+        document.contents.as_str(),
+        &document.line_index,
+        selection.range,
+    );
 
     // If there is a parent, convert it and box it
     let parent = selection.parent.and_then(|selection| {

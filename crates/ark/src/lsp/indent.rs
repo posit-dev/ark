@@ -26,8 +26,12 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
     let ast = &doc.ast;
     let config = &doc.config.indent;
 
-    // Rope counts from 1, we count from 0
-    if line >= text.len_lines() {
+    let line_count = if text.is_empty() {
+        1
+    } else {
+        text.chars().filter(|c| *c == '\n').count() + 1
+    };
+    if line >= line_count {
         return Err(anyhow!("`line` is OOB"));
     }
 
@@ -65,8 +69,11 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
 
     // Iterator over characters following `line`'s indent
     let text_at_indent = || {
-        text.chars_at(text.line_to_char(line))
-            .skip_while(|c| *c == ' ' || *c == '\t')
+        text.lines()
+            .nth(line)
+            .map(|line_text| line_text.chars().skip_while(|c| *c == ' ' || *c == '\t'))
+            .into_iter()
+            .flatten()
     };
 
     // The indentation of the line the node starts on
@@ -205,12 +212,15 @@ fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
 }
 
 /// Returns indent as a pair of space size and byte size
-pub fn line_indent(text: &ropey::Rope, line: usize, config: &IndentationConfig) -> (usize, usize) {
+pub fn line_indent(text: &str, line: usize, config: &IndentationConfig) -> (usize, usize) {
     let mut byte_indent = 0;
     let mut indent = 0;
-    let mut iter = text.chars_at(text.line_to_char(line));
 
-    while let Some(next_char) = iter.next() {
+    let Some(line_text) = text.lines().nth(line) else {
+        return (0, 0);
+    };
+
+    for next_char in line_text.chars() {
         if next_char == ' ' {
             indent = indent + 1;
             byte_indent = byte_indent + 1;

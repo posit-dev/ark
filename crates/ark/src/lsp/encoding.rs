@@ -5,11 +5,9 @@
 //
 //
 
-use ropey::Rope;
+use biome_line_index::LineIndex;
 use tower_lsp::lsp_types::Position;
 use tree_sitter::Point;
-
-use crate::lsp::traits::rope::RopeExt;
 
 /// `PositionEncodingKind` describes the encoding used for the `Position` `character`
 /// column offset field. The `Position` `line` field is encoding agnostic, but the
@@ -46,23 +44,25 @@ pub fn get_position_encoding_kind() -> tower_lsp::lsp_types::PositionEncodingKin
 }
 
 pub fn convert_tree_sitter_range_to_lsp_range(
-    x: &Rope,
+    contents: &str,
+    line_index: &LineIndex,
     range: tree_sitter::Range,
 ) -> tower_lsp::lsp_types::Range {
-    let start = convert_point_to_position(x, range.start_point);
-    let end = convert_point_to_position(x, range.end_point);
+    let start = convert_point_to_position(contents, line_index, range.start_point);
+    let end = convert_point_to_position(contents, line_index, range.end_point);
     tower_lsp::lsp_types::Range::new(start, end)
 }
 
 pub fn convert_lsp_range_to_tree_sitter_range(
-    x: &Rope,
+    contents: &str,
+    line_index: &LineIndex,
     range: tower_lsp::lsp_types::Range,
 ) -> tree_sitter::Range {
-    let start_point = convert_position_to_point(x, range.start);
-    let start_byte = x.point_to_byte(start_point);
+    let start_point = convert_position_to_point(contents, line_index, range.start);
+    let start_byte = point_to_byte(line_index, start_point);
 
-    let end_point = convert_position_to_point(x, range.end);
-    let end_byte = x.point_to_byte(end_point);
+    let end_point = convert_position_to_point(contents, line_index, range.end);
+    let end_byte = point_to_byte(line_index, end_point);
 
     tree_sitter::Range {
         start_byte,
@@ -72,20 +72,36 @@ pub fn convert_lsp_range_to_tree_sitter_range(
     }
 }
 
-pub fn convert_position_to_point(x: &Rope, position: Position) -> Point {
+pub fn convert_position_to_point(
+    contents: &str,
+    line_index: &LineIndex,
+    position: Position,
+) -> Point {
     let line = position.line as usize;
     let character = position.character as usize;
 
-    let character = with_line(x, line, character, convert_character_from_utf16_to_utf8);
+    let character = with_line(
+        contents,
+        line_index,
+        line,
+        character,
+        convert_character_from_utf16_to_utf8,
+    );
 
     Point::new(line, character)
 }
 
-pub fn convert_point_to_position(x: &Rope, point: Point) -> Position {
+pub fn convert_point_to_position(contents: &str, line_index: &LineIndex, point: Point) -> Position {
     let line = point.row;
     let character = point.column;
 
-    let character = with_line(x, line, character, convert_character_from_utf8_to_utf16);
+    let character = with_line(
+        contents,
+        line_index,
+        line,
+        character,
+        convert_character_from_utf8_to_utf16,
+    );
 
     let line = line as u32;
     let character = character as u32;
@@ -93,33 +109,58 @@ pub fn convert_point_to_position(x: &Rope, point: Point) -> Position {
     Position::new(line, character)
 }
 
-fn with_line<F>(x: &Rope, line: usize, character: usize, f: F) -> usize
+fn point_to_byte(line_index: &LineIndex, point: Point) -> usize {
+    let line_start = match line_index.newlines.get(point.row) {
+        Some(offset) => *offset,
+        None => {
+            log::error!(
+                "Failed to get line start for line {}. Document has {} lines.",
+                point.row,
+                line_index.len()
+            );
+            return 0;
+        },
+    };
+
+    let line_start_byte: usize = line_start.into();
+    line_start_byte + point.column
+}
+
+fn with_line<F>(
+    contents: &str,
+    line_index: &LineIndex,
+    line: usize,
+    character: usize,
+    f: F,
+) -> usize
 where
     F: FnOnce(&str, usize) -> usize,
 {
-    let Some(x) = x.get_line(line) else {
-        let n = x.len_lines();
-        let x = x.to_string();
-        let line = line + 1;
-        // Forcing a full capture so we can learn the situations in which this occurs
-        let trace = std::backtrace::Backtrace::force_capture();
-        log::error!(
-            "Requesting line {line} but only {n} lines exist.\n\nDocument:\n{x}\n\nBacktrace:\n{trace}"
-        );
-        return 0;
+    let line_start = match line_index.newlines.get(line) {
+        Some(offset) => *offset,
+        None => {
+            let n = line_index.len();
+            let line = line + 1;
+            let trace = std::backtrace::Backtrace::force_capture();
+            log::error!(
+                "Requesting line {line} but only {n} lines exist.\n\nDocument:\n{contents}\n\nBacktrace:\n{trace}"
+            );
+            return 0;
+        },
     };
 
-    // If the line is fully contained in a single chunk (likely is), use free conversion to `&str`
-    if let Some(x) = x.as_str() {
-        return f(x, character);
-    }
+    let line_end = line_index
+        .newlines
+        .get(line + 1)
+        .copied()
+        .unwrap_or_else(|| (contents.len() as u32).into());
 
-    // Otherwise, use ever so slightly more expensive String materialization of the
-    // line spread across chunks
-    let x = x.to_string();
-    let x = x.as_str();
+    let line_start_byte: usize = line_start.into();
+    let line_end_byte: usize = line_end.into();
 
-    f(x, character)
+    let line_str = &contents[line_start_byte..line_end_byte];
+
+    f(line_str, character)
 }
 
 /// Converts a character offset into a particular line from UTF-16 to UTF-8

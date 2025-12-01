@@ -23,7 +23,7 @@ use crate::lsp::completions::completion_item::completion_item_from_lazydata;
 use crate::lsp::completions::completion_item::completion_item_from_namespace;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::completions::sources::CompletionSource;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NamespaceOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -76,8 +76,7 @@ fn completions_from_namespace(
         return Ok(Some(completions));
     };
 
-    let package = context.document.contents.node_slice(&package)?.to_string();
-    let package = package.as_str();
+    let package = package.node_as_str(&context.document.contents)?;
 
     // Get the package namespace
     let Ok(namespace) = RFunction::new("base", "getNamespace").add(package).call() else {

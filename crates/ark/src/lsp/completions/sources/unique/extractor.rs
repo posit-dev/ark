@@ -21,7 +21,7 @@ use crate::lsp::completions::completion_item::completion_item_from_data_variable
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::ExtractOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -99,9 +99,9 @@ fn completions_from_extractor(
     };
 
     // Extract out its name from the document
-    let text = context.document.contents.node_slice(&node)?.to_string();
+    let text = node.node_as_str(&context.document.contents)?;
 
-    completions.append(&mut completions_from_extractor_object(text.as_str(), fun)?);
+    completions.append(&mut completions_from_extractor_object(text, fun)?);
 
     Ok(Some(completions))
 }
