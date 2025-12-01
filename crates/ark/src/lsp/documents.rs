@@ -15,7 +15,6 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp::config::DocumentConfig;
-use crate::lsp::encoding::tree_sitter_range_from_lsp_range;
 
 fn compute_point(point: Point, text: &str) -> Point {
     // figure out where the newlines in this edit are
@@ -137,18 +136,12 @@ impl Document {
             None => return Ok(()),
         };
 
-        // Update the AST. We do this before updating the underlying document
-        // contents, because edit computations need to be done using the current
-        // state of the document (prior to the edit being applied) so that byte
-        // offsets can be computed correctly.
-        let ast = &mut self.ast;
-
         let tree_sitter::Range {
             start_byte,
             end_byte: old_end_byte,
             start_point,
             end_point: old_end_point,
-        } = tree_sitter_range_from_lsp_range(&self.contents, &self.line_index, range);
+        } = self.tree_sitter_range_from_lsp_range(range);
 
         let new_end_point = compute_point(start_point, &change.text);
         let new_end_byte = start_byte + change.text.as_bytes().len();
@@ -163,7 +156,11 @@ impl Document {
             new_end_position: new_end_point,
         };
 
-        ast.edit(&edit);
+        // Update the AST. We do this before updating the underlying document
+        // contents, because edit computations need to be done using the current
+        // state of the document (prior to the edit being applied) so that byte
+        // offsets can be computed correctly.
+        self.ast.edit(&edit);
 
         // We can now re-parse incrementally by providing the old edited AST
         let ast = parser.parse(self.contents.as_str(), Some(&self.ast));
@@ -181,7 +178,18 @@ impl Document {
     }
 
     pub fn get_line(&self, line: usize) -> Option<&str> {
-        let line_start = *self.line_index.newlines.get(line)?;
+        let Some(line_start) = self.line_index.newlines.get(line) else {
+            // Forcing a full capture so we can learn the situations in which this occurs
+            log::error!(
+                "Requesting line {line} but only {n} lines exist.\n\nDocument:\n{contents}\n\nBacktrace:\n{trace}",
+                n = self.line_index.len(),
+                line = line + 1,
+                contents = &self.contents,
+                trace = std::backtrace::Backtrace::force_capture(),
+            );
+            return None;
+        };
+
         let line_end = self
             .line_index
             .newlines
@@ -190,7 +198,7 @@ impl Document {
             // if `line` is last, extract text until end of buffer
             .unwrap_or_else(|| (self.contents.len() as u32).into());
 
-        let line_start_byte: usize = line_start.into();
+        let line_start_byte: usize = line_start.to_owned().into();
         let line_end_byte: usize = line_end.into();
 
         self.contents.get(line_start_byte..line_end_byte)
@@ -200,6 +208,123 @@ impl Document {
     /// More convenient than the generic `biome_rowan::SyntaxNode<L>` type.
     pub fn syntax(&self) -> aether_syntax::RSyntaxNode {
         self.parse.syntax()
+    }
+
+    pub fn lsp_range_from_tree_sitter_range(
+        &self,
+        range: tree_sitter::Range,
+    ) -> tower_lsp::lsp_types::Range {
+        let start = self.lsp_position_from_tree_sitter_point(range.start_point);
+        let end = self.lsp_position_from_tree_sitter_point(range.end_point);
+        tower_lsp::lsp_types::Range::new(start, end)
+    }
+
+    pub fn tree_sitter_range_from_lsp_range(
+        &self,
+        range: tower_lsp::lsp_types::Range,
+    ) -> tree_sitter::Range {
+        let start_point = self.tree_sitter_point_from_lsp_position(range.start);
+        let start_byte = self.byte_offset_from_tree_sitter_point(start_point);
+
+        let end_point = self.tree_sitter_point_from_lsp_position(range.end);
+        let end_byte = self.byte_offset_from_tree_sitter_point(end_point);
+
+        tree_sitter::Range {
+            start_byte,
+            end_byte,
+            start_point,
+            end_point,
+        }
+    }
+
+    pub fn tree_sitter_point_from_lsp_position(
+        &self,
+        position: tower_lsp::lsp_types::Position,
+    ) -> tree_sitter::Point {
+        let line = position.line as usize;
+        let character = position.character as usize;
+
+        let character = match self.get_line(line) {
+            Some(line_str) => utf8_offset_from_utf16_offset(line_str, character),
+            None => 0,
+        };
+
+        tree_sitter::Point::new(line, character)
+    }
+
+    pub fn lsp_position_from_tree_sitter_point(
+        &self,
+        point: tree_sitter::Point,
+    ) -> tower_lsp::lsp_types::Position {
+        let line = point.row;
+        let character = point.column;
+
+        let character = match self.get_line(line) {
+            Some(line_str) => utf16_offset_from_utf8_offset(line_str, character),
+            None => 0,
+        };
+
+        let line = line as u32;
+        let character = character as u32;
+
+        tower_lsp::lsp_types::Position::new(line, character)
+    }
+
+    fn byte_offset_from_tree_sitter_point(&self, point: tree_sitter::Point) -> usize {
+        let line_start = match self.line_index.newlines.get(point.row) {
+            Some(offset) => *offset,
+            None => {
+                log::error!(
+                    "Failed to get line start for line {}. Document has {} lines.",
+                    point.row,
+                    self.line_index.len()
+                );
+                return 0;
+            },
+        };
+
+        let line_start_byte: usize = line_start.into();
+        line_start_byte + point.column
+    }
+}
+
+fn utf8_offset_from_utf16_offset(x: &str, utf16_offset: usize) -> usize {
+    if x.is_ascii() {
+        return utf16_offset;
+    }
+
+    if utf16_offset == 0 {
+        return utf16_offset;
+    }
+
+    let mut n = 0;
+
+    for (pos, char) in x.char_indices() {
+        n += char.len_utf16();
+
+        if n == utf16_offset {
+            return pos + char.len_utf8();
+        }
+    }
+
+    log::error!("Failed to locate UTF-16 offset of {utf16_offset}. Line: '{x}'.");
+    0
+}
+
+fn utf16_offset_from_utf8_offset(x: &str, utf8_offset: usize) -> usize {
+    if x.is_ascii() {
+        return utf8_offset;
+    }
+
+    match x.get(..utf8_offset) {
+        Some(x) => x.encode_utf16().count(),
+        None => {
+            let n = x.len();
+            log::error!(
+                "Tried to take UTF-8 character {utf8_offset}, but only {n} characters exist. Line: '{x}'."
+            );
+            0
+        },
     }
 }
 

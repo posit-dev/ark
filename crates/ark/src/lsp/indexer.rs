@@ -23,7 +23,6 @@ use walkdir::WalkDir;
 
 use crate::lsp;
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -283,16 +282,14 @@ pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn index_document(document: &Document, uri: &Url) {
-    let ast = &document.ast;
-    let contents = document.contents.as_str();
-    let line_index = &document.line_index;
+fn index_document(doc: &Document, uri: &Url) {
+    let ast = &doc.ast;
     let root = ast.root_node();
     let mut cursor = root.walk();
     let mut entries = Vec::new();
 
     for node in root.children(&mut cursor) {
-        if let Err(err) = index_node(uri, contents, line_index, &node, &mut entries) {
+        if let Err(err) = index_node(doc, &node, &mut entries) {
             lsp::log_error!("Can't index document: {err:?}");
         }
     }
@@ -304,22 +301,14 @@ fn index_document(document: &Document, uri: &Url) {
     }
 }
 
-fn index_node(
-    uri: &Url,
-    contents: &str,
-    line_index: &biome_line_index::LineIndex,
-    node: &Node,
-    entries: &mut Vec<IndexEntry>,
-) -> anyhow::Result<()> {
-    index_assignment(uri, contents, line_index, node, entries)?;
-    index_comment(uri, contents, line_index, node, entries)?;
+fn index_node(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
+    index_assignment(doc, node, entries)?;
+    index_comment(doc, node, entries)?;
     Ok(())
 }
 
 fn index_assignment(
-    uri: &Url,
-    contents: &str,
-    line_index: &biome_line_index::LineIndex,
+    doc: &Document,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -340,14 +329,14 @@ fn index_assignment(
         return Ok(());
     };
 
-    if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
-        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
+    if crate::treesitter::node_is_call(&rhs, "R6Class", &doc.contents) ||
+        crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", &doc.contents)
     {
-        index_r6_class_methods(uri, contents, line_index, &rhs, entries)?;
+        index_r6_class_methods(doc, &rhs, entries)?;
         // Fallthrough to index the variable to which the R6 class is assigned
     }
 
-    let lhs_text = lhs.node_to_string(contents)?;
+    let lhs_text = lhs.node_to_string(&doc.contents)?;
 
     // The method matching is super hacky but let's wait until the typed API to
     // do better
@@ -367,7 +356,7 @@ fn index_assignment(
             for child in parameters.children(&mut cursor) {
                 let name = unwrap!(child.child_by_field_name("name"), None => continue);
                 if name.is_identifier() {
-                    let name = name.node_to_string(contents)?;
+                    let name = name.node_to_string(&doc.contents)?;
                     arguments.push(name);
                 }
             }
@@ -375,8 +364,8 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = lsp_position_from_tree_sitter_point(contents, line_index, lhs.start_position());
-        let end = lsp_position_from_tree_sitter_point(contents, line_index, lhs.end_position());
+        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position());
+        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position());
 
         entries.push(IndexEntry {
             key: lhs_text.clone(),
@@ -388,8 +377,8 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = lsp_position_from_tree_sitter_point(contents, line_index, lhs.start_position());
-        let end = lsp_position_from_tree_sitter_point(contents, line_index, lhs.end_position());
+        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position());
+        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position());
         entries.push(IndexEntry {
             key: lhs_text.clone(),
             range: Range { start, end },
@@ -401,9 +390,7 @@ fn index_assignment(
 }
 
 fn index_r6_class_methods(
-    _uri: &Url,
-    contents: &str,
-    line_index: &biome_line_index::LineIndex,
+    doc: &Document,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -430,10 +417,10 @@ fn index_r6_class_methods(
     });
     let mut ts_query = TsQuery::from_query(&*R6_METHODS_QUERY);
 
-    for method_node in ts_query.captures_for(*node, "method_name", contents.as_bytes()) {
-        let name = method_node.node_to_string(contents)?;
-        let start = lsp_position_from_tree_sitter_point(contents, line_index, method_node.start_position());
-        let end = lsp_position_from_tree_sitter_point(contents, line_index, method_node.end_position());
+    for method_node in ts_query.captures_for(*node, "method_name", doc.contents.as_bytes()) {
+        let name = method_node.node_to_string(&doc.contents)?;
+        let start = doc.lsp_position_from_tree_sitter_point(method_node.start_position());
+        let end = doc.lsp_position_from_tree_sitter_point(method_node.end_position());
 
         entries.push(IndexEntry {
             key: name.clone(),
@@ -445,21 +432,15 @@ fn index_r6_class_methods(
     Ok(())
 }
 
-fn index_comment(
-    _uri: &Url,
-    contents: &str,
-    line_index: &biome_line_index::LineIndex,
-    node: &Node,
-    entries: &mut Vec<IndexEntry>,
-) -> anyhow::Result<()> {
+fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> anyhow::Result<()> {
     // check for comment
     if !node.is_comment() {
         return Ok(());
     }
 
     // see if it looks like a section
-    let comment = NodeExt::node_to_string(node, contents)?;
-    let matches = match RE_COMMENT_SECTION.captures(comment.as_str()) {
+    let comment = node.node_as_str(&doc.contents)?;
+    let matches = match RE_COMMENT_SECTION.captures(comment) {
         Some(m) => m,
         None => return Ok(()),
     };
@@ -475,8 +456,8 @@ fn index_comment(
         return Ok(());
     }
 
-    let start = lsp_position_from_tree_sitter_point(contents, line_index, node.start_position());
-    let end = lsp_position_from_tree_sitter_point(contents, line_index, node.end_position());
+    let start = doc.lsp_position_from_tree_sitter_point(node.start_position());
+    let end = doc.lsp_position_from_tree_sitter_point(node.end_position());
 
     entries.push(IndexEntry {
         key: title.clone(),
@@ -496,24 +477,16 @@ mod tests {
 
     use super::*;
     use crate::lsp::documents::Document;
-    use crate::lsp::util::test_path;
 
     macro_rules! test_index {
         ($code:expr) => {
             let doc = Document::new($code, None);
-            let uri = test_path("/path/to/file.R");
             let root = doc.ast.root_node();
             let mut cursor = root.walk();
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(
-                    &uri,
-                    doc.contents.as_str(),
-                    &doc.line_index,
-                    &node,
-                    &mut entries,
-                );
+                let _ = index_node(&doc, &node, &mut entries);
             }
             assert_debug_snapshot!(entries);
         };

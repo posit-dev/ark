@@ -21,8 +21,6 @@ use walkdir::WalkDir;
 
 use crate::lsp;
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
-use crate::lsp::encoding::tree_sitter_point_from_lsp_position;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::state::with_document;
 use crate::lsp::state::WorldState;
@@ -74,15 +72,9 @@ struct Context {
     symbol: String,
 }
 
-fn add_reference(
-    node: &Node,
-    contents: &str,
-    line_index: &biome_line_index::LineIndex,
-    path: &Path,
-    locations: &mut Vec<Location>,
-) {
-    let start = lsp_position_from_tree_sitter_point(contents, line_index, node.start_position());
-    let end = lsp_position_from_tree_sitter_point(contents, line_index, node.end_position());
+fn add_reference(node: &Node, document: &Document, path: &Path, locations: &mut Vec<Location>) {
+    let start = document.lsp_position_from_tree_sitter_point(node.start_position());
+    let end = document.lsp_position_from_tree_sitter_point(node.end_position());
 
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
@@ -112,8 +104,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
     let context = with_document(path.as_path(), state, |document| {
         let ast = &document.ast;
         let contents = document.contents.as_str();
-        let line_index = &document.line_index;
-        let point = tree_sitter_point_from_lsp_position(contents, line_index, position);
+        let point = document.tree_sitter_point_from_lsp_position(position);
 
         let mut node = ast
             .root_node()
@@ -193,12 +184,11 @@ fn find_references_in_document(
 ) {
     let ast = &document.ast;
     let contents = document.contents.as_str();
-    let line_index = &document.line_index;
 
     let mut cursor = ast.walk();
     cursor.recurse(|node| {
         if found_match(&node, contents, &context) {
-            add_reference(&node, contents, line_index, path, locations);
+            add_reference(&node, document, path, locations);
         }
 
         return true;

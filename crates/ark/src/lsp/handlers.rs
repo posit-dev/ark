@@ -7,6 +7,7 @@
 
 use anyhow::anyhow;
 use serde_json::Value;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::CodeActionParams;
@@ -47,8 +48,6 @@ use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
 use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::tree_sitter_point_from_lsp_position;
-use crate::lsp::encoding::tree_sitter_range_from_lsp_range;
 use crate::lsp::folding_range::folding_range;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
@@ -189,8 +188,7 @@ pub(crate) fn handle_completion(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position.position;
-    let point =
-        tree_sitter_point_from_lsp_position(&document.contents, &document.line_index, position);
+    let point = document.tree_sitter_point_from_lsp_position(position);
 
     let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
 
@@ -224,8 +222,7 @@ pub(crate) fn handle_hover(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position_params.position;
-    let point =
-        tree_sitter_point_from_lsp_position(&document.contents, &document.line_index, position);
+    let point = document.tree_sitter_point_from_lsp_position(position);
 
     // build document context
     let context = DocumentContext::new(&document, point, None);
@@ -260,8 +257,7 @@ pub(crate) fn handle_signature_help(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position_params.position;
-    let point =
-        tree_sitter_point_from_lsp_position(&document.contents, &document.line_index, position);
+    let point = document.tree_sitter_point_from_lsp_position(position);
 
     let context = DocumentContext::new(&document, point, None);
 
@@ -287,17 +283,9 @@ pub(crate) fn handle_goto_definition(
     params: GotoDefinitionParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
-    // get reference to document
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
-
-    // build goto definition context
-    let result = unwrap!(goto_definition(&document, params), Err(err) => {
-        lsp::log_error!("{err:?}");
-        return Ok(None);
-    });
-
-    Ok(result)
+    Ok(goto_definition(&document, params).log_err().flatten())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -305,23 +293,16 @@ pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<Vec<SelectionRange>>> {
-    // Get reference to document
-    let uri = params.text_document.uri;
-    let document = state.get_document(&uri)?;
-
-    let tree = &document.ast;
+    let document = state.get_document(&params.text_document.uri)?;
 
     // Get tree-sitter points to return selection ranges for
-    let line_index = &document.line_index;
     let points: Vec<Point> = params
         .positions
         .into_iter()
-        .map(|position| {
-            tree_sitter_point_from_lsp_position(&document.contents, line_index, position)
-        })
+        .map(|position| document.tree_sitter_point_from_lsp_position(position))
         .collect();
 
-    let Some(selections) = selection_range(tree, points) else {
+    let Some(selections) = selection_range(&document.ast, points) else {
         return Ok(None);
     };
 
@@ -358,17 +339,9 @@ pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<StatementRangeResponse>> {
-    let uri = &params.text_document.uri;
-    let document = state.get_document(uri)?;
-
-    let root = document.ast.root_node();
-    let contents = &document.contents;
-    let line_index = &document.line_index;
-
-    let position = params.position;
-    let point = tree_sitter_point_from_lsp_position(contents, line_index, position);
-
-    statement_range(root, contents, line_index, point)
+    let document = state.get_document(&params.text_document.uri)?;
+    let point = document.tree_sitter_point_from_lsp_position(params.position);
+    statement_range(document, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -376,14 +349,8 @@ pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
 ) -> anyhow::Result<Option<HelpTopicResponse>> {
-    let uri = &params.text_document.uri;
-    let document = state.get_document(uri)?;
-    let contents = &document.contents;
-    let line_index = &document.line_index;
-
-    let position = params.position;
-    let point = tree_sitter_point_from_lsp_position(contents, line_index, position);
-
+    let document = state.get_document(&params.text_document.uri)?;
+    let point = document.tree_sitter_point_from_lsp_position(params.position);
     help_topic(point, &document)
 }
 
@@ -393,11 +360,8 @@ pub(crate) fn handle_indent(
     state: &WorldState,
 ) -> anyhow::Result<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
-    let uri = ctxt.text_document.uri;
-
-    let doc = state.get_document(&uri)?;
-    let pos = ctxt.position;
-    let point = tree_sitter_point_from_lsp_position(&doc.contents, &doc.line_index, pos);
+    let doc = state.get_document(&ctxt.text_document.uri)?;
+    let point = doc.tree_sitter_point_from_lsp_position(ctxt.position);
 
     let res = indent_edit(doc, point.row);
 
@@ -416,7 +380,7 @@ pub(crate) fn handle_code_action(
 ) -> anyhow::Result<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
     let doc = state.get_document(&uri)?;
-    let range = tree_sitter_range_from_lsp_range(&doc.contents, &doc.line_index, params.range);
+    let range = doc.tree_sitter_range_from_lsp_range(params.range);
 
     let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
 

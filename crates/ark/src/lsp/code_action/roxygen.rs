@@ -6,7 +6,6 @@ use crate::lsp::code_action::code_action;
 use crate::lsp::code_action::code_action_workspace_text_edit;
 use crate::lsp::code_action::CodeActions;
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -101,8 +100,7 @@ pub(crate) fn roxygen_documentation(
     // We insert the documentation string at the start position of the function name.
     // This handles the indentation of the first documentation line, and makes new line
     // handling trivial (we just add a new line to every documentation line).
-    let position =
-        lsp_position_from_tree_sitter_point(&document.contents, &document.line_index, position);
+    let position = document.lsp_position_from_tree_sitter_point(position);
     let range = tower_lsp::lsp_types::Range::new(position, position);
     let edit = lsp_types::TextEdit::new(range, documentation);
     let edit =
