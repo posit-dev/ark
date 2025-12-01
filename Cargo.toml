@@ -26,3 +26,4 @@ authors = ["Posit Software, PBC"]
 
 [workspace.dependencies]
 biome_line_index = { git = "https://github.com/biomejs/biome", rev = "c13fc60726883781e4530a4437724273b560c8e0" }
+aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "71b546e63dc7" }
