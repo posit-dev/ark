@@ -10,7 +10,6 @@ use tree_sitter::Point;
 use tree_sitter::Range;
 use tree_sitter::Tree;
 
-use crate::lsp::encoding::lsp_range_from_tree_sitter_range;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -107,11 +106,7 @@ pub fn convert_selection_range_from_tree_sitter_to_lsp(
     selection: SelectionRange,
     document: &crate::lsp::documents::Document,
 ) -> tower_lsp::lsp_types::SelectionRange {
-    let range = lsp_range_from_tree_sitter_range(
-        document.contents.as_str(),
-        &document.line_index,
-        selection.range,
-    );
+    let range = document.lsp_range_from_tree_sitter_range(selection.range);
 
     // If there is a parent, convert it and box it
     let parent = selection.parent.and_then(|selection| {
