@@ -23,7 +23,7 @@ use walkdir::WalkDir;
 
 use crate::lsp;
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
+use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -375,8 +375,8 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = convert_point_to_position(contents, line_index, lhs.start_position());
-        let end = convert_point_to_position(contents, line_index, lhs.end_position());
+        let start = lsp_position_from_tree_sitter_point(contents, line_index, lhs.start_position());
+        let end = lsp_position_from_tree_sitter_point(contents, line_index, lhs.end_position());
 
         entries.push(IndexEntry {
             key: lhs_text.clone(),
@@ -388,8 +388,8 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = convert_point_to_position(contents, line_index, lhs.start_position());
-        let end = convert_point_to_position(contents, line_index, lhs.end_position());
+        let start = lsp_position_from_tree_sitter_point(contents, line_index, lhs.start_position());
+        let end = lsp_position_from_tree_sitter_point(contents, line_index, lhs.end_position());
         entries.push(IndexEntry {
             key: lhs_text.clone(),
             range: Range { start, end },
@@ -432,8 +432,8 @@ fn index_r6_class_methods(
 
     for method_node in ts_query.captures_for(*node, "method_name", contents.as_bytes()) {
         let name = method_node.node_to_string(contents)?;
-        let start = convert_point_to_position(contents, line_index, method_node.start_position());
-        let end = convert_point_to_position(contents, line_index, method_node.end_position());
+        let start = lsp_position_from_tree_sitter_point(contents, line_index, method_node.start_position());
+        let end = lsp_position_from_tree_sitter_point(contents, line_index, method_node.end_position());
 
         entries.push(IndexEntry {
             key: name.clone(),
@@ -475,8 +475,8 @@ fn index_comment(
         return Ok(());
     }
 
-    let start = convert_point_to_position(contents, line_index, node.start_position());
-    let end = convert_point_to_position(contents, line_index, node.end_position());
+    let start = lsp_position_from_tree_sitter_point(contents, line_index, node.start_position());
+    let end = lsp_position_from_tree_sitter_point(contents, line_index, node.end_position());
 
     entries.push(IndexEntry {
         key: title.clone(),
