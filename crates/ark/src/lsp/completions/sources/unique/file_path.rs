@@ -17,7 +17,7 @@ use tree_sitter::Node;
 use crate::lsp::completions::completion_item::completion_item_from_direntry;
 use crate::lsp::completions::sources::utils::set_sort_text_by_words_first;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 
 pub(super) fn completions_from_string_file_path(
     node: &Node,
@@ -32,12 +32,12 @@ pub(super) fn completions_from_string_file_path(
     // NOTE: This includes the quotation characters on the string, and so
     // also includes any internal escapes! We need to decode the R string
     // by parsing it before searching the path entries.
-    let token = context.document.contents.node_slice(&node)?.to_string();
+    let token = node.node_as_str(&context.document.contents)?;
 
     // It's entirely possible that we can fail to parse the string, `R_ParseVector()`
     // can fail in various ways. We silently swallow these because they are unlikely
     // to report to real file paths and just bail (posit-dev/positron#6584).
-    let Ok(contents) = harp::parse_expr(&token) else {
+    let Ok(contents) = harp::parse_expr(token) else {
         return Ok(completions);
     };
 
