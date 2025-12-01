@@ -12,8 +12,8 @@ use tower_lsp::lsp_types::LocationLink;
 use tower_lsp::lsp_types::Range;
 
 use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
+use crate::lsp::encoding::tree_sitter_point_from_lsp_position;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
@@ -30,15 +30,15 @@ pub fn goto_definition<'a>(
 
     // try to find node at position
     let position = params.text_document_position_params.position;
-    let point = convert_position_to_point(contents, line_index, position);
+    let point = tree_sitter_point_from_lsp_position(contents, line_index, position);
 
     let Some(node) = ast.root_node().find_closest_node_to_point(point) else {
         log::warn!("Failed to find the closest node to point {point}.");
         return Ok(None);
     };
 
-    let start = convert_point_to_position(contents, line_index, node.start_position());
-    let end = convert_point_to_position(contents, line_index, node.end_position());
+    let start = lsp_position_from_tree_sitter_point(contents, line_index, node.start_position());
+    let end = lsp_position_from_tree_sitter_point(contents, line_index, node.end_position());
     let range = Range { start, end };
 
     // Search for a reference in the document index

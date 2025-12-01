@@ -10,7 +10,7 @@ use tree_sitter::Node;
 use tree_sitter::Range;
 
 use crate::lsp::diagnostics::DiagnosticContext;
-use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
+use crate::lsp::encoding::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
@@ -412,7 +412,7 @@ fn new_missing_close_diagnostic(
 }
 
 fn new_syntax_diagnostic(message: String, range: Range, context: &DiagnosticContext) -> Diagnostic {
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, context.line_index, range);
+    let range = lsp_range_from_tree_sitter_range(context.contents, context.line_index, range);
     Diagnostic::new_simple(range, message)
 }
 
