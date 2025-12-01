@@ -169,8 +169,8 @@ impl Document {
         let ast = parser.parse(self.contents.as_str(), Some(&self.ast));
         self.ast = ast.unwrap();
 
-        // Do another parse with Rowan
-        self.parse = aether_parser::parse(&self.contents, Default::default());
+        // Update the Rowan tree
+        self.parse = aether_parser::parse_tree_sitter(&self.contents, &self.ast);
 
         // Now update the text
         self.contents

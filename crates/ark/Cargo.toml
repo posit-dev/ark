@@ -23,8 +23,8 @@ crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
 dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }
 dashmap = "5.4.0"
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax" }
+aether_parser.workspace = true
+aether_syntax.workspace = true
 ego-tree = "0.6.2"
 harp = { path = "../harp" }
 http = "0.2.9"
