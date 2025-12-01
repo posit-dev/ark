@@ -16,7 +16,6 @@ use tree_sitter::Tree;
 use crate::lsp;
 use crate::lsp::documents::Document;
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -49,10 +48,7 @@ pub(crate) fn help_topic(
         return Ok(None);
     };
 
-    // Get the text of the node
-    let text = document.contents.node_slice(&node)?.to_string();
-
-    // Form the response
+    let text = node.node_to_string(&document.contents)?;
     let response = HelpTopicResponse { topic: text };
 
     lsp::log_info!(
@@ -103,6 +99,7 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::help_topic::locate_help_node;
+    use crate::lsp::traits::node::NodeExt;
 
     #[test]
     fn test_locate_help_node() {
@@ -133,7 +130,7 @@ mod tests {
             let (text, point) = point_from_cursor(code);
             let tree = parser.parse(text.as_str(), None).unwrap();
             let node = locate_help_node(&tree, point).unwrap();
-            let text = node.utf8_text(text.as_bytes()).unwrap();
+            let text = node.node_as_str(&text).unwrap();
             assert_eq!(text, expected);
         }
     }

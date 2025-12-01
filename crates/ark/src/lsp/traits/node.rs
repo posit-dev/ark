@@ -4,14 +4,15 @@
 //
 //
 
+use anyhow::anyhow;
 use stdext::all;
+use stdext::result::ResultExt;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
 use tree_sitter::TreeCursor;
 
 use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::rope::RopeExt;
 
 fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut String) {
     let node = cursor.node();
@@ -22,7 +23,7 @@ fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut 
             format!(
                 "{} - {} - {} ({} -- {})\n",
                 indent,
-                node.utf8_text(source.as_bytes()).unwrap(),
+                node.node_as_str(&source).unwrap(),
                 node.kind(),
                 node.start_position(),
                 node.end_position(),
@@ -96,10 +97,14 @@ pub trait NodeExt: Sized {
     fn arguments(&self) -> impl Iterator<Item = (Option<Self>, Option<Self>)>;
     fn arguments_values(&self) -> impl Iterator<Item = Option<Self>>;
     fn arguments_names(&self) -> impl Iterator<Item = Option<Self>>;
-    fn arguments_names_as_string(
-        &self,
-        contents: &ropey::Rope,
-    ) -> impl Iterator<Item = Option<String>>;
+    fn arguments_names_as_string(&self, contents: &str) -> impl Iterator<Item = Option<String>>;
+
+    /// Return the node's text as a `&str` slice into `source`.
+    /// This is a thin wrapper around `Node::utf8_text(&node, source.as_bytes())`.
+    fn node_as_str<'a>(&self, source: &'a str) -> anyhow::Result<&'a str>;
+
+    /// Convenience method returning an owned `String` for this node's text.
+    fn node_to_string(&self, source: &str) -> anyhow::Result<String>;
 }
 
 impl<'tree> NodeExt for Node<'tree> {
@@ -268,12 +273,11 @@ impl<'tree> NodeExt for Node<'tree> {
         self.arguments().map(|(name, _value)| name)
     }
 
-    fn arguments_names_as_string(
-        &self,
-        contents: &ropey::Rope,
-    ) -> impl Iterator<Item = Option<String>> {
-        self.arguments_names().map(|maybe_node| {
-            maybe_node.and_then(|node| match contents.node_slice(&node) {
+    fn arguments_names_as_string(&self, contents: &str) -> impl Iterator<Item = Option<String>> {
+        // Note: capture `contents` by reference into the closure so the iterator
+        // can outlive the stack frame where this method is called.
+        self.arguments_names().map(move |maybe_node| {
+            maybe_node.and_then(|node| match node.node_as_str(&contents) {
                 Err(err) => {
                     tracing::error!("Can't convert argument name to text: {err:?}");
                     None
@@ -281,6 +285,17 @@ impl<'tree> NodeExt for Node<'tree> {
                 Ok(text) => Some(text.to_string()),
             })
         })
+    }
+
+    fn node_as_str<'a>(&self, source: &'a str) -> anyhow::Result<&'a str> {
+        self.utf8_text(source.as_bytes()).anyhow()
+    }
+
+    fn node_to_string(&self, source: &str) -> anyhow::Result<String> {
+        Ok(self
+            .node_as_str(source)
+            .map(|s| s.to_string())
+            .map_err(|e| anyhow!(e))?)
     }
 
     fn arguments_values(&self) -> impl Iterator<Item = Option<Node<'tree>>> {

@@ -5,14 +5,15 @@
 //
 //
 
+use stdext::result::ResultExt;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
-use crate::treesitter::node_text;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -63,6 +64,7 @@ impl FunctionContext {
             // return a dummy FunctionContext just to be safe.
             let node_end = convert_point_to_position(
                 &document_context.document.contents,
+                &document_context.document.line_index,
                 completion_node.range().end_point,
             );
 
@@ -93,7 +95,10 @@ impl FunctionContext {
             cursor.row == node_range.end_point.row && cursor.column == node_range.end_point.column;
 
         let name = match function_name_node {
-            Some(node) => node_text(&node, &document_context.document.contents).unwrap_or_default(),
+            Some(node) => node
+                .node_to_string(&document_context.document.contents)
+                .log_err()
+                .unwrap_or_default(),
             None => String::new(),
         };
 
@@ -112,12 +117,14 @@ impl FunctionContext {
             range: match function_name_node {
                 Some(node) => convert_tree_sitter_range_to_lsp_range(
                     &document_context.document.contents,
+                    &document_context.document.line_index,
                     node.range(),
                 ),
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
                     let node_end = convert_point_to_position(
                         &document_context.document.contents,
+                        &document_context.document.line_index,
                         effective_function_node.range().end_point,
                     );
                     tower_lsp::lsp_types::Range::new(node_end, node_end)
@@ -165,7 +172,7 @@ static FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE: &[&str] = &[
     "str",
 ];
 
-fn is_inside_special_function(node: &Node, contents: &ropey::Rope) -> bool {
+fn is_inside_special_function(node: &Node, contents: &str) -> bool {
     let Some(call_node) = node_find_parent_call(node) else {
         return false;
     };
@@ -174,9 +181,12 @@ fn is_inside_special_function(node: &Node, contents: &ropey::Rope) -> bool {
         return false;
     };
 
-    let call_name = node_text(&call_name_node, contents).unwrap_or_default();
+    let call_name = call_name_node
+        .node_as_str(contents)
+        .log_err()
+        .unwrap_or_default();
 
-    FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE.contains(&call_name.as_str())
+    FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE.contains(&call_name)
 }
 
 /// Checks if the node is inside a help operator context like `?foo` or `method?foo`
@@ -226,7 +236,7 @@ fn determine_arguments_status(function_container_node: &Node) -> ArgumentsStatus
     }
 }
 
-fn determine_function_usage(node: &Node, contents: &ropey::Rope) -> FunctionRefUsage {
+fn determine_function_usage(node: &Node, contents: &str) -> FunctionRefUsage {
     if is_inside_special_function(node, contents) || is_inside_help_operator(node) {
         FunctionRefUsage::Value
     } else {

@@ -16,7 +16,6 @@ use crate::lsp::encoding::convert_point_to_position;
 use crate::lsp::encoding::convert_position_to_point;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeTypeExt;
 
 pub fn goto_definition<'a>(
@@ -27,28 +26,28 @@ pub fn goto_definition<'a>(
     let ast = &document.ast;
 
     let contents = &document.contents;
+    let line_index = &document.line_index;
 
     // try to find node at position
     let position = params.text_document_position_params.position;
-    let point = convert_position_to_point(contents, position);
+    let point = convert_position_to_point(contents, line_index, position);
 
     let Some(node) = ast.root_node().find_closest_node_to_point(point) else {
         log::warn!("Failed to find the closest node to point {point}.");
         return Ok(None);
     };
 
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
+    let start = convert_point_to_position(contents, line_index, node.start_position());
+    let end = convert_point_to_position(contents, line_index, node.end_position());
     let range = Range { start, end };
 
     // Search for a reference in the document index
     if node.is_identifier() {
-        let symbol = document.contents.node_slice(&node)?.to_string();
+        let symbol = node.node_as_str(&document.contents)?;
 
         // First search in current file, then in all files
         let uri = &params.text_document_position_params.text_document.uri;
-        let info =
-            indexer::find_in_file(symbol.as_str(), uri).or_else(|| indexer::find(symbol.as_str()));
+        let info = indexer::find_in_file(symbol, uri).or_else(|| indexer::find(symbol));
 
         if let Some((file_id, entry)) = info {
             let target_uri = file_id.as_uri().clone();

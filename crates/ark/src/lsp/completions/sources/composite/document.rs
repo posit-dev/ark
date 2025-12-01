@@ -16,8 +16,8 @@ use crate::lsp::completions::sources::utils::filter_out_dot_prefixes;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::cursor::TreeCursorExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -170,7 +170,7 @@ fn completions_from_document_function_arguments(
             continue;
         }
 
-        let parameter = context.document.contents.node_slice(&node)?.to_string();
+        let parameter = node.node_as_str(&context.document.contents)?.to_string();
         match completion_item_from_scope_parameter(parameter.as_str(), context) {
             Ok(item) => completions.push(item),
             Err(err) => log::error!("{err:?}"),
@@ -186,7 +186,9 @@ fn call_uses_nse(node: &Node, context: &DocumentContext) -> bool {
         let lhs = node.child(0).into_result()?;
         lhs.is_identifier_or_string().into_result()?;
 
-        let value = context.document.contents.node_slice(&lhs)?.to_string();
+        let value = lhs
+            .node_as_str(&context.document.contents)?
+            .to_string();
         matches!(value.as_str(), "expression" | "local" | "quote" | "enquote" | "substitute" | "with" | "within").into_result()?;
 
         Ok(())

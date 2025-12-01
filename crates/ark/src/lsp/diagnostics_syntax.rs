@@ -11,7 +11,7 @@ use tree_sitter::Range;
 
 use crate::lsp::diagnostics::DiagnosticContext;
 use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -334,7 +334,7 @@ fn diagnose_missing_binary_operator(
 
     let range = operator.range();
 
-    let text = context.contents.node_slice(&operator)?;
+    let text = operator.node_as_str(&context.contents)?;
     let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context));
@@ -365,7 +365,7 @@ pub(crate) fn diagnose_missing_namespace_operator(
 
     let range = operator.range();
 
-    let text = context.contents.node_slice(&operator)?;
+    let text = operator.node_as_str(&context.contents)?;
     let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
 
     diagnostics.push(new_syntax_diagnostic(message, range, context));
@@ -412,7 +412,7 @@ fn new_missing_close_diagnostic(
 }
 
 fn new_syntax_diagnostic(message: String, range: Range, context: &DiagnosticContext) -> Diagnostic {
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+    let range = convert_tree_sitter_range_to_lsp_range(context.contents, context.line_index, range);
     Diagnostic::new_simple(range, message)
 }
 
@@ -429,7 +429,8 @@ mod tests {
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
         let document = Document::new(text, None);
         let library = Library::default();
-        let context = DiagnosticContext::new(&document.contents, &None, &library);
+        let context =
+            DiagnosticContext::new(&document.contents, &document.line_index, &None, &library);
         let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
         diagnostics
     }

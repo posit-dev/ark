@@ -189,7 +189,7 @@ pub(crate) fn handle_completion(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position.position;
-    let point = convert_position_to_point(&document.contents, position);
+    let point = convert_position_to_point(&document.contents, &document.line_index, position);
 
     let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
 
@@ -223,7 +223,7 @@ pub(crate) fn handle_hover(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position_params.position;
-    let point = convert_position_to_point(&document.contents, position);
+    let point = convert_position_to_point(&document.contents, &document.line_index, position);
 
     // build document context
     let context = DocumentContext::new(&document, point, None);
@@ -258,7 +258,7 @@ pub(crate) fn handle_signature_help(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position_params.position;
-    let point = convert_position_to_point(&document.contents, position);
+    let point = convert_position_to_point(&document.contents, &document.line_index, position);
 
     let context = DocumentContext::new(&document, point, None);
 
@@ -309,10 +309,11 @@ pub(crate) fn handle_selection_range(
     let tree = &document.ast;
 
     // Get tree-sitter points to return selection ranges for
+    let line_index = &document.line_index;
     let points: Vec<Point> = params
         .positions
         .into_iter()
-        .map(|position| convert_position_to_point(&document.contents, position))
+        .map(|position| convert_position_to_point(&document.contents, line_index, position))
         .collect();
 
     let Some(selections) = selection_range(tree, points) else {
@@ -357,11 +358,12 @@ pub(crate) fn handle_statement_range(
 
     let root = document.ast.root_node();
     let contents = &document.contents;
+    let line_index = &document.line_index;
 
     let position = params.position;
-    let point = convert_position_to_point(contents, position);
+    let point = convert_position_to_point(contents, line_index, position);
 
-    statement_range(root, contents, point)
+    statement_range(root, contents, line_index, point)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -372,9 +374,10 @@ pub(crate) fn handle_help_topic(
     let uri = &params.text_document.uri;
     let document = state.get_document(uri)?;
     let contents = &document.contents;
+    let line_index = &document.line_index;
 
     let position = params.position;
-    let point = convert_position_to_point(contents, position);
+    let point = convert_position_to_point(contents, line_index, position);
 
     help_topic(point, &document)
 }
@@ -389,12 +392,14 @@ pub(crate) fn handle_indent(
 
     let doc = state.get_document(&uri)?;
     let pos = ctxt.position;
-    let point = convert_position_to_point(&doc.contents, pos);
+    let point = convert_position_to_point(&doc.contents, &doc.line_index, pos);
 
     let res = indent_edit(doc, point.row);
 
     Result::map(res, |opt| {
-        Option::map(opt, |edits| edits.into_lsp_offset(&doc.contents))
+        Option::map(opt, |edits| {
+            edits.into_lsp_offset(&doc.contents, &doc.line_index)
+        })
     })
 }
 
@@ -406,7 +411,8 @@ pub(crate) fn handle_code_action(
 ) -> anyhow::Result<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
     let doc = state.get_document(&uri)?;
-    let range = convert_lsp_range_to_tree_sitter_range(&doc.contents, params.range);
+    let range =
+        convert_lsp_range_to_tree_sitter_range(&doc.contents, &doc.line_index, params.range);
 
     let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
 

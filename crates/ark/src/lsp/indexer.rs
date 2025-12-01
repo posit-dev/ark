@@ -12,7 +12,6 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use regex::Regex;
-use ropey::Rope;
 use stdext::unwrap;
 use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::Range;
@@ -25,7 +24,7 @@ use walkdir::WalkDir;
 use crate::lsp;
 use crate::lsp::documents::Document;
 use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -286,13 +285,14 @@ pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
 
 fn index_document(document: &Document, uri: &Url) {
     let ast = &document.ast;
-    let contents = &document.contents;
+    let contents = document.contents.as_str();
+    let line_index = &document.line_index;
     let root = ast.root_node();
     let mut cursor = root.walk();
     let mut entries = Vec::new();
 
     for node in root.children(&mut cursor) {
-        if let Err(err) = index_node(uri, contents, &node, &mut entries) {
+        if let Err(err) = index_node(uri, contents, line_index, &node, &mut entries) {
             lsp::log_error!("Can't index document: {err:?}");
         }
     }
@@ -306,18 +306,20 @@ fn index_document(document: &Document, uri: &Url) {
 
 fn index_node(
     uri: &Url,
-    contents: &Rope,
+    contents: &str,
+    line_index: &biome_line_index::LineIndex,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
-    index_assignment(uri, contents, node, entries)?;
-    index_comment(uri, contents, node, entries)?;
+    index_assignment(uri, contents, line_index, node, entries)?;
+    index_comment(uri, contents, line_index, node, entries)?;
     Ok(())
 }
 
 fn index_assignment(
     uri: &Url,
-    contents: &Rope,
+    contents: &str,
+    line_index: &biome_line_index::LineIndex,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -341,11 +343,11 @@ fn index_assignment(
     if crate::treesitter::node_is_call(&rhs, "R6Class", contents) ||
         crate::treesitter::node_is_namespaced_call(&rhs, "R6", "R6Class", contents)
     {
-        index_r6_class_methods(uri, contents, &rhs, entries)?;
+        index_r6_class_methods(uri, contents, line_index, &rhs, entries)?;
         // Fallthrough to index the variable to which the R6 class is assigned
     }
 
-    let lhs_text = contents.node_slice(&lhs)?.to_string();
+    let lhs_text = lhs.node_to_string(contents)?;
 
     // The method matching is super hacky but let's wait until the typed API to
     // do better
@@ -365,7 +367,7 @@ fn index_assignment(
             for child in parameters.children(&mut cursor) {
                 let name = unwrap!(child.child_by_field_name("name"), None => continue);
                 if name.is_identifier() {
-                    let name = contents.node_slice(&name)?.to_string();
+                    let name = name.node_to_string(contents)?;
                     arguments.push(name);
                 }
             }
@@ -373,8 +375,8 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = convert_point_to_position(contents, lhs.start_position());
-        let end = convert_point_to_position(contents, lhs.end_position());
+        let start = convert_point_to_position(contents, line_index, lhs.start_position());
+        let end = convert_point_to_position(contents, line_index, lhs.end_position());
 
         entries.push(IndexEntry {
             key: lhs_text.clone(),
@@ -386,8 +388,8 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = convert_point_to_position(contents, lhs.start_position());
-        let end = convert_point_to_position(contents, lhs.end_position());
+        let start = convert_point_to_position(contents, line_index, lhs.start_position());
+        let end = convert_point_to_position(contents, line_index, lhs.end_position());
         entries.push(IndexEntry {
             key: lhs_text.clone(),
             range: Range { start, end },
@@ -400,7 +402,8 @@ fn index_assignment(
 
 fn index_r6_class_methods(
     _uri: &Url,
-    contents: &Rope,
+    contents: &str,
+    line_index: &biome_line_index::LineIndex,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -427,14 +430,10 @@ fn index_r6_class_methods(
     });
     let mut ts_query = TsQuery::from_query(&*R6_METHODS_QUERY);
 
-    // We'll switch from Rope to String in the near future so let's not
-    // worry about this conversion now
-    let contents_str = contents.to_string();
-
-    for method_node in ts_query.captures_for(*node, "method_name", contents_str.as_bytes()) {
-        let name = contents.node_slice(&method_node)?.to_string();
-        let start = convert_point_to_position(contents, method_node.start_position());
-        let end = convert_point_to_position(contents, method_node.end_position());
+    for method_node in ts_query.captures_for(*node, "method_name", contents.as_bytes()) {
+        let name = method_node.node_to_string(contents)?;
+        let start = convert_point_to_position(contents, line_index, method_node.start_position());
+        let end = convert_point_to_position(contents, line_index, method_node.end_position());
 
         entries.push(IndexEntry {
             key: name.clone(),
@@ -448,7 +447,8 @@ fn index_r6_class_methods(
 
 fn index_comment(
     _uri: &Url,
-    contents: &Rope,
+    contents: &str,
+    line_index: &biome_line_index::LineIndex,
     node: &Node,
     entries: &mut Vec<IndexEntry>,
 ) -> anyhow::Result<()> {
@@ -458,7 +458,7 @@ fn index_comment(
     }
 
     // see if it looks like a section
-    let comment = contents.node_slice(node)?.to_string();
+    let comment = NodeExt::node_to_string(node, contents)?;
     let matches = match RE_COMMENT_SECTION.captures(comment.as_str()) {
         Some(m) => m,
         None => return Ok(()),
@@ -475,8 +475,8 @@ fn index_comment(
         return Ok(());
     }
 
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
+    let start = convert_point_to_position(contents, line_index, node.start_position());
+    let end = convert_point_to_position(contents, line_index, node.end_position());
 
     entries.push(IndexEntry {
         key: title.clone(),
@@ -507,7 +507,13 @@ mod tests {
 
             let mut entries = vec![];
             for node in root.children(&mut cursor) {
-                let _ = index_node(&uri, &doc.contents, &node, &mut entries);
+                let _ = index_node(
+                    &uri,
+                    doc.contents.as_str(),
+                    &doc.line_index,
+                    &node,
+                    &mut entries,
+                );
             }
             assert_debug_snapshot!(entries);
         };

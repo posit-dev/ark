@@ -8,7 +8,6 @@
 use std::path::Path;
 
 use anyhow::anyhow;
-use ropey::Rope;
 use stdext::unwrap::IntoResult;
 use stdext::*;
 use tower_lsp::lsp_types::Location;
@@ -28,7 +27,7 @@ use crate::lsp::indexer::filter_entry;
 use crate::lsp::state::with_document;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::url::UrlExt;
 use crate::treesitter::ExtractOperatorType;
 use crate::treesitter::NodeType;
@@ -75,9 +74,15 @@ struct Context {
     symbol: String,
 }
 
-fn add_reference(node: &Node, contents: &Rope, path: &Path, locations: &mut Vec<Location>) {
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
+fn add_reference(
+    node: &Node,
+    contents: &str,
+    line_index: &biome_line_index::LineIndex,
+    path: &Path,
+    locations: &mut Vec<Location>,
+) {
+    let start = convert_point_to_position(contents, line_index, node.start_position());
+    let end = convert_point_to_position(contents, line_index, node.end_position());
 
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
@@ -86,12 +91,12 @@ fn add_reference(node: &Node, contents: &Rope, path: &Path, locations: &mut Vec<
     locations.push(location);
 }
 
-fn found_match(node: &Node, contents: &Rope, context: &Context) -> bool {
+fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
     if !node.is_identifier() {
         return false;
     }
 
-    let symbol = contents.node_slice(node).unwrap().to_string();
+    let symbol = NodeExt::node_to_string(node, contents).unwrap();
     if symbol != context.symbol {
         return false;
     }
@@ -106,8 +111,9 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
     // Figure out the identifier we're looking for.
     let context = with_document(path.as_path(), state, |document| {
         let ast = &document.ast;
-        let contents = &document.contents;
-        let point = convert_position_to_point(contents, position);
+        let contents = document.contents.as_str();
+        let line_index = &document.line_index;
+        let point = convert_position_to_point(contents, line_index, position);
 
         let mut node = ast
             .root_node()
@@ -140,7 +146,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
         let kind = node_reference_kind(&node);
 
         // return identifier text contents
-        let symbol = document.contents.node_slice(&node)?.to_string();
+        let symbol = node.node_to_string(contents)?;
 
         Ok(Context { kind, symbol })
     });
@@ -186,12 +192,13 @@ fn find_references_in_document(
     locations: &mut Vec<Location>,
 ) {
     let ast = &document.ast;
-    let contents = &document.contents;
+    let contents = document.contents.as_str();
+    let line_index = &document.line_index;
 
     let mut cursor = ast.walk();
     cursor.recurse(|node| {
         if found_match(&node, contents, &context) {
-            add_reference(&node, contents, path, locations);
+            add_reference(&node, contents, line_index, path, locations);
         }
 
         return true;

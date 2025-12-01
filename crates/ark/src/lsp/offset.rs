@@ -9,6 +9,7 @@
 // TODO: Consider using https://github.com/rust-analyzer/text-size/
 
 use anyhow::anyhow;
+use biome_line_index::LineIndex;
 use tower_lsp::lsp_types;
 pub use tree_sitter::Point as ArkPoint;
 
@@ -44,55 +45,63 @@ pub struct ArkTextEdit {
 }
 
 pub trait FromArkOffset<T>: Sized {
-    fn from_ark_offset(text: &ropey::Rope, value: T) -> Self;
+    fn from_ark_offset(text: &str, line_index: &LineIndex, value: T) -> Self;
 }
 
 pub trait IntoLspOffset<T>: Sized {
-    fn into_lsp_offset(self, text: &ropey::Rope) -> T;
+    fn into_lsp_offset(self, text: &str, line_index: &LineIndex) -> T;
 }
 
 impl<T, U> IntoLspOffset<U> for T
 where
     U: FromArkOffset<T>,
 {
-    fn into_lsp_offset(self, text: &ropey::Rope) -> U {
-        U::from_ark_offset(text, self)
+    fn into_lsp_offset(self, text: &str, line_index: &LineIndex) -> U {
+        U::from_ark_offset(text, line_index, self)
     }
 }
 
 impl FromArkOffset<ArkPoint> for lsp_types::Position {
-    fn from_ark_offset(text: &ropey::Rope, value: ArkPoint) -> lsp_types::Position {
+    fn from_ark_offset(text: &str, line_index: &LineIndex, value: ArkPoint) -> lsp_types::Position {
         let point = tree_sitter::Point {
             row: value.row,
             column: value.column,
         };
-        convert_point_to_position(text, point)
+        convert_point_to_position(text, line_index, point)
     }
 }
 
 impl FromArkOffset<ArkRange> for lsp_types::Range {
-    fn from_ark_offset(text: &ropey::Rope, value: ArkRange) -> lsp_types::Range {
+    fn from_ark_offset(text: &str, line_index: &LineIndex, value: ArkRange) -> lsp_types::Range {
         lsp_types::Range {
-            start: value.start.into_lsp_offset(text),
-            end: value.end.into_lsp_offset(text),
+            start: value.start.into_lsp_offset(text, line_index),
+            end: value.end.into_lsp_offset(text, line_index),
         }
     }
 }
 
 impl FromArkOffset<ArkTextEdit> for lsp_types::TextEdit {
-    fn from_ark_offset(text: &ropey::Rope, value: ArkTextEdit) -> lsp_types::TextEdit {
+    fn from_ark_offset(
+        text: &str,
+        line_index: &LineIndex,
+        value: ArkTextEdit,
+    ) -> lsp_types::TextEdit {
         lsp_types::TextEdit {
-            range: value.range.into_lsp_offset(text),
+            range: value.range.into_lsp_offset(text, line_index),
             new_text: value.new_text,
         }
     }
 }
 
 impl FromArkOffset<Vec<ArkTextEdit>> for Vec<lsp_types::TextEdit> {
-    fn from_ark_offset(text: &ropey::Rope, value: Vec<ArkTextEdit>) -> Vec<lsp_types::TextEdit> {
+    fn from_ark_offset(
+        text: &str,
+        line_index: &LineIndex,
+        value: Vec<ArkTextEdit>,
+    ) -> Vec<lsp_types::TextEdit> {
         value
             .into_iter()
-            .map(|edit| edit.into_lsp_offset(text))
+            .map(|edit| edit.into_lsp_offset(text, line_index))
             .collect()
     }
 }

@@ -98,7 +98,6 @@ impl<'a> DocumentContext<'a> {
 mod tests {
     use super::*;
     use crate::fixtures::point_from_cursor;
-    use crate::treesitter::node_text;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -109,7 +108,7 @@ mod tests {
         let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            node_text(&context.node, &context.document.contents).unwrap(),
+            context.node.node_as_str( &context.document.contents).unwrap(),
             ""
         );
 
@@ -118,7 +117,7 @@ mod tests {
         let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            node_text(&context.node, &context.document.contents).unwrap(),
+            context.node.node_as_str( &context.document.contents).unwrap(),
             "1"
         );
     }
@@ -132,7 +131,7 @@ mod tests {
 
         assert_eq!(context.node.node_type(), NodeType::Program);
         assert_eq!(
-            node_text(&context.node, &context.document.contents).unwrap(),
+            context.node.node_as_str( &context.document.contents).unwrap(),
             "toupper(letters)\n"
         );
 
@@ -141,7 +140,7 @@ mod tests {
             NodeType::Anonymous(String::from(")"))
         );
         assert_eq!(
-            node_text(&context.closest_node, &context.document.contents).unwrap(),
+            context.closest_node.node_as_str( &context.document.contents).unwrap(),
             ")"
         );
     }

@@ -22,7 +22,7 @@ use crate::lsp::completions::sources::utils::CallNodePositionType;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::indexer;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 
 pub(super) struct CallSource;
 
@@ -75,11 +75,7 @@ fn completions_from_call(
         return Ok(None);
     };
 
-    let callee = document_context
-        .document
-        .contents
-        .node_slice(&callee)?
-        .to_string();
+    let callee = callee.node_as_str(&document_context.document.contents)?;
 
     // - Prefer `root` as the first argument if it exists
     // - Then fall back to looking it up, if possible
@@ -125,7 +121,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
         return Ok(None);
     };
 
-    let text = context.document.contents.node_slice(&value)?.to_string();
+    let text = value.node_as_str(&context.document.contents)?;
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
@@ -133,7 +129,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
     };
 
     // Try to evaluate the first argument
-    let value = harp::parse_eval(text.as_str(), options);
+    let value = harp::parse_eval(text, options);
 
     // If we get an `UnsafeEvaluationError` here from setting
     // `forbid_function_calls`, we don't even log that one, as that is

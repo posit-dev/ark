@@ -5,9 +5,9 @@
 //
 //
 
-use anyhow::*;
-use ropey::Rope;
+use anyhow::Result;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
+use tower_lsp::lsp_types::PositionEncodingKind;
 use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
 use tree_sitter::InputEdit;
 use tree_sitter::Parser;
@@ -37,7 +37,7 @@ fn compute_point(point: Point, text: &str) -> Point {
 #[derive(Clone)]
 pub struct Document {
     /// The document's textual contents.
-    pub contents: Rope,
+    pub contents: String,
 
     /// The document's AST.
     pub ast: Tree,
@@ -53,6 +53,9 @@ pub struct Document {
     /// The version of the document we last synchronized with.
     /// None if the document hasn't been synchronized yet.
     pub version: Option<i32>,
+
+    /// Position encoding used for LSP position conversions.
+    pub position_encoding: PositionEncodingKind,
 
     /// Configuration of the document, such as indentation settings.
     pub config: DocumentConfig,
@@ -81,17 +84,18 @@ impl Document {
     }
 
     pub fn new_with_parser(contents: &str, parser: &mut Parser, version: Option<i32>) -> Self {
-        let document = Rope::from(contents);
-        let ast = parser.parse(contents, None).unwrap();
-        let parse = aether_parser::parse(contents, Default::default());
+        let contents = String::from(contents);
+        let ast = parser.parse(contents.as_str(), None).unwrap();
+        let parse = aether_parser::parse(&contents, Default::default());
         let line_index = biome_line_index::LineIndex::new(&contents);
 
         Self {
-            contents: document,
+            contents,
             version,
             ast,
             parse,
             line_index,
+            position_encoding: PositionEncodingKind::UTF16,
             config: Default::default(),
         }
     }
@@ -127,7 +131,7 @@ impl Document {
         parser: &mut Parser,
         change: &TextDocumentContentChangeEvent,
     ) -> Result<()> {
-        // Extract edit range. Nothing to do if there wasn't an edit.
+        // Extract edit range. Return without doing anything if there wasn't any actual edit.
         let range = match change.range {
             Some(r) => r,
             None => return Ok(()),
@@ -144,7 +148,7 @@ impl Document {
             end_byte: old_end_byte,
             start_point,
             end_point: old_end_point,
-        } = convert_lsp_range_to_tree_sitter_range(&self.contents, range);
+        } = convert_lsp_range_to_tree_sitter_range(&self.contents, &self.line_index, range);
 
         let new_end_point = compute_point(start_point, &change.text);
         let new_end_byte = start_byte + change.text.as_bytes().len();
@@ -161,59 +165,35 @@ impl Document {
 
         ast.edit(&edit);
 
-        // Now, apply edits to the underlying document.
-        // Convert from byte offsets to character offsets.
-        let start_character = self.contents.byte_to_char(start_byte);
-        let old_end_character = self.contents.byte_to_char(old_end_byte);
-
-        // Remove the old slice of text, and insert the new slice of text.
-        self.contents.remove(start_character..old_end_character);
-        self.contents.insert(start_character, change.text.as_str());
-
-        // We've edited the AST, and updated the document. We can now re-parse.
-        let contents = &self.contents;
-        let callback = &mut |byte, point| Self::parse_callback(contents, byte, point);
-
-        let ast = parser.parse_with(callback, Some(&self.ast));
+        // We can now re-parse incrementally by providing the old edited AST
+        let ast = parser.parse(self.contents.as_str(), Some(&self.ast));
         self.ast = ast.unwrap();
 
-        // Update the Rowan syntax tree (full reparse)
-        self.parse = aether_parser::parse(&self.contents.to_string(), Default::default());
+        // Do another parse with Rowan
+        self.parse = aether_parser::parse(&self.contents, Default::default());
+
+        // Now update the text
+        self.contents
+            .replace_range(start_byte..old_end_byte, &change.text);
+        self.line_index = biome_line_index::LineIndex::new(&self.contents);
 
         Ok(())
     }
 
-    /// A tree-sitter `parse_with()` callback to efficiently return a slice of the
-    /// document in the `Rope` that tree-sitter can reparse with.
-    ///
-    /// According to the tree-sitter docs:
-    /// * `callback` A function that takes a byte offset and position and
-    ///   returns a slice of UTF8-encoded text starting at that byte offset
-    ///   and position. The slices can be of any length. If the given position
-    ///   is at the end of the text, the callback should return an empty slice.
-    ///
-    /// We expect that tree-sitter will call the callback again with an updated `byte`
-    /// if the chunk doesn't contain enough text to fully reparse.
-    fn parse_callback(contents: &Rope, byte: usize, point: Point) -> &[u8] {
-        // Get Rope "chunk" that lines up with this `byte`
-        let Some((chunk, chunk_byte_idx, _chunk_char_idx, _chunk_line_idx)) =
-            contents.get_chunk_at_byte(byte)
-        else {
-            let contents = contents.to_string();
-            log::error!(
-                "Failed to get Rope chunk at byte {byte}, point {point}. Text '{contents}'.",
-            );
-            return "\n".as_bytes();
-        };
+    pub fn get_line(&self, line: usize) -> Option<&str> {
+        let line_start = *self.line_index.newlines.get(line)?;
+        let line_end = self
+            .line_index
+            .newlines
+            .get(line + 1)
+            .copied()
+            // if `line` is last, extract text until end of buffer
+            .unwrap_or_else(|| (self.contents.len() as u32).into());
 
-        // How far into this chunk are we?
-        let byte = byte - chunk_byte_idx;
+        let line_start_byte: usize = line_start.into();
+        let line_end_byte: usize = line_end.into();
 
-        // Now return the slice from that `byte` to the end of the chunk.
-        // SAFETY: This should never panic, since `get_chunk_at_byte()` worked.
-        let slice = &chunk[byte..];
-
-        slice.as_bytes()
+        self.contents.get(line_start_byte..line_end_byte)
     }
 
     /// Accessor that returns an annotated `RSyntaxNode` type.
