@@ -231,7 +231,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air#35325d105553dd0d3bb147846aa410e1b09b7f84"
+source = "git+https://github.com/posit-dev/air?rev=1aed1dcf7356#1aed1dcf7356505e35ab42176594bb865400f5b8"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -240,7 +240,7 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air#35325d105553dd0d3bb147846aa410e1b09b7f84"
+source = "git+https://github.com/posit-dev/air?rev=1aed1dcf7356#1aed1dcf7356505e35ab42176594bb865400f5b8"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
@@ -256,7 +256,7 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air#35325d105553dd0d3bb147846aa410e1b09b7f84"
+source = "git+https://github.com/posit-dev/air?rev=1aed1dcf7356#1aed1dcf7356505e35ab42176594bb865400f5b8"
 dependencies = [
  "biome_rowan",
  "serde",
