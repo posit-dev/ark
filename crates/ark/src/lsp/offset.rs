@@ -13,8 +13,6 @@ use biome_line_index::LineIndex;
 use tower_lsp::lsp_types;
 pub use tree_sitter::Point as ArkPoint;
 
-use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ArkRange {
     pub start: ArkPoint,
@@ -67,7 +65,7 @@ impl FromArkOffset<ArkPoint> for lsp_types::Position {
             row: value.row,
             column: value.column,
         };
-        lsp_position_from_tree_sitter_point(text, line_index, point)
+        todo!()
     }
 }
 

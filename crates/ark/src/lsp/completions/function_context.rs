@@ -10,8 +10,6 @@ use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
-use crate::lsp::encoding::lsp_range_from_tree_sitter_range;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::BinaryOperatorType;
@@ -62,11 +60,9 @@ impl FunctionContext {
             // We shouldn't ever attempt to instantiate a FunctionContext or
             // function-flavored CompletionItem in this degenerate case, but we
             // return a dummy FunctionContext just to be safe.
-            let node_end = lsp_position_from_tree_sitter_point(
-                &document_context.document.contents,
-                &document_context.document.line_index,
-                completion_node.range().end_point,
-            );
+            let node_end = document_context
+                .document
+                .lsp_position_from_tree_sitter_point(completion_node.range().end_point);
 
             return Self {
                 name: String::new(),
@@ -115,18 +111,16 @@ impl FunctionContext {
         Self {
             name,
             range: match function_name_node {
-                Some(node) => lsp_range_from_tree_sitter_range(
-                    &document_context.document.contents,
-                    &document_context.document.line_index,
-                    node.range(),
-                ),
+                Some(node) => document_context
+                    .document
+                    .lsp_range_from_tree_sitter_range(node.range()),
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
-                    let node_end = lsp_position_from_tree_sitter_point(
-                        &document_context.document.contents,
-                        &document_context.document.line_index,
-                        effective_function_node.range().end_point,
-                    );
+                    let node_end = document_context
+                        .document
+                        .lsp_position_from_tree_sitter_point(
+                            effective_function_node.range().end_point,
+                        );
                     tower_lsp::lsp_types::Range::new(node_end, node_end)
                 },
             },

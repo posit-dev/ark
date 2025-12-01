@@ -43,7 +43,6 @@ use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::lsp_position_from_tree_sitter_point;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -647,11 +646,9 @@ fn completion_item_from_dot_dot_dot(
 
     item.kind = Some(CompletionItemKind::FIELD);
 
-    let position = lsp_position_from_tree_sitter_point(
-        &context.document.contents,
-        &context.document.line_index,
-        context.point,
-    );
+    let position = context
+        .document
+        .lsp_position_from_tree_sitter_point(context.point);
 
     let range = Range {
         start: position,
