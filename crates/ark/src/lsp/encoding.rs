@@ -6,8 +6,7 @@
 //
 
 use biome_line_index::LineIndex;
-use tower_lsp::lsp_types::Position;
-use tree_sitter::Point;
+use tower_lsp::lsp_types;
 
 /// `PositionEncodingKind` describes the encoding used for the `Position` `character`
 /// column offset field. The `Position` `line` field is encoding agnostic, but the
@@ -75,8 +74,8 @@ pub fn convert_lsp_range_to_tree_sitter_range(
 pub fn convert_position_to_point(
     contents: &str,
     line_index: &LineIndex,
-    position: Position,
-) -> Point {
+    position: lsp_types::Position,
+) -> tree_sitter::Point {
     let line = position.line as usize;
     let character = position.character as usize;
 
@@ -88,10 +87,14 @@ pub fn convert_position_to_point(
         convert_character_from_utf16_to_utf8,
     );
 
-    Point::new(line, character)
+    tree_sitter::Point::new(line, character)
 }
 
-pub fn convert_point_to_position(contents: &str, line_index: &LineIndex, point: Point) -> Position {
+pub fn convert_point_to_position(
+    contents: &str,
+    line_index: &LineIndex,
+    point: tree_sitter::Point,
+) -> lsp_types::Position {
     let line = point.row;
     let character = point.column;
 
@@ -106,10 +109,10 @@ pub fn convert_point_to_position(contents: &str, line_index: &LineIndex, point: 
     let line = line as u32;
     let character = character as u32;
 
-    Position::new(line, character)
+    lsp_types::Position::new(line, character)
 }
 
-fn point_to_byte(line_index: &LineIndex, point: Point) -> usize {
+fn point_to_byte(line_index: &LineIndex, point: tree_sitter::Point) -> usize {
     let line_start = match line_index.newlines.get(point.row) {
         Some(offset) => *offset,
         None => {
