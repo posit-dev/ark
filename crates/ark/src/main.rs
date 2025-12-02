@@ -36,35 +36,35 @@ Usage: ark [OPTIONS]
 
 Available options:
 
---connection_file FILE   Start the kernel with the given JSON connection file
-                         (see the Jupyter kernel documentation for details)
--- arg1 arg2 ...         Set the argument list to pass to R; defaults to
-                         --interactive
---startup-file FILE      An R file to run on session startup
---session-mode MODE      The mode in which the session is running (console, notebook, background)
---no-capture-streams     Do not capture stdout/stderr from R
---default-repos          Set the default repositories to use, by name:
-                         "rstudio" ('cran.rstudio.com', the default), or
-                         "posit-ppm" ('packagemanager.posit.co', subject to availability), or
-                         "none" (do not alter the 'repos' option in any way)
---repos-conf             Set the default repositories to use from a configuration file
-                         containing a list of named repositories (`name = url`)
---default-ppm-repo       Set the default repositories to a custom Posit Package Manager URL.
---version                Print the version of Ark
---log FILE               Log to the given file (if not specified, stdout/stderr
-                         will be used)
---install                Install the kernel spec for Ark"#);
+--connection_file FILE       Start the kernel with the given JSON connection file
+                             (see the Jupyter kernel documentation for details)
+-- arg1 arg2 ...             Set the argument list to pass to R; defaults to
+                             --interactive
+--startup-file FILE          An R file to run on session startup
+--session-mode MODE          The mode in which the session is running (console, notebook, background)
+--no-capture-streams         Do not capture stdout/stderr from R
+--default-repos              Set the default repositories to use, by name:
+                             "rstudio" ('cran.rstudio.com', the default), or
+                             "posit-ppm" ('packagemanager.posit.co', subject to availability), or
+                             "none" (do not alter the 'repos' option in any way)
+--repos-conf                 Set the default repositories to use from a configuration file
+                             containing a list of named repositories (`name = url`)
+--default-ppm-repo           Set the default repositories to a custom Posit Package Manager URL.
+--version                    Print the version of Ark
+--log FILE                   Log to the given file (if not specified, stdout/stderr
+                             will be used)
+--install                    Install the kernel spec for Ark"#);
 
     // Windows-specific options
     #[cfg(target_os = "windows")]
     print!(r#"
---standard-dll-search-order        Use the standard Windows DLL search order (including the PATH environment
-                         variable) when loading R. Useful for R installations that depend on DLLs
-                         other than those in system folders and R install folder, such as Conda.
-                         The R shared library folder must be on the PATH for this to work."#);
+--standard-dll-search-order  Use the standard Windows DLL search order (including the PATH environment
+                             variable) when loading R. Useful for R installations that depend on DLLs
+                             other than those in system folders and R install folder, such as Conda.
+                             The R shared library folder must be on the PATH for this to work."#);
 
     print!(r#"
---help                   Print this help message
+--help                       Print this help message
 
 "#);
 
@@ -150,7 +150,7 @@ fn main() -> anyhow::Result<()> {
             },
             "--no-capture-streams" => capture_streams = false,
             #[cfg(target_os = "windows")]
-            "--dll-search-path" => use_windows_dll_search_path = true,
+            "--standard-dll-search-order" => use_windows_dll_search_path = true,
             "--default-repos" => {
                 if let Some(repos) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
