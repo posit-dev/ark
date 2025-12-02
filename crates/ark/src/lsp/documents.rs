@@ -5,10 +5,9 @@
 //
 //
 
+use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::Result;
-use tower_lsp::lsp_types::DidChangeTextDocumentParams;
-use tower_lsp::lsp_types::PositionEncodingKind;
-use tower_lsp::lsp_types::TextDocumentContentChangeEvent;
+use tower_lsp::lsp_types;
 use tree_sitter::InputEdit;
 use tree_sitter::Parser;
 use tree_sitter::Point;
@@ -54,7 +53,7 @@ pub struct Document {
     pub version: Option<i32>,
 
     /// Position encoding used for LSP position conversions.
-    pub position_encoding: PositionEncodingKind,
+    pub position_encoding: PositionEncoding,
 
     /// Configuration of the document, such as indentation settings.
     pub config: DocumentConfig,
@@ -94,12 +93,16 @@ impl Document {
             ast,
             parse,
             line_index,
-            position_encoding: PositionEncodingKind::UTF16,
+            position_encoding: PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             config: Default::default(),
         }
     }
 
-    pub fn on_did_change(&mut self, parser: &mut Parser, params: &DidChangeTextDocumentParams) {
+    pub fn on_did_change(
+        &mut self,
+        parser: &mut Parser,
+        params: &lsp_types::DidChangeTextDocumentParams,
+    ) {
         let new_version = params.text_document.version;
 
         // Check for out-of-order change notifications
@@ -128,7 +131,7 @@ impl Document {
     fn update(
         &mut self,
         parser: &mut Parser,
-        change: &TextDocumentContentChangeEvent,
+        change: &lsp_types::TextDocumentContentChangeEvent,
     ) -> Result<()> {
         // Extract edit range. Return without doing anything if there wasn't any actual edit.
         let range = match change.range {

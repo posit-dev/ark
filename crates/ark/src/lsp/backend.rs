@@ -584,7 +584,7 @@ pub fn start_lsp(
 fn new_jsonrpc_error(message: String) -> jsonrpc::Error {
     jsonrpc::Error {
         code: jsonrpc::ErrorCode::ServerError(-1),
-        message,
+        message: message.into(),
         data: None,
     }
 }

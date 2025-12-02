@@ -207,6 +207,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aether_lsp_utils"
+version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+dependencies = [
+ "anyhow",
+ "biome_line_index",
+ "biome_text_size",
+ "dissimilar",
+ "itertools 0.13.0",
+ "line_ending",
+ "settings",
+ "tower-lsp",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -231,7 +246,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=1aed1dcf7356#1aed1dcf7356505e35ab42176594bb865400f5b8"
+source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -240,7 +255,7 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=1aed1dcf7356#1aed1dcf7356505e35ab42176594bb865400f5b8"
+source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
@@ -256,7 +271,7 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=1aed1dcf7356#1aed1dcf7356505e35ab42176594bb865400f5b8"
+source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
 dependencies = [
  "biome_rowan",
  "serde",
@@ -330,6 +345,7 @@ name = "ark"
 version = "0.1.223"
 dependencies = [
  "actix-web",
+ "aether_lsp_utils",
  "air_r_parser",
  "air_r_syntax",
  "amalthea",
@@ -353,7 +369,7 @@ dependencies = [
  "home",
  "http 0.2.9",
  "insta",
- "itertools",
+ "itertools 0.10.5",
  "libc",
  "libr",
  "log",
@@ -999,6 +1015,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dissimilar"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8975ffdaa0ef3661bfe02dbdcc06c9f829dfafe6a3c474de366a8d5e44276921"
+
+[[package]]
 name = "drop_bomb"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1119,7 +1141,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1359,7 +1381,7 @@ dependencies = [
  "ctor",
  "embed-resource",
  "harp-macros",
- "itertools",
+ "itertools 0.10.5",
  "libc",
  "libloading",
  "libr",
@@ -1691,7 +1713,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi 0.5.2",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1699,6 +1721,15 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
+dependencies = [
+ "either",
+]
+
+[[package]]
+name = "itertools"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]
@@ -1796,6 +1827,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "line_ending"
+version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+dependencies = [
+ "memchr",
+ "settings",
+]
+
+[[package]]
 name = "linked-hash-map"
 version = "0.5.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1848,9 +1888,9 @@ checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
 
 [[package]]
 name = "lsp-types"
-version = "0.94.0"
+version = "0.94.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b63735a13a1f9cd4f4835223d828ed9c2e35c8c5e61837774399f558b6a1237"
+checksum = "c66bfd44a06ae10647fe3f8214762e9369fd4248df1350924b4ef9e770a85ea1"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -2682,7 +2722,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2865,6 +2905,11 @@ dependencies = [
  "nodrop",
  "stable_deref_trait",
 ]
+
+[[package]]
+name = "settings"
+version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
 
 [[package]]
 name = "sha1"
@@ -3372,9 +3417,8 @@ checksum = "c20c8dbed6283a09604c3e69b4b7eeb54e298b8a600d4d5ecb5ad39de609f1d0"
 
 [[package]]
 name = "tower-lsp"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b38fb0e6ce037835174256518aace3ca621c4f96383c56bb846cfc11b341910"
+version = "0.20.0"
+source = "git+https://github.com/lionel-/tower-lsp?branch=bugfix%2Fpatches#49ef549eaa9f74b71e212cf513283af4ad748a81"
 dependencies = [
  "async-trait",
  "auto_impl",
@@ -3395,13 +3439,12 @@ dependencies = [
 
 [[package]]
 name = "tower-lsp-macros"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34723c06344244474fdde365b76aebef8050bf6be61a935b91ee9ff7c4e91157"
+version = "0.9.0"
+source = "git+https://github.com/lionel-/tower-lsp?branch=bugfix%2Fpatches#49ef549eaa9f74b71e212cf513283af4ad748a81"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.111",
 ]
 
 [[package]]
