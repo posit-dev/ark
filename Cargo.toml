@@ -26,8 +26,8 @@ authors = ["Posit Software, PBC"]
 
 [workspace.dependencies]
 biome_line_index = { git = "https://github.com/biomejs/biome", rev = "c13fc60726883781e4530a4437724273b560c8e0" }
-aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "6fb4fdf5231e" }
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "6fb4fdf5231e" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "6fb4fdf5231e" }
+aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "f959e32eee91" }
+aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "f959e32eee91" }
+aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "f959e32eee91" }
 # For https://github.com/ebkalderon/tower-lsp/pull/428
 tower-lsp = { branch = "bugfix/patches", git = "https://github.com/lionel-/tower-lsp" }
