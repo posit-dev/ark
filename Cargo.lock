@@ -209,7 +209,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "aether_lsp_utils"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "anyhow",
  "biome_line_index",
@@ -246,7 +246,7 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
@@ -271,7 +271,7 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "biome_rowan",
  "serde",
@@ -1829,7 +1829,7 @@ dependencies = [
 [[package]]
 name = "line_ending"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "memchr",
  "settings",
@@ -2909,7 +2909,7 @@ dependencies = [
 [[package]]
 name = "settings"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=6fb4fdf5231e#6fb4fdf5231efd37b3d7d468d2febed24182a967"
+source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 
 [[package]]
 name = "sha1"

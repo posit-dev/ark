@@ -170,8 +170,11 @@ impl Document {
         let ast = parser.parse(self.contents.as_str(), Some(&self.ast));
         self.ast = ast.unwrap();
 
-        // Update the Rowan tree
-        self.parse = aether_parser::parse_tree_sitter(&self.contents, &self.ast);
+        // Update the Rowan tree. This currently reparses with TS. We could pass
+        // down the TS tree if that turns out too expensive, but the long term
+        // plan is to remove any TS usage so we prefer not introduce TS trees in
+        // the public APIs.
+        self.parse = aether_parser::parse(&self.contents, Default::default());
 
         // Now update the text
         self.contents
