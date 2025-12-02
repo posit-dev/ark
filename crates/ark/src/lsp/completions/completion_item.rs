@@ -648,7 +648,7 @@ fn completion_item_from_dot_dot_dot(
 
     let position = context
         .document
-        .lsp_position_from_tree_sitter_point(context.point);
+        .lsp_position_from_tree_sitter_point(context.point)?;
 
     let range = Range {
         start: position,
