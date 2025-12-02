@@ -94,6 +94,8 @@ impl Document {
             ast,
             parse,
             line_index,
+            // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
+            // once/if Ark becomes an independent LSP
             position_encoding: PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16),
             config: Default::default(),
         }
@@ -333,5 +335,54 @@ mod tests {
         );
 
         assert!(!document.parse.has_error());
+    }
+
+    #[test]
+    fn test_tree_sitter_point_from_lsp_position_wide_encoding() {
+        // The emoji is 4 UTF-8 bytes and 2 UTF-16 bytes
+        let mut document = Document::new("😃a", None);
+        document.position_encoding = PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+
+        let point = document
+            .tree_sitter_point_from_lsp_position(lsp_types::Position::new(0, 2))
+            .unwrap();
+        assert_eq!(point, Point::new(0, 4));
+
+        let point = document
+            .tree_sitter_point_from_lsp_position(lsp_types::Position::new(0, 3))
+            .unwrap();
+        assert_eq!(point, Point::new(0, 5));
+    }
+
+    #[test]
+    fn test_lsp_position_from_tree_sitter_point_wide_encoding() {
+        let mut document = Document::new("😃a", None);
+        document.position_encoding = PositionEncoding::Wide(biome_line_index::WideEncoding::Utf16);
+
+        let position = document
+            .lsp_position_from_tree_sitter_point(Point::new(0, 4))
+            .unwrap();
+        assert_eq!(position, lsp_types::Position::new(0, 2));
+
+        let position = document
+            .lsp_position_from_tree_sitter_point(Point::new(0, 5))
+            .unwrap();
+        assert_eq!(position, lsp_types::Position::new(0, 3));
+    }
+
+    #[test]
+    fn test_utf8_position_roundtrip_multibyte() {
+        // `é` is 2 bytes
+        let mut document = Document::new("é\n", None);
+        document.position_encoding = PositionEncoding::Utf8;
+
+        let lsp_position = lsp_types::Position::new(0, 2);
+        let point = document
+            .tree_sitter_point_from_lsp_position(lsp_position)
+            .unwrap();
+        assert_eq!(point, Point::new(0, 2));
+
+        let roundtrip_position = document.lsp_position_from_tree_sitter_point(point).unwrap();
+        assert_eq!(roundtrip_position, lsp_position);
     }
 }
