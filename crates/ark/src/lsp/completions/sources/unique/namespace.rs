@@ -102,7 +102,7 @@ fn completions_from_namespace(
                 string,
                 *namespace,
                 package,
-                completion_context.function_context(),
+                completion_context.function_context()?,
             )
         };
         match item {
@@ -246,8 +246,8 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
-    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document::Document;
+    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 

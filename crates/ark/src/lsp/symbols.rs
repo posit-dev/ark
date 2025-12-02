@@ -543,8 +543,8 @@ fn collect_method(
     }
     let arg_name = arg_fun.node_to_string(&doc.contents)?;
 
-    let start = doc.lsp_position_from_tree_sitter_point(arg_value.start_position());
-    let end = doc.lsp_position_from_tree_sitter_point(arg_value.end_position());
+    let start = doc.lsp_position_from_tree_sitter_point(arg_value.start_position())?;
+    let end = doc.lsp_position_from_tree_sitter_point(arg_value.end_position())?;
 
     let mut children = vec![];
     collect_symbols(ctx, arg_value, doc, &mut children)?;
@@ -597,8 +597,8 @@ fn collect_call_test_that(
     let name = string.node_to_string(&doc.contents)?;
     let name = format!("Test: {name}");
 
-    let start = doc.lsp_position_from_tree_sitter_point(node.start_position());
-    let end = doc.lsp_position_from_tree_sitter_point(node.end_position());
+    let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;
+    let end = doc.lsp_position_from_tree_sitter_point(node.end_position())?;
 
     let symbol = new_symbol_node(name, SymbolKind::FUNCTION, Range { start, end }, children);
     symbols.push(symbol);
@@ -637,8 +637,8 @@ fn collect_assignment(
         // too busy.
         let name = lhs.node_to_string(&doc.contents)?;
 
-        let start = doc.lsp_position_from_tree_sitter_point(node.start_position());
-        let end = doc.lsp_position_from_tree_sitter_point(node.end_position());
+        let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;
+        let end = doc.lsp_position_from_tree_sitter_point(node.end_position())?;
 
         // Now recurse into RHS
         let mut children = Vec::new();
@@ -679,8 +679,8 @@ fn collect_assignment_with_function(
     let detail = format!("function({})", arguments.join(", "));
 
     let range = Range {
-        start: doc.lsp_position_from_tree_sitter_point(lhs.start_position()),
-        end: doc.lsp_position_from_tree_sitter_point(rhs.end_position()),
+        start: doc.lsp_position_from_tree_sitter_point(lhs.start_position())?,
+        end: doc.lsp_position_from_tree_sitter_point(rhs.end_position())?,
     };
 
     // Process the function body to extract child symbols
@@ -705,8 +705,8 @@ fn finalize_section(
         let end_pos = section.end_position.unwrap_or(section.start_position);
 
         let range = Range {
-            start: doc.lsp_position_from_tree_sitter_point(start_pos),
-            end: doc.lsp_position_from_tree_sitter_point(end_pos),
+            start: doc.lsp_position_from_tree_sitter_point(start_pos)?,
+            end: doc.lsp_position_from_tree_sitter_point(end_pos)?,
         };
 
         let symbol = new_symbol(section.title, SymbolKind::STRING, range);

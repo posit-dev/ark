@@ -106,16 +106,19 @@ fn range_default(node: Node) -> Range {
 pub fn convert_selection_range_from_tree_sitter_to_lsp(
     selection: SelectionRange,
     document: &crate::lsp::document::Document,
-) -> lsp_types::SelectionRange {
-    let range = document.lsp_range_from_tree_sitter_range(selection.range);
+) -> anyhow::Result<lsp_types::SelectionRange> {
+    let range = document.lsp_range_from_tree_sitter_range(selection.range)?;
 
     // If there is a parent, convert it and box it
-    let parent = selection.parent.and_then(|selection| {
-        let selection = convert_selection_range_from_tree_sitter_to_lsp(*selection, document);
-        Some(Box::new(selection))
-    });
+    let parent = match selection.parent {
+        Some(selection) => {
+            let selection = convert_selection_range_from_tree_sitter_to_lsp(*selection, document)?;
+            Some(Box::new(selection))
+        },
+        None => None,
+    };
 
-    lsp_types::SelectionRange { range, parent }
+    Ok(lsp_types::SelectionRange { range, parent })
 }
 
 #[cfg(test)]

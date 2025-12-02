@@ -5,8 +5,6 @@
 //
 //
 
-use log::*;
-use stdext::*;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::Documentation;
 use tower_lsp::lsp_types::MarkupContent;
@@ -78,14 +76,21 @@ fn completions_from_workspace(
 
         match &entry.data {
             indexer::IndexEntryData::Function { name, .. } => {
-                let mut completion = unwrap!(completion_item_from_function(
-                    name,
-                    None,
-                    completion_context.function_context(),
-                ), Err(error) => {
-                    error!("{:?}", error);
-                    return;
-                });
+                let fun_context = match completion_context.function_context() {
+                    Ok(fun_context) => fun_context,
+                    Err(err) => {
+                        log::error!("{:?}", err);
+                        return;
+                    },
+                };
+
+                let mut completion = match completion_item_from_function(name, None, fun_context) {
+                    Ok(completion) => completion,
+                    Err(err) => {
+                        log::error!("{:?}", err);
+                        return;
+                    },
+                };
 
                 // Add some metadata about where the completion was found
                 let mut path = uri.as_str().to_owned();

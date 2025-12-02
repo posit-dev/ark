@@ -692,7 +692,7 @@ fn recurse_namespace(
     let package = lhs.node_as_str(&context.doc.contents)?;
     if !context.installed_packages.contains(package) {
         let range = lhs.range();
-        let range = context.doc.lsp_range_from_tree_sitter_range(range);
+        let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
         let message = format!("Package '{}' is not installed.", package);
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
@@ -1035,7 +1035,7 @@ fn check_invalid_na_comparison(
                 _ => continue,
             };
             let range = child.range();
-            let range = context.doc.lsp_range_from_tree_sitter_range(range);
+            let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
             let mut diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
             diagnostics.push(diagnostic);
@@ -1069,7 +1069,7 @@ fn check_unexpected_assignment_in_if_conditional(
     }
 
     let range = condition.range();
-    let range = context.doc.lsp_range_from_tree_sitter_range(range);
+    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
     let message = "Unexpected '='; use '==' to compare values for equality.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
@@ -1117,7 +1117,7 @@ fn check_symbol_in_scope(
 
     // No symbol in scope; provide a diagnostic.
     let range = node.range();
-    let range = context.doc.lsp_range_from_tree_sitter_range(range);
+    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
     let identifier = node.node_as_str(&context.doc.contents)?;
     let message = format!("No symbol named '{}' in scope.", identifier);
     let mut diagnostic = Diagnostic::new_simple(range, message);
