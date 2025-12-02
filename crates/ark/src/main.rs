@@ -427,7 +427,7 @@ fn main() -> anyhow::Result<()> {
     // (this must be done before R libraries are loaded)
     #[cfg(target_os = "windows")]
     if use_windows_dll_search_path {
-        harp::library::set_use_standard_dll_search_path(true);
+        harp::sys::library::set_use_standard_dll_search_path(true);
     }
 
     // Connect the Jupyter kernel and start R.
