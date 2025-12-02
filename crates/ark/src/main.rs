@@ -53,21 +53,25 @@ Available options:
 --version                    Print the version of Ark
 --log FILE                   Log to the given file (if not specified, stdout/stderr
                              will be used)
---install                    Install the kernel spec for Ark"#);
+--install                    Install the kernel spec for Ark"#
+    );
 
     // Windows-specific options
     #[cfg(target_os = "windows")]
-    print!(r#"
+    print!(
+        r#"
 --standard-dll-search-order  Use the standard Windows DLL search order (including the PATH environment
                              variable) when loading R. Useful for R installations that depend on DLLs
                              other than those in system folders and R install folder, such as Conda.
-                             The R shared library folder must be on the PATH for this to work."#);
+                             The R shared library folder must be on the PATH for this to work."#
+    );
 
-    print!(r#"
+    print!(
+        r#"
 --help                       Print this help message
 
-"#);
-
+"#
+    );
 }
 
 fn main() -> anyhow::Result<()> {
