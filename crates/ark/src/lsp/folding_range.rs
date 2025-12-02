@@ -14,7 +14,7 @@ use tower_lsp::lsp_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
 use crate::lsp;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
@@ -361,7 +361,7 @@ fn end_node_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     fn test_folding_range(code: &str) -> Vec<FoldingRange> {
         let doc = Document::new(code, None);

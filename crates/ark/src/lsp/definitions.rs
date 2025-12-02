@@ -11,7 +11,7 @@ use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
 use tower_lsp::lsp_types::Range;
 
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
@@ -82,7 +82,7 @@ mod tests {
     use tower_lsp::lsp_types;
 
     use super::*;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::indexer;
     use crate::lsp::util::test_path;
 

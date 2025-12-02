@@ -8,7 +8,7 @@
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -108,7 +108,10 @@ mod tests {
         let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            context.node.node_as_str( &context.document.contents).unwrap(),
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             ""
         );
 
@@ -117,7 +120,10 @@ mod tests {
         let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            context.node.node_as_str( &context.document.contents).unwrap(),
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             "1"
         );
     }
@@ -131,7 +137,10 @@ mod tests {
 
         assert_eq!(context.node.node_type(), NodeType::Program);
         assert_eq!(
-            context.node.node_as_str( &context.document.contents).unwrap(),
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             "toupper(letters)\n"
         );
 
@@ -140,7 +149,10 @@ mod tests {
             NodeType::Anonymous(String::from(")"))
         );
         assert_eq!(
-            context.closest_node.node_as_str( &context.document.contents).unwrap(),
+            context
+                .closest_node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             ")"
         );
     }

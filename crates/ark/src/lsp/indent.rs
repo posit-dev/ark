@@ -3,7 +3,7 @@ use tower_lsp::lsp_types::TextEdit;
 
 use crate::lsp::config::IndentStyle;
 use crate::lsp::config::IndentationConfig;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -267,7 +267,7 @@ mod tests {
 
     use crate::lsp::config::IndentStyle;
     use crate::lsp::config::IndentationConfig;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::indent::indent_edit;
     use crate::lsp::indent::new_line_indent;
 

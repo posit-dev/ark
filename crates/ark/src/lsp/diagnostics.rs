@@ -24,7 +24,7 @@ use tree_sitter::Range;
 use crate::lsp;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;
 use crate::lsp::inputs::package::Package;
@@ -1137,7 +1137,7 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use crate::interface::console_inputs;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::inputs::library::Library;
     use crate::lsp::inputs::package::Package;
     use crate::lsp::inputs::package_description::Dcf;

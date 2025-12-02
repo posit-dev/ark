@@ -36,7 +36,7 @@ use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;

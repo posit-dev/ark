@@ -247,7 +247,7 @@ mod tests {
     use crate::lsp::completions::sources::unique::namespace::completions_from_namespace;
     use crate::lsp::completions::tests::utils::find_completion_by_label;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 

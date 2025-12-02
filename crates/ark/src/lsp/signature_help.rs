@@ -510,7 +510,7 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;
 

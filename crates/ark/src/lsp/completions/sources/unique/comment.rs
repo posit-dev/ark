@@ -144,7 +144,7 @@ fn inject_roxygen_comment_after_newline(x: &str) -> String {
 fn test_comment() {
     use tree_sitter::Point;
 
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
 
     r_task(|| {
@@ -169,7 +169,7 @@ fn test_roxygen_comment() {
     use libr::LOGICAL_ELT;
     use tree_sitter::Point;
 
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
 
     r_task(|| unsafe {

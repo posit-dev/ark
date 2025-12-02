@@ -47,7 +47,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::inputs::package::Package;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;

@@ -22,7 +22,7 @@ use walkdir::DirEntry;
 use walkdir::WalkDir;
 
 use crate::lsp;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -476,7 +476,7 @@ mod tests {
     use tower_lsp::lsp_types;
 
     use super::*;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     macro_rules! test_index {
         ($code:expr) => {

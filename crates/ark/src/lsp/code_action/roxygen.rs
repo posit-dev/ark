@@ -5,7 +5,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::code_action;
 use crate::lsp::code_action::code_action_workspace_text_edit;
 use crate::lsp::code_action::CodeActions;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
@@ -170,7 +170,7 @@ mod tests {
     use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::roxygen::roxygen_documentation;
     use crate::lsp::code_action::CodeActions;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     fn point_range(point: Point, byte: usize) -> Range {
         Range {

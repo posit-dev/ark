@@ -93,7 +93,7 @@ mod test {
     use crate::lsp::declarations::declare_ark_args;
     use crate::lsp::declarations::top_level_declare;
     use crate::lsp::declarations::top_level_declare_args;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     #[test]
     fn test_declare_args() {
