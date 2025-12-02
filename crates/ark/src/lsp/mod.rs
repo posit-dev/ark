@@ -30,7 +30,7 @@ pub mod input_boundaries;
 pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
-pub mod offset;
+
 pub mod references;
 pub mod selection_range;
 pub mod signature_help;
