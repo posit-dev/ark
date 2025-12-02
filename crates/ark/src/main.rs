@@ -58,7 +58,7 @@ Available options:
     // Windows-specific options
     #[cfg(target_os = "windows")]
     print!(r#"
---dll-search-path        Use the standard Windows DLL search path (including the PATH environment
+--standard-dll-search-order        Use the standard Windows DLL search order (including the PATH environment
                          variable) when loading R. Useful for R installations that depend on DLLs
                          other than those in system folders and R install folder, such as Conda.
                          The R shared library folder must be on the PATH for this to work."#);
