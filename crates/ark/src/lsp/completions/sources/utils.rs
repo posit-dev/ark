@@ -293,7 +293,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;

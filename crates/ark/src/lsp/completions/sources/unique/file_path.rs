@@ -97,7 +97,7 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::file_path::completions_from_string_file_path;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
     use crate::treesitter::node_find_string;
 

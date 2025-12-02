@@ -281,8 +281,8 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::composite::call::completions_from_call;
+    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 

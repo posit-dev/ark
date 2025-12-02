@@ -18,7 +18,7 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
@@ -703,7 +703,7 @@ mod tests {
     use tree_sitter::Point;
 
     use crate::fixtures::point_and_offset_from_cursor;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
 

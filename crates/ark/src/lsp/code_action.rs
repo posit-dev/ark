@@ -15,7 +15,7 @@ use url::Url;
 
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::roxygen::roxygen_documentation;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 
 mod roxygen;
 

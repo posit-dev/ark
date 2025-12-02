@@ -211,7 +211,7 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
