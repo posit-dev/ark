@@ -20,7 +20,7 @@ use tree_sitter::Point;
 use walkdir::WalkDir;
 
 use crate::lsp;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::state::with_document;
 use crate::lsp::state::WorldState;

@@ -166,8 +166,8 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
+    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
     use crate::r_task;
     use crate::treesitter::node_find_containing_call;
 

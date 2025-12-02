@@ -19,7 +19,7 @@ use tower_lsp::lsp_types::SymbolKind;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tree_sitter::Node;
 
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::indexer;
 use crate::lsp::indexer::IndexEntryData;
 use crate::lsp::state::WorldState;
@@ -747,7 +747,7 @@ mod tests {
     use super::*;
     use crate::lsp::config::LspConfig;
     use crate::lsp::config::WorkspaceSymbolsConfig;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::indexer::ResetIndexerGuard;
     use crate::lsp::util::test_path;
 

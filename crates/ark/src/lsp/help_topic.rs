@@ -14,7 +14,7 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;

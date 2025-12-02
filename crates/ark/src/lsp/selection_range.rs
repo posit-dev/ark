@@ -105,7 +105,7 @@ fn range_default(node: Node) -> Range {
 
 pub fn convert_selection_range_from_tree_sitter_to_lsp(
     selection: SelectionRange,
-    document: &crate::lsp::documents::Document,
+    document: &crate::lsp::document::Document,
 ) -> lsp_types::SelectionRange {
     let range = document.lsp_range_from_tree_sitter_range(selection.range);
 

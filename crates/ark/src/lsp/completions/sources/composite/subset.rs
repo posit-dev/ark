@@ -92,8 +92,8 @@ mod tests {
 
     use crate::fixtures::package_is_installed;
     use crate::lsp::completions::sources::composite::subset::completions_from_subset;
+    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
     use crate::r_task;
 
     #[test]
