@@ -57,7 +57,6 @@ use crate::lsp::indent::indent_edit;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
 use crate::lsp::main_loop::LspState;
-use crate::lsp::offset::IntoLspOffset;
 use crate::lsp::references::find_references;
 use crate::lsp::selection_range::convert_selection_range_from_tree_sitter_to_lsp;
 use crate::lsp::selection_range::selection_range;
@@ -363,13 +362,7 @@ pub(crate) fn handle_indent(
     let doc = state.get_document(&ctxt.text_document.uri)?;
     let point = doc.tree_sitter_point_from_lsp_position(ctxt.position);
 
-    let res = indent_edit(doc, point.row);
-
-    Result::map(res, |opt| {
-        Option::map(opt, |edits| {
-            edits.into_lsp_offset(&doc.contents, &doc.line_index)
-        })
-    })
+    indent_edit(doc, point.row)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
