@@ -15,6 +15,7 @@ use libr::VECSXP;
 use libr::VECTOR_ELT;
 use stdext::unwrap;
 use stdext::IntoResult;
+use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::lsp;
@@ -81,12 +82,12 @@ fn completions_from_custom_source(
 
     // Extract the parameter text.
     let parameter = match parameter.label.clone() {
-        tower_lsp::lsp_types::ParameterLabel::LabelOffsets([start, end]) => {
+        lsp_types::ParameterLabel::LabelOffsets([start, end]) => {
             let label = signature.label.as_str();
             let substring = label.get((start as usize)..(end as usize));
             substring.unwrap().to_string()
         },
-        tower_lsp::lsp_types::ParameterLabel::Simple(string) => string,
+        lsp_types::ParameterLabel::Simple(string) => string,
     };
 
     // Parameter text typically contains the parameter name and its default value if there is one.

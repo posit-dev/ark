@@ -101,7 +101,7 @@ pub(crate) fn roxygen_documentation(
     // This handles the indentation of the first documentation line, and makes new line
     // handling trivial (we just add a new line to every documentation line).
     let position = document.lsp_position_from_tree_sitter_point(position);
-    let range = tower_lsp::lsp_types::Range::new(position, position);
+    let range = lsp_types::Range::new(position, position);
     let edit = lsp_types::TextEdit::new(range, documentation);
     let edit =
         code_action_workspace_text_edit(uri.clone(), document.version, vec![edit], capabilities);

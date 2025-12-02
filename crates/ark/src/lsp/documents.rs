@@ -213,19 +213,13 @@ impl Document {
         self.parse.syntax()
     }
 
-    pub fn lsp_range_from_tree_sitter_range(
-        &self,
-        range: tree_sitter::Range,
-    ) -> tower_lsp::lsp_types::Range {
+    pub fn lsp_range_from_tree_sitter_range(&self, range: tree_sitter::Range) -> lsp_types::Range {
         let start = self.lsp_position_from_tree_sitter_point(range.start_point);
         let end = self.lsp_position_from_tree_sitter_point(range.end_point);
-        tower_lsp::lsp_types::Range::new(start, end)
+        lsp_types::Range::new(start, end)
     }
 
-    pub fn tree_sitter_range_from_lsp_range(
-        &self,
-        range: tower_lsp::lsp_types::Range,
-    ) -> tree_sitter::Range {
+    pub fn tree_sitter_range_from_lsp_range(&self, range: lsp_types::Range) -> tree_sitter::Range {
         let start_point = self.tree_sitter_point_from_lsp_position(range.start);
         let start_byte = self.byte_offset_from_tree_sitter_point(start_point);
 
@@ -242,7 +236,7 @@ impl Document {
 
     pub fn tree_sitter_point_from_lsp_position(
         &self,
-        position: tower_lsp::lsp_types::Position,
+        position: lsp_types::Position,
     ) -> tree_sitter::Point {
         let line = position.line as usize;
         let character = position.character as usize;
@@ -258,7 +252,7 @@ impl Document {
     pub fn lsp_position_from_tree_sitter_point(
         &self,
         point: tree_sitter::Point,
-    ) -> tower_lsp::lsp_types::Position {
+    ) -> lsp_types::Position {
         let line = point.row;
         let character = point.column;
 
@@ -270,7 +264,7 @@ impl Document {
         let line = line as u32;
         let character = character as u32;
 
-        tower_lsp::lsp_types::Position::new(line, character)
+        lsp_types::Position::new(line, character)
     }
 
     fn byte_offset_from_tree_sitter_point(&self, point: tree_sitter::Point) -> usize {
