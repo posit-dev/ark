@@ -1,10 +1,11 @@
 //
 // document.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2025 Posit Software, PBC. All rights reserved.
 //
 //
 
+use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::PositionEncoding;
 use anyhow::Result;
 use tower_lsp::lsp_types;
@@ -213,6 +214,37 @@ impl Document {
         self.parse.syntax()
     }
 
+    pub fn tree_sitter_point_from_lsp_position(
+        &self,
+        position: lsp_types::Position,
+    ) -> tree_sitter::Point {
+        // TODO! Return result
+        let offset =
+            from_proto::offset(position, &self.line_index, self.position_encoding).unwrap();
+
+        // Unwrap safety: Conversion from u32 to u32 will succeed
+        let line_col = self.line_index.line_col(offset).unwrap();
+        tree_sitter::Point::new(line_col.line as usize, line_col.col as usize)
+    }
+
+    pub fn lsp_position_from_tree_sitter_point(
+        &self,
+        point: tree_sitter::Point,
+    ) -> lsp_types::Position {
+        let line_col = biome_line_index::LineCol {
+            line: point.row as u32,
+            col: point.column as u32,
+        };
+
+        match self.position_encoding {
+            PositionEncoding::Utf8 => lsp_types::Position::new(line_col.line, line_col.col),
+            PositionEncoding::Wide(wide_encoding) => {
+                let wide_line_col = self.line_index.to_wide(wide_encoding, line_col);
+                wide_line_col_as_lsp_position(wide_line_col, line_col)
+            },
+        }
+    }
+
     pub fn lsp_range_from_tree_sitter_range(&self, range: tree_sitter::Range) -> lsp_types::Range {
         let start = self.lsp_position_from_tree_sitter_point(range.start_point);
         let end = self.lsp_position_from_tree_sitter_point(range.end_point);
@@ -221,106 +253,38 @@ impl Document {
 
     pub fn tree_sitter_range_from_lsp_range(&self, range: lsp_types::Range) -> tree_sitter::Range {
         let start_point = self.tree_sitter_point_from_lsp_position(range.start);
-        let start_byte = self.byte_offset_from_tree_sitter_point(start_point);
-
         let end_point = self.tree_sitter_point_from_lsp_position(range.end);
-        let end_byte = self.byte_offset_from_tree_sitter_point(end_point);
+
+        // TODO! Return Result
+        let start_offset =
+            from_proto::offset(range.start, &self.line_index, self.position_encoding).unwrap();
+        let end_offset =
+            from_proto::offset(range.end, &self.line_index, self.position_encoding).unwrap();
 
         tree_sitter::Range {
-            start_byte,
-            end_byte,
+            start_byte: start_offset.into(),
+            end_byte: end_offset.into(),
             start_point,
             end_point,
         }
     }
-
-    pub fn tree_sitter_point_from_lsp_position(
-        &self,
-        position: lsp_types::Position,
-    ) -> tree_sitter::Point {
-        let line = position.line as usize;
-        let character = position.character as usize;
-
-        let character = match self.get_line(line) {
-            Some(line_str) => utf8_offset_from_utf16_offset(line_str, character),
-            None => 0,
-        };
-
-        tree_sitter::Point::new(line, character)
-    }
-
-    pub fn lsp_position_from_tree_sitter_point(
-        &self,
-        point: tree_sitter::Point,
-    ) -> lsp_types::Position {
-        let line = point.row;
-        let character = point.column;
-
-        let character = match self.get_line(line) {
-            Some(line_str) => utf16_offset_from_utf8_offset(line_str, character),
-            None => 0,
-        };
-
-        let line = line as u32;
-        let character = character as u32;
-
-        lsp_types::Position::new(line, character)
-    }
-
-    fn byte_offset_from_tree_sitter_point(&self, point: tree_sitter::Point) -> usize {
-        let line_start = match self.line_index.newlines.get(point.row) {
-            Some(offset) => *offset,
-            None => {
-                log::error!(
-                    "Failed to get line start for line {}. Document has {} lines.",
-                    point.row,
-                    self.line_index.len()
-                );
-                return 0;
-            },
-        };
-
-        let line_start_byte: usize = line_start.into();
-        line_start_byte + point.column
-    }
 }
 
-fn utf8_offset_from_utf16_offset(x: &str, utf16_offset: usize) -> usize {
-    if x.is_ascii() {
-        return utf16_offset;
-    }
-
-    if utf16_offset == 0 {
-        return utf16_offset;
-    }
-
-    let mut n = 0;
-
-    for (pos, char) in x.char_indices() {
-        n += char.len_utf16();
-
-        if n == utf16_offset {
-            return pos + char.len_utf8();
-        }
-    }
-
-    log::error!("Failed to locate UTF-16 offset of {utf16_offset}. Line: '{x}'.");
-    0
-}
-
-fn utf16_offset_from_utf8_offset(x: &str, utf8_offset: usize) -> usize {
-    if x.is_ascii() {
-        return utf8_offset;
-    }
-
-    match x.get(..utf8_offset) {
-        Some(x) => x.encode_utf16().count(),
+fn wide_line_col_as_lsp_position(
+    wide_line_col: Option<biome_line_index::WideLineCol>,
+    fallback_line_col: biome_line_index::LineCol,
+) -> lsp_types::Position {
+    match wide_line_col {
+        Some(wide_line_col) => {
+            lsp_types::Position::new(wide_line_col.line as u32, wide_line_col.col as u32)
+        },
         None => {
-            let n = x.len();
+            // Forcing a full capture so we can learn the situations in which this occurs
             log::error!(
-                "Tried to take UTF-8 character {utf8_offset}, but only {n} characters exist. Line: '{x}'."
+                "Converting position {fallback_line_col:?} failed, using column = 0 as fallback\n\nBacktrace:\n{trace}",
+                trace = std::backtrace::Backtrace::force_capture(),
             );
-            0
+            lsp_types::Position::new(fallback_line_col.line, 0)
         },
     }
 }
