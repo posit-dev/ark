@@ -132,7 +132,8 @@ pub(crate) fn initialize(
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }),
         capabilities: ServerCapabilities {
-            // TODO: Allow frontends implementing UTF-8 positions
+            // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
+            // once/if Ark becomes an independent LSP
             position_encoding: Some(lsp_types::PositionEncodingKind::UTF16),
             text_document_sync: Some(TextDocumentSyncCapability::Kind(
                 TextDocumentSyncKind::INCREMENTAL,
