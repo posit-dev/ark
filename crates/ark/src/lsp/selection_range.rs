@@ -5,6 +5,7 @@
 //
 //
 
+use tower_lsp::lsp_types;
 use tree_sitter::Node;
 use tree_sitter::Point;
 use tree_sitter::Range;
@@ -105,7 +106,7 @@ fn range_default(node: Node) -> Range {
 pub fn convert_selection_range_from_tree_sitter_to_lsp(
     selection: SelectionRange,
     document: &crate::lsp::documents::Document,
-) -> tower_lsp::lsp_types::SelectionRange {
+) -> lsp_types::SelectionRange {
     let range = document.lsp_range_from_tree_sitter_range(selection.range);
 
     // If there is a parent, convert it and box it
@@ -114,7 +115,7 @@ pub fn convert_selection_range_from_tree_sitter_to_lsp(
         Some(Box::new(selection))
     });
 
-    tower_lsp::lsp_types::SelectionRange { range, parent }
+    lsp_types::SelectionRange { range, parent }
 }
 
 #[cfg(test)]

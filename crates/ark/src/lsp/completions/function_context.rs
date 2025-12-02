@@ -6,6 +6,7 @@
 //
 
 use stdext::result::ResultExt;
+use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
@@ -66,7 +67,7 @@ impl FunctionContext {
 
             return Self {
                 name: String::new(),
-                range: tower_lsp::lsp_types::Range::new(node_end, node_end),
+                range: lsp_types::Range::new(node_end, node_end),
                 usage: FunctionRefUsage::Call,
                 arguments_status: ArgumentsStatus::Absent,
                 cursor_is_at_end: true,
@@ -121,7 +122,7 @@ impl FunctionContext {
                         .lsp_position_from_tree_sitter_point(
                             effective_function_node.range().end_point,
                         );
-                    tower_lsp::lsp_types::Range::new(node_end, node_end)
+                    lsp_types::Range::new(node_end, node_end)
                 },
             },
             usage,
