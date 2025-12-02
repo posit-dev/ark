@@ -173,7 +173,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Tex
     };
 
     let edit = TextEdit {
-        range: doc.lsp_range_from_tree_sitter_range(range),
+        range: doc.lsp_range_from_tree_sitter_range(range)?,
         new_text,
     };
 

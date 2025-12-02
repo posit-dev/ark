@@ -8,6 +8,7 @@
 use std::path::Path;
 
 use anyhow::anyhow;
+use stdext::result::ResultExt;
 use stdext::unwrap::IntoResult;
 use stdext::*;
 use tower_lsp::lsp_types::Location;
@@ -72,15 +73,21 @@ struct Context {
     symbol: String,
 }
 
-fn add_reference(node: &Node, document: &Document, path: &Path, locations: &mut Vec<Location>) {
-    let start = document.lsp_position_from_tree_sitter_point(node.start_position());
-    let end = document.lsp_position_from_tree_sitter_point(node.end_position());
+fn add_reference(
+    node: &Node,
+    document: &Document,
+    path: &Path,
+    locations: &mut Vec<Location>,
+) -> anyhow::Result<()> {
+    let start = document.lsp_position_from_tree_sitter_point(node.start_position())?;
+    let end = document.lsp_position_from_tree_sitter_point(node.end_position())?;
 
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
         Range::new(start, end),
     );
     locations.push(location);
+    Ok(())
 }
 
 fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
@@ -104,7 +111,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
     let context = with_document(path.as_path(), state, |document| {
         let ast = &document.ast;
         let contents = document.contents.as_str();
-        let point = document.tree_sitter_point_from_lsp_position(position);
+        let point = document.tree_sitter_point_from_lsp_position(position)?;
 
         let mut node = ast
             .root_node()
@@ -162,8 +169,7 @@ fn find_references_in_folder(
 
         lsp::log_info!("found R file {}", path.display());
         let result = with_document(path, state, |document| {
-            find_references_in_document(context, path, document, locations);
-            return Ok(());
+            find_references_in_document(context, path, document, locations)
         });
 
         match result {
@@ -181,18 +187,19 @@ fn find_references_in_document(
     path: &Path,
     document: &Document,
     locations: &mut Vec<Location>,
-) {
+) -> anyhow::Result<()> {
     let ast = &document.ast;
     let contents = document.contents.as_str();
 
     let mut cursor = ast.walk();
     cursor.recurse(|node| {
         if found_match(&node, contents, &context) {
-            add_reference(&node, document, path, locations);
+            add_reference(&node, document, path, locations).log_err();
         }
 
         return true;
     });
+    Ok(())
 }
 
 pub(crate) fn find_references(

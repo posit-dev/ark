@@ -100,7 +100,9 @@ pub(crate) fn roxygen_documentation(
     // We insert the documentation string at the start position of the function name.
     // This handles the indentation of the first documentation line, and makes new line
     // handling trivial (we just add a new line to every documentation line).
-    let position = document.lsp_position_from_tree_sitter_point(position);
+    let position = document
+        .lsp_position_from_tree_sitter_point(position)
+        .ok()?;
     let range = lsp_types::Range::new(position, position);
     let edit = lsp_types::TextEdit::new(range, documentation);
     let edit =

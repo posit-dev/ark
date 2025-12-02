@@ -54,7 +54,7 @@ pub(crate) enum ArgumentsStatus {
 }
 
 impl FunctionContext {
-    pub(crate) fn new(document_context: &DocumentContext) -> Self {
+    pub(crate) fn new(document_context: &DocumentContext) -> anyhow::Result<Self> {
         let completion_node = document_context.node;
 
         let Some(effective_function_node) = get_effective_function_node(completion_node) else {
@@ -63,15 +63,15 @@ impl FunctionContext {
             // return a dummy FunctionContext just to be safe.
             let node_end = document_context
                 .document
-                .lsp_position_from_tree_sitter_point(completion_node.range().end_point);
+                .lsp_position_from_tree_sitter_point(completion_node.range().end_point)?;
 
-            return Self {
+            return Ok(Self {
                 name: String::new(),
                 range: lsp_types::Range::new(node_end, node_end),
                 usage: FunctionRefUsage::Call,
                 arguments_status: ArgumentsStatus::Absent,
                 cursor_is_at_end: true,
-            };
+            });
         };
 
         let usage = determine_function_usage(
@@ -92,10 +92,7 @@ impl FunctionContext {
             cursor.row == node_range.end_point.row && cursor.column == node_range.end_point.column;
 
         let name = match function_name_node {
-            Some(node) => node
-                .node_to_string(&document_context.document.contents)
-                .log_err()
-                .unwrap_or_default(),
+            Some(node) => node.node_to_string(&document_context.document.contents)?,
             None => String::new(),
         };
 
@@ -109,26 +106,26 @@ impl FunctionContext {
             "FunctionContext created with name: '{name}', usage: {usage:?}, arguments: {arguments_status:?}, cursor at end: {is_cursor_at_end}"
         );
 
-        Self {
+        Ok(Self {
             name,
             range: match function_name_node {
                 Some(node) => document_context
                     .document
-                    .lsp_range_from_tree_sitter_range(node.range()),
+                    .lsp_range_from_tree_sitter_range(node.range())?,
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
                     let node_end = document_context
                         .document
                         .lsp_position_from_tree_sitter_point(
                             effective_function_node.range().end_point,
-                        );
+                        )?;
                     lsp_types::Range::new(node_end, node_end)
                 },
             },
             usage,
             arguments_status,
             cursor_is_at_end: is_cursor_at_end,
-        }
+        })
     }
 }
 

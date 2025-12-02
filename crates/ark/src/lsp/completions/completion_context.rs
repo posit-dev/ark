@@ -20,7 +20,7 @@ pub(crate) struct CompletionContext<'a> {
     pub(crate) state: &'a WorldState,
     pipe_root_cell: OnceCell<Option<PipeRoot>>,
     containing_call_cell: OnceCell<Option<Node<'a>>>,
-    function_context_cell: OnceCell<FunctionContext>,
+    function_context_cell: OnceCell<anyhow::Result<FunctionContext>>,
 }
 
 impl<'a> CompletionContext<'a> {
@@ -54,8 +54,10 @@ impl<'a> CompletionContext<'a> {
             .get_or_init(|| node_find_containing_call(self.document_context.node))
     }
 
-    pub fn function_context(&self) -> &FunctionContext {
+    pub fn function_context(&self) -> anyhow::Result<&FunctionContext> {
         self.function_context_cell
             .get_or_init(|| FunctionContext::new(&self.document_context))
+            .as_ref()
+            .map_err(|err| anyhow::anyhow!("{err:?}"))
     }
 }

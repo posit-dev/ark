@@ -187,7 +187,7 @@ pub(crate) fn handle_completion(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position.position;
-    let point = document.tree_sitter_point_from_lsp_position(position);
+    let point = document.tree_sitter_point_from_lsp_position(position)?;
 
     let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
 
@@ -221,7 +221,7 @@ pub(crate) fn handle_hover(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position);
+    let point = document.tree_sitter_point_from_lsp_position(position)?;
 
     // build document context
     let context = DocumentContext::new(&document, point, None);
@@ -256,7 +256,7 @@ pub(crate) fn handle_signature_help(
     let document = state.get_document(&uri)?;
 
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position);
+    let point = document.tree_sitter_point_from_lsp_position(position)?;
 
     let context = DocumentContext::new(&document, point, None);
 
@@ -295,11 +295,12 @@ pub(crate) fn handle_selection_range(
     let document = state.get_document(&params.text_document.uri)?;
 
     // Get tree-sitter points to return selection ranges for
-    let points: Vec<Point> = params
+    let points: anyhow::Result<Vec<Point>> = params
         .positions
         .into_iter()
         .map(|position| document.tree_sitter_point_from_lsp_position(position))
         .collect();
+    let points = points?;
 
     let Some(selections) = selection_range(&document.ast, points) else {
         return Ok(None);
@@ -309,7 +310,7 @@ pub(crate) fn handle_selection_range(
     let selections = selections
         .into_iter()
         .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(selection, &document))
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Some(selections))
 }
@@ -339,7 +340,7 @@ pub(crate) fn handle_statement_range(
     state: &WorldState,
 ) -> anyhow::Result<Option<StatementRangeResponse>> {
     let document = state.get_document(&params.text_document.uri)?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position);
+    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
     statement_range(document, point)
 }
 
@@ -349,7 +350,7 @@ pub(crate) fn handle_help_topic(
     state: &WorldState,
 ) -> anyhow::Result<Option<HelpTopicResponse>> {
     let document = state.get_document(&params.text_document.uri)?;
-    let point = document.tree_sitter_point_from_lsp_position(params.position);
+    let point = document.tree_sitter_point_from_lsp_position(params.position)?;
     help_topic(point, &document)
 }
 
@@ -360,7 +361,7 @@ pub(crate) fn handle_indent(
 ) -> anyhow::Result<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
     let doc = state.get_document(&ctxt.text_document.uri)?;
-    let point = doc.tree_sitter_point_from_lsp_position(ctxt.position);
+    let point = doc.tree_sitter_point_from_lsp_position(ctxt.position)?;
 
     indent_edit(doc, point.row)
 }
@@ -373,7 +374,7 @@ pub(crate) fn handle_code_action(
 ) -> anyhow::Result<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
     let doc = state.get_document(&uri)?;
-    let range = doc.tree_sitter_range_from_lsp_range(params.range);
+    let range = doc.tree_sitter_range_from_lsp_range(params.range)?;
 
     let code_actions = code_actions(&uri, doc, range, &lsp_state.capabilities);
 

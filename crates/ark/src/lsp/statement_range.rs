@@ -62,11 +62,11 @@ pub(crate) fn statement_range(
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
     if let Some((range, code)) = find_roxygen_statement_range(&root, contents, point) {
-        return Ok(Some(new_statement_range_response(range, document, code)));
+        return Ok(Some(new_statement_range_response(range, document, code)?));
     }
 
     if let Some(range) = find_statement_range(&root, point.row) {
-        return Ok(Some(new_statement_range_response(range, document, None)));
+        return Ok(Some(new_statement_range_response(range, document, None)?));
     };
 
     Ok(None)
@@ -76,14 +76,13 @@ fn new_statement_range_response(
     range: tree_sitter::Range,
     document: &Document,
     code: Option<String>,
-) -> StatementRangeResponse {
+) -> anyhow::Result<StatementRangeResponse> {
     // Tree-sitter `Point`s to LSP `Position`s
-    let start = document.lsp_position_from_tree_sitter_point(range.start_point);
-    let end = document.lsp_position_from_tree_sitter_point(range.end_point);
+    let start = document.lsp_position_from_tree_sitter_point(range.start_point)?;
+    let end = document.lsp_position_from_tree_sitter_point(range.end_point)?;
 
     let range = lsp_types::Range { start, end };
-
-    StatementRangeResponse { range, code }
+    Ok(StatementRangeResponse { range, code })
 }
 
 fn find_roxygen_statement_range(

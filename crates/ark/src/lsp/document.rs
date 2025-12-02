@@ -145,7 +145,7 @@ impl Document {
             end_byte: old_end_byte,
             start_point,
             end_point: old_end_point,
-        } = self.tree_sitter_range_from_lsp_range(range);
+        } = self.tree_sitter_range_from_lsp_range(range)?;
 
         let new_end_point = compute_point(start_point, &change.text);
         let new_end_byte = start_byte + change.text.as_bytes().len();
@@ -217,75 +217,69 @@ impl Document {
     pub fn tree_sitter_point_from_lsp_position(
         &self,
         position: lsp_types::Position,
-    ) -> tree_sitter::Point {
-        // TODO! Return result
-        let offset =
-            from_proto::offset(position, &self.line_index, self.position_encoding).unwrap();
-
-        // Unwrap safety: Conversion from u32 to u32 will succeed
-        let line_col = self.line_index.line_col(offset).unwrap();
-        tree_sitter::Point::new(line_col.line as usize, line_col.col as usize)
+    ) -> anyhow::Result<tree_sitter::Point> {
+        let offset = from_proto::offset(position, &self.line_index, self.position_encoding)?;
+        let line_col = self.line_index.line_col(offset).ok_or_else(|| {
+            anyhow::anyhow!("Failed to convert LSP position {position:?} to LineCol offset")
+        })?;
+        Ok(tree_sitter::Point::new(
+            line_col.line as usize,
+            line_col.col as usize,
+        ))
     }
 
     pub fn lsp_position_from_tree_sitter_point(
         &self,
         point: tree_sitter::Point,
-    ) -> lsp_types::Position {
+    ) -> anyhow::Result<lsp_types::Position> {
         let line_col = biome_line_index::LineCol {
             line: point.row as u32,
             col: point.column as u32,
         };
 
         match self.position_encoding {
-            PositionEncoding::Utf8 => lsp_types::Position::new(line_col.line, line_col.col),
+            PositionEncoding::Utf8 => Ok(lsp_types::Position::new(line_col.line, line_col.col)),
             PositionEncoding::Wide(wide_encoding) => {
-                let wide_line_col = self.line_index.to_wide(wide_encoding, line_col);
-                wide_line_col_as_lsp_position(wide_line_col, line_col)
+                let wide_line_col = self
+                    .line_index
+                    .to_wide(wide_encoding, line_col)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Failed to convert Tree-Sitter point {point:?} to wide line column for document")
+                    })?;
+                Ok(lsp_types::Position::new(
+                    wide_line_col.line as u32,
+                    wide_line_col.col as u32,
+                ))
             },
         }
     }
 
-    pub fn lsp_range_from_tree_sitter_range(&self, range: tree_sitter::Range) -> lsp_types::Range {
-        let start = self.lsp_position_from_tree_sitter_point(range.start_point);
-        let end = self.lsp_position_from_tree_sitter_point(range.end_point);
-        lsp_types::Range::new(start, end)
+    pub fn lsp_range_from_tree_sitter_range(
+        &self,
+        range: tree_sitter::Range,
+    ) -> anyhow::Result<lsp_types::Range> {
+        let start = self.lsp_position_from_tree_sitter_point(range.start_point)?;
+        let end = self.lsp_position_from_tree_sitter_point(range.end_point)?;
+        Ok(lsp_types::Range::new(start, end))
     }
 
-    pub fn tree_sitter_range_from_lsp_range(&self, range: lsp_types::Range) -> tree_sitter::Range {
-        let start_point = self.tree_sitter_point_from_lsp_position(range.start);
-        let end_point = self.tree_sitter_point_from_lsp_position(range.end);
+    pub fn tree_sitter_range_from_lsp_range(
+        &self,
+        range: lsp_types::Range,
+    ) -> anyhow::Result<tree_sitter::Range> {
+        let start_point = self.tree_sitter_point_from_lsp_position(range.start)?;
+        let end_point = self.tree_sitter_point_from_lsp_position(range.end)?;
 
-        // TODO! Return Result
         let start_offset =
-            from_proto::offset(range.start, &self.line_index, self.position_encoding).unwrap();
-        let end_offset =
-            from_proto::offset(range.end, &self.line_index, self.position_encoding).unwrap();
+            from_proto::offset(range.start, &self.line_index, self.position_encoding)?;
+        let end_offset = from_proto::offset(range.end, &self.line_index, self.position_encoding)?;
 
-        tree_sitter::Range {
+        Ok(tree_sitter::Range {
             start_byte: start_offset.into(),
             end_byte: end_offset.into(),
             start_point,
             end_point,
-        }
-    }
-}
-
-fn wide_line_col_as_lsp_position(
-    wide_line_col: Option<biome_line_index::WideLineCol>,
-    fallback_line_col: biome_line_index::LineCol,
-) -> lsp_types::Position {
-    match wide_line_col {
-        Some(wide_line_col) => {
-            lsp_types::Position::new(wide_line_col.line as u32, wide_line_col.col as u32)
-        },
-        None => {
-            // Forcing a full capture so we can learn the situations in which this occurs
-            log::error!(
-                "Converting position {fallback_line_col:?} failed, using column = 0 as fallback\n\nBacktrace:\n{trace}",
-                trace = std::backtrace::Backtrace::force_capture(),
-            );
-            lsp_types::Position::new(fallback_line_col.line, 0)
-        },
+        })
     }
 }
 

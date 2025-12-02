@@ -364,8 +364,8 @@ fn index_assignment(
 
         // Note that unlike document symbols whose ranges cover the whole entity
         // they represent, the range of workspace symbols only cover the identifers
-        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position());
-        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position());
+        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position())?;
+        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position())?;
 
         entries.push(IndexEntry {
             key: lhs_text.clone(),
@@ -377,8 +377,8 @@ fn index_assignment(
         });
     } else {
         // Otherwise, emit variable
-        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position());
-        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position());
+        let start = doc.lsp_position_from_tree_sitter_point(lhs.start_position())?;
+        let end = doc.lsp_position_from_tree_sitter_point(lhs.end_position())?;
         entries.push(IndexEntry {
             key: lhs_text.clone(),
             range: Range { start, end },
@@ -419,8 +419,8 @@ fn index_r6_class_methods(
 
     for method_node in ts_query.captures_for(*node, "method_name", doc.contents.as_bytes()) {
         let name = method_node.node_to_string(&doc.contents)?;
-        let start = doc.lsp_position_from_tree_sitter_point(method_node.start_position());
-        let end = doc.lsp_position_from_tree_sitter_point(method_node.end_position());
+        let start = doc.lsp_position_from_tree_sitter_point(method_node.start_position())?;
+        let end = doc.lsp_position_from_tree_sitter_point(method_node.end_position())?;
 
         entries.push(IndexEntry {
             key: name.clone(),
@@ -456,8 +456,8 @@ fn index_comment(doc: &Document, node: &Node, entries: &mut Vec<IndexEntry>) -> 
         return Ok(());
     }
 
-    let start = doc.lsp_position_from_tree_sitter_point(node.start_position());
-    let end = doc.lsp_position_from_tree_sitter_point(node.end_position());
+    let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;
+    let end = doc.lsp_position_from_tree_sitter_point(node.end_position())?;
 
     entries.push(IndexEntry {
         key: title.clone(),

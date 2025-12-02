@@ -80,10 +80,13 @@ fn syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<
     // would be able to report precise error locations/messages, because it "knows" why a
     // parse error occurred.
 
-    Ok(syntax_diagnostic_default(node, context))
+    syntax_diagnostic_default(node, context)
 }
 
-fn syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
+fn syntax_diagnostic_default(
+    node: Node,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
     let range = node.range();
     let row_span = range.end_point.row - range.start_point.row;
 
@@ -98,7 +101,10 @@ fn syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnos
 
 // If the syntax error spans more than 20 rows, just target the starting position
 // to avoid overwhelming the user.
-fn syntax_diagnostic_truncated_default(range: Range, context: &DiagnosticContext) -> Diagnostic {
+fn syntax_diagnostic_truncated_default(
+    range: Range,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
     // In theory this is an empty range, as they are constructed like `[ )`, but it
     // seems to work for the purpose of diagnostics, and getting the correct
     // coordinates exactly right seems challenging.
@@ -336,7 +342,7 @@ fn diagnose_missing_binary_operator(
     let text = operator.node_as_str(&context.doc.contents)?;
     let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
 
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -367,7 +373,7 @@ pub(crate) fn diagnose_missing_namespace_operator(
     let text = operator.node_as_str(&context.doc.contents)?;
     let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
 
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -396,7 +402,7 @@ fn diagnose_missing_close(
         close_token,
         open.range(),
         context,
-    ));
+    )?);
 
     Ok(())
 }
@@ -405,14 +411,18 @@ fn new_missing_close_diagnostic(
     close_token: &str,
     range: Range,
     context: &DiagnosticContext,
-) -> Diagnostic {
+) -> anyhow::Result<Diagnostic> {
     let message = format!("Unmatched opening delimiter. Missing a closing '{close_token}'.");
     new_syntax_diagnostic(message, range, context)
 }
 
-fn new_syntax_diagnostic(message: String, range: Range, context: &DiagnosticContext) -> Diagnostic {
-    let range = context.doc.lsp_range_from_tree_sitter_range(range);
-    Diagnostic::new_simple(range, message)
+fn new_syntax_diagnostic(
+    message: String,
+    range: Range,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
+    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+    Ok(Diagnostic::new_simple(range, message))
 }
 
 #[cfg(test)]

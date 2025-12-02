@@ -25,15 +25,15 @@ pub fn goto_definition<'a>(
 
     // try to find node at position
     let position = params.text_document_position_params.position;
-    let point = document.tree_sitter_point_from_lsp_position(position);
+    let point = document.tree_sitter_point_from_lsp_position(position)?;
 
     let Some(node) = ast.root_node().find_closest_node_to_point(point) else {
         log::warn!("Failed to find the closest node to point {point}.");
         return Ok(None);
     };
 
-    let start = document.lsp_position_from_tree_sitter_point(node.start_position());
-    let end = document.lsp_position_from_tree_sitter_point(node.end_position());
+    let start = document.lsp_position_from_tree_sitter_point(node.start_position())?;
+    let end = document.lsp_position_from_tree_sitter_point(node.end_position())?;
     let range = Range { start, end };
 
     // Search for a reference in the document index
