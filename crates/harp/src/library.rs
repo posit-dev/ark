@@ -8,7 +8,9 @@
 use std::env::consts::DLL_PREFIX;
 use std::env::consts::DLL_SUFFIX;
 use std::path::PathBuf;
+#[cfg(windows)]
 use std::sync::atomic::AtomicBool;
+#[cfg(windows)]
 use std::sync::atomic::Ordering;
 
 use crate::sys;
@@ -16,17 +18,20 @@ pub use crate::sys::library::RLibraries;
 
 /// When true, use the standard Windows DLL search path instead of the restricted
 /// search path (DLL load dir + system32). This is a Windows-only setting.
+#[cfg(windows)]
 static USE_STANDARD_DLL_SEARCH_PATH: AtomicBool = AtomicBool::new(false);
 
 /// Set whether to use the standard Windows DLL search path when loading R libraries.
 /// When set to true, the DLL loading will use the default search order instead of
 /// restricting to the DLL's directory and system32.
 /// This must be called before `RLibraries::from_r_home_path()`.
+#[cfg(windows)]
 pub fn set_use_standard_dll_search_path(value: bool) {
     USE_STANDARD_DLL_SEARCH_PATH.store(value, Ordering::SeqCst);
 }
 
 /// Get whether to use the standard Windows DLL search path.
+#[cfg(windows)]
 pub(crate) fn use_standard_dll_search_path() -> bool {
     USE_STANDARD_DLL_SEARCH_PATH.load(Ordering::SeqCst)
 }
