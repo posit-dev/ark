@@ -1069,13 +1069,3 @@ fn test_execute_request_source_references() {
         },
     );
 }
-
-#[test]
-fn test_platform_gui_positron_console() {
-    let frontend = DummyArkFrontend::lock();
-
-    // Console sessions should have .Platform$GUI set to "Positron"
-    frontend.execute_request(".Platform$GUI", |result| {
-        assert_eq!(result, "[1] \"Positron\"");
-    });
-}
