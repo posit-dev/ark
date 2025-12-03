@@ -7,4 +7,6 @@
 
 .Platform <- base::.Platform
 .Platform$GUI <- "Positron"
-env_bind_force(baseenv(), ".Platform", .Platform)
+if (Sys.getenv("POSITRON") == 1) {
+    env_bind_force(baseenv(), ".Platform", .Platform)
+}
