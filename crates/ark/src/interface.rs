@@ -620,19 +620,6 @@ impl RMain {
                 log::error!("Error registering some hooks: {err:?}");
             }
 
-            // Set .Platform$GUI to "Positron" for console sessions only
-            if session_mode == SessionMode::Console {
-                let result = harp::parse_eval_global(r#"
-                    unlockBinding(".Platform", baseenv())
-                    .Platform$GUI <- "Positron"
-                    lockBinding(".Platform", baseenv())
-                "#);
-                match result {
-                    Ok(_) => log::info!("Set .Platform$GUI to 'Positron' for console session"),
-                    Err(err) => log::warn!("Failed to set .Platform$GUI: {err:?}"),
-                }
-            }
-
             // Populate srcrefs for namespaces already loaded in the session.
             // Namespaces of future loaded packages will be populated on load.
             // (after r_task initialization)
