@@ -234,6 +234,7 @@ impl DummyFrontend {
             user_expressions: serde_json::Value::Null,
             allow_stdin: options.allow_stdin,
             stop_on_error: false,
+            positron: None,
         })
     }
 

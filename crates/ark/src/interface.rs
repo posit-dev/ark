@@ -38,6 +38,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_request::CodeLocation;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
@@ -332,7 +333,10 @@ enum ParseResult<T> {
 }
 
 impl PendingInputs {
-    pub(crate) fn read(input: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
+    pub(crate) fn read(
+        input: &str,
+        _loc: Option<CodeLocation>,
+    ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let mut _srcfile = None;
 
         let input = if harp::get_option_bool("keep.source") {
@@ -478,7 +482,7 @@ pub struct PromptInfo {
 
 pub enum ConsoleInput {
     EOF,
-    Input(String),
+    Input(String, Option<CodeLocation>),
 }
 
 #[derive(Debug)]
@@ -908,8 +912,13 @@ impl RMain {
             }
         }
 
+        let loc = req.extract_code_location().log_err().flatten();
+
         // Return the code to the R console to be evaluated and the corresponding exec count
-        (ConsoleInput::Input(req.code.clone()), self.execution_count)
+        (
+            ConsoleInput::Input(req.code.clone(), loc),
+            self.execution_count,
+        )
     }
 
     /// Invoked by R to read console input from the user.
@@ -1338,14 +1347,14 @@ impl RMain {
 
                 // Translate requests from the debugger frontend to actual inputs for
                 // the debug interpreter
-                ConsoleInput::Input(debug_request_command(cmd))
+                ConsoleInput::Input(debug_request_command(cmd), None)
             },
         };
 
         match input {
-            ConsoleInput::Input(code) => {
+            ConsoleInput::Input(code, loc) => {
                 // Parse input into pending expressions
-                match PendingInputs::read(&code) {
+                match PendingInputs::read(&code, loc) {
                     Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },
