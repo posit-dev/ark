@@ -168,6 +168,11 @@ impl Document {
         // offsets can be computed correctly.
         self.ast.edit(&edit);
 
+        // Now update the text before re-parsing so the AST reflects the new contents
+        self.contents
+            .replace_range(start_byte..old_end_byte, &change.text);
+        self.line_index = biome_line_index::LineIndex::new(&self.contents);
+
         // We can now re-parse incrementally by providing the old edited AST
         let ast = parser.parse(self.contents.as_str(), Some(&self.ast));
         self.ast = ast.unwrap();
@@ -177,11 +182,6 @@ impl Document {
         // plan is to remove any TS usage so we prefer not introduce TS trees in
         // the public APIs.
         self.parse = aether_parser::parse(&self.contents, Default::default());
-
-        // Now update the text
-        self.contents
-            .replace_range(start_byte..old_end_byte, &change.text);
-        self.line_index = biome_line_index::LineIndex::new(&self.contents);
 
         Ok(())
     }
@@ -384,5 +384,75 @@ mod tests {
 
         let roundtrip_position = document.lsp_position_from_tree_sitter_point(point).unwrap();
         assert_eq!(roundtrip_position, lsp_position);
+    }
+
+    // After an incremental update, the AST reflects the new document contents,
+    // not the old ones
+    #[test]
+    fn test_incremental_update_keeps_ast_in_sync() {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_r::LANGUAGE.into())
+            .unwrap();
+
+        let mut document = Document::new_with_parser("", &mut parser, Some(1));
+        assert_eq!(document.contents, "");
+        assert_eq!(document.ast.root_node().end_position(), Point::new(0, 0));
+
+        // Simulate typing "lib" character by character
+        let changes = [
+            (
+                "l",
+                lsp_types::Range::new(
+                    lsp_types::Position::new(0, 0),
+                    lsp_types::Position::new(0, 0),
+                ),
+            ),
+            (
+                "i",
+                lsp_types::Range::new(
+                    lsp_types::Position::new(0, 1),
+                    lsp_types::Position::new(0, 1),
+                ),
+            ),
+            (
+                "b",
+                lsp_types::Range::new(
+                    lsp_types::Position::new(0, 2),
+                    lsp_types::Position::new(0, 2),
+                ),
+            ),
+        ];
+
+        for (i, (text, range)) in changes.iter().enumerate() {
+            let params = lsp_types::DidChangeTextDocumentParams {
+                text_document: lsp_types::VersionedTextDocumentIdentifier {
+                    uri: lsp_types::Url::parse("file:///test.R").unwrap(),
+                    version: (i + 2) as i32,
+                },
+                content_changes: vec![lsp_types::TextDocumentContentChangeEvent {
+                    range: Some(*range),
+                    range_length: None,
+                    text: text.to_string(),
+                }],
+            };
+            document.on_did_change(&mut parser, &params);
+        }
+
+        // After typing "lib", document should contain "lib"
+        assert_eq!(document.contents, "lib");
+
+        // The AST should reflect the current contents, not be one edit behind.
+        // The root node should span the entire "lib" identifier.
+        let root = document.ast.root_node();
+        assert_eq!(root.end_position(), Point::new(0, 3));
+
+        // Verify we can find a node at position (0, 3) which is at the end of "lib"
+        use crate::lsp::traits::node::NodeExt;
+        let node = root.find_smallest_spanning_node(Point::new(0, 3));
+        assert!(node.is_some(), "Should find spanning node at end of 'lib'");
+
+        // The Rowan tree contains the updated document
+        assert_eq!(document.syntax().text_with_trivia(), "lib");
     }
 }

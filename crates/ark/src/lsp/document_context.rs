@@ -129,6 +129,23 @@ mod tests {
     }
 
     #[test]
+    fn test_document_context_end_of_identifier() {
+        // Cursor at end of identifier "lib" at position (0, 3)
+        // This reproduced a panic where find_smallest_spanning_node returned None
+        let (text, point) = point_from_cursor("lib@");
+        let document = Document::new(text.as_str(), None);
+        let context = DocumentContext::new(&document, point, None);
+        // The node should be the identifier "lib"
+        assert_eq!(
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
+            "lib"
+        );
+    }
+
+    #[test]
     fn test_document_context_cursor_on_empty_line() {
         // as if we're about to type on the second line
         let (text, point) = point_from_cursor("toupper(letters)\n@");
