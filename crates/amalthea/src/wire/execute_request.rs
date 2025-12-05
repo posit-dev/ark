@@ -87,11 +87,7 @@ impl ExecuteRequest {
 
         let uri = Url::parse(&location.uri).context("Failed to parse URI from code location")?;
 
-        let character = unicode_char_to_utf8_offset(
-            &self.code,
-            location.range.start.line,
-            location.range.start.character,
-        )?;
+        let character = unicode_char_to_utf8_offset(&self.code, 0, location.range.start.character)?;
 
         Ok(Some(CodeLocation {
             uri,

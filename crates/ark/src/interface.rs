@@ -52,6 +52,7 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use amalthea::Error;
 use anyhow::*;
+use biome_rowan::AstNode;
 use bus::Bus;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
@@ -334,16 +335,20 @@ enum ParseResult<T> {
 
 impl PendingInputs {
     pub(crate) fn read(
-        input: &str,
-        _loc: Option<CodeLocation>,
+        code: &str,
+        location: Option<CodeLocation>,
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let mut _srcfile = None;
 
-        let input = if harp::get_option_bool("keep.source") {
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(input.into()));
+        let input = if let Some(location) = location {
+            let annotated_code = Self::annotate(code, location);
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(annotated_code.into()));
+            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+        } else if harp::get_option_bool("keep.source") {
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(code.into()));
             harp::ParseInput::SrcFile(&_srcfile.unwrap())
         } else {
-            harp::ParseInput::Text(input)
+            harp::ParseInput::Text(code)
         };
 
         let status = match harp::parse_status(&input) {
@@ -385,6 +390,51 @@ impl PendingInputs {
             len,
             index,
         })))
+    }
+
+    fn annotate(code: &str, location: CodeLocation) -> String {
+        let node = aether_parser::parse(code, Default::default()).tree();
+        let Some(first_token) = node.syntax().first_token() else {
+            return code.into();
+        };
+
+        let line_directive = format!(
+            "#line {line} \"{uri}\"",
+            line = location.line + 1,
+            uri = location.uri
+        );
+
+        // Collect existing leading trivia as (kind, text) tuples
+        let existing_trivia: Vec<_> = first_token
+            .leading_trivia()
+            .pieces()
+            .map(|piece| (piece.kind(), piece.text().to_string()))
+            .collect();
+
+        // Create new trivia with line directive prepended
+        let new_trivia: Vec<_> = vec![
+            (
+                biome_rowan::TriviaPieceKind::SingleLineComment,
+                line_directive.to_string(),
+            ),
+            (biome_rowan::TriviaPieceKind::Newline, "\n".to_string()),
+        ]
+        .into_iter()
+        .chain(existing_trivia.into_iter())
+        .collect();
+
+        let new_first_token =
+            first_token.with_leading_trivia(new_trivia.iter().map(|(k, t)| (*k, t.as_str())));
+
+        let Some(new_node) = node
+            .syntax()
+            .clone()
+            .replace_child(first_token.into(), new_first_token.into())
+        else {
+            return code.into();
+        };
+
+        new_node.to_string()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
