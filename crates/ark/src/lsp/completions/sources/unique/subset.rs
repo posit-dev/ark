@@ -5,14 +5,13 @@
 //
 //
 
-use ropey::Rope;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
 use crate::lsp::completions::sources::common::subset::is_within_subset_delimiters;
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
 use crate::treesitter::NodeTypeExt;
 
@@ -47,10 +46,10 @@ pub(super) fn completions_from_string_subset(
     // completion sources from running.
     let mut completions: Vec<CompletionItem> = vec![];
 
-    let text = context.document.contents.node_slice(&node)?.to_string();
+    let text = node.node_as_str(&context.document.contents)?;
 
     if let Some(mut candidates) =
-        completions_from_evaluated_object_names(&text, ENQUOTE, node.node_type())?
+        completions_from_evaluated_object_names(text, ENQUOTE, node.node_type())?
     {
         completions.append(&mut candidates);
     }
@@ -106,7 +105,7 @@ fn node_find_object_for_string_subset<'tree>(
     return Some(node);
 }
 
-fn node_is_c_call(x: &Node, contents: &Rope) -> bool {
+fn node_is_c_call(x: &Node, contents: &str) -> bool {
     if !x.is_call() {
         return false;
     }
@@ -119,7 +118,7 @@ fn node_is_c_call(x: &Node, contents: &Rope) -> bool {
         return false;
     }
 
-    let Ok(text) = contents.node_slice(&x) else {
+    let Ok(text) = x.node_as_str(&contents) else {
         log::error!("Can't slice `contents`.");
         return false;
     };
@@ -135,7 +134,7 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
     use crate::treesitter::node_find_string;
 
