@@ -13,9 +13,11 @@ use std::io::BufRead;
 use std::io::BufReader;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::RObject;
+use libr::SEXP;
 
 use crate::modules::ARK_ENVS;
 
@@ -344,6 +346,28 @@ fn get_ppm_binary_package_repo(repo_url: Option<url::Url>) -> String {
         // For non-Linux, we can use the generic URL
         generic_url
     }
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ps_get_ppm_binary_url(url: SEXP) -> anyhow::Result<SEXP> {
+    let url_string = unsafe { RObject::view(url).to::<String>().context("`url` must be a string")? };
+    if url_string.is_empty() {
+        return Err(anyhow::anyhow!("Empty Package Manager URL provided"));
+    }
+
+    // Validate the PPM URL structure.
+    let parsed = url::Url::parse(&url_string).context("Invalid URL format")?;
+    let segments = parsed
+        .path_segments()
+        .ok_or_else(|| anyhow::anyhow!("Package Manager URL must have a path"))?;
+    if segments.count() != 2 {
+        return Err(anyhow::anyhow!(
+            "Package Manager URL must have exactly 2 path segments (e.g., /cran/latest)"
+        ));
+    }
+
+    let final_url = get_ppm_binary_package_repo(Some(parsed));
+    Ok(RObject::from(final_url).sexp)
 }
 
 #[cfg(test)]
