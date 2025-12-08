@@ -1,7 +1,10 @@
+use amalthea::wire::execute_request::JupyterPositronLocation;
+use amalthea::wire::execute_request::JupyterPositronPosition;
+use amalthea::wire::execute_request::JupyterPositronRange;
 use ark::fixtures::DummyArkFrontend;
 
 #[test]
-fn test_execute_request_source_references() {
+fn test_execute_request_srcref() {
     let frontend = DummyArkFrontend::lock();
 
     // Test that our parser attaches source references when global option is set
@@ -32,4 +35,41 @@ fn test_execute_request_source_references() {
             assert_eq!(result, "[1] TRUE");
         },
     );
+}
+
+#[test]
+fn test_execute_request_srcref_location_line_shift() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Starting at line 3, column 0
+    let code_location = JupyterPositronLocation {
+        uri: "file:///path/to/file.R".to_owned(),
+        range: JupyterPositronRange {
+            start: JupyterPositronPosition {
+                line: 2,
+                character: 0,
+            },
+            end: JupyterPositronPosition {
+                line: 2,
+                character: 18,
+            },
+        },
+    };
+    frontend.execute_request_with_location("fn <- function() {}; NULL", |_| (), code_location);
+
+    // `function` starts at column 7, the body ends at 19 (right-boundary position)
+    // Lines are 1-based so incremented by 1.
+    frontend.execute_request(".ps.internal(get_srcref_range(fn))", |result| {
+        assert_eq!(
+            result,
+            "$start
+     line character\u{20}
+        3         7\u{20}
+
+$end
+     line character\u{20}
+        3        19\u{20}
+"
+        );
+    });
 }
