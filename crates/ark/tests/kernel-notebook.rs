@@ -109,7 +109,10 @@ fn test_notebook_execute_request_incomplete_multiple_lines() {
 fn test_notebook_stdin_basic_prompt() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "readline('prompt>')";
     frontend.send_execute_request(code, options);
@@ -134,7 +137,10 @@ fn test_notebook_stdin_basic_prompt() {
 fn test_notebook_stdin_followed_by_an_expression_on_the_same_line() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "val <- readline('prompt>'); paste0(val,'-there')";
     frontend.send_execute_request(code, options);
@@ -159,7 +165,10 @@ fn test_notebook_stdin_followed_by_an_expression_on_the_same_line() {
 fn test_notebook_stdin_followed_by_an_expression_on_the_next_line() {
     let frontend = DummyArkFrontendNotebook::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     // Note, `1` is an intermediate output and is not emitted in notebooks
     let code = "1\nval <- readline('prompt>')\npaste0(val,'-there')";
