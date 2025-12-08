@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 use tree_sitter::Parser;
 use tree_sitter::Query;
 
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::TsQuery;
 
 /// Parsed NAMESPACE file
@@ -72,11 +73,7 @@ impl Namespace {
         let as_strings = |nodes: &Vec<tree_sitter::Node>| {
             nodes
                 .iter()
-                .map(|node| {
-                    node.utf8_text(contents.as_bytes())
-                        .unwrap_or("")
-                        .to_string()
-                })
+                .map(|node| node.node_as_str(&contents).unwrap_or("").to_string())
                 .collect::<Vec<_>>()
         };
 

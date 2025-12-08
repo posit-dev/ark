@@ -78,7 +78,7 @@ mod tests {
     use crate::lsp::completions::sources::unique;
     use crate::lsp::completions::sources::unique::string::completions_from_string;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
     use crate::treesitter::node_find_string;

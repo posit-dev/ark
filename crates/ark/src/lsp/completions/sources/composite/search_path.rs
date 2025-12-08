@@ -103,7 +103,7 @@ fn completions_from_search_path(
                     env,
                     name,
                     promise_strategy,
-                    context.function_context(),
+                    context.function_context()?,
                 ) {
                     Ok(item) => completions.push(item),
                     Err(err) => {
