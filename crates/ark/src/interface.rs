@@ -400,13 +400,13 @@ impl PendingInputs {
 
         let line_directive = format!(
             "#line {line} \"{uri}\"",
-            line = location.line + 1,
+            line = location.start.line + 1,
             uri = location.uri
         );
 
         // Leading whitespace to ensure that R starts parsing expressions from
         // the expected `character` offset.
-        let leading_padding = " ".repeat(location.character);
+        let leading_padding = " ".repeat(location.start.character);
 
         // Collect existing leading trivia as (kind, text) tuples
         let existing_trivia: Vec<_> = first_token
@@ -970,7 +970,7 @@ impl RMain {
             }
         }
 
-        let loc = req.extract_code_location().log_err().flatten();
+        let loc = req.code_location().log_err().flatten();
 
         // Return the code to the R console to be evaluated and the corresponding exec count
         (

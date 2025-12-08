@@ -51,7 +51,7 @@ fn test_execute_request_srcref_location_line_shift() {
             },
             end: JupyterPositronPosition {
                 line: 2,
-                character: 18,
+                character: 25,
             },
         },
     };
@@ -88,7 +88,7 @@ fn test_execute_request_srcref_location_line_and_column_shift() {
             },
             end: JupyterPositronPosition {
                 line: 2,
-                character: 22,
+                character: 25,
             },
         },
     };
