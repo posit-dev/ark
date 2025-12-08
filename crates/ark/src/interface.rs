@@ -38,6 +38,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_request::CodeLocation;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
@@ -51,6 +52,7 @@ use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
 use amalthea::Error;
 use anyhow::*;
+use biome_rowan::AstNode;
 use bus::Bus;
 use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
@@ -332,14 +334,21 @@ enum ParseResult<T> {
 }
 
 impl PendingInputs {
-    pub(crate) fn read(input: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
+    pub(crate) fn read(
+        code: &str,
+        location: Option<CodeLocation>,
+    ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let mut _srcfile = None;
 
-        let input = if harp::get_option_bool("keep.source") {
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(input.into()));
+        let input = if let Some(location) = location {
+            let annotated_code = Self::annotate(code, location);
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(annotated_code.into()));
+            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+        } else if harp::get_option_bool("keep.source") {
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(code.into()));
             harp::ParseInput::SrcFile(&_srcfile.unwrap())
         } else {
-            harp::ParseInput::Text(input)
+            harp::ParseInput::Text(code)
         };
 
         let status = match harp::parse_status(&input) {
@@ -381,6 +390,59 @@ impl PendingInputs {
             len,
             index,
         })))
+    }
+
+    fn annotate(code: &str, location: CodeLocation) -> String {
+        let node = aether_parser::parse(code, Default::default()).tree();
+        let Some(first_token) = node.syntax().first_token() else {
+            return code.into();
+        };
+
+        let line_directive = format!(
+            "#line {line} \"{uri}\"",
+            line = location.start.line + 1,
+            uri = location.uri
+        );
+
+        // Leading whitespace to ensure that R starts parsing expressions from
+        // the expected `character` offset.
+        let leading_padding = " ".repeat(location.start.character);
+
+        // Collect existing leading trivia as (kind, text) tuples
+        let existing_trivia: Vec<_> = first_token
+            .leading_trivia()
+            .pieces()
+            .map(|piece| (piece.kind(), piece.text().to_string()))
+            .collect();
+
+        // Create new trivia with line directive prepended
+        let new_trivia: Vec<_> = vec![
+            (
+                biome_rowan::TriviaPieceKind::SingleLineComment,
+                line_directive.to_string(),
+            ),
+            (biome_rowan::TriviaPieceKind::Newline, "\n".to_string()),
+            (
+                biome_rowan::TriviaPieceKind::Whitespace,
+                leading_padding.to_string(),
+            ),
+        ]
+        .into_iter()
+        .chain(existing_trivia.into_iter())
+        .collect();
+
+        let new_first_token =
+            first_token.with_leading_trivia(new_trivia.iter().map(|(k, t)| (*k, t.as_str())));
+
+        let Some(new_node) = node
+            .syntax()
+            .clone()
+            .replace_child(first_token.into(), new_first_token.into())
+        else {
+            return code.into();
+        };
+
+        new_node.to_string()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -478,7 +540,7 @@ pub struct PromptInfo {
 
 pub enum ConsoleInput {
     EOF,
-    Input(String),
+    Input(String, Option<CodeLocation>),
 }
 
 #[derive(Debug)]
@@ -894,8 +956,13 @@ impl RMain {
             }
         }
 
+        let loc = req.code_location().log_err().flatten();
+
         // Return the code to the R console to be evaluated and the corresponding exec count
-        (ConsoleInput::Input(req.code.clone()), self.execution_count)
+        (
+            ConsoleInput::Input(req.code.clone(), loc),
+            self.execution_count,
+        )
     }
 
     /// Invoked by R to read console input from the user.
@@ -1318,14 +1385,14 @@ impl RMain {
 
                 // Translate requests from the debugger frontend to actual inputs for
                 // the debug interpreter
-                ConsoleInput::Input(debug_request_command(cmd))
+                ConsoleInput::Input(debug_request_command(cmd), None)
             },
         };
 
         match input {
-            ConsoleInput::Input(code) => {
+            ConsoleInput::Input(code, loc) => {
                 // Parse input into pending expressions
-                match PendingInputs::read(&code) {
+                match PendingInputs::read(&code, loc) {
                     Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },
