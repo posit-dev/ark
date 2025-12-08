@@ -71,12 +71,19 @@ pub struct JupyterPositronPosition {
 #[derive(Debug, Clone)]
 pub struct CodeLocation {
     pub uri: Url,
+    pub start: Position,
+    pub end: Position,
+}
+
+/// `character` in UTF-8 offset
+#[derive(Debug, Clone)]
+pub struct Position {
     pub line: u32,
     pub character: usize,
 }
 
 impl ExecuteRequest {
-    pub fn extract_code_location(&self) -> anyhow::Result<Option<CodeLocation>> {
+    pub fn code_location(&self) -> anyhow::Result<Option<CodeLocation>> {
         let Some(positron) = &self.positron else {
             return Ok(None);
         };
@@ -87,13 +94,51 @@ impl ExecuteRequest {
 
         let uri = Url::parse(&location.uri).context("Failed to parse URI from code location")?;
 
-        let character = unicode_char_to_utf8_offset(&self.code, 0, location.range.start.character)?;
+        let character_start =
+            unicode_char_to_utf8_offset(&self.code, 0, location.range.start.character)?;
+        let character_end =
+            unicode_char_to_utf8_offset(&self.code, 0, location.range.end.character)?;
 
-        Ok(Some(CodeLocation {
-            uri,
+        let start = Position {
             line: location.range.start.line,
-            character,
-        }))
+            character: character_start,
+        };
+        let end = Position {
+            line: location.range.end.line,
+            character: character_end,
+        };
+
+        // Sanity check: `code` conforms exactly to expected number of lines
+        let line_count_code = self.code.lines().count() - 1;
+        let line_count_message = (end.line - start.line) as usize;
+        if line_count_code != line_count_message {
+            return Err(anyhow::anyhow!(
+                "Line information does not match code line count (expected {}, got {})",
+                line_count_code,
+                line_count_message
+            ));
+        }
+
+        // Sanity check: the last line has exactly the expected number of UTF-8 bytes
+        let last_line = self
+            .code
+            .split('\n')
+            .last()
+            .ok_or_else(|| anyhow::anyhow!("Unreachable"))?;
+
+        // `code` might have Windows line endings
+        let last_line = last_line.strip_suffix('\r').unwrap_or(last_line);
+
+        if end.character != last_line.len() {
+            return Err(anyhow::anyhow!(
+                "Expected line {line} to have length {expected}, got {actual}",
+                line = end.line,
+                expected = end.character,
+                actual = last_line.len()
+            ));
+        }
+
+        Ok(Some(CodeLocation { uri, start, end }))
     }
 }
 
