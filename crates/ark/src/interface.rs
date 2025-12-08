@@ -404,6 +404,10 @@ impl PendingInputs {
             uri = location.uri
         );
 
+        // Leading whitespace to ensure that R starts parsing expressions from
+        // the expected `character` offset.
+        let leading_padding = " ".repeat(location.character);
+
         // Collect existing leading trivia as (kind, text) tuples
         let existing_trivia: Vec<_> = first_token
             .leading_trivia()
@@ -418,6 +422,10 @@ impl PendingInputs {
                 line_directive.to_string(),
             ),
             (biome_rowan::TriviaPieceKind::Newline, "\n".to_string()),
+            (
+                biome_rowan::TriviaPieceKind::Whitespace,
+                leading_padding.to_string(),
+            ),
         ]
         .into_iter()
         .chain(existing_trivia.into_iter())
