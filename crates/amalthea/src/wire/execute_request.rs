@@ -94,10 +94,57 @@ impl ExecuteRequest {
 
         let uri = Url::parse(&location.uri).context("Failed to parse URI from code location")?;
 
+        // The location maps `self.code` to a range in the document. We'll first
+        // do a sanity check that the span dimensions (end - start) match the
+        // code extents.
+        let span_lines = location.range.end.line - location.range.start.line;
+
+        // For multiline code, the last line's expected length is just `end.character`.
+        // For single-line code, the expected length is `end.character - start.character`.
+        let expected_last_line_chars = if span_lines == 0 {
+            location.range.end.character - location.range.start.character
+        } else {
+            location.range.end.character
+        };
+
+        let code_lines: Vec<&str> = self.code.lines().collect();
+        let code_line_count = code_lines.len().saturating_sub(1);
+
+        // Sanity check: `code` conforms exactly to expected number of lines in the span
+        if code_line_count != span_lines as usize {
+            return Err(anyhow::anyhow!(
+                "Line information does not match code line count (expected {}, got {})",
+                code_line_count,
+                span_lines
+            ));
+        }
+
+        let last_line_idx = code_lines.len().saturating_sub(1);
+        let last_line = code_lines.get(last_line_idx).unwrap_or(&"");
+        let last_line = last_line.strip_suffix('\r').unwrap_or(last_line);
+        let last_line_chars = last_line.chars().count() as u32;
+
+        // Sanity check: the last line has exactly the expected number of characters
+        if last_line_chars != expected_last_line_chars {
+            return Err(anyhow::anyhow!(
+                "Expected last line to have {expected} characters, got {actual}",
+                expected = expected_last_line_chars,
+                actual = last_line_chars
+            ));
+        }
+
+        // Convert start character from unicode code points to UTF-8 bytes
         let character_start =
             unicode_char_to_utf8_offset(&self.code, 0, location.range.start.character)?;
-        let character_end =
-            unicode_char_to_utf8_offset(&self.code, 0, location.range.end.character)?;
+
+        // End character is start + last line byte length (for single line)
+        // or just last line byte length (for multiline, since it's on a new line)
+        let last_line_bytes = last_line.len();
+        let character_end = if span_lines == 0 {
+            character_start + last_line_bytes
+        } else {
+            last_line_bytes
+        };
 
         let start = Position {
             line: location.range.start.line,
@@ -107,36 +154,6 @@ impl ExecuteRequest {
             line: location.range.end.line,
             character: character_end,
         };
-
-        // Sanity check: `code` conforms exactly to expected number of lines
-        let line_count_code = self.code.lines().count() - 1;
-        let line_count_message = (end.line - start.line) as usize;
-        if line_count_code != line_count_message {
-            return Err(anyhow::anyhow!(
-                "Line information does not match code line count (expected {}, got {})",
-                line_count_code,
-                line_count_message
-            ));
-        }
-
-        // Sanity check: the last line has exactly the expected number of UTF-8 bytes
-        let last_line = self
-            .code
-            .split('\n')
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("Unreachable"))?;
-
-        // `code` might have Windows line endings
-        let last_line = last_line.strip_suffix('\r').unwrap_or(last_line);
-
-        if end.character != last_line.len() {
-            return Err(anyhow::anyhow!(
-                "Expected line {line} to have length {expected}, got {actual}",
-                line = end.line,
-                expected = end.character,
-                actual = last_line.len()
-            ));
-        }
 
         Ok(Some(CodeLocation { uri, start, end }))
     }
@@ -150,18 +167,23 @@ fn unicode_char_to_utf8_offset(text: &str, line: u32, character: u32) -> anyhow:
         .nth(line as usize)
         .ok_or_else(|| anyhow::anyhow!("Line {line} not found in text"))?;
 
-    let line_chars = target_line.chars().count();
+    unicode_char_to_utf8_offset_in_line(target_line, character)
+}
+
+/// Converts a character count in unicode scalar values to a UTF-8 byte count.
+fn unicode_char_to_utf8_offset_in_line(line: &str, character: u32) -> anyhow::Result<usize> {
+    let line_chars = line.chars().count();
     if character as usize > line_chars {
         return Err(anyhow::anyhow!(
-            "Character position {character} exceeds line {line} length ({line_chars})"
+            "Character position {character} exceeds line length ({line_chars})"
         ));
     }
 
-    let byte_offset = target_line
+    let byte_offset = line
         .char_indices()
         .nth(character as usize)
         .map(|(byte_idx, _)| byte_idx)
-        .unwrap_or(target_line.len());
+        .unwrap_or(line.len());
 
     Ok(byte_offset)
 }
