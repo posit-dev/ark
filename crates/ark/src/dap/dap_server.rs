@@ -30,7 +30,9 @@ use dap::server::ServerOutput;
 use dap::types::*;
 use stdext::result::ResultExt;
 use stdext::spawn;
+use url::Url;
 
+use super::dap::Breakpoint;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::console_debug::FrameInfo;
@@ -172,6 +174,17 @@ fn listen_dap_events<W: Write>(
                     DapBackendEvent::Terminated => {
                         Event::Terminated(None)
                     },
+
+                    DapBackendEvent::BreakpointVerified(id) => {
+                        Event::Breakpoint(BreakpointEventBody {
+                            reason: BreakpointEventReason::Changed,
+                            breakpoint: dap::types::Breakpoint {
+                                id: Some(id),
+                                verified: true,
+                                ..Default::default()
+                            },
+                        })
+                    },
                 };
 
                 let mut output = output.lock().unwrap();
@@ -237,6 +250,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::Threads => {
                 self.handle_threads(req);
             },
+            Command::SetBreakpoints(args) => {
+                self.handle_set_breakpoints(req, args);
+            },
             Command::SetExceptionBreakpoints(args) => {
                 self.handle_set_exception_breakpoints(req, args);
             },
@@ -295,6 +311,58 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.respond(rsp);
 
         self.send_event(Event::Initialized);
+    }
+
+    fn handle_set_breakpoints(&mut self, req: Request, args: SetBreakpointsArguments) {
+        let path = args.source.path.clone().unwrap_or_default();
+
+        let uri = match Url::from_file_path(&path) {
+            Ok(uri) => uri,
+            Err(()) => {
+                log::error!("Failed to convert path to URI: '{path}'");
+                let rsp = req.error(&format!("Invalid path: {path}"));
+                self.respond(rsp);
+                return;
+            },
+        };
+
+        let source_breakpoints = args.breakpoints.unwrap_or_default();
+
+        let mut state = self.state.lock().unwrap();
+
+        let breakpoints: Vec<Breakpoint> = source_breakpoints
+            .iter()
+            .map(|bp| Breakpoint {
+                id: state.next_breakpoint_id(),
+                line: bp.line as u32,
+                verified: false,
+            })
+            .collect();
+
+        log::trace!(
+            "DAP: URI {uri} now has {} unverified breakpoints",
+            breakpoints.len()
+        );
+
+        state.breakpoints.insert(uri, breakpoints.clone());
+
+        drop(state);
+
+        let response_breakpoints: Vec<dap::types::Breakpoint> = breakpoints
+            .iter()
+            .map(|bp| dap::types::Breakpoint {
+                id: Some(bp.id),
+                verified: bp.verified,
+                line: Some(bp.line as i64),
+                ..Default::default()
+            })
+            .collect();
+
+        let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+            breakpoints: response_breakpoints,
+        }));
+
+        self.respond(rsp);
     }
 
     fn handle_attach(&mut self, req: Request, _args: AttachRequestArguments) {
