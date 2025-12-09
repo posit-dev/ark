@@ -17,11 +17,19 @@ use crossbeam::channel::Sender;
 use harp::object::RObject;
 use stdext::result::ResultExt;
 use stdext::spawn;
+use url::Url;
 
 use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
+
+#[derive(Debug, Clone)]
+pub struct Breakpoint {
+    pub id: i64,
+    pub line: u32,
+    pub verified: bool,
+}
 
 #[derive(Debug, Copy, Clone)]
 pub enum DapBackendEvent {
@@ -35,6 +43,9 @@ pub enum DapBackendEvent {
     /// Event sent when a browser prompt is emitted during an existing
     /// debugging session
     Stopped(DapStoppedEvent),
+
+    /// Event sent when a breakpoint has been verified
+    BreakpointVerified(i64),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -55,6 +66,9 @@ pub struct Dap {
 
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
+
+    /// Known breakpoints keyed by URI
+    pub breakpoints: HashMap<Url, Vec<Breakpoint>>,
 
     /// Map of `source` -> `source_reference` used for frames that don't have
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
@@ -83,6 +97,9 @@ pub struct Dap {
     /// information.
     current_variables_reference: i64,
 
+    /// Monotonically increasing breakpoint ID counter
+    current_breakpoint_id: i64,
+
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<Sender<CommMsg>>,
 
@@ -101,10 +118,12 @@ impl Dap {
             is_connected: false,
             backend_events_tx: None,
             stack: None,
+            breakpoints: HashMap::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
             current_variables_reference: 1,
+            current_breakpoint_id: 1,
             comm_tx: None,
             r_request_tx,
             shared_self: None,
@@ -231,6 +250,39 @@ impl Dap {
         self.current_variables_reference += 1;
 
         variables_reference
+    }
+
+    pub fn next_breakpoint_id(&mut self) -> i64 {
+        let id = self.current_breakpoint_id;
+        self.current_breakpoint_id += 1;
+        id
+    }
+
+    /// Verify breakpoints within a line range for a given URI
+    ///
+    /// Loops over all breakpoints for the URI and verifies any unverified
+    /// breakpoints that fall within the range [start_line, end_line].
+    /// Sends a `BreakpointVerified` event for each newly verified breakpoint.
+    pub fn verify_range(&mut self, uri: &Url, start_line: usize, end_line: usize) {
+        let Some(bp_list) = self.breakpoints.get_mut(uri) else {
+            return;
+        };
+
+        for bp in bp_list.iter_mut() {
+            if bp.verified {
+                continue;
+            }
+
+            let line = bp.line as usize;
+            if line >= start_line && line <= end_line {
+                bp.verified = true;
+
+                if let Some(tx) = &self.backend_events_tx {
+                    tx.send(DapBackendEvent::BreakpointVerified(bp.id))
+                        .log_err();
+                }
+            }
+        }
     }
 }
 
