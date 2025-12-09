@@ -132,20 +132,19 @@ impl Dap {
         self.load_variables_references(&mut stack);
         self.stack = Some(stack);
 
-        if self.is_debugging {
-            if let Some(tx) = &self.backend_events_tx {
-                tx.send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus }))
+        log::trace!("DAP: Sending `start_debug` events");
+
+        if let Some(comm_tx) = &self.comm_tx {
+            // Ask frontend to connect to the DAP
+            comm_tx
+                .send(amalthea::comm_rpc_message!("start_debug"))
+                .log_err();
+
+            if let Some(dap_tx) = &self.backend_events_tx {
+                dap_tx
+                    .send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus }))
                     .log_err();
             }
-        } else {
-            if let Some(tx) = &self.comm_tx {
-                // Ask frontend to connect to the DAP
-                log::trace!("DAP: Sending `start_debug` event");
-                let msg = amalthea::comm_rpc_message!("start_debug");
-                tx.send(msg).log_err();
-            }
-
-            self.is_debugging = true;
         }
     }
 
@@ -158,12 +157,17 @@ impl Dap {
         self.is_debugging = false;
 
         if self.is_connected {
-            if let Some(_) = &self.comm_tx {
+            log::trace!("DAP: Sending `stop_debug` events");
+
+            if let Some(comm_tx) = &self.comm_tx {
+                comm_tx
+                    .send(amalthea::comm_rpc_message!("stop_debug"))
+                    .log_err();
+
                 // Let frontend know we've quit the debugger so it can
                 // terminate the debugging session and disconnect.
-                if let Some(tx) = &self.backend_events_tx {
-                    log::trace!("DAP: Sending `stop_debug` event");
-                    tx.send(DapBackendEvent::Terminated).log_err();
+                if let Some(datp_tx) = &self.backend_events_tx {
+                    datp_tx.send(DapBackendEvent::Continued).log_err();
                 }
             }
             // else: If not connected to a frontend, the DAP client should
