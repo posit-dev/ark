@@ -59,3 +59,84 @@ pub(crate) fn annotate_input(code: &str, location: CodeLocation) -> String {
 
     new_node.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use amalthea::wire::execute_request::CodeLocation;
+    use amalthea::wire::execute_request::Position;
+    use url::Url;
+
+    use super::*;
+
+    fn make_location(line: u32, character: usize) -> CodeLocation {
+        CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position { line, character },
+            end: Position { line, character },
+        }
+    }
+
+    #[test]
+    fn test_annotate_input_basic() {
+        let code = "x <- 1\ny <- 2";
+        let location = make_location(0, 0);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_shifted_line() {
+        let code = "x <- 1\ny <- 2";
+        let location = make_location(10, 0);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_shifted_character() {
+        let code = "x <- 1\ny <- 2";
+        let location = make_location(0, 5);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_shifted_line_and_character() {
+        let code = "x <- 1\ny <- 2";
+        let location = make_location(10, 5);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_with_existing_whitespace() {
+        let code = "  x <- 1\n  y <- 2";
+        let location = make_location(0, 0);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_with_existing_whitespace_shifted() {
+        let code = "  x <- 1\n  y <- 2";
+        let location = make_location(0, 2);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_with_existing_comment() {
+        let code = "# comment\nx <- 1";
+        let location = make_location(0, 0);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_empty_code() {
+        let code = "";
+        let location = make_location(0, 0);
+        let result = annotate_input(code, location);
+        insta::assert_snapshot!(result);
+    }
+}
