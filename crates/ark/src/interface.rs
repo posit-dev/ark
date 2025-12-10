@@ -98,6 +98,7 @@ use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
+use crate::console_debug::FrameInfoId;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
@@ -120,7 +121,6 @@ use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
-use crate::repl_debug::FrameInfoId;
 use crate::repos::apply_default_repos;
 use crate::repos::DefaultRepos;
 use crate::request::debug_request_command;
@@ -1635,12 +1635,12 @@ impl RMain {
     /// in duplicate virtual editors being opened on the client side.
     pub fn load_fallback_sources(
         &mut self,
-        stack: &Vec<crate::repl_debug::FrameInfo>,
+        stack: &Vec<crate::console_debug::FrameInfo>,
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
         for frame in stack.iter() {
-            if let crate::repl_debug::FrameSource::Text(source) = &frame.source {
+            if let crate::console_debug::FrameSource::Text(source) = &frame.source {
                 let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
 
                 if self.has_virtual_document(&uri) {

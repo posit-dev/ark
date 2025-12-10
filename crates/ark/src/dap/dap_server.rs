@@ -33,12 +33,12 @@ use stdext::spawn;
 
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::console_debug::FrameInfo;
+use crate::console_debug::FrameSource;
 use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
-use crate::repl_debug::FrameInfo;
-use crate::repl_debug::FrameSource;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
