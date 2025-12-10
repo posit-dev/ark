@@ -347,6 +347,7 @@ version = "0.1.223"
 dependencies = [
  "actix-web",
  "aether_lsp_utils",
+ "air_r_factory",
  "air_r_parser",
  "air_r_syntax",
  "amalthea",

@@ -12,6 +12,7 @@ rust-version.workspace = true
 
 [dependencies]
 actix-web = "4.4.0"
+aether_factory.workspace = true
 aether_lsp_utils.workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true

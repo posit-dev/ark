@@ -99,6 +99,7 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
+use crate::dap::dap::Breakpoint;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
@@ -337,11 +338,12 @@ impl PendingInputs {
     pub(crate) fn read(
         code: &str,
         location: Option<CodeLocation>,
+        breakpoints: Option<&mut [Breakpoint]>,
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let mut _srcfile = None;
 
         let input = if let Some(location) = location {
-            let annotated_code = annotate_input(code, location);
+            let annotated_code = annotate_input(code, location, breakpoints);
             _srcfile = Some(SrcFile::new_virtual_empty_filename(annotated_code.into()));
             harp::ParseInput::SrcFile(&_srcfile.unwrap())
         } else if harp::get_option_bool("keep.source") {
@@ -1359,19 +1361,28 @@ impl RMain {
         match input {
             ConsoleInput::Input(code, loc) => {
                 // Parse input into pending expressions
-                match PendingInputs::read(&code, loc) {
+
+                // Keep the DAP lock while we are updating breakpoints
+                let mut dap_guard = self.debug_dap.lock().unwrap();
+                let breakpoints = loc
+                    .as_ref()
+                    .and_then(|loc| dap_guard.breakpoints.get_mut(&loc.uri))
+                    .map(|v| v.as_mut_slice());
+
+                match PendingInputs::read(&code, loc, breakpoints) {
                     Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },
                     Ok(ParseResult::SyntaxError(message)) => {
-                        return Some(ConsoleResult::Error(message))
+                        return Some(ConsoleResult::Error(message));
                     },
                     Err(err) => {
                         return Some(ConsoleResult::Error(format!(
                             "Error while parsing input: {err:?}"
-                        )))
+                        )));
                     },
                 }
+                drop(dap_guard);
 
                 // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
