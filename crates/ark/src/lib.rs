@@ -9,6 +9,7 @@ pub mod analysis;
 pub mod ark_comm;
 pub mod browser;
 pub mod connections;
+pub mod console_annotate;
 pub mod console_debug;
 pub mod control;
 pub mod coordinates;
