@@ -330,12 +330,14 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         let mut state = self.state.lock().unwrap();
 
+        // Positron sends 1-based line offsets, but this is configurable by client
         let breakpoints: Vec<Breakpoint> = source_breakpoints
             .iter()
             .map(|bp| Breakpoint {
                 id: state.next_breakpoint_id(),
-                line: bp.line as u32,
+                line: (bp.line - 1) as u32,
                 verified: false,
+                invalid: false,
             })
             .collect();
 

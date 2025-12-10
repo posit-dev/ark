@@ -29,6 +29,7 @@ pub struct Breakpoint {
     pub id: i64,
     pub line: u32,
     pub verified: bool,
+    pub invalid: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -269,7 +270,7 @@ impl Dap {
         };
 
         for bp in bp_list.iter_mut() {
-            if bp.verified {
+            if bp.verified || bp.invalid {
                 continue;
             }
 

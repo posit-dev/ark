@@ -27,6 +27,7 @@ dashmap = "5.4.0"
 aether_parser.workspace = true
 aether_syntax.workspace = true
 aether_lsp_utils.workspace = true
+aether_factory.workspace = true
 ego-tree = "0.6.2"
 harp = { path = "../harp" }
 http = "0.2.9"
