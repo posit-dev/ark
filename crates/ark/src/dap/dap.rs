@@ -18,8 +18,8 @@ use harp::object::RObject;
 use stdext::result::ResultExt;
 use stdext::spawn;
 
+use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
-use crate::repl_debug::FrameInfo;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
 
