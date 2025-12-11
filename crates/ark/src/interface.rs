@@ -658,6 +658,16 @@ impl RMain {
 
             // Initialise Ark's last value
             libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
+
+            // Store `.ark_breakpoint` in base namespace so it's maximally reachable
+            libr::SETCDR(
+                r_symbol!(".ark_breakpoint"),
+                // Originally defined in Positron namespace, get it from there
+                Environment::view(ARK_ENVS.positron_ns)
+                    .get(".ark_breakpoint")
+                    .unwrap()
+                    .sexp,
+            );
         }
 
         // Now that R has started (emitting any startup messages that we capture in the
@@ -1002,6 +1012,16 @@ impl RMain {
             // fall through to event loop
             let result = self.take_result();
             self.handle_active_request(&info, ConsoleValue::Success(result));
+        }
+
+        // If debugger is active, get current function and check whether it
+        // inherits from `ark_breakpoint`. If it does, send `n` automatically.
+        if harp::r_current_function().inherits("ark_breakpoint") {
+            self.debug_preserve_focus = false;
+            self.debug_send_dap(DapBackendEvent::Continued);
+
+            Self::on_console_input(buf, buflen, String::from("n")).unwrap();
+            return ConsoleResult::NewInput;
         }
 
         // In the future we'll also send browser information, see
