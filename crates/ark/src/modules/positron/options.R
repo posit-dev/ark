@@ -1,7 +1,7 @@
 #
 # options.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -35,4 +35,13 @@ options(plumber.docs.callback = function(url) {
 # Show Shiny applications in the viewer
 options(shiny.launch.browser = function(url) {
     .ps.ui.showUrl(url)
+})
+
+# Show Profvis output in the viewer
+options(profvis.print = function(x) {
+    # Render the HTML content to a temporary file
+    tmp_file <- htmltools::html_print(x, viewer = NULL)
+
+    # Pass the file to the viewer
+    .ps.Call("ps_html_viewer", tmp_file, "R Profile", -1L, "editor")
 })

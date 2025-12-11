@@ -1,7 +1,7 @@
 #
 # html_widgets.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
 #
 #
 #' @export
@@ -14,7 +14,7 @@
     tmp_file <- htmltools::html_print(rendered, viewer = NULL)
 
     # Guess whether this is a plot-like widget based on its sizing policy.
-    is_plot <- isTRUE(x$sizingPolicy$knitr$figure)
+    destination <- if (isTRUE(x$sizingPolicy$knitr$figure)) 'plot' else 'viewer'
 
     # Derive the height of the viewer pane from the sizing policy of the widget.
     height <- .ps.validate.viewer.height(x$sizingPolicy$viewer$paneHeight)
@@ -30,7 +30,7 @@
 
     # Pass the widget to the viewer. Positron will assemble the final HTML
     # document from these components.
-    .ps.Call("ps_html_viewer", tmp_file, label, height, is_plot)
+    .ps.Call("ps_html_viewer", tmp_file, label, height, destination)
 }
 
 #' @export

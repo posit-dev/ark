@@ -108,6 +108,7 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
 pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     let params = ShowUrlParams {
         url: url.to_string(),
+        source: None,
     };
     let event = UiFrontendEvent::ShowUrl(params);
 
