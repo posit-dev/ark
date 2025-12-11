@@ -440,7 +440,6 @@ fn add_line_directive_to_node(node: &RSyntaxNode, line: u32, uri: &Url) -> RSynt
     let line_directive = format!("#line {line} \"{uri}\"", line = line + 1);
 
     // Collect existing leading trivia, but skip only the first newline to avoid double blank lines
-    // Preserve any additional newlines (blank lines) that may follow
     let existing_trivia: Vec<_> = first_token
         .leading_trivia()
         .pieces()
@@ -455,17 +454,36 @@ fn add_line_directive_to_node(node: &RSyntaxNode, line: u32, uri: &Url) -> RSynt
         })
         .collect();
 
-    // Create new trivia with #line directive prepended, followed by a newline
-    let new_trivia: Vec<_> = vec![
-        (
-            biome_rowan::TriviaPieceKind::SingleLineComment,
-            line_directive,
-        ),
-        (biome_rowan::TriviaPieceKind::Newline, "\n".to_string()),
-    ]
-    .into_iter()
-    .chain(existing_trivia.into_iter())
-    .collect();
+    // Insert line directive before the final whitespace (indentation) if present.
+    // This preserves indentation: `[\n, \n, ws]` becomes `[\n, \n, directive, \n, ws]`
+    // rather than `[\n, \n, ws, directive, \n]` which would break indentation.
+    let new_trivia: Vec<_> = if existing_trivia.last().map_or(false, |(k, _)| {
+        *k == biome_rowan::TriviaPieceKind::Whitespace
+    }) {
+        let (init, last) = existing_trivia.split_at(existing_trivia.len() - 1);
+        init.iter()
+            .cloned()
+            .chain(vec![
+                (
+                    biome_rowan::TriviaPieceKind::SingleLineComment,
+                    line_directive,
+                ),
+                (biome_rowan::TriviaPieceKind::Newline, "\n".to_string()),
+            ])
+            .chain(last.iter().cloned())
+            .collect()
+    } else {
+        existing_trivia
+            .into_iter()
+            .chain(vec![
+                (
+                    biome_rowan::TriviaPieceKind::SingleLineComment,
+                    line_directive,
+                ),
+                (biome_rowan::TriviaPieceKind::Newline, "\n".to_string()),
+            ])
+            .collect()
+    };
 
     let new_first_token =
         first_token.with_leading_trivia(new_trivia.iter().map(|(k, t)| (*k, t.as_str())));
