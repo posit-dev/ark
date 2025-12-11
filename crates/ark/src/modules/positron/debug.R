@@ -700,3 +700,8 @@ non_parseable_pattern_info <- function(pattern, replacement) {
 non_parseable_fixed_info <- function(pattern, replacement) {
     list(pattern = pattern, replacement = replacement, fixed = TRUE)
 }
+
+#' @export
+.ark.breakpoint <- function(expr, id) {
+    expr
+}

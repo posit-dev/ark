@@ -35,7 +35,7 @@ pub enum ParseDataKind {
 impl ParseData {
     pub fn from_srcfile(srcfile: &harp::srcref::SrcFile) -> harp::Result<Self> {
         let data = RFunction::new("utils", "getParseData")
-            .add(srcfile.inner.sexp)
+            .add(srcfile.inner.inner.sexp)
             .call()?;
 
         if data.sexp == harp::RObject::null().sexp {
