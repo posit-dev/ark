@@ -72,6 +72,7 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::get_option;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::table_kind;
@@ -1159,6 +1160,7 @@ impl RDataExplorer {
                     }]),
                 },
             },
+            format_options: Some(Self::current_format_options()),
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
     }
@@ -1298,6 +1300,18 @@ impl RDataExplorer {
 
         // Call the conversion function with resolved sort keys
         convert_to_code::convert_to_code(params, object_name, &resolved_sort_keys)
+    }
+
+    fn current_format_options() -> FormatOptions {
+        let scipen: i64 = get_option("scipen").try_into().unwrap_or(0);
+        let max_integral_digits = (7 + scipen).clamp(1, 20);
+        FormatOptions {
+            large_num_digits: 2,
+            small_num_digits: 4,
+            max_integral_digits,
+            max_value_length: 1000,
+            thousands_sep: None,
+        }
     }
 }
 
