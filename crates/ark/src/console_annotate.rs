@@ -25,9 +25,19 @@ pub(crate) fn annotate_input(
     location: CodeLocation,
     breakpoints: Option<&mut [Breakpoint]>,
 ) -> String {
-    let node = aether_parser::parse(code, Default::default()).tree();
+    // First, inject breakpoints into the original code (before adding line directive).
+    // This ensures AST line numbers match the code coordinates we expect.
+    let code_with_breakpoints = if let Some(breakpoints) = breakpoints {
+        let line_index = LineIndex::new(code);
+        inject_breakpoints(code, location.clone(), breakpoints, &line_index)
+    } else {
+        code.to_string()
+    };
+
+    // Now add the line directive to the (possibly modified) code
+    let node = aether_parser::parse(&code_with_breakpoints, Default::default()).tree();
     let Some(first_token) = node.syntax().first_token() else {
-        return code.into();
+        return code_with_breakpoints;
     };
 
     let line_directive = format!(
@@ -71,17 +81,10 @@ pub(crate) fn annotate_input(
         .clone()
         .replace_child(first_token.into(), new_first_token.into())
     else {
-        return code.into();
+        return code_with_breakpoints;
     };
 
-    let out = new_node.to_string();
-
-    if let Some(breakpoints) = breakpoints {
-        let line_index = LineIndex::new(&out);
-        inject_breakpoints(&out, location, breakpoints, &line_index)
-    } else {
-        out
-    }
+    new_node.to_string()
 }
 
 #[allow(dead_code)]
@@ -92,6 +95,10 @@ pub(crate) fn inject_breakpoints(
     line_index: &LineIndex,
 ) -> String {
     let root = aether_parser::parse(code, Default::default()).tree();
+
+    // The offset between document coordinates and code coordinates.
+    // Breakpoints are in document coordinates, but AST nodes are in code coordinates.
+    let line_offset = location.start.line;
 
     // Filter breakpoints to only those within the source's valid range
     let breakpoints: Vec<_> = breakpoints
@@ -104,19 +111,26 @@ pub(crate) fn inject_breakpoints(
     }
 
     // Phase 1: Find breakpoint anchors
-    let anchors = find_breakpoint_anchors(root.syntax(), breakpoints, &location.uri, line_index);
+    let anchors = find_breakpoint_anchors(
+        root.syntax(),
+        breakpoints,
+        &location.uri,
+        line_index,
+        line_offset,
+    );
 
     if anchors.is_empty() {
         return code.into();
     }
 
     // Phase 2: Inject breakpoints
-    inject_breakpoint_calls(root.syntax(), anchors, &location.uri)
+    inject_breakpoint_calls(root.syntax(), anchors, &location.uri, line_offset)
 }
 
 struct BreakpointAnchor {
     breakpoint_id: i64,
-    actual_line: u32,
+    /// The line in code coordinates (0-based within parsed code)
+    code_line: u32,
 }
 
 fn find_breakpoint_anchors(
@@ -124,6 +138,7 @@ fn find_breakpoint_anchors(
     mut breakpoints: Vec<&mut Breakpoint>,
     uri: &Url,
     line_index: &LineIndex,
+    line_offset: u32,
 ) -> Vec<BreakpointAnchor> {
     // Sort breakpoints by line ascending
     breakpoints.sort_by_key(|bp| bp.line);
@@ -143,6 +158,7 @@ fn find_breakpoint_anchors(
         &mut anchors,
         uri,
         line_index,
+        line_offset,
         true,
     );
 
@@ -155,6 +171,7 @@ fn find_anchors_in_list<'a>(
     anchors: &mut Vec<BreakpointAnchor>,
     uri: &Url,
     line_index: &LineIndex,
+    line_offset: u32,
     is_root: bool,
 ) {
     let elements: Vec<_> = list.into_iter().collect();
@@ -169,40 +186,49 @@ fn find_anchors_in_list<'a>(
             return;
         };
 
-        let target_line = bp.line;
+        // Convert breakpoint line from document coordinates to code coordinates
+        let target_code_line = bp.line - line_offset;
         let current = &elements[i];
-        let current_start_line = get_start_line(current.syntax(), line_index);
+        let current_code_line = get_start_line(current.syntax(), line_index);
 
         // Base case: target line is at or before current element's start
-        if target_line <= current_start_line {
+        if target_code_line <= current_code_line {
             let bp = breakpoints.next().unwrap();
-            bp.line = current_start_line;
+            // Update bp.line to the actual document line where the breakpoint is placed
+            bp.line = current_code_line + line_offset;
             anchors.push(BreakpointAnchor {
                 breakpoint_id: bp.id,
-                actual_line: current_start_line,
+                code_line: current_code_line,
             });
             continue;
         }
 
         // Check if target is beyond current element
-        let next_start_line = if i + 1 < elements.len() {
+        let next_code_line = if i + 1 < elements.len() {
             Some(get_start_line(elements[i + 1].syntax(), line_index))
         } else {
             None
         };
 
         // Recursion case: target must be within current element
-        if next_start_line.map_or(true, |next| target_line < next) {
+        if next_code_line.map_or(true, |next| target_code_line < next) {
             // If we're at the last element of a nested list and there's no next element,
             // the target might be beyond this list. Pop back up to let the parent handle it.
-            if !is_root && next_start_line.is_none() {
+            if !is_root && next_code_line.is_none() {
                 return;
             }
 
             // Search within current element for brace lists
             let anchors_before = anchors.len();
-            if find_anchor_in_element(current.syntax(), breakpoints, anchors, uri, line_index)
-                .is_some()
+            if find_anchor_in_element(
+                current.syntax(),
+                breakpoints,
+                anchors,
+                uri,
+                line_index,
+                line_offset,
+            )
+            .is_some()
             {
                 // A nested brace list was found and processed.
                 if anchors.len() > anchors_before {
@@ -221,10 +247,11 @@ fn find_anchors_in_list<'a>(
             } else {
                 // No brace list found, use current element as fallback
                 let bp = breakpoints.next().unwrap();
-                bp.line = current_start_line;
+                // Update bp.line to the actual document line where the breakpoint is placed
+                bp.line = current_code_line + line_offset;
                 anchors.push(BreakpointAnchor {
                     breakpoint_id: bp.id,
-                    actual_line: current_start_line,
+                    code_line: current_code_line,
                 });
                 continue;
             }
@@ -241,6 +268,7 @@ fn find_anchor_in_element<'a>(
     anchors: &mut Vec<BreakpointAnchor>,
     uri: &Url,
     line_index: &LineIndex,
+    line_offset: u32,
 ) -> Option<()> {
     use biome_rowan::WalkEvent;
 
@@ -255,7 +283,15 @@ fn find_anchor_in_element<'a>(
             let expr_list = braced.expressions();
             if !expr_list.is_empty() {
                 // Found a non-empty brace list, recurse into it
-                find_anchors_in_list(&expr_list, breakpoints, anchors, uri, line_index, false);
+                find_anchors_in_list(
+                    &expr_list,
+                    breakpoints,
+                    anchors,
+                    uri,
+                    line_index,
+                    line_offset,
+                    false,
+                );
                 return Some(());
             }
         }
@@ -268,6 +304,7 @@ fn inject_breakpoint_calls(
     root: &RSyntaxNode,
     mut anchors: Vec<BreakpointAnchor>,
     uri: &Url,
+    line_offset: u32,
 ) -> String {
     if anchors.is_empty() {
         return root.to_string();
@@ -275,7 +312,7 @@ fn inject_breakpoint_calls(
 
     // Sort anchors by line DESCENDING so we modify from bottom to top.
     // This preserves line numbers for earlier breakpoints.
-    anchors.sort_by_key(|a| std::cmp::Reverse(a.actual_line));
+    anchors.sort_by_key(|a| std::cmp::Reverse(a.code_line));
 
     let mut source = root.to_string();
 
@@ -286,10 +323,9 @@ fn inject_breakpoint_calls(
         let root = parse_result.tree();
         let new_line_index = LineIndex::new(&source);
 
-        // Find the anchor node at the target line
-        // We need to search the re-parsed tree for the node at actual_line
+        // Find the anchor node at the target line (using code coordinates)
         let Some(new_anchor) =
-            find_node_at_line(root.syntax(), anchor_info.actual_line, &new_line_index)
+            find_node_at_line(root.syntax(), anchor_info.code_line, &new_line_index)
         else {
             continue;
         };
@@ -308,8 +344,10 @@ fn inject_breakpoint_calls(
         };
 
         // Create the breakpoint call and modified anchor
+        // Line directive uses document coordinates (code_line + line_offset)
         let breakpoint_call = create_breakpoint_call(anchor_info.breakpoint_id);
-        let modified_anchor = add_line_directive_to_node(&new_anchor, anchor_info.actual_line, uri);
+        let doc_line = anchor_info.code_line + line_offset;
+        let modified_anchor = add_line_directive_to_node(&new_anchor, doc_line, uri);
 
         // Inject the breakpoint by splicing
         let modified_parent = parent.clone().splice_slots(index..=index, [
@@ -515,6 +553,38 @@ mod tests {
         let location = make_location(0, 0);
         let result = annotate_input(code, location, None);
         insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_input_with_breakpoint() {
+        // Test the full annotate_input path with breakpoints.
+        // This ensures breakpoints are injected correctly before the line directive is added.
+        let code = "0\n1\n2";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 3,
+                character: 0,
+            },
+            end: Position {
+                line: 5,
+                character: 1,
+            },
+        };
+        // Breakpoint at document line 4 (code line 1, i.e., `1`)
+        let mut breakpoints = vec![Breakpoint {
+            id: 1,
+            line: 4,
+            verified: false,
+            invalid: false,
+        }];
+
+        let result = annotate_input(code, location, Some(&mut breakpoints));
+        insta::assert_snapshot!(result);
+
+        // Breakpoint line should remain in document coordinates
+        assert_eq!(breakpoints[0].line, 4);
+        assert!(!breakpoints[0].invalid);
     }
 
     #[test]
@@ -828,5 +898,77 @@ mod tests {
         assert!(!breakpoints[1].invalid);
         assert!(!breakpoints[2].verified);
         assert!(!breakpoints[2].invalid);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_with_line_offset() {
+        // Test that breakpoints work correctly when the code starts at a non-zero line
+        // in the document. This simulates executing a selection from the middle of a file.
+        //
+        // The code represents lines 10-12 of the original document:
+        // Line 10: x <- 1
+        // Line 11: y <- 2
+        // Line 12: z <- 3
+        let code = "x <- 1\ny <- 2\nz <- 3";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 10,
+                character: 0,
+            },
+            end: Position {
+                line: 12,
+                character: 6,
+            },
+        };
+        let line_index = LineIndex::new(code);
+
+        // Breakpoint at document line 11 (which is code line 1, i.e., `y <- 2`)
+        let mut breakpoints = vec![Breakpoint {
+            id: 1,
+            line: 11,
+            verified: false,
+            invalid: false,
+        }];
+
+        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
+        insta::assert_snapshot!(result);
+
+        // The breakpoint line should remain in document coordinates
+        assert_eq!(breakpoints[0].line, 11);
+        assert!(!breakpoints[0].invalid);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_with_line_offset_nested() {
+        // Test with line offset and nested braces
+        let code = "f <- function() {\n  x <- 1\n  y <- 2\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 20,
+                character: 0,
+            },
+            end: Position {
+                line: 23,
+                character: 1,
+            },
+        };
+        let line_index = LineIndex::new(code);
+
+        // Breakpoint at document line 22 (code line 2, i.e., `y <- 2`)
+        let mut breakpoints = vec![Breakpoint {
+            id: 1,
+            line: 22,
+            verified: false,
+            invalid: false,
+        }];
+
+        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
+        insta::assert_snapshot!(result);
+
+        // The breakpoint line should remain in document coordinates
+        assert_eq!(breakpoints[0].line, 22);
+        assert!(!breakpoints[0].invalid);
     }
 }
