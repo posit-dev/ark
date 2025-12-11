@@ -355,7 +355,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             .map(|bp| dap::types::Breakpoint {
                 id: Some(bp.id),
                 verified: bp.verified,
-                line: Some(bp.line as i64),
+                line: Some((bp.line + 1) as i64),
                 ..Default::default()
             })
             .collect();
