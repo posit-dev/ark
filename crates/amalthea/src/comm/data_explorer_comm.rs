@@ -92,9 +92,12 @@ pub struct BackendState {
 	/// requests. This parameter may change.
 	pub connected: Option<bool>,
 
-	/// Optional experimental parameter to provide an explanation when
-	/// connected=false. This parameter may change.
-	pub error_message: Option<String>
+    /// Optional experimental parameter to provide an explanation when
+    /// connected=false. This parameter may change.
+    pub error_message: Option<String>,
+
+    /// Optional formatting options for frontend display
+    pub format_options: Option<FormatOptions>,
 }
 
 /// Schema for a column in a table
