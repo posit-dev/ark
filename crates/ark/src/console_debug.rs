@@ -20,6 +20,7 @@ use stdext::result::ResultExt;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::interface::DebugCallText;
+use crate::interface::DebugCallTextKind;
 use crate::interface::RMain;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
@@ -126,16 +127,16 @@ impl RMain {
             // If not debugging, nothing to do.
             DebugCallText::None => (),
             // If already finalized, keep what we have.
-            DebugCallText::Finalized(_) => (),
+            DebugCallText::Finalized(_, _) => (),
             // If capturing, transition to finalized.
-            DebugCallText::Capturing(call_text) => {
-                self.debug_call_text = DebugCallText::Finalized(call_text.clone())
+            DebugCallText::Capturing(call_text, kind) => {
+                self.debug_call_text = DebugCallText::Finalized(call_text.clone(), *kind)
             },
         }
     }
 
     pub(crate) fn debug_handle_write_console(&mut self, content: &str) {
-        if let DebugCallText::Capturing(ref mut call_text) = self.debug_call_text {
+        if let DebugCallText::Capturing(ref mut call_text, _) = self.debug_call_text {
             // Append to current expression if we are currently capturing stdout
             call_text.push_str(content);
             return;
@@ -145,7 +146,17 @@ impl RMain {
         // the current expression we are debugging, so we use that as a signal to begin
         // capturing.
         if content == "debug: " {
-            self.debug_call_text = DebugCallText::Capturing(String::new());
+            self.debug_call_text =
+                DebugCallText::Capturing(String::new(), DebugCallTextKind::Debug);
+            return;
+        }
+
+        // `debug at *PATH*: *EXPR*` is emitted by R when stepping through
+        // blocks that have srcrefs. We use this to detect that we've just
+        // stepped to an injected breakpoint and need to move on automatically.
+        if content.starts_with("debug at ") {
+            self.debug_call_text =
+                DebugCallText::Capturing(String::new(), DebugCallTextKind::DebugAt);
             return;
         }
 
@@ -164,13 +175,14 @@ impl RMain {
         // recreate the debugger state after their code execution.
         let call_text = match self.debug_call_text.clone() {
             DebugCallText::None => None,
-            DebugCallText::Capturing(call_text) => {
+            DebugCallText::Capturing(call_text, _) => {
                 log::error!(
                     "Call text is in `Capturing` state, but should be `Finalized`: '{call_text}'."
                 );
                 None
             },
-            DebugCallText::Finalized(call_text) => Some(call_text),
+            DebugCallText::Finalized(call_text, DebugCallTextKind::Debug) => Some(call_text),
+            DebugCallText::Finalized(_, DebugCallTextKind::DebugAt) => None,
         };
 
         let last_start_line = self.debug_last_line;

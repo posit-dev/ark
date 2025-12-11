@@ -158,8 +158,14 @@ pub enum SessionMode {
 #[derive(Clone, Debug)]
 pub enum DebugCallText {
     None,
-    Capturing(String),
-    Finalized(String),
+    Capturing(String, DebugCallTextKind),
+    Finalized(String, DebugCallTextKind),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum DebugCallTextKind {
+    Debug,
+    DebugAt,
 }
 
 // --- Globals ---
@@ -1014,14 +1020,32 @@ impl RMain {
             self.handle_active_request(&info, ConsoleValue::Success(result));
         }
 
-        // If debugger is active, get current function and check whether it
-        // inherits from `ark_breakpoint`. If it does, send `n` automatically.
-        if harp::r_current_function().inherits("ark_breakpoint") {
-            self.debug_preserve_focus = false;
-            self.debug_send_dap(DapBackendEvent::Continued);
+        // If debugger is active, to prevent injected expressions from
+        // interfering with debug-stepping, we might need to automatically step
+        // over to the next statement by returning `n` to R. Two cases:
+        // - We've just stopped due to an injected breakpoint. In this case
+        //   we're in the `.ark_breakpoint()` function and can look at the current
+        //   `sys.function()` to detect this.
+        // - We've just stepped to another injected breakpoint. In this case we
+        //   look at what function R emitted as part of the `Debug at` output.
+        if self.debug_is_debugging {
+            // Did we just step onto an injected breakpoint
+            let at_injected_breakpoint = matches!(
+                &self.debug_call_text,
+                DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
+                    if text.contains(".ark_breakpoint")
+            );
 
-            Self::on_console_input(buf, buflen, String::from("n")).unwrap();
-            return ConsoleResult::NewInput;
+            // Are we stopped by an injected breakpoint
+            let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
+
+            if at_injected_breakpoint || in_injected_breakpoint {
+                self.debug_preserve_focus = false;
+                self.debug_send_dap(DapBackendEvent::Continued);
+
+                Self::on_console_input(buf, buflen, String::from("n")).unwrap();
+                return ConsoleResult::NewInput;
+            }
         }
 
         // In the future we'll also send browser information, see
