@@ -17,13 +17,13 @@ use crate::symbol::RSymbol;
 
 const FRAME_LOCK_MASK: std::ffi::c_int = 1 << 14;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Environment {
     pub inner: RObject,
     filter: EnvironmentFilter,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum EnvironmentFilter {
     None,
     ExcludeHidden,

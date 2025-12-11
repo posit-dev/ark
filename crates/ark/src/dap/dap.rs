@@ -264,7 +264,7 @@ impl Dap {
     /// Loops over all breakpoints for the URI and verifies any unverified
     /// breakpoints that fall within the range [start_line, end_line].
     /// Sends a `BreakpointVerified` event for each newly verified breakpoint.
-    pub fn verify_range(&mut self, uri: &Url, start_line: usize, end_line: usize) {
+    pub fn verify_breakpoints(&mut self, uri: &Url, start_line: u32, end_line: u32) {
         let Some(bp_list) = self.breakpoints.get_mut(uri) else {
             return;
         };
@@ -274,7 +274,7 @@ impl Dap {
                 continue;
             }
 
-            let line = bp.line as usize;
+            let line = bp.line;
             if line >= start_line && line <= end_line {
                 bp.verified = true;
 

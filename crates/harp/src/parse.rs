@@ -105,7 +105,7 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
 
         let (text, srcfile) = match input {
             ParseInput::Text(text) => (as_parse_text(text), RObject::null()),
-            ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.clone()),
+            ParseInput::SrcFile(srcfile) => (srcfile.lines()?, srcfile.inner.inner.clone()),
         };
 
         let result =

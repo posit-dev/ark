@@ -78,6 +78,7 @@ use harp::session::r_traceback;
 use harp::srcref::get_srcref_list;
 use harp::srcref::srcref_list_get;
 use harp::srcref::SrcFile;
+use harp::srcref::SrcRef;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
@@ -95,6 +96,7 @@ use serde_json::json;
 use stdext::result::ResultExt;
 use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
+use url::Url;
 use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
@@ -2402,6 +2404,24 @@ impl RMain {
         }
     }
 
+    pub(crate) fn verify_breakpoints(&self, srcref: RObject) {
+        let Some(srcref) = SrcRef::try_from(srcref).log_err() else {
+            return;
+        };
+
+        let Some(uri) = srcref
+            .srcfile()
+            .and_then(|srcfile| srcfile.filename())
+            .and_then(|filename| Url::parse(&filename).anyhow())
+            .log_err()
+        else {
+            return;
+        };
+
+        let mut dap = self.debug_dap.lock().unwrap();
+        dap.verify_breakpoints(&uri, srcref.line_virtual.start, srcref.line_virtual.end);
+    }
+
     #[cfg(not(test))] // Avoid warnings in unit test
     pub(crate) fn read_console_frame(&self) -> RObject {
         self.read_console_frame.borrow().clone()
@@ -2586,6 +2606,10 @@ fn r_read_console_impl(
                     RMain::on_console_input(buf, buflen, String::from(" ")).unwrap();
                     main.read_console_nested_return.set(false);
                 }
+
+                // We verify breakpoints _after_ evaluation is complete. An
+                // error will prevent verification.
+                main.verify_breakpoints(RObject::from(srcref));
 
                 libr::Rf_unprotect(2);
                 return 1;

@@ -8,18 +8,22 @@
 use core::f64;
 
 use anyhow::anyhow;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 
 use crate::exec::RFunction;
 use crate::exec::RFunctionExt;
 use crate::vector::IntegerVector;
 use crate::vector::Vector;
+use crate::Environment;
 use crate::RObject;
 
 /// Structured representation of `srcref` integer vectors
 /// 0-based offsets.
 #[derive(Debug)]
 pub struct SrcRef {
+    pub inner: IntegerVector,
+
     /// Lines and virtual lines may differ if a `#line` directive is used in code:
     /// the former just counts actual lines, the latter respects the directive.
     /// `line` corresponds to `line_parsed` in the original base R srcref vector.
@@ -33,7 +37,16 @@ pub struct SrcRef {
 
 #[derive(Clone, Debug)]
 pub struct SrcFile {
-    pub inner: RObject,
+    pub inner: Environment,
+}
+
+impl SrcRef {
+    pub fn srcfile(&self) -> anyhow::Result<SrcFile> {
+        let Some(srcfile) = self.inner.object.get_attribute("srcfile") else {
+            return Err(anyhow!("Can't find `srcfile` attribute"));
+        };
+        SrcFile::wrap(srcfile)
+    }
 }
 
 // Takes user-facing object as input. The srcrefs are retrieved from
@@ -111,6 +124,7 @@ impl TryFrom<RObject> for SrcRef {
             line_virtual: line,
             column,
             column_byte,
+            inner: value,
         })
     }
 }
@@ -118,6 +132,19 @@ impl TryFrom<RObject> for SrcRef {
 /// Creates the same sort of srcfile object as with `parse(text = )`.
 /// Takes code as an R string containing newlines, or as a R vector of lines.
 impl SrcFile {
+    pub fn wrap(value: RObject) -> anyhow::Result<SrcFile> {
+        if value.kind() != libr::ENVSXP {
+            return Err(anyhow!("Expected an environment, got {:?}", value.kind()));
+        }
+        if !value.inherits("srcfile") {
+            return Err(anyhow!("Expected an srcfile, got {:?}", value.class()));
+        }
+
+        Ok(Self {
+            inner: Environment::new(value),
+        })
+    }
+
     // Created by the R function `parse()`
     pub fn new_virtual(text: RObject) -> Self {
         let inner = RFunction::new("base", "srcfilecopy")
@@ -128,7 +155,9 @@ impl SrcFile {
         // Unwrap safety: Should never fail, unless something is seriously wrong
         let inner = inner.unwrap();
 
-        Self { inner }
+        Self {
+            inner: Environment::new(inner),
+        }
     }
 
     // Created by the C-level parser
@@ -144,15 +173,24 @@ impl SrcFile {
         }
         CLASS.with(|c| inner.set_attribute("class", c.sexp));
 
-        Self { inner }
+        Self {
+            inner: Environment::new(inner),
+        }
     }
 
     pub fn lines(&self) -> harp::Result<RObject> {
         RFunction::new("base", "getSrcLines")
-            .add(self.inner.sexp)
+            .add(self.inner.inner.sexp)
             .param("first", 1)
             .param("last", f64::INFINITY)
             .call()
+    }
+
+    pub fn filename(&self) -> anyhow::Result<String> {
+        // In theory we should check if `filename` is relative, and prefix it
+        // with `wd` in that case, if `wd` is set. For now we only use this
+        // method to fetch our own URIs.
+        self.inner.get("filename")?.try_into().anyhow()
     }
 }
 
