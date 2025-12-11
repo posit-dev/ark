@@ -702,6 +702,10 @@ non_parseable_fixed_info <- function(pattern, replacement) {
 }
 
 #' @export
-.ark.breakpoint <- function(expr, id) {
-    expr
-}
+.ark_breakpoint <- structure(
+    function(expr, id) {
+        # TODO: Don't force `expr` if breakpoint is disabled
+        expr
+    },
+    class = "ark_breakpoint"
+)
