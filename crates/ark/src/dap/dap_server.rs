@@ -33,6 +33,7 @@ use stdext::spawn;
 use url::Url;
 
 use super::dap::Breakpoint;
+use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::console_debug::FrameInfo;
@@ -336,8 +337,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             .map(|bp| Breakpoint {
                 id: state.next_breakpoint_id(),
                 line: (bp.line - 1) as u32,
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             })
             .collect();
 
@@ -354,7 +354,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             .iter()
             .map(|bp| dap::types::Breakpoint {
                 id: Some(bp.id),
-                verified: bp.verified,
+                verified: matches!(bp.state, BreakpointState::Verified),
                 line: Some((bp.line + 1) as i64),
                 ..Default::default()
             })
