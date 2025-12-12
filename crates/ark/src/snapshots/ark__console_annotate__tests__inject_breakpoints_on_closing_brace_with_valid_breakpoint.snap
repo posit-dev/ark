@@ -5,6 +5,6 @@ expression: result
 f <- function() {
   x <- 1
 }
-.ark_breakpoint(browser(), 2)
+base::.ark_breakpoint(browser(), "file:///test.R", "2")
 #line 4 "file:///test.R"
 y <- 2

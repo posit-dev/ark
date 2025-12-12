@@ -4,7 +4,7 @@ expression: result
 ---
 #line 4 "file:///test.R"
 0
-.ark_breakpoint(browser(), 1)
+base::.ark_breakpoint(browser(), "file:///test.R", "1")
 #line 5 "file:///test.R"
 1
 2

@@ -701,10 +701,24 @@ non_parseable_fixed_info <- function(pattern, replacement) {
     list(pattern = pattern, replacement = replacement, fixed = TRUE)
 }
 
+is_breakpoint_enabled <- function(uri, id) {
+    .ps.Call("ps_is_breakpoint_enabled", uri, id)
+}
+
+# Injected breakpoint. This receives a `browser()` call in the `expr` argument.
+# The argument if forced if the breakpoint is enabled. Since `expr` is promised
+# in the calling frame environment, that environment is marked by R as being
+# debugged (with `SET_RDEBUG`), allowing to step through it. We're stopped in
+# the wrong frame (`.ark_breakpoint()`'s) but the console automatically steps to
+# the next expression whenever it detects that the current function (retrieved
+# with `sys.function()`) inherits from `ark_breakpoint`.
 #' @export
 .ark_breakpoint <- structure(
-    function(expr, id) {
-        # TODO: Don't force `expr` if breakpoint is disabled
+    function(expr, uri, id) {
+        # Force `browser()` call only if breakpoint is enabled
+        if (!is_breakpoint_enabled(uri, id)) {
+            return()
+        }
         expr
     },
     class = "ark_breakpoint"

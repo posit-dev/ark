@@ -309,6 +309,16 @@ impl Dap {
             }
         }
     }
+
+    pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: String) -> bool {
+        let Some((_, breakpoints)) = self.breakpoints.get(uri) else {
+            return false;
+        };
+
+        breakpoints
+            .iter()
+            .any(|bp| bp.id.to_string() == id && matches!(bp.state, BreakpointState::Verified))
+    }
 }
 
 // Handler for Amalthea socket threads

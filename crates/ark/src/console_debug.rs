@@ -15,8 +15,10 @@ use harp::session::r_sys_calls;
 use harp::session::r_sys_frames;
 use harp::session::r_sys_functions;
 use harp::utils::r_is_null;
+use libr::SEXP;
 use regex::Regex;
 use stdext::result::ResultExt;
+use url::Url;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::interface::DebugCallText;
@@ -295,6 +297,13 @@ impl RMain {
         let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
         re.is_match(uri)
     }
+
+    pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: String) -> bool {
+        self.debug_dap
+            .lock()
+            .unwrap()
+            .is_breakpoint_enabled(uri, id)
+    }
 }
 
 fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
@@ -369,4 +378,18 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
             end_column: end_column.try_into()?,
         })
     }
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
+    uri: SEXP,
+    id: SEXP,
+) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let uri = Url::parse(&uri)?;
+
+    let id: String = RObject::view(id).try_into()?;
+
+    let enabled: RObject = RMain::get().is_breakpoint_enabled(&uri, id).into();
+    Ok(enabled.sexp)
 }

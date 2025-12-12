@@ -1036,6 +1036,9 @@ impl RMain {
             let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
 
             if at_injected_breakpoint || in_injected_breakpoint {
+                let kind = if at_injected_breakpoint { "at" } else { "in" };
+                log::trace!("Injected breakpoint reached ({kind}), moving to next expression");
+
                 self.debug_preserve_focus = false;
                 self.debug_send_dap(DapBackendEvent::Continued);
 

@@ -346,7 +346,7 @@ fn inject_breakpoint_calls(
 
         // Create the breakpoint call and modified anchor
         // Line directive uses document coordinates (code_line + line_offset)
-        let breakpoint_call = create_breakpoint_call(anchor_info.breakpoint_id);
+        let breakpoint_call = create_breakpoint_call(uri, anchor_info.breakpoint_id);
         let doc_line = anchor_info.code_line + line_offset;
         let modified_anchor = add_line_directive_to_node(&new_anchor, doc_line, uri);
 
@@ -428,8 +428,12 @@ fn get_start_line(node: &RSyntaxNode, line_index: &LineIndex) -> u32 {
     line_index.line_col(offset).map(|lc| lc.line).unwrap_or(0)
 }
 
-fn create_breakpoint_call(breakpoint_id: i64) -> RSyntaxNode {
-    let code = format!("\n.ark_breakpoint(browser(), {breakpoint_id})\n");
+fn create_breakpoint_call(uri: &Url, id: i64) -> RSyntaxNode {
+    // NOTE: If you use `base::browser()` here in an attempt to prevent masking
+    // issues in case someone redefined `browser()`, you'll cause the function
+    // in which the breakpoint is injected to be bytecode-compiled. This is a
+    // limitation/bug of https://github.com/r-devel/r-svn/blob/e2aae817/src/library/compiler/R/cmp.R#L1273-L1290
+    let code = format!("\nbase::.ark_breakpoint(browser(), \"{uri}\", \"{id}\")\n");
     aether_parser::parse(&code, Default::default()).syntax()
 }
 
