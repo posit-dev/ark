@@ -19,6 +19,7 @@ use biome_rowan::WalkEvent;
 use url::Url;
 
 use crate::dap::dap::Breakpoint;
+use crate::dap::dap::BreakpointState;
 
 pub(crate) fn annotate_input(
     code: &str,
@@ -242,7 +243,7 @@ fn find_anchors_in_list<'a>(
                 // expressions in the nested list (e.g., on a closing `}` line with
                 // no executable code). Mark this breakpoint as invalid.
                 let bp = breakpoints.next().unwrap();
-                bp.invalid = true;
+                bp.state = BreakpointState::Invalid;
                 continue;
             } else {
                 // No brace list found, use current element as fallback
@@ -593,8 +594,7 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 4,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = annotate_input(code, location, Some(&mut breakpoints));
@@ -602,7 +602,7 @@ mod tests {
 
         // Breakpoint line should remain in document coordinates
         assert_eq!(breakpoints[0].line, 4);
-        assert!(!breakpoints[0].invalid);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
 
     #[test]
@@ -623,13 +623,12 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 1,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         insta::assert_snapshot!(result);
-        assert!(!breakpoints[0].verified);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
     }
 
     #[test]
@@ -651,22 +650,20 @@ mod tests {
             Breakpoint {
                 id: 1,
                 line: 1,
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
             Breakpoint {
                 id: 2,
                 line: 3,
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
         ];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         insta::assert_snapshot!(result);
-        assert!(!breakpoints[0].verified);
-        assert!(!breakpoints[1].verified);
-        assert!(!breakpoints[1].invalid); // Valid location
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid)); // Valid location
     }
 
     #[test]
@@ -687,13 +684,12 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 2,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         insta::assert_snapshot!(result);
-        assert!(!breakpoints[0].verified);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
     }
 
     #[test]
@@ -714,14 +710,13 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 10,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         // Should return unchanged code
         assert_eq!(result, code);
-        assert!(!breakpoints[0].verified);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
     }
 
     #[test]
@@ -747,22 +742,20 @@ mod tests {
             Breakpoint {
                 id: 1,
                 line: 2,
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
             Breakpoint {
                 id: 2,
                 line: 5,
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
         ];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         insta::assert_snapshot!(result);
-        assert!(!breakpoints[0].verified);
-        assert!(!breakpoints[1].verified);
-        assert!(!breakpoints[1].invalid); // Valid location
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid)); // Valid location
     }
 
     #[test]
@@ -784,13 +777,12 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 3,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         insta::assert_snapshot!(result);
-        assert!(!breakpoints[0].verified);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
     }
 
     #[test]
@@ -813,17 +805,14 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 2, // The `}` line
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         // Should return unchanged code since breakpoint is invalid
         assert_eq!(result, code);
-        assert!(!breakpoints[0].verified);
-
         // Marked as invalid
-        assert!(breakpoints[0].invalid);
+        assert!(matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
 
     #[test]
@@ -846,14 +835,12 @@ mod tests {
             Breakpoint {
                 id: 1,
                 line: 2, // The `}` line - invalid
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
             Breakpoint {
                 id: 2,
                 line: 3, // `y <- 2` - valid
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
         ];
 
@@ -861,11 +848,11 @@ mod tests {
         insta::assert_snapshot!(result);
 
         // Invalid location
-        assert!(!breakpoints[0].verified);
-        assert!(breakpoints[0].invalid);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
+        assert!(matches!(breakpoints[0].state, BreakpointState::Invalid));
 
-        assert!(!breakpoints[1].verified);
-        assert!(!breakpoints[1].invalid);
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid));
     }
 
     #[test]
@@ -891,31 +878,28 @@ mod tests {
             Breakpoint {
                 id: 1,
                 line: 0, // `x <- 1` - before nested
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
             Breakpoint {
                 id: 2,
                 line: 2, // `y <- 2` - within nested
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
             Breakpoint {
                 id: 3,
                 line: 5, // `w <- 4` - after nested
-                verified: false,
-                invalid: false,
+                state: BreakpointState::Unverified,
             },
         ];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
         insta::assert_snapshot!(result);
-        assert!(!breakpoints[0].verified);
-        assert!(!breakpoints[0].invalid);
-        assert!(!breakpoints[1].verified);
-        assert!(!breakpoints[1].invalid);
-        assert!(!breakpoints[2].verified);
-        assert!(!breakpoints[2].invalid);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid));
+        assert!(!matches!(breakpoints[2].state, BreakpointState::Verified));
+        assert!(!matches!(breakpoints[2].state, BreakpointState::Invalid));
     }
 
     #[test]
@@ -945,8 +929,7 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 11,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
@@ -954,7 +937,7 @@ mod tests {
 
         // The breakpoint line should remain in document coordinates
         assert_eq!(breakpoints[0].line, 11);
-        assert!(!breakpoints[0].invalid);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
 
     #[test]
@@ -978,8 +961,7 @@ mod tests {
         let mut breakpoints = vec![Breakpoint {
             id: 1,
             line: 22,
-            verified: false,
-            invalid: false,
+            state: BreakpointState::Unverified,
         }];
 
         let result = inject_breakpoints(code, location, &mut breakpoints, &line_index);
@@ -987,6 +969,6 @@ mod tests {
 
         // The breakpoint line should remain in document coordinates
         assert_eq!(breakpoints[0].line, 22);
-        assert!(!breakpoints[0].invalid);
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
 }

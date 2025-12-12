@@ -24,12 +24,18 @@ use crate::dap::dap_server;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BreakpointState {
+    Unverified,
+    Verified,
+    Invalid,
+}
+
 #[derive(Debug, Clone)]
 pub struct Breakpoint {
     pub id: i64,
     pub line: u32,
-    pub verified: bool,
-    pub invalid: bool,
+    pub state: BreakpointState,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -270,13 +276,16 @@ impl Dap {
         };
 
         for bp in bp_list.iter_mut() {
-            if bp.verified || bp.invalid {
+            if matches!(
+                bp.state,
+                BreakpointState::Verified | BreakpointState::Invalid
+            ) {
                 continue;
             }
 
             let line = bp.line;
             if line >= start_line && line <= end_line {
-                bp.verified = true;
+                bp.state = BreakpointState::Verified;
 
                 if let Some(tx) = &self.backend_events_tx {
                     tx.send(DapBackendEvent::BreakpointVerified(bp.id))
