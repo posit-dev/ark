@@ -348,15 +348,11 @@ impl PendingInputs {
         location: Option<CodeLocation>,
         breakpoints: Option<&mut [Breakpoint]>,
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
-        let mut _srcfile = None;
-
         let input = if let Some(location) = location {
             let annotated_code = annotate_input(code, location, breakpoints);
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(annotated_code.into()));
-            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+            harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(annotated_code.into()))
         } else if harp::get_option_bool("keep.source") {
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(code.into()));
-            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+            harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(code.into()))
         } else {
             harp::ParseInput::Text(code)
         };
