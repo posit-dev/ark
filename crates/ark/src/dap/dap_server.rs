@@ -327,35 +327,123 @@ impl<R: Read, W: Write> DapServer<R, W> {
             },
         };
 
-        let source_breakpoints = args.breakpoints.unwrap_or_default();
+        // Read document content to compute hash. We currently assume UTF-8 even
+        // though the frontend supports files with different encodings (but
+        // UTF-8 is the default).
+        let doc_content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(err) => {
+                // TODO: What do we do with breakpoints in virtual documents?
+                log::error!("Failed to read file '{path}': {err}");
+                let rsp = req.error(&format!("Failed to read file: {path}"));
+                self.respond(rsp);
+                return;
+            },
+        };
+
+        let args_breakpoints = args.breakpoints.unwrap_or_default();
 
         let mut state = self.state.lock().unwrap();
+        let old_breakpoints = state.breakpoints.get(&uri).cloned();
 
-        // Positron sends 1-based line offsets, but this is configurable by client
-        let breakpoints: Vec<Breakpoint> = source_breakpoints
-            .iter()
-            .map(|bp| Breakpoint {
-                id: state.next_breakpoint_id(),
-                line: (bp.line - 1) as u32,
-                state: BreakpointState::Unverified,
-            })
-            .collect();
+        // Breakpoints are associated with this hash. If the document has
+        // changed after a reconnection, the breakpoints are no longer valid.
+        let doc_hash = blake3::hash(doc_content.as_bytes());
+        let doc_changed = match &old_breakpoints {
+            Some((existing_hash, _)) => existing_hash != &doc_hash,
+            None => true,
+        };
+
+        let new_breakpoints = if doc_changed {
+            log::trace!("DAP: Document changed for {uri}, discarding old breakpoints");
+
+            // Replace all existing breakpoints by new, unverified ones
+            args_breakpoints
+                .iter()
+                .map(|bp| Breakpoint {
+                    id: state.next_breakpoint_id(),
+                    line: Breakpoint::from_dap_line(bp.line),
+                    state: BreakpointState::Unverified,
+                })
+                .collect()
+        } else {
+            log::trace!("DAP: Document unchanged for {uri}, preserving breakpoint states");
+
+            // Unwrap Safety: `doc_changed` is false, so `existing_breakpoints` is Some
+            let (_, old_breakpoints) = old_breakpoints.unwrap();
+            let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
+                .into_iter()
+                .map(|bp| (bp.line, bp))
+                .collect();
+
+            let mut breakpoints: Vec<Breakpoint> = Vec::new();
+
+            for bp in &args_breakpoints {
+                let line = Breakpoint::from_dap_line(bp.line);
+
+                if let Some(old_bp) = old_by_line.remove(&line) {
+                    // Breakpoint already exists at this line
+                    let new_state = match old_bp.state {
+                        // This breakpoint used to be verified, was disabled, and is now back online
+                        BreakpointState::Disabled => BreakpointState::Verified,
+                        // We preserve other states (verified or unverified)
+                        other => other,
+                    };
+
+                    breakpoints.push(Breakpoint {
+                        id: old_bp.id,
+                        line,
+                        state: new_state,
+                    });
+                } else {
+                    // New breakpoints always start as Unverified, until they get evaluated once
+                    breakpoints.push(Breakpoint {
+                        id: state.next_breakpoint_id(),
+                        line,
+                        state: BreakpointState::Unverified,
+                    });
+                }
+            }
+
+            // Remaining verified breakpoints need to be preserved in memory
+            // when deleted. That's because when user unchecks a breakpoint on
+            // the frontend, the breakpoint is actually deleted (i.e. omitted)
+            // by a `SetBreakpoints()` request. When the user reenables the
+            // breakpoint, we have to restore the verification state.
+            // Unverified/Invalid breakpoints on the other hand are simply
+            // dropped since there's no verified state that needs to be
+            // preserved.
+            for (line, old_bp) in old_by_line {
+                if matches!(old_bp.state, BreakpointState::Verified) {
+                    breakpoints.push(Breakpoint {
+                        id: old_bp.id,
+                        line,
+                        state: BreakpointState::Disabled,
+                    });
+                }
+            }
+
+            breakpoints
+        };
 
         log::trace!(
-            "DAP: URI {uri} now has {} unverified breakpoints",
-            breakpoints.len()
+            "DAP: URI {uri} now has {} breakpoints",
+            new_breakpoints.len()
         );
 
-        state.breakpoints.insert(uri, breakpoints.clone());
+        state
+            .breakpoints
+            .insert(uri, (doc_hash, new_breakpoints.clone()));
 
         drop(state);
 
-        let response_breakpoints: Vec<dap::types::Breakpoint> = breakpoints
+        let response_breakpoints: Vec<dap::types::Breakpoint> = new_breakpoints
             .iter()
+            .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
             .map(|bp| dap::types::Breakpoint {
                 id: Some(bp.id),
                 verified: matches!(bp.state, BreakpointState::Verified),
-                line: Some((bp.line + 1) as i64),
+                line: Some(Breakpoint::to_dap_line(bp.line)),
                 ..Default::default()
             })
             .collect();
