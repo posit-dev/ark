@@ -29,13 +29,26 @@ pub enum BreakpointState {
     Unverified,
     Verified,
     Invalid,
+    Disabled,
 }
 
 #[derive(Debug, Clone)]
 pub struct Breakpoint {
     pub id: i64,
-    pub line: u32,
+    pub line: u32, // 0-based
     pub state: BreakpointState,
+}
+
+impl Breakpoint {
+    /// Convert from DAP 1-based line to internal 0-based line
+    pub fn from_dap_line(line: i64) -> u32 {
+        (line - 1) as u32
+    }
+
+    /// Convert from internal 0-based line to DAP 1-based line
+    pub fn to_dap_line(line: u32) -> i64 {
+        (line + 1) as i64
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -74,8 +87,8 @@ pub struct Dap {
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
 
-    /// Known breakpoints keyed by URI
-    pub breakpoints: HashMap<Url, Vec<Breakpoint>>,
+    /// Known breakpoints keyed by URI, with document hash
+    pub breakpoints: HashMap<Url, (blake3::Hash, Vec<Breakpoint>)>,
 
     /// Map of `source` -> `source_reference` used for frames that don't have
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
@@ -271,14 +284,16 @@ impl Dap {
     /// breakpoints that fall within the range [start_line, end_line].
     /// Sends a `BreakpointVerified` event for each newly verified breakpoint.
     pub fn verify_breakpoints(&mut self, uri: &Url, start_line: u32, end_line: u32) {
-        let Some(bp_list) = self.breakpoints.get_mut(uri) else {
+        let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
             return;
         };
 
         for bp in bp_list.iter_mut() {
+            // Verified and Disabled breakpoints are both already verified.
+            // Invalid breakpoints never get verified so we skip them too.
             if matches!(
                 bp.state,
-                BreakpointState::Verified | BreakpointState::Invalid
+                BreakpointState::Verified | BreakpointState::Disabled | BreakpointState::Invalid
             ) {
                 continue;
             }

@@ -1413,7 +1413,7 @@ impl RMain {
                 let breakpoints = loc
                     .as_ref()
                     .and_then(|loc| dap_guard.breakpoints.get_mut(&loc.uri))
-                    .map(|v| v.as_mut_slice());
+                    .map(|(_, v)| v.as_mut_slice());
 
                 match PendingInputs::read(&code, loc, breakpoints) {
                     Ok(ParseResult::Success(inputs)) => {
