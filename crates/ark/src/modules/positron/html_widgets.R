@@ -14,7 +14,7 @@
     tmp_file <- htmltools::html_print(rendered, viewer = NULL)
 
     # Guess whether this is a plot-like widget based on its sizing policy.
-    destination <- if (isTRUE(x$sizingPolicy$knitr$figure)) 'plot' else 'viewer'
+    destination <- if (isTRUE(x$sizingPolicy$knitr$figure)) "plot" else "viewer"
 
     # Derive the height of the viewer pane from the sizing policy of the widget.
     height <- .ps.validate.viewer.height(x$sizingPolicy$viewer$paneHeight)
