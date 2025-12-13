@@ -337,7 +337,7 @@ impl PendingInputs {
 
         let input = if harp::get_option_bool("keep.source") {
             _srcfile = Some(SrcFile::new_virtual_empty_filename(input.into()));
-            harp::ParseInput::SrcFile(_srcfile.as_ref().unwrap())
+            harp::ParseInput::SrcFile(&_srcfile.unwrap())
         } else {
             harp::ParseInput::Text(input)
         };
