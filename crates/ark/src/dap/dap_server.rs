@@ -176,12 +176,12 @@ fn listen_dap_events<W: Write>(
                         Event::Terminated(None)
                     },
 
-                    DapBackendEvent::BreakpointVerified(id) => {
+                    DapBackendEvent::BreakpointState { id, verified } => {
                         Event::Breakpoint(BreakpointEventBody {
                             reason: BreakpointEventReason::Changed,
                             breakpoint: dap::types::Breakpoint {
                                 id: Some(id),
-                                verified: true,
+                                verified,
                                 ..Default::default()
                             },
                         })
