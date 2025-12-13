@@ -29,6 +29,7 @@ use tower_lsp::Client;
 use url::Url;
 
 use super::backend::RequestResponse;
+use crate::interface::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
@@ -146,13 +147,15 @@ pub(crate) struct GlobalState {
 
 /// Unlike `WorldState`, `ParserState` cannot be cloned and is only accessed by
 /// exclusive handlers.
-#[derive(Default)]
 pub(crate) struct LspState {
     /// The set of tree-sitter document parsers managed by the `GlobalState`.
     pub(crate) parsers: HashMap<Url, tree_sitter::Parser>,
 
     /// Capabilities negotiated with the client
     pub(crate) capabilities: Capabilities,
+
+    /// Channel for sending notifications to Console (e.g., document changes for DAP)
+    pub(crate) console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
 }
 
 /// State for the auxiliary loop
@@ -177,14 +180,23 @@ impl GlobalState {
     ///
     /// * `client`: The tower-lsp client shared with the tower-lsp backend
     ///   and auxiliary loop.
-    pub(crate) fn new(client: Client) -> Self {
+    pub(crate) fn new(
+        client: Client,
+        console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
+    ) -> Self {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
 
+        let lsp_state = LspState {
+            parsers: HashMap::new(),
+            capabilities: Capabilities::default(),
+            console_notification_tx,
+        };
+
         let mut state = Self {
             world: WorldState::default(),
-            lsp_state: LspState::default(),
+            lsp_state,
             client,
             events_tx,
             events_rx,

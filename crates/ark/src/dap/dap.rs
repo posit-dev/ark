@@ -64,8 +64,8 @@ pub enum DapBackendEvent {
     /// debugging session
     Stopped(DapStoppedEvent),
 
-    /// Event sent when a breakpoint has been verified
-    BreakpointVerified(i64),
+    /// Event sent when a breakpoint state changes (verified or unverified)
+    BreakpointState { id: i64, verified: bool },
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -303,10 +303,32 @@ impl Dap {
                 bp.state = BreakpointState::Verified;
 
                 if let Some(tx) = &self.backend_events_tx {
-                    tx.send(DapBackendEvent::BreakpointVerified(bp.id))
-                        .log_err();
+                    tx.send(DapBackendEvent::BreakpointState {
+                        id: bp.id,
+                        verified: true,
+                    })
+                    .log_err();
                 }
             }
+        }
+    }
+
+    /// Called when a document changes. Removes all breakpoints for the URI
+    /// and sends unverified events for each one.
+    pub fn did_change_document(&mut self, uri: &Url) {
+        let Some((_, breakpoints)) = self.breakpoints.remove(uri) else {
+            return;
+        };
+        let Some(tx) = &self.backend_events_tx else {
+            return;
+        };
+
+        for bp in breakpoints {
+            tx.send(DapBackendEvent::BreakpointState {
+                id: bp.id,
+                verified: false,
+            })
+            .log_err();
         }
     }
 

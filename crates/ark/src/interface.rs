@@ -168,6 +168,13 @@ pub enum DebugCallTextKind {
     DebugAt,
 }
 
+/// Notifications from other components (e.g., LSP) to the Console
+#[derive(Debug)]
+pub enum ConsoleNotification {
+    /// Notification that a document has changed, requiring breakpoint invalidation.
+    DidChangeDocument(Url),
+}
+
 // --- Globals ---
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
@@ -523,6 +530,7 @@ impl RMain {
         session_mode: SessionMode,
         default_repos: DefaultRepos,
         graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
+        console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
@@ -550,6 +558,14 @@ impl RMain {
         )));
 
         let main = RMain::get_mut();
+
+        // Spawn handler loop for async messages
+        r_task::spawn_interrupt({
+            let dap_clone = main.debug_dap.clone();
+            || async move {
+                RMain::process_console_notifications(console_notification_rx, dap_clone).await
+            }
+        });
 
         let mut r_args = r_args.clone();
 
@@ -904,9 +920,29 @@ impl RMain {
     /// Get the current execution context if an active request exists.
     /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
     pub fn get_execution_context(&self) -> Option<(String, String)> {
-        self.active_request
-            .as_ref()
-            .map(|req| (req.originator.header.msg_id.clone(), req.request.code.clone()))
+        self.active_request.as_ref().map(|req| {
+            (
+                req.originator.header.msg_id.clone(),
+                req.request.code.clone(),
+            )
+        })
+    }
+
+    // Async messages for the Console. Processed at interrupt time.
+    async fn process_console_notifications(
+        mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
+        dap: Arc<Mutex<Dap>>,
+    ) {
+        loop {
+            while let Some(notification) = console_notification_rx.recv().await {
+                match notification {
+                    ConsoleNotification::DidChangeDocument(uri) => {
+                        let mut dap = dap.lock().unwrap();
+                        dap.did_change_document(&uri);
+                    },
+                }
+            }
+        }
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {

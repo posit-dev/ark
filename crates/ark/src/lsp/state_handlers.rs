@@ -6,6 +6,7 @@
 //
 
 use anyhow::anyhow;
+use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
@@ -42,6 +43,7 @@ use tracing::Instrument;
 use tree_sitter::Parser;
 use url::Url;
 
+use crate::interface::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
@@ -251,6 +253,12 @@ pub(crate) fn did_change(
     document.on_did_change(&mut parser, &params);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
+
+    // Notify console about document change to invalidate breakpoints
+    lsp_state
+        .console_notification_tx
+        .send(ConsoleNotification::DidChangeDocument(uri.clone()))
+        .log_err();
 
     Ok(())
 }
