@@ -126,6 +126,7 @@ impl RConnection {
                             .map(|(name, kind)| ObjectSchema {
                                 name: name.clone(),
                                 kind: kind.clone(),
+                                has_children: None,
                             })
                             .collect::<Vec<_>>();
 

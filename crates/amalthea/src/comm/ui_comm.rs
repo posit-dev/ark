@@ -98,6 +98,17 @@ pub struct Range {
 	pub end: Position
 }
 
+/// Source information for preview content
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PreviewSource {
+	/// The type of source that opened the preview
+	#[serde(rename = "type")]
+	pub preview_source_type: PreviewSourceType,
+
+	/// The ID of the source (session_id or terminal process ID)
+	pub id: String
+}
+
 /// Possible values for Kind in OpenEditor
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum OpenEditorKind {
@@ -108,6 +119,34 @@ pub enum OpenEditorKind {
 	#[serde(rename = "uri")]
 	#[strum(to_string = "uri")]
 	Uri
+}
+
+/// Possible values for Destination in ShowHtmlFile
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
+pub enum ShowHtmlFileDestination {
+	#[serde(rename = "plot")]
+	#[strum(to_string = "plot")]
+	Plot,
+
+	#[serde(rename = "viewer")]
+	#[strum(to_string = "viewer")]
+	Viewer,
+
+	#[serde(rename = "editor")]
+	#[strum(to_string = "editor")]
+	Editor
+}
+
+/// Possible values for Type in PreviewSource
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
+pub enum PreviewSourceType {
+	#[serde(rename = "runtime")]
+	#[strum(to_string = "runtime")]
+	Runtime,
+
+	#[serde(rename = "terminal")]
+	#[strum(to_string = "terminal")]
+	Terminal
 }
 
 /// Parameters for the DidChangePlotsRenderSettings method.
@@ -305,6 +344,9 @@ pub struct ModifyEditorSelectionsParams {
 pub struct ShowUrlParams {
 	/// The URL to display
 	pub url: String,
+
+	/// Optional source information for the URL
+	pub source: Option<PreviewSource>,
 }
 
 /// Parameters for the ShowHtmlFile method.
@@ -317,8 +359,9 @@ pub struct ShowHtmlFileParams {
 	/// superseded by the title in the HTML file.
 	pub title: String,
 
-	/// Whether the HTML file is a plot-like object
-	pub is_plot: bool,
+	/// Where the file should be shown in Positron: as an interactive plot, in
+	/// the viewer pane, or in a new editor tab.
+	pub destination: ShowHtmlFileDestination,
 
 	/// The desired height of the HTML viewer, in pixels. The special value 0
 	/// indicates that no particular height is desired, and -1 indicates that

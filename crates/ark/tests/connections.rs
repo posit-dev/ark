@@ -70,6 +70,7 @@ fn obj(name: &str, kind: &str) -> ObjectSchema {
     ObjectSchema {
         name: String::from(name),
         kind: String::from(kind),
+        has_children: None,
     }
 }
 
