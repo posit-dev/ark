@@ -166,6 +166,7 @@ impl Dap {
         preserve_focus: bool,
         fallback_sources: HashMap<String, String>,
     ) {
+        self.is_debugging = true;
         self.fallback_sources.extend(fallback_sources);
 
         self.load_variables_references(&mut stack);
