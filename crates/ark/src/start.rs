@@ -22,6 +22,7 @@ use crossbeam::channel::unbounded;
 
 use crate::control::Control;
 use crate::dap;
+use crate::interface::ConsoleNotification;
 use crate::interface::SessionMode;
 use crate::lsp;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
@@ -58,10 +59,17 @@ pub fn start_kernel(
     let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
     let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
+    // Async communication channel with the R thread (Console)
+    let (console_notification_tx, console_notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<ConsoleNotification>();
+
     // Create the LSP and DAP clients.
     // Not all Amalthea kernels provide these, but ark does.
     // They must be able to deliver messages to the shell channel directly.
-    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(kernel_init_tx.add_rx())));
+    let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
+        kernel_init_tx.add_rx(),
+        console_notification_tx.clone(),
+    )));
 
     // DAP needs the `RRequest` channel to communicate with
     // `read_console()` and send commands to the debug interpreter
@@ -85,6 +93,7 @@ pub fn start_kernel(
         kernel_init_rx,
         kernel_request_tx,
         graphics_device_tx,
+        console_notification_tx,
     ));
 
     // Create the control handler; this is used to handle shutdown/interrupt and
@@ -146,5 +155,6 @@ pub fn start_kernel(
         session_mode,
         default_repos,
         graphics_device_rx,
+        console_notification_rx,
     )
 }
