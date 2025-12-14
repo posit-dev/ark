@@ -15,6 +15,15 @@
         defer(options(old))
     }
 
+    if (debug_should_break_on_condition("error")) {
+        debug_set_stopped_reason(cnd)
+
+        # Drop in the debugger
+        browser()
+
+        # Fall through to our error handler when we're done debugging
+    }
+
     # This reproduces the behaviour of R's default error handler:
     # - Invoke `getOption("error")`
     # - Save backtrace for `traceback()`
@@ -50,6 +59,20 @@
 }
 
 #' @export
+.ps.errors.globalWarningHandler <- function(cnd) {
+    # If the debugger requested that we break on warnings, drop into `browser()`
+    if (debug_should_break_on_condition("warning")) {
+        debug_set_stopped_reason(cnd)
+
+        # Drop in the debugger
+        browser()
+
+        # Fall through to our error handler when we're done debugging
+    }
+
+    # Fall through to default warning handling
+}
+
 .ps.errors.globalMessageHandler <- function(cnd) {
     # Decline to handle if we can't muffle the message (should only happen
     # in extremely rare cases)
@@ -81,12 +104,8 @@
 globalInterruptHandler <- function(cnd) {
     if (is_interrupting_for_debugger()) {
         browser()
-        invokeRestart("resume")
+        base::.tryResumeInterrupt()
     }
-}
-
-is_interrupting_for_debugger <- function() {
-    .ps.Call("ps_is_interrupting_for_debugger")
 }
 
 #' @export
@@ -257,6 +276,7 @@ initialize_errors <- function() {
         handlers,
         list(
             error = .ps.errors.globalErrorHandler,
+            warning = .ps.errors.globalWarningHandler,
             message = .ps.errors.globalMessageHandler,
             interrupt = globalInterruptHandler
         )
@@ -264,4 +284,28 @@ initialize_errors <- function() {
     do.call(globalCallingHandlers, handlers)
 
     invisible(NULL)
+}
+
+is_interrupting_for_debugger <- function() {
+    isTRUE(.ps.Call("ps_is_interrupting_for_debugger"))
+}
+
+debug_should_break_on_condition <- function(filter) {
+    isTRUE(.ps.Call("ps_debug_should_break_on_condition", filter))
+}
+
+debug_set_stopped_reason <- function(cnd) {
+    # Set the stopped reason so DAP knows we stopped due to an exception.
+    # Call `conditionMessage()`defensively since it invokes foreign code
+    # that might be buggy.
+    message <- tryCatch(
+        conditionMessage(cnd),
+        error = function(e) "<error getting condition message>"
+    )
+
+    if (.ps.is_installed("cli")) {
+        message <- cli::ansi_strip(message)
+    }
+
+    .ps.Call("ps_debug_set_stopped_reason", class(cnd)[[1]], message)
 }

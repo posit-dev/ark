@@ -39,6 +39,7 @@ use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
+use crate::dap::dap::DapExceptionEvent;
 use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
@@ -192,6 +193,19 @@ fn listen_dap_events<W: Write>(
                         })
                     },
 
+                    DapBackendEvent::Exception(DapExceptionEvent { class, message, preserve_focus }) => {
+                        let text = format!("<{class}> {message}");
+                        Event::Stopped(StoppedEventBody {
+                            reason: StoppedEventReason::Exception,
+                            description: Some(message),
+                            thread_id: Some(THREAD_ID),
+                            preserve_focus_hint: Some(preserve_focus),
+                            text: Some(text),
+                            all_threads_stopped: Some(true),
+                            hit_breakpoint_ids: None,
+                        })
+                    },
+
                     DapBackendEvent::Terminated => {
                         Event::Terminated(None)
                     },
@@ -325,6 +339,25 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Result<(), ServerError> {
         let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
             supports_restart_request: Some(true),
+            supports_exception_info_request: Some(false),
+            exception_breakpoint_filters: Some(vec![
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("error"),
+                    label: String::from("Errors"),
+                    description: Some(String::from("Break on uncaught R errors")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("warning"),
+                    label: String::from("Warnings"),
+                    description: Some(String::from("Break on R warnings")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+            ]),
             ..Default::default()
         }));
         self.respond(rsp)?;
@@ -578,12 +611,13 @@ impl<R: Read, W: Write> DapServer<R, W> {
     fn handle_set_exception_breakpoints(
         &mut self,
         req: Request,
-        _args: SetExceptionBreakpointsArguments,
+        args: SetExceptionBreakpointsArguments,
     ) -> Result<(), ServerError> {
+        let mut state = self.state.lock().unwrap();
+        state.breakpoints_conditions = args.filters;
+        drop(state);
         let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
-            SetExceptionBreakpointsResponse {
-                breakpoints: None, // TODO
-            },
+            SetExceptionBreakpointsResponse { breakpoints: None },
         ));
         self.respond(rsp)
     }

@@ -3,7 +3,6 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
-
 use anyhow::anyhow;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -24,6 +23,7 @@ use url::Url;
 use crate::console::Console;
 use crate::console::DebugCallText;
 use crate::console::DebugCallTextKind;
+use crate::console::DebugStoppedReason;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -73,7 +73,11 @@ impl From<&FrameInfo> for FrameInfoId {
 }
 
 impl Console {
-    pub(crate) fn debug_start(&mut self, debug_preserve_focus: bool) {
+    pub(crate) fn debug_start(
+        &mut self,
+        debug_preserve_focus: bool,
+        debug_stopped_reason: DebugStoppedReason,
+    ) {
         match self.debug_stack_info() {
             Ok(stack) => {
                 // Figure out whether we changed location since last time,
@@ -97,7 +101,12 @@ impl Console {
                 let preserve_focus = same_stack && debug_preserve_focus;
 
                 let mut dap = self.debug_dap.lock().unwrap();
-                dap.start_debug(stack, preserve_focus, fallback_sources)
+                dap.start_debug(
+                    stack,
+                    preserve_focus,
+                    fallback_sources,
+                    debug_stopped_reason,
+                )
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
@@ -536,8 +545,34 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
 }
 
 #[harp::register]
+pub unsafe extern "C-unwind" fn ps_debug_should_break_on_condition(
+    filter: SEXP,
+) -> anyhow::Result<SEXP> {
+    let filter: String = RObject::view(filter).try_into()?;
+
+    let console = Console::get_mut();
+    let dap = console.debug_dap.lock().unwrap();
+
+    let enabled: RObject = dap.is_exception_breakpoint_filter_enabled(&filter).into();
+    Ok(enabled.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_debug_set_stopped_reason(
+    class: SEXP,
+    message: SEXP,
+) -> anyhow::Result<SEXP> {
+    let class: String = RObject::view(class).try_into()?;
+    let message: String = RObject::view(message).try_into()?;
+
+    Console::get_mut().debug_stopped_reason = DebugStoppedReason::Condition { class, message };
+
+    Ok(libr::R_NilValue)
+}
+
+#[harp::register]
 pub unsafe extern "C-unwind" fn ps_is_interrupting_for_debugger() -> anyhow::Result<SEXP> {
-    let console = RMain::get_mut();
+    let console = Console::get_mut();
     let mut dap = console.debug_dap.lock().unwrap();
 
     let result: RObject = dap.is_interrupting_for_debugger.into();
