@@ -78,6 +78,17 @@
     invokeRestart("muffleMessage")
 }
 
+globalInterruptHandler <- function(cnd) {
+    if (is_interrupting_for_debugger()) {
+        browser()
+        invokeRestart("resume")
+    }
+}
+
+is_interrupting_for_debugger <- function() {
+    .ps.Call("ps_is_interrupting_for_debugger")
+}
+
 #' @export
 .ps.errors.traceback <- function() {
     traceback <- get0(".Traceback", baseenv(), ifnotfound = list())
@@ -246,7 +257,8 @@ initialize_errors <- function() {
         handlers,
         list(
             error = .ps.errors.globalErrorHandler,
-            message = .ps.errors.globalMessageHandler
+            message = .ps.errors.globalMessageHandler,
+            interrupt = globalInterruptHandler
         )
     )
     do.call(globalCallingHandlers, handlers)

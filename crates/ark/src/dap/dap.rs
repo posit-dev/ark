@@ -163,6 +163,9 @@ pub struct Dap {
     /// Monotonically increasing breakpoint ID counter
     current_breakpoint_id: i64,
 
+    /// Whether an interrupt was sent to drop into the debugger
+    pub(crate) is_interrupting_for_debugger: bool,
+
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<CommOutgoingTx>,
 
@@ -190,6 +193,7 @@ impl Dap {
             comm_tx: None,
             r_request_tx,
             shared_self: None,
+            is_interrupting_for_debugger: false,
         };
 
         let shared = Arc::new(Mutex::new(state));
