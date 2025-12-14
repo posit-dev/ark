@@ -172,6 +172,18 @@ pub enum DebugCallTextKind {
     DebugAt,
 }
 
+#[derive(Debug, Clone)]
+pub enum DebugStoppedReason {
+    Step,
+    Condition { class: String, message: String },
+}
+
+impl Default for DebugStoppedReason {
+    fn default() -> Self {
+        DebugStoppedReason::Step
+    }
+}
+
 /// Notifications from other components (e.g., LSP) to the Console
 #[derive(Debug)]
 pub enum ConsoleNotification {
@@ -306,6 +318,9 @@ pub struct Console {
     /// The current frame `id`. Unique across all frames within a single debug session.
     /// Reset after `debug_stop()`, not between debug steps.
     pub(crate) debug_current_frame_id: i64,
+
+    /// Reason for entering the debugger. Used to determine which DAP event to send.
+    pub(crate) debug_stopped_reason: DebugStoppedReason,
 
     /// Tracks how many nested `r_read_console()` calls are on the stack.
     /// Incremented when entering `r_read_console(),` decremented on exit.
@@ -822,6 +837,7 @@ impl Console {
             lsp_virtual_documents: HashMap::new(),
             debug_dap: dap,
             debug_is_debugging: false,
+            debug_stopped_reason: DebugStoppedReason::Step,
             tasks_interrupt_rx,
             tasks_idle_rx,
             pending_futures: HashMap::new(),
@@ -1019,7 +1035,7 @@ impl Console {
             // we'd clean from here for symmetry.
             self.debug_is_debugging = true;
             if !has_pending {
-                self.debug_start(self.debug_preserve_focus);
+                self.debug_start(self.debug_preserve_focus, self.debug_stopped_reason.clone());
             }
         }
 
@@ -2679,6 +2695,7 @@ pub extern "C-unwind" fn r_read_console(
             // For a more practical example see Shiny app example in
             // https://github.com/rstudio/rstudio/pull/14848
             console.debug_is_debugging = false;
+            console.debug_stopped_reason = Default::default();
             console.debug_stop();
         },
     )
