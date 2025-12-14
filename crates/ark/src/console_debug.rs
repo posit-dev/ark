@@ -535,6 +535,17 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     Ok(libr::R_NilValue)
 }
 
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_is_interrupting_for_debugger() -> anyhow::Result<SEXP> {
+    let console = RMain::get_mut();
+    let mut dap = console.debug_dap.lock().unwrap();
+
+    let result: RObject = dap.is_interrupting_for_debugger.into();
+    dap.is_interrupting_for_debugger = false;
+
+    Ok(result.sexp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

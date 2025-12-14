@@ -763,6 +763,21 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.respond(rsp)
     }
 
+    fn handle_pause(&mut self, req: Request, args: PauseArguments) {
+        if args.thread_id != THREAD_ID {
+            self.respond(req.error(&format!("Ark DAP: Unknown thread ID {}", args.thread_id)));
+            return;
+        }
+
+        self.state.lock().unwrap().is_interrupting_for_debugger = true;
+
+        log::info!("DAP: Received request to pause R, sending interrupt");
+        crate::sys::control::handle_interrupt_request();
+
+        let rsp = req.success(ResponseBody::Pause);
+        self.respond(rsp);
+    }
+
     fn send_command(&mut self, cmd: DebugRequest) {
         if let Some(tx) = &self.comm_tx {
             // If we have a comm channel (always the case as of this
