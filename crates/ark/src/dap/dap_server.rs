@@ -459,15 +459,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let rsp = req.success(ResponseBody::Attach);
         self.respond(rsp);
 
-        self.send_event(Event::Stopped(StoppedEventBody {
-            reason: StoppedEventReason::Step,
-            description: Some(String::from("Execution paused")),
-            thread_id: Some(THREAD_ID),
-            preserve_focus_hint: Some(false),
-            text: None,
-            all_threads_stopped: None,
-            hit_breakpoint_ids: None,
-        }))
+        self.send_event(Event::Thread(ThreadEventBody {
+            reason: ThreadEventReason::Started,
+            thread_id: THREAD_ID,
+        }));
     }
 
     fn handle_disconnect(&mut self, req: Request, _args: DisconnectArguments) {
@@ -504,7 +499,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let rsp = req.success(ResponseBody::Threads(ThreadsResponse {
             threads: vec![Thread {
                 id: THREAD_ID,
-                name: String::from("Main thread"),
+                name: String::from("R console"),
             }],
         }));
         self.respond(rsp);
