@@ -84,13 +84,26 @@ debugger_stack_info <- function(
 }
 
 top_level_call_frame_info <- function(x) {
-    x <- call_deparse(x)
-    x <- paste_line(x)
+    source_name <- paste0(as_label(x), ".R")
+
+    srcref <- attr(x, "srcref", exact = TRUE)
+    if (!is.null(srcref)) {
+        out <- frame_info_from_srcref(
+            source_name = source_name,
+            frame_name = "<global>",
+            srcref = srcref,
+            environment = NULL
+        )
+
+        if (!is.null(out)) {
+            return(out)
+        }
+    }
 
     # We return `0`s to avoid highlighting anything in the top level call.
     # We just want to show it in the editor, and that's really it.
     new_frame_info(
-        source_name = x,
+        source_name = source_name,
         frame_name = "<global>",
         file = NULL,
         contents = x,
@@ -111,7 +124,7 @@ context_frame_info <- function(
     last_start_line
 ) {
     frame_name <- as_label(frame_call)
-    source_name <- frame_name
+    source_name <- paste0(frame_name, ".R")
 
     frame_info(
         source_name,
@@ -149,7 +162,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         frame_name <- frame_names[[i]]
 
         out[[i]] <- frame_info(
-            source_name = frame_name,
+            source_name = paste0(frame_name, ".R"),
             frame_name = frame_name,
             srcref = srcref,
             fn = fn,
@@ -238,7 +251,9 @@ frame_info_from_srcref <- function(
         return(NULL)
     }
 
-    source_name <- basename(info$file)
+    if (is_string(info$file)) {
+        source_name <- basename(info$file)
+    }
 
     new_frame_info(
         source_name = source_name,
