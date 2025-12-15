@@ -85,7 +85,7 @@ debugger_stack_info <- function(
 
 top_level_call_frame_info <- function(x) {
     x <- call_deparse(x)
-    x <- lines_join(x)
+    x <- paste_line(x)
 
     # We return `0`s to avoid highlighting anything in the top level call.
     # We just want to show it in the editor, and that's really it.
@@ -110,18 +110,8 @@ context_frame_info <- function(
     frame_call,
     last_start_line
 ) {
-    frame_call_name <- call_name(frame_call)
-    if (!is.null(frame_call_name)) {
-        # Figure out the frame function's name and use that as a simpler
-        # `frame_name` and `source_name`
-        frame_name <- paste0(frame_call_name, "()")
-        source_name <- frame_name
-    } else {
-        # Otherwise fall back to standard deparsing of `frame_call`
-        frame_lines <- call_deparse(frame_call)
-        frame_name <- lines_join(frame_lines)
-        source_name <- frame_name
-    }
+    frame_name <- as_label(frame_call)
+    source_name <- frame_name
 
     frame_info(
         source_name,
@@ -140,14 +130,10 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
     })
     call_texts <- lapply(calls, function(call) {
         call_lines <- call_deparse(call)
-        call_text <- lines_join(call_lines)
+        call_text <- paste_line(call_lines)
         call_text
     })
-    frame_names <- lapply(frame_calls, function(call) {
-        call_lines <- call_deparse(call)
-        call_text <- lines_join(call_lines)
-        call_text
-    })
+    frame_names <- lapply(frame_calls, function(call) as_label(call))
 
     # Currently only tracked for the context frame, as that is where it is most useful,
     # since that is where the user is actively stepping.
@@ -163,7 +149,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         frame_name <- frame_names[[i]]
 
         out[[i]] <- frame_info(
-            source_name = call_text,
+            source_name = frame_name,
             frame_name = frame_name,
             srcref = srcref,
             fn = fn,
@@ -201,7 +187,7 @@ frame_info <- function(
 
     # Only deparse if `srcref` failed!
     fn_lines <- call_deparse(fn)
-    fn_text <- lines_join(fn_lines)
+    fn_text <- paste_line(fn_lines)
 
     # Reparse early on, so even if we fail to find `call_text` or fail to reparse,
     # we pass a `fn_text` to `frame_info_unknown_range()` where we've consistently removed
@@ -251,6 +237,8 @@ frame_info_from_srcref <- function(
     if (is.null(info)) {
         return(NULL)
     }
+
+    source_name <- basename(info$file)
 
     new_frame_info(
         source_name = source_name,
@@ -366,14 +354,6 @@ new_frame_info <- function(
         end_line = end_line,
         end_column = end_column
     )
-}
-
-call_deparse <- function(x) {
-    deparse(x, width.cutoff = 500L)
-}
-
-lines_join <- function(x) {
-    paste0(x, collapse = "\n")
 }
 
 #' @param fn_expr A function expression returned from `parse_function_text()`, which

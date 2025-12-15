@@ -219,3 +219,7 @@ log_error <- function(msg) {
     stopifnot(is_string(msg))
     .Call("ark_log_error", msg)
 }
+
+paste_line <- function(x) {
+    paste0(x, collapse = "\n")
+}
