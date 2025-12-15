@@ -80,7 +80,7 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
                     let destination = match RObject::view(destination).to::<String>() {
                         Ok(s) => s.parse::<ShowHtmlFileDestination>().unwrap_or_else(|_| {
                             log::warn!(
-                                "`destination` must be one of 'plot', 'editor', or 'viewer'"
+                                "`destination` must be one of 'plot', 'editor', or 'viewer', using 'viewer' as a fallback."
                             );
                             ShowHtmlFileDestination::Viewer
                         }),
