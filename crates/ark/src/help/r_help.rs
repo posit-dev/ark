@@ -279,7 +279,15 @@ impl RHelp {
                 RObject::from(R_GlobalEnv)
             })();
 
-            let obj = harp::parse_eval0(topic.as_str(), env.sexp)?;
+            let obj = match harp::parse_eval0(topic.as_str(), env.sexp) {
+                Ok(obj) => obj,
+                Err(err) => {
+                    // Could not parse/eval the topic; no custom handler.
+                    log::trace!("Could not parse/eval help topic expression '{}': {:?}", topic, err);
+                    return Ok(None);
+                }
+            };
+
             let handler: Option<RObject> =
                 ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
 
