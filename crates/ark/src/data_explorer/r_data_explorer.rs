@@ -1302,6 +1302,12 @@ impl RDataExplorer {
         convert_to_code::convert_to_code(params, object_name, &resolved_sort_keys)
     }
 
+    /// Returns the current format options as a `FormatOptions` object.
+    ///
+    /// These options are derived from the R options "scipen" and "digits". The
+    /// thresholds for scientific notation are calculated based on these
+    /// options. The `max_value_length` is set to 1000, and `thousands_sep`
+    /// is set to `None`.
     fn current_format_options() -> FormatOptions {
         let scipen: i64 = get_option("scipen").try_into().unwrap_or(0); // R default
         let digits: i64 = get_option("digits").try_into().unwrap_or(7); // R default
