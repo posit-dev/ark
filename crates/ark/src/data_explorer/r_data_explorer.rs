@@ -1308,7 +1308,7 @@ impl RDataExplorer {
 
         // Calculate thresholds for scientific notation
         let max_integral_digits = (digits + scipen).max(1);
-        let large_num_digits = (digits / 2).max(1);
+        let large_num_digits = (digits - 5).max(0); // default to 2 d.p.
         let small_num_digits = (digits / 2).max(1);
 
         FormatOptions {
