@@ -1307,9 +1307,9 @@ impl RDataExplorer {
         let digits: i64 = get_option("digits").try_into().unwrap_or(7); // R default
 
         // Calculate thresholds for scientific notation
-        let max_integral_digits = (digits + scipen).max(1);
+        let max_integral_digits = (scipen + 5).max(1); // only depends on scipen
         let large_num_digits = (digits - 5).max(0); // default to 2 d.p.
-        let small_num_digits = (digits / 2).max(1);
+        let small_num_digits = (scipen + 6).max(1); // only depends on scipen
 
         FormatOptions {
             large_num_digits,
