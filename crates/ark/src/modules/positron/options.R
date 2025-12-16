@@ -40,6 +40,7 @@ options(shiny.launch.browser = function(url) {
 # Show Profvis output in the viewer
 options(profvis.print = function(x) {
     # Render the HTML content to a temporary file
+    # (htmltools is a profvis dependency so it's guaranteed to be available)
     tmp_file <- htmltools::html_print(x, viewer = NULL)
 
     # Pass the file to the viewer
