@@ -474,11 +474,6 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         let rsp = req.success(ResponseBody::Disconnect);
         self.respond(rsp);
-
-        // Instruct client to reattach immediately
-        if let Some(tx) = &self.comm_tx {
-            tx.send(amalthea::comm_rpc_message!("attach")).log_err();
-        }
     }
 
     fn handle_restart<T>(&mut self, req: Request, _args: T) {
