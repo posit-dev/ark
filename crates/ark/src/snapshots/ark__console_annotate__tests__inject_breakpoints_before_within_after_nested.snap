@@ -2,15 +2,17 @@
 source: crates/ark/src/console_annotate.rs
 expression: result
 ---
-base::.ark_breakpoint(browser(), "file:///test.R", "1")
-#line 1 "file:///test.R"
+{
+base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "1"))
+#line 2 "file:///test.R"
 x <- 1
 f <- function() {
-base::.ark_breakpoint(browser(), "file:///test.R", "2")
-#line 3 "file:///test.R"
+base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "2"))
+#line 4 "file:///test.R"
   y <- 2
   z <- 3
 }
-base::.ark_breakpoint(browser(), "file:///test.R", "3")
-#line 6 "file:///test.R"
+base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "3"))
+#line 7 "file:///test.R"
 w <- 4
+}

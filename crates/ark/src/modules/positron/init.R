@@ -166,3 +166,7 @@ if (!exists("the", inherits = FALSE)) {
 
     the$cli_version <- NULL
 }
+
+initialize <- function() {
+    debug_initialize()
+}

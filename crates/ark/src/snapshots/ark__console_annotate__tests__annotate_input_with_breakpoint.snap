@@ -3,8 +3,10 @@ source: crates/ark/src/console_annotate.rs
 expression: result
 ---
 #line 4 "file:///test.R"
+{
 0
-base::.ark_breakpoint(browser(), "file:///test.R", "1")
-#line 5 "file:///test.R"
+base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "1"))
+#line 6 "file:///test.R"
 1
 2
+}

@@ -78,7 +78,6 @@ use harp::session::r_traceback;
 use harp::srcref::get_srcref_list;
 use harp::srcref::srcref_list_get;
 use harp::srcref::SrcFile;
-use harp::srcref::SrcRef;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
 use harp::R_MAIN_THREAD_ID;
@@ -357,6 +356,7 @@ impl PendingInputs {
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let input = if let Some(location) = location {
             let annotated_code = annotate_input(code, location, breakpoints);
+            log::trace!("Annotated code: \n```\n{annotated_code}\n```");
             harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(annotated_code.into()))
         } else if harp::get_option_bool("keep.source") {
             harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(code.into()))
@@ -652,10 +652,9 @@ impl RMain {
             }
 
             // Register all hooks once all modules have been imported
-            let hook_result = RFunction::from("register_hooks").call_in(ARK_ENVS.positron_ns);
-            if let Err(err) = hook_result {
-                log::error!("Error registering some hooks: {err:?}");
-            }
+            RFunction::from("register_hooks")
+                .call_in(ARK_ENVS.positron_ns)
+                .log_err();
 
             // Populate srcrefs for namespaces already loaded in the session.
             // Namespaces of future loaded packages will be populated on load.
@@ -674,18 +673,13 @@ impl RMain {
                 log::error!("Error setting default repositories: {err:?}");
             }
 
+            // Finish initilization of modules
+            RFunction::from("initialize")
+                .call_in(ARK_ENVS.positron_ns)
+                .log_err();
+
             // Initialise Ark's last value
             libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
-
-            // Store `.ark_breakpoint` in base namespace so it's maximally reachable
-            libr::SETCDR(
-                r_symbol!(".ark_breakpoint"),
-                // Originally defined in Positron namespace, get it from there
-                Environment::view(ARK_ENVS.positron_ns)
-                    .get(".ark_breakpoint")
-                    .unwrap()
-                    .sexp,
-            );
         }
 
         // Now that R has started (emitting any startup messages that we capture in the
@@ -1059,21 +1053,22 @@ impl RMain {
         //   we're in the `.ark_breakpoint()` function and can look at the current
         //   `sys.function()` to detect this.
         // - We've just stepped to another injected breakpoint. In this case we
-        //   look at what function R emitted as part of the `Debug at` output.
+        //   look whether our sentinel `.ark_auto_step()` was emitted by R as part
+        //   of the `Debug at` output.
         if self.debug_is_debugging {
-            // Did we just step onto an injected breakpoint
-            let at_injected_breakpoint = matches!(
+            // Did we just step onto an injected breakpoint or verification call
+            let at_auto_step = matches!(
                 &self.debug_call_text,
                 DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
-                    if text.contains(".ark_breakpoint")
+                    if text.contains(".ark_auto_step")
             );
 
             // Are we stopped by an injected breakpoint
             let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
 
-            if at_injected_breakpoint || in_injected_breakpoint {
-                let kind = if at_injected_breakpoint { "at" } else { "in" };
-                log::trace!("Injected breakpoint reached ({kind}), moving to next expression");
+            if in_injected_breakpoint || at_auto_step {
+                let kind = if in_injected_breakpoint { "in" } else { "at" };
+                log::trace!("Auto-step expression reached ({kind}), moving to next expression");
 
                 self.debug_preserve_focus = false;
                 self.debug_send_dap(DapBackendEvent::Continued);
@@ -1383,7 +1378,7 @@ impl RMain {
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
-            Self::reply_execute_request(&self.iopub_tx, req, &info, value);
+            Self::reply_execute_request(&self.iopub_tx, req, value);
         } else {
             log::info!("No active request to handle, discarding: {value:?}");
         }
@@ -2021,12 +2016,9 @@ impl RMain {
     fn reply_execute_request(
         iopub_tx: &Sender<IOPubMessage>,
         req: ActiveReadConsoleRequest,
-        prompt_info: &PromptInfo,
         value: ConsoleValue,
     ) {
-        let prompt = &prompt_info.input_prompt;
-
-        log::trace!("Got R prompt '{}', completing execution", prompt);
+        log::trace!("Completing execution after receiving prompt");
 
         let exec_count = req.exec_count;
 
@@ -2481,24 +2473,6 @@ impl RMain {
             // `harp::register`) will trigger an interrupt jump right away.
             StdInRpcReply::Interrupt => Ok(RObject::null()),
         }
-    }
-
-    pub(crate) fn verify_breakpoints(&self, srcref: RObject) {
-        let Some(srcref) = SrcRef::try_from(srcref).log_err() else {
-            return;
-        };
-
-        let Some(uri) = srcref
-            .srcfile()
-            .and_then(|srcfile| srcfile.filename())
-            .and_then(|filename| Url::parse(&filename).anyhow())
-            .log_err()
-        else {
-            return;
-        };
-
-        let mut dap = self.debug_dap.lock().unwrap();
-        dap.verify_breakpoints(&uri, srcref.line_virtual.start, srcref.line_virtual.end);
     }
 
     #[cfg(not(test))] // Avoid warnings in unit test
