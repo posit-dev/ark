@@ -3108,3 +3108,63 @@ fn test_single_row_data_frame_column_profiles() {
         });
     }
 }
+
+#[test]
+fn test_format_options_state_change() {
+    let _lock = r_test_lock();
+    
+    // Save the current R options so we can restore them later
+    let (original_scipen, original_digits) = r_task(|| {
+        let scipen_obj = harp::parse_eval_global("getOption('scipen')").expect("Failed to get scipen option");
+        let digits_obj = harp::parse_eval_global("getOption('digits')").expect("Failed to get digits option");
+        let scipen: i64 = scipen_obj.try_into().unwrap_or(0);
+        let digits: i64 = digits_obj.try_into().unwrap_or(7);
+        (scipen, digits)
+    });
+    
+    // Set known R options for testing
+    r_task(|| {
+        harp::parse_eval_global("options(scipen = 0, digits = 7)").unwrap();
+    });
+    
+    // Open a data explorer with mtcars
+    let setup = TestSetup::new("mtcars");
+    let socket = setup.socket();
+    
+    // Get the initial state and verify format_options
+    TestAssertions::assert_state(&socket, |state| {
+        let format_options = state.format_options.as_ref().expect("format_options should be present");
+        
+        // With scipen=0, digits=7:
+        // max_integral_digits = (0 + 5).max(1) = 5
+        // large_num_digits = (7 - 5).max(0) = 2
+        // small_num_digits = (0 + 6).max(1) = 6
+        assert_eq!(format_options.max_integral_digits, 5);
+        assert_eq!(format_options.large_num_digits, 2);
+        assert_eq!(format_options.small_num_digits, 6);
+    });
+    
+    // Change R options to different values
+    r_task(|| {
+        harp::parse_eval_global("options(scipen = 10, digits = 10)").unwrap();
+    });
+    
+    // Get the state again and verify format_options changed
+    TestAssertions::assert_state(&socket, |state| {
+        let format_options = state.format_options.as_ref().expect("format_options should be present");
+        
+        // With scipen=10, digits=10:
+        // max_integral_digits = (10 + 5).max(1) = 15
+        // large_num_digits = (10 - 5).max(0) = 5
+        // small_num_digits = (10 + 6).max(1) = 16
+        assert_eq!(format_options.max_integral_digits, 15);
+        assert_eq!(format_options.large_num_digits, 5);
+        assert_eq!(format_options.small_num_digits, 16);
+    });
+    
+    // Restore original R options
+    r_task(|| {
+        let restore_cmd = format!("options(scipen = {}, digits = {})", original_scipen, original_digits);
+        harp::parse_eval_global(&restore_cmd).expect("Failed to restore original R options");
+    });
+}
