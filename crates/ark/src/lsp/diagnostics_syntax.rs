@@ -137,6 +137,7 @@ fn diagnose_missing(
         NodeType::ForStatement => diagnose_missing_for(node, context, diagnostics),
         NodeType::WhileStatement => diagnose_missing_while(node, context, diagnostics),
         NodeType::RepeatStatement => diagnose_missing_repeat(node, context, diagnostics),
+        NodeType::IfStatement => diagnose_missing_if(node, context, diagnostics),
         _ => Ok(()),
     }
 }
@@ -250,6 +251,34 @@ fn diagnose_missing_loop_body(
 
     let range = token.range();
     let message = format!("Invalid {name} loop. Missing a body.");
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
+}
+
+fn diagnose_missing_if(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let Some(consequence) = node.child_by_field_name("consequence") else {
+        return Ok(());
+    };
+
+    if !consequence.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    // Highlight just the token name (i.e. `if`).
+    // Don't want to highlight whole `node` because that can confusingly span many lines.
+    // Unfortunately we don't have a field name for this.
+    let Some(token) = node.child(0) else {
+        return Ok(());
+    };
+
+    let range = token.range();
+    let message = format!("Invalid if statement. Missing a body.");
     diagnostics.push(new_syntax_diagnostic(message, range, context));
 
     Ok(())
@@ -603,6 +632,21 @@ function(x {
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(1, 0));
         assert_eq!(diagnostic.range.end, Position::new(1, 6));
+    }
+
+    #[test]
+    fn test_if_statement_with_no_consequence() {
+        let text = "if (a)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `if`
+        // We call if an if "body" even though tree-sitter calls it a "consequence"
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 2));
     }
 
     #[test]
