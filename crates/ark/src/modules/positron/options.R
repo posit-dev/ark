@@ -39,9 +39,12 @@ options(shiny.launch.browser = function(url) {
 
 # Show Profvis output in the viewer
 options(profvis.print = function(x) {
+    # Render the widget to a tag list to create standalone HTML output.
+    # (htmltools is a Profvis dependency so it's guaranteed to be available)
+    rendered <- htmltools::as.tags(x, standalone = TRUE)
+
     # Render the HTML content to a temporary file
-    # (htmltools is a profvis dependency so it's guaranteed to be available)
-    tmp_file <- htmltools::html_print(x, viewer = NULL)
+    tmp_file <- htmltools::html_print(rendered, viewer = NULL)
 
     # Pass the file to the viewer
     .ps.Call("ps_html_viewer", tmp_file, "R Profile", -1L, "editor")
