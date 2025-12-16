@@ -1303,8 +1303,8 @@ impl RDataExplorer {
     }
 
     fn current_format_options() -> FormatOptions {
-        let scipen: i64 = get_option("scipen").try_into().unwrap_or(0);
-        let digits: i64 = get_option("digits").try_into().unwrap_or(7);
+        let scipen: i64 = get_option("scipen").try_into().unwrap_or(0); // R default
+        let digits: i64 = get_option("digits").try_into().unwrap_or(7); // R default
 
         // Calculate thresholds for scientific notation
         let max_integral_digits = (digits + scipen).max(1);
