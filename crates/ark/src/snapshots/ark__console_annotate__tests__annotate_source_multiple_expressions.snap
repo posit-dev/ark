@@ -1,0 +1,15 @@
+---
+source: crates/ark/src/console_annotate.rs
+expression: result
+---
+{
+#line 1 "file:///test.R"
+a <- 1
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 1L))
+#line 2 "file:///test.R"
+b <- 2
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 2L, 2L))
+#line 3 "file:///test.R"
+c <- 3
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 3L, 3L))
+}

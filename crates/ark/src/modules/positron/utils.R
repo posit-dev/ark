@@ -182,6 +182,27 @@ system_path <- function(pkg) {
     ""
 }
 
+# Convert a file path to a file:// URI
+path_to_file_uri <- function(path) {
+    # `winslash` takes care of Windows backslashes
+    path <- tryCatch(
+        normalizePath(path, winslash = "/", mustWork = TRUE),
+        error = function(e) NULL
+    )
+    if (is.null(path)) {
+        return(NULL)
+    }
+
+    # On Windows, paths like "C:/foo" need to become "file:///C:/foo"
+    # On Unix, paths like "/foo" need to become "file:///foo"
+    if (startsWith(path, "/")) {
+        paste0("file://", path)
+    } else {
+        paste0("file:///", path)
+    }
+}
+
+
 # `NULL` if successful, otherwise an error condition
 try_load_namespace <- function(package) {
     tryCatch(

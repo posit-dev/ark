@@ -14,11 +14,6 @@ debugger_stack_info <- function(
     calls
 ) {
     n <- length(fns)
-
-    if (n == 0L) {
-        # Must have at least 1 frame on the stack to proceed
-        return(list())
-    }
     if (n != length(environments) || n != length(calls)) {
         message <- paste0(
             "`sys.function()`, `sys.frames()`, and `sys.calls()` didn't return consistent results. ",
@@ -27,8 +22,15 @@ debugger_stack_info <- function(
         stop(sprintf(message, n, length(environments), length(calls)))
     }
 
-    # Top level call never has source references.
-    # It's what comes through the console input.
+    if (n == 0L) {
+        return(list(frame_info_from_srcref(
+            source_name = "<global>.R",
+            frame_name = "<global>",
+            srcref = context_srcref,
+            environment = NULL
+        )))
+    }
+
     top_level_loc <- 1L
     top_level_call <- calls[[top_level_loc]]
 
@@ -718,3 +720,30 @@ is_breakpoint_enabled <- function(uri, id) {
     },
     class = "ark_breakpoint"
 )
+
+# Wrapper for expressions that should be auto-stepped over in the debugger. The
+# debugger detects this by checking if R emitted a `debug at` line containing
+# `.ark_auto_step` and automatically steps past it.
+#' @export
+.ark_auto_step <- function(expr) {
+    expr
+}
+
+# Verify breakpoints in a line range. Called after each top-level expression in
+# `source()`.
+.ark_verify_breakpoints_range <- function(uri, start_line, end_line) {
+    .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
+}
+
+debug_initialize <- function() {
+    # Store `.ark_breakpoint` and friends in base namespace so they're maximally
+    # reachable. We might want to do that for all symbols exported from the
+    # Ark/Positron namespace.
+    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+    node_poke_cdr(as.symbol(".ark_auto_step"), .ark_auto_step)
+    node_poke_cdr(as.symbol(".ark_breakpoint"), .ark_breakpoint)
+    node_poke_cdr(
+        as.symbol(".ark_verify_breakpoints_range"),
+        .ark_verify_breakpoints_range
+    )
+}
