@@ -283,7 +283,7 @@ impl RHelp {
                 Ok(obj) => obj,
                 Err(err) => {
                     // Could not parse/eval the topic; no custom handler.
-                    log::trace!("Could not parse/eval help topic expression '{}': {:?}", topic, err);
+                    log::warn!("Could not parse/eval help topic expression '{}': {:?}", topic, err);
                     return Ok(None);
                 }
             };
