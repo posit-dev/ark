@@ -1304,10 +1304,16 @@ impl RDataExplorer {
 
     fn current_format_options() -> FormatOptions {
         let scipen: i64 = get_option("scipen").try_into().unwrap_or(0);
-        let max_integral_digits = (7 + scipen).clamp(1, 20);
+        let digits: i64 = get_option("digits").try_into().unwrap_or(7);
+
+        // Calculate thresholds for scientific notation
+        let max_integral_digits = (digits + scipen).clamp(1, 20);
+        let large_num_digits = (digits / 2).clamp(1, 10);
+        let small_num_digits = (digits / 2).clamp(1, 10);
+
         FormatOptions {
-            large_num_digits: 2,
-            small_num_digits: 4,
+            large_num_digits,
+            small_num_digits,
             max_integral_digits,
             max_value_length: 1000,
             thousands_sep: None,
