@@ -297,13 +297,6 @@ impl RMain {
         let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
         re.is_match(uri)
     }
-
-    pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: String) -> bool {
-        self.debug_dap
-            .lock()
-            .unwrap()
-            .is_breakpoint_enabled(uri, id)
-    }
 }
 
 fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
@@ -390,6 +383,9 @@ pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
 
     let id: String = RObject::view(id).try_into()?;
 
-    let enabled: RObject = RMain::get().is_breakpoint_enabled(&uri, id).into();
+    let console = RMain::get_mut();
+    let dap = console.debug_dap.lock().unwrap();
+
+    let enabled: RObject = dap.is_breakpoint_enabled(&uri, id).into();
     Ok(enabled.sexp)
 }
