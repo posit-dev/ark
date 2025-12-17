@@ -338,9 +338,16 @@ impl Dap {
             return false;
         };
 
-        breakpoints
-            .iter()
-            .any(|bp| bp.id.to_string() == id && matches!(bp.state, BreakpointState::Verified))
+        // Unverified breakpoints are enabled. This happens when we hit a
+        // breakpoint in an expression that hasn't been evaluated yet (or hasn't
+        // finished).
+        breakpoints.iter().any(|bp| {
+            bp.id.to_string() == id &&
+                matches!(
+                    bp.state,
+                    BreakpointState::Verified | BreakpointState::Unverified
+                )
+        })
     }
 }
 
