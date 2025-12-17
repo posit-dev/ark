@@ -72,6 +72,7 @@ use crossbeam::channel::Sender;
 use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
+use harp::get_option;
 use harp::object::RObject;
 use harp::r_symbol;
 use harp::table_kind;
@@ -1159,6 +1160,7 @@ impl RDataExplorer {
                     }]),
                 },
             },
+            format_options: Some(Self::current_format_options()),
         };
         Ok(DataExplorerBackendReply::GetStateReply(state))
     }
@@ -1298,6 +1300,36 @@ impl RDataExplorer {
 
         // Call the conversion function with resolved sort keys
         convert_to_code::convert_to_code(params, object_name, &resolved_sort_keys)
+    }
+
+    /// Returns the current format options as a `FormatOptions` object.
+    ///
+    /// These options are derived from the R options "scipen" and "digits". The
+    /// thresholds for scientific notation are calculated based on these
+    /// options. The `max_value_length` is set to 1000, and `thousands_sep`
+    /// is set to `None`.
+    fn current_format_options() -> FormatOptions {
+        // In R 4.2, Rf_GetOption1 (used by get_option) doesn't work correctly for scipen
+        // due to special handling added in later versions. We need to use the R interpreter's
+        // getOption() function instead. See: https://github.com/wch/r-source/commit/7f20c19
+        // Note: 'digits' works fine with Rf_GetOption1, so we don't need to change it.
+        let scipen: i64 = harp::parse_eval_global("as.integer(getOption('scipen', 0))")
+            .and_then(|obj| obj.try_into())
+            .unwrap_or(0); // R default
+        let digits: i64 = get_option("digits").try_into().unwrap_or(7); // R default
+
+        // Calculate thresholds for scientific notation
+        let max_integral_digits = (scipen + 5).max(1); // only depends on scipen
+        let large_num_digits = (digits - 5).max(0); // default to 2 d.p.
+        let small_num_digits = (scipen + 6).max(1); // only depends on scipen
+
+        FormatOptions {
+            large_num_digits,
+            small_num_digits,
+            max_integral_digits,
+            max_value_length: 1000,
+            thousands_sep: None,
+        }
     }
 }
 
