@@ -1314,8 +1314,7 @@ impl RDataExplorer {
         // getOption() function instead. See: https://github.com/wch/r-source/commit/7f20c19
         // Note: 'digits' works fine with Rf_GetOption1, so we don't need to change it.
         let scipen: i64 = harp::parse_eval_global("as.integer(getOption('scipen', 0))")
-            .ok()
-            .and_then(|obj| obj.try_into().ok())
+            .and_then(|obj| obj.try_into())
             .unwrap_or(0); // R default
         let digits: i64 = get_option("digits").try_into().unwrap_or(7); // R default
 
