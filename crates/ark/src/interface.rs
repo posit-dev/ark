@@ -870,6 +870,14 @@ impl RMain {
         &self.iopub_tx
     }
 
+    /// Get the current execution context if an active request exists.
+    /// Returns (execution_count, code) tuple.
+    pub fn get_execution_context(&self) -> Option<(u32, String)> {
+        self.active_request
+            .as_ref()
+            .map(|req| (req.exec_count, req.request.code.clone()))
+    }
+
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
         // Reset the autoprint buffer
         self.autoprint_output = String::new();
@@ -1265,10 +1273,14 @@ impl RMain {
                 ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
             });
 
+            // Extract execution context before req is consumed
+            let execution_id = req.exec_count;
+            let code = req.request.code.clone();
+
             // Check for pending graphics updates
             // (Important that this occurs while in the "busy" state of this ExecuteRequest
             // so that the `parent` message is set correctly in any Jupyter messages)
-            graphics_device::on_did_execute_request();
+            graphics_device::on_did_execute_request(execution_id, code);
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
