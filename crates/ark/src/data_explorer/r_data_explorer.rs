@@ -1309,7 +1309,14 @@ impl RDataExplorer {
     /// options. The `max_value_length` is set to 1000, and `thousands_sep`
     /// is set to `None`.
     fn current_format_options() -> FormatOptions {
-        let scipen: i64 = get_option("scipen").try_into().unwrap_or(0); // R default
+        // In R 4.2, Rf_GetOption1 (used by get_option) doesn't work correctly for scipen
+        // due to special handling added in later versions. We need to use the R interpreter's
+        // getOption() function instead. See: https://github.com/wch/r-source/commit/7f20c19
+        // Note: 'digits' works fine with Rf_GetOption1, so we don't need to change it.
+        let scipen: i64 = harp::parse_eval_global("as.integer(getOption('scipen', 0))")
+            .ok()
+            .and_then(|obj| obj.try_into().ok())
+            .unwrap_or(0); // R default
         let digits: i64 = get_option("digits").try_into().unwrap_or(7); // R default
 
         // Calculate thresholds for scientific notation
