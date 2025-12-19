@@ -5,9 +5,8 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::code_action::code_action;
 use crate::lsp::code_action::code_action_workspace_text_edit;
 use crate::lsp::code_action::CodeActions;
-use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::document::Document;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeTypeExt;
 
@@ -64,8 +63,8 @@ pub(crate) fn roxygen_documentation(
 
     // Fairly simple detection of existing `#'` on the previous line (but starting at the
     // same `column` offset), which tells us not to provide this code action
-    if let Some(previous_line) = document.contents.get_line(position.row.saturating_sub(1)) {
-        if let Some(previous_line) = previous_line.get_byte_slice(position.column..) {
+    if let Some(previous_line) = document.get_line(position.row.saturating_sub(1)) {
+        if let Some(previous_line) = previous_line.get(position.column..) {
             let mut previous_line = previous_line.bytes();
 
             if previous_line
@@ -91,11 +90,7 @@ pub(crate) fn roxygen_documentation(
 
     for child in parameters.children_by_field_name("parameter", &mut cursor) {
         let parameter_name = child.child_by_field_name("name")?;
-        let parameter_name = document
-            .contents
-            .node_slice(&parameter_name)
-            .ok()?
-            .to_string();
+        let parameter_name = parameter_name.node_to_string(&document.contents).ok()?;
         parameter_names.push(parameter_name);
     }
 
@@ -105,8 +100,10 @@ pub(crate) fn roxygen_documentation(
     // We insert the documentation string at the start position of the function name.
     // This handles the indentation of the first documentation line, and makes new line
     // handling trivial (we just add a new line to every documentation line).
-    let position = convert_point_to_position(&document.contents, position);
-    let range = tower_lsp::lsp_types::Range::new(position, position);
+    let position = document
+        .lsp_position_from_tree_sitter_point(position)
+        .ok()?;
+    let range = lsp_types::Range::new(position, position);
     let edit = lsp_types::TextEdit::new(range, documentation);
     let edit =
         code_action_workspace_text_edit(uri.clone(), document.version, vec![edit], capabilities);
@@ -175,7 +172,7 @@ mod tests {
     use crate::lsp::capabilities::Capabilities;
     use crate::lsp::code_action::roxygen::roxygen_documentation;
     use crate::lsp::code_action::CodeActions;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     fn point_range(point: Point, byte: usize) -> Range {
         Range {

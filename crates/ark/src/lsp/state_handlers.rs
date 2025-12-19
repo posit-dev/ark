@@ -47,8 +47,7 @@ use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
-use crate::lsp::documents::Document;
-use crate::lsp::encoding::get_position_encoding_kind;
+use crate::lsp::document::Document;
 use crate::lsp::inputs::package::Package;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
@@ -133,7 +132,9 @@ pub(crate) fn initialize(
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }),
         capabilities: ServerCapabilities {
-            position_encoding: Some(get_position_encoding_kind()),
+            // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
+            // once/if Ark becomes an independent LSP
+            position_encoding: Some(lsp_types::PositionEncodingKind::UTF16),
             text_document_sync: Some(TextDocumentSyncCapability::Kind(
                 TextDocumentSyncKind::INCREMENTAL,
             )),

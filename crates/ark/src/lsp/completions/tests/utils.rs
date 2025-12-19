@@ -4,6 +4,7 @@
 // Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
 
+use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionTextEdit;
 
@@ -11,7 +12,7 @@ use crate::fixtures::utils::point_from_cursor;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::state::WorldState;
 
 pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {
@@ -27,13 +28,13 @@ pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec
 }
 
 pub(crate) fn find_completion_by_label<'a>(
-    completions: &'a [tower_lsp::lsp_types::CompletionItem],
+    completions: &'a [lsp_types::CompletionItem],
     label: &str,
-) -> Option<&'a tower_lsp::lsp_types::CompletionItem> {
+) -> Option<&'a lsp_types::CompletionItem> {
     completions.iter().find(|c| c.label == label)
 }
 
-pub(crate) fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expected_text: &str) {
+pub(crate) fn assert_text_edit(item: &lsp_types::CompletionItem, expected_text: &str) {
     assert!(item.text_edit.is_some());
     assert!(item.insert_text.is_none());
 
@@ -48,21 +49,21 @@ pub(crate) fn assert_text_edit(item: &tower_lsp::lsp_types::CompletionItem, expe
     }
 }
 
-pub(crate) fn assert_has_parameter_hints(item: &tower_lsp::lsp_types::CompletionItem) {
+pub(crate) fn assert_has_parameter_hints(item: &lsp_types::CompletionItem) {
     match &item.command {
         Some(command) => assert_eq!(command.command, "editor.action.triggerParameterHints"),
         None => panic!("CompletionItem is missing parameter hints command"),
     }
 }
 
-pub(crate) fn assert_no_command(item: &tower_lsp::lsp_types::CompletionItem) {
+pub(crate) fn assert_no_command(item: &lsp_types::CompletionItem) {
     assert!(
         item.command.is_none(),
         "CompletionItem should not have an associated command"
     );
 }
 
-pub(crate) fn assert_sort_text_has_priority_prefix(item: &tower_lsp::lsp_types::CompletionItem) {
+pub(crate) fn assert_sort_text_has_priority_prefix(item: &lsp_types::CompletionItem) {
     assert!(item.sort_text.is_some());
     let sort_text = item.sort_text.as_ref().unwrap();
     assert!(has_priority_prefix(sort_text));

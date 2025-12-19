@@ -43,8 +43,7 @@ use crate::lsp::completions::function_context::FunctionRefUsage;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::completions::types::PromiseStrategy;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -102,7 +101,7 @@ pub(super) fn completion_item_from_assignment(
     let lhs = node.child_by_field_name("lhs").into_result()?;
     let rhs = node.child_by_field_name("rhs").into_result()?;
 
-    let label = context.document.contents.node_slice(&lhs)?.to_string();
+    let label = lhs.node_as_str(&context.document.contents)?.to_string();
 
     // TODO: Resolve functions that exist in-document here.
     let mut item = completion_item(label.clone(), CompletionData::ScopeVariable {
@@ -125,11 +124,7 @@ pub(super) fn completion_item_from_assignment(
     // benefit from the logic in completion_item_from_function() :(
     if rhs.node_type() == NodeType::FunctionDefinition {
         if let Some(parameters) = rhs.child_by_field_name("parameters") {
-            let parameters = context
-                .document
-                .contents
-                .node_slice(&parameters)?
-                .to_string();
+            let parameters = parameters.node_as_str(&context.document.contents)?;
             item.detail = Some(join!(label, parameters));
         }
 
@@ -651,7 +646,9 @@ fn completion_item_from_dot_dot_dot(
 
     item.kind = Some(CompletionItemKind::FIELD);
 
-    let position = convert_point_to_position(&context.document.contents, context.point);
+    let position = context
+        .document
+        .lsp_position_from_tree_sitter_point(context.point)?;
 
     let range = Range {
         start: position,

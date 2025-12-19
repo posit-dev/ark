@@ -15,7 +15,7 @@ use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::sources::utils::completions_from_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) struct PipeSource;
@@ -137,7 +137,7 @@ fn find_pipe_root_name(context: &DocumentContext, node: &Node) -> anyhow::Result
     }
 
     // Try to evaluate the left-hand side
-    let root = context.document.contents.node_slice(&lhs)?.to_string();
+    let root = lhs.node_as_str(&context.document.contents)?.to_string();
 
     Ok(Some(root))
 }
@@ -166,8 +166,8 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::composite::pipe::find_pipe_root;
+    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
     use crate::r_task;
     use crate::treesitter::node_find_containing_call;
 

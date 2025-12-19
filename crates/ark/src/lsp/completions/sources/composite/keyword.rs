@@ -176,13 +176,14 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
 #[cfg(test)]
 mod tests {
     use tower_lsp::lsp_types::CompletionItemLabelDetails;
+    use tower_lsp::lsp_types::{self};
 
     #[test]
     fn test_presence_bare_keywords() {
         let completions = super::completions_from_keywords().unwrap().unwrap();
         let keyword_completions: Vec<_> = completions
             .iter()
-            .filter(|item| item.kind == Some(tower_lsp::lsp_types::CompletionItemKind::KEYWORD))
+            .filter(|item| item.kind == Some(lsp_types::CompletionItemKind::KEYWORD))
             .collect();
 
         for keyword in super::BARE_KEYWORDS {
@@ -209,7 +210,7 @@ mod tests {
         let completions = super::completions_from_keywords().unwrap().unwrap();
         let snippet_completions: Vec<_> = completions
             .iter()
-            .filter(|item| item.kind == Some(tower_lsp::lsp_types::CompletionItemKind::SNIPPET))
+            .filter(|item| item.kind == Some(lsp_types::CompletionItemKind::SNIPPET))
             .collect();
 
         let snippet_labels: Vec<&str> = super::KEYWORD_SNIPPETS
