@@ -209,7 +209,6 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "aether_lsp_utils"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "anyhow",
  "biome_line_index",
@@ -246,7 +245,6 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "air_r_syntax",
  "biome_rowan",
@@ -255,7 +253,6 @@ dependencies = [
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
@@ -271,7 +268,6 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "biome_rowan",
  "serde",
@@ -488,7 +484,6 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "biome_console"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "biome_markup",
  "biome_text_size",
@@ -501,7 +496,6 @@ dependencies = [
 [[package]]
 name = "biome_diagnostics"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "backtrace",
  "biome_console",
@@ -521,7 +515,6 @@ dependencies = [
 [[package]]
 name = "biome_diagnostics_categories"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "quote",
  "serde",
@@ -530,7 +523,6 @@ dependencies = [
 [[package]]
 name = "biome_diagnostics_macros"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "proc-macro-error2",
  "proc-macro2",
@@ -541,7 +533,6 @@ dependencies = [
 [[package]]
 name = "biome_line_index"
 version = "0.1.0"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "biome_text_size",
  "rustc-hash",
@@ -550,7 +541,6 @@ dependencies = [
 [[package]]
 name = "biome_markup"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "proc-macro-error2",
  "proc-macro2",
@@ -560,7 +550,6 @@ dependencies = [
 [[package]]
 name = "biome_parser"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "biome_console",
  "biome_diagnostics",
@@ -574,7 +563,6 @@ dependencies = [
 [[package]]
 name = "biome_rowan"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "biome_text_edit",
  "biome_text_size",
@@ -586,7 +574,6 @@ dependencies = [
 [[package]]
 name = "biome_text_edit"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "biome_text_size",
  "serde",
@@ -596,7 +583,6 @@ dependencies = [
 [[package]]
 name = "biome_text_size"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 dependencies = [
  "serde",
 ]
@@ -604,7 +590,6 @@ dependencies = [
 [[package]]
 name = "biome_unicode_table"
 version = "0.5.7"
-source = "git+https://github.com/biomejs/biome?rev=c13fc60726883781e4530a4437724273b560c8e0#c13fc60726883781e4530a4437724273b560c8e0"
 
 [[package]]
 name = "bitflags"
@@ -1967,7 +1952,6 @@ dependencies = [
 [[package]]
 name = "line_ending"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 dependencies = [
  "memchr",
  "settings",
@@ -3062,7 +3046,6 @@ dependencies = [
 [[package]]
 name = "settings"
 version = "0.0.0"
-source = "git+https://github.com/posit-dev/air?rev=f959e32eee91#f959e32eee91654f04a44a32e97321ef5d510e93"
 
 [[package]]
 name = "sha1"
