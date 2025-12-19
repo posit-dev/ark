@@ -10,8 +10,8 @@ base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "1"))
   x <- 1
   y <- 2
 }
-base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 4L))
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 5L))
 #line 5 "file:///test.R"
 bar <- 3
-base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 5L, 5L))
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 5L, 6L))
 }
