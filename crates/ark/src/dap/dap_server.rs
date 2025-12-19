@@ -231,7 +231,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Some(req) => req,
             None => return false,
         };
-        log::trace!("DAP: Got request: {:?}", req);
+        log::trace!("DAP: Got request: {:#?}", req);
 
         let cmd = req.command.clone();
 
