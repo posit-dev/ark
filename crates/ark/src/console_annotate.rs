@@ -14,8 +14,6 @@ use biome_line_index::LineIndex;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
 use biome_rowan::SyntaxElement;
-use biome_rowan::TextRange;
-use biome_rowan::TextSize;
 use biome_rowan::WalkEvent;
 use harp::object::RObject;
 use libr::SEXP;
@@ -194,7 +192,7 @@ fn find_anchors_in_list<'a>(
         // Convert breakpoint line from document coordinates to code coordinates
         let target_code_line = bp.line - line_offset;
         let current = &elements[i];
-        let current_code_line = get_start_line(current.syntax(), line_index);
+        let current_code_line = text_trimmed_line_range(current.syntax(), line_index).start;
 
         // Base case: target line is at or before current element's start.
         // At root level, we can't place breakpoints (R can't step at top-level),
@@ -234,7 +232,7 @@ fn find_anchors_in_list<'a>(
 
         // Check if target is beyond current element
         let next_code_line = if i + 1 < elements.len() {
-            Some(get_start_line(elements[i + 1].syntax(), line_index))
+            Some(text_trimmed_line_range(elements[i + 1].syntax(), line_index).start)
         } else {
             None
         };
@@ -431,7 +429,7 @@ fn find_node_at_line(
 
         // Check each child of this list
         for expr in expr_list.into_iter() {
-            let child_line = get_start_line(expr.syntax(), line_index);
+            let child_line = text_trimmed_line_range(expr.syntax(), line_index).start;
             if child_line == target_line {
                 return Some(expr.into_syntax());
             }
@@ -462,16 +460,23 @@ fn propagate_change_to_root(original: &RSyntaxNode, replacement: RSyntaxNode) ->
     current_replacement
 }
 
-fn get_start_line(node: &RSyntaxNode, line_index: &LineIndex) -> u32 {
-    let text_range: TextRange = node.text_trimmed_range();
-    let offset: TextSize = text_range.start();
-    line_index.line_col(offset).map(|lc| lc.line).unwrap_or(0)
-}
+/// Returns the line range [start, end) for the node's trimmed text.
+/// TODO: Should move to an ext trait in aether_utils? Probably fine to have it
+/// depend on the syntax crate (and can be made optional if needed).
+fn text_trimmed_line_range(node: &RSyntaxNode, line_index: &LineIndex) -> std::ops::Range<u32> {
+    let text_range = node.text_trimmed_range();
 
-fn get_end_line(node: &RSyntaxNode, line_index: &LineIndex) -> u32 {
-    let text_range: TextRange = node.text_trimmed_range();
-    let offset: TextSize = text_range.end();
-    line_index.line_col(offset).map(|lc| lc.line).unwrap_or(0)
+    let start = line_index
+        .line_col(text_range.start())
+        .map(|lc| lc.line)
+        .unwrap_or(0);
+
+    let end = line_index
+        .line_col(text_range.end())
+        .map(|lc| lc.line + 1) // Close the range end
+        .unwrap_or(0);
+
+    start..end
 }
 
 fn create_breakpoint_call(uri: &Url, id: i64) -> RSyntaxNode {
@@ -567,14 +572,10 @@ pub(crate) fn annotate_source(code: &str, uri: &Url, breakpoints: &mut [Breakpoi
     };
 
     // Collect original line ranges before any modifications
-    let original_ranges: Vec<(u32, u32)> = original_r
+    let original_ranges: Vec<_> = original_r
         .expressions()
         .into_iter()
-        .map(|expr| {
-            let start = get_start_line(expr.syntax(), &line_index);
-            let end = get_end_line(expr.syntax(), &line_index);
-            (start, end)
-        })
+        .map(|expr| text_trimmed_line_range(expr.syntax(), &line_index))
         .collect();
 
     if original_ranges.is_empty() {
@@ -624,21 +625,21 @@ pub(crate) fn annotate_source(code: &str, uri: &Url, breakpoints: &mut [Breakpoi
             output.push('\n');
         } else {
             // This is an original expression - use the tracked original line range
-            if let Some(&(start_line, end_line)) = original_ranges.get(original_expr_idx) {
+            if let Some(line_range) = original_ranges.get(original_expr_idx) {
                 // Add #line directive (R uses 1-based lines)
-                output.push_str(&format!("#line {} \"{}\"\n", start_line + 1, uri));
+                output.push_str(&format!("#line {} \"{}\"\n", line_range.start + 1, uri));
 
                 // Add the expression, stripping leading whitespace since we added our own newline
                 output.push_str(expr_str.trim_start());
                 output.push('\n');
 
-                // Add verify call after the expression
-                // Use L suffix for integer literals in R
+                // Add verification call after the expression.
+                // Convert from 0-based to 1-based lines for R.
                 output.push_str(&format!(
                     "base::.ark_auto_step(base::.ark_verify_breakpoints_range(\"{}\", {}L, {}L))\n",
                     uri,
-                    start_line + 1,
-                    end_line + 1
+                    line_range.start + 1,
+                    line_range.end + 1
                 ));
 
                 original_expr_idx += 1;
