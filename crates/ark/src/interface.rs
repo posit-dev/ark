@@ -871,11 +871,11 @@ impl RMain {
     }
 
     /// Get the current execution context if an active request exists.
-    /// Returns (execution_count, code) tuple.
-    pub fn get_execution_context(&self) -> Option<(u32, String)> {
+    /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
+    pub fn get_execution_context(&self) -> Option<(String, String)> {
         self.active_request
             .as_ref()
-            .map(|req| (req.exec_count, req.request.code.clone()))
+            .map(|req| (req.originator.header.msg_id.clone(), req.request.code.clone()))
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
@@ -1274,7 +1274,7 @@ impl RMain {
             });
 
             // Extract execution context before req is consumed
-            let execution_id = req.exec_count;
+            let execution_id = req.originator.header.msg_id.clone();
             let code = req.request.code.clone();
 
             // Check for pending graphics updates

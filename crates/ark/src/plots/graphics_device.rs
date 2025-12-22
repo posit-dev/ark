@@ -129,8 +129,8 @@ struct PlotMetadataInfo {
     name: String,
     /// Kind of plot (e.g., "ggplot2 scatter plot", "histogram")
     kind: String,
-    /// Execution count when the plot was created
-    execution_id: u32,
+    /// The Jupyter message ID of the execute_request that produced the plot
+    execution_id: String,
     /// Code that produced the plot
     code: String,
 }
@@ -306,11 +306,11 @@ impl DeviceContext {
     }
 
     /// Capture the current execution context for a new plot
-    fn capture_execution_context(&self) -> (u32, String) {
+    fn capture_execution_context(&self) -> (String, String) {
         RMain::with(|main| {
             main.get_execution_context().unwrap_or_else(|| {
                 // No active request - might be during startup or from R code
-                (0, String::new())
+                (String::new(), String::new())
             })
         })
     }
@@ -473,7 +473,7 @@ impl DeviceContext {
                     Some(info) => PlotMetadata {
                         name: info.name.clone(),
                         kind: info.kind.clone(),
-                        execution_id: info.execution_id.to_string(),
+                        execution_id: info.execution_id.clone(),
                         code: info.code.clone(),
                     },
                     None => {
@@ -559,7 +559,7 @@ impl DeviceContext {
     /// from the active request. When `None`, attempts to get context from the current
     /// active request (which may not exist, e.g., during deactivation hooks).
     #[tracing::instrument(level = "trace", skip_all)]
-    fn process_changes(&self, execution_context: Option<(u32, String)>) {
+    fn process_changes(&self, execution_context: Option<(String, String)>) {
         let id = self.id();
 
         if !self.has_changes.replace(false) {
@@ -588,7 +588,7 @@ impl DeviceContext {
         }
     }
 
-    fn process_new_plot(&self, id: &PlotId, execution_context: Option<(u32, String)>) {
+    fn process_new_plot(&self, id: &PlotId, execution_context: Option<(String, String)>) {
         if self.should_use_dynamic_plots() {
             self.process_new_plot_positron(id, execution_context);
         } else {
@@ -597,11 +597,11 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_positron(&self, id: &PlotId, execution_context: Option<(u32, String)>) {
+    fn process_new_plot_positron(&self, id: &PlotId, execution_context: Option<(String, String)>) {
         log::trace!("Notifying Positron of new plot");
 
         // Use passed execution context, or fall back to capturing from active request
-        let (exec_count, code) = execution_context
+        let (execution_id, code) = execution_context
             .unwrap_or_else(|| self.capture_execution_context());
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
@@ -613,7 +613,7 @@ impl DeviceContext {
                 PlotMetadataInfo {
                     name,
                     kind,
-                    execution_id: exec_count,
+                    execution_id,
                     code,
                 },
             );
@@ -658,11 +658,11 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_jupyter_protocol(&self, id: &PlotId, execution_context: Option<(u32, String)>) {
+    fn process_new_plot_jupyter_protocol(&self, id: &PlotId, execution_context: Option<(String, String)>) {
         log::trace!("Notifying Jupyter frontend of new plot");
 
         // Use passed execution context, or fall back to capturing from active request
-        let (exec_count, code) = execution_context
+        let (execution_id, code) = execution_context
             .unwrap_or_else(|| self.capture_execution_context());
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
@@ -674,7 +674,7 @@ impl DeviceContext {
                 PlotMetadataInfo {
                     name,
                     kind,
-                    execution_id: exec_count,
+                    execution_id,
                     code,
                 },
             );
@@ -952,7 +952,7 @@ pub(crate) fn on_process_idle_events() {
 /// The `execution_id` and `code` parameters are passed from the caller because
 /// the active request has already been taken by the time this is called.
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_did_execute_request(execution_id: u32, code: String) {
+pub(crate) fn on_did_execute_request(execution_id: String, code: String) {
     log::trace!("Entering on_did_execute_request");
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_changes(Some((execution_id, code))));
 }
