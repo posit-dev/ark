@@ -138,6 +138,9 @@ fn diagnose_missing(
         NodeType::WhileStatement => diagnose_missing_while(node, context, diagnostics),
         NodeType::RepeatStatement => diagnose_missing_repeat(node, context, diagnostics),
         NodeType::IfStatement => diagnose_missing_if(node, context, diagnostics),
+        NodeType::FunctionDefinition => {
+            diagnose_missing_function_definition(node, context, diagnostics)
+        },
         _ => Ok(()),
     }
 }
@@ -279,6 +282,33 @@ fn diagnose_missing_if(
 
     let range = token.range();
     let message = format!("Invalid if statement. Missing a body.");
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
+}
+
+fn diagnose_missing_function_definition(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let Some(body) = node.child_by_field_name("body") else {
+        return Ok(());
+    };
+
+    if !body.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    // Highlight just the token name (i.e. `function`).
+    // Don't want to highlight whole `node` because that can confusingly span many lines.
+    let Some(name) = node.child_by_field_name("name") else {
+        return Ok(());
+    };
+
+    let range = name.range();
+    let message = format!("Invalid function definition. Missing a body.");
     diagnostics.push(new_syntax_diagnostic(message, range, context));
 
     Ok(())
@@ -647,6 +677,32 @@ function(x {
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 2));
+    }
+
+    #[test]
+    fn test_function_definition_with_no_body() {
+        let text = "function(a)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `function`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 8));
+
+        // Anonymous function
+        let text = r"\(a)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `function`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 1));
     }
 
     #[test]
