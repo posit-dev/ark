@@ -360,6 +360,25 @@ fn test_browser_in_base_env() {
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
 
+#[test]
+fn test_execute_request_browser_braced_step_out() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Evaluate `{browser()}` which enters the debugger
+    frontend.execute_request("{browser()}", |result| {
+        assert!(result.contains("Called from: top level"));
+    });
+
+    // Step once with `n` to leave the debugger (the braced expression completes)
+    frontend.execute_request_invisibly("n");
+
+    // Now evaluate `{1}` - this should NOT trigger the debugger
+    // and should return the result normally
+    frontend.execute_request("{1}", |result| {
+        assert!(result.contains("[1] 1"));
+    });
+}
+
 // The minimal environment we can debug in: access to base via `::`. This might
 // be a problem for very specialised sandboxing environment, but they can
 // temporarily add `::` while debugging.
