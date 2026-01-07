@@ -712,11 +712,18 @@ is_breakpoint_enabled <- function(uri, id) {
 #' @export
 .ark_breakpoint <- structure(
     function(expr, uri, id) {
+        enabled <- is_breakpoint_enabled(uri, id)
+        log_trace(sprintf(
+            "DAP: Breakpoint %s for %s enabled: %s",
+            id,
+            uri,
+            enabled
+        ))
+
         # Force `browser()` call only if breakpoint is enabled
-        if (!is_breakpoint_enabled(uri, id)) {
-            return()
+        if (enabled) {
+            expr
         }
-        expr
     },
     class = "ark_breakpoint"
 )
