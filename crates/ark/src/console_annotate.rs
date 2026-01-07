@@ -46,7 +46,79 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 //    top-level stepping, inject breakpoints, and inject top-level verification
 //    calls to let Ark know a breakpoint is now active after evaluation. This is
 //    handled in a separate code path in `annotate_source()`.
+
+// Breakpoint injection
 //
+// A breakpoint injected on `expression_to_break_on` looks like this:
+//
+// ```r
+// .ark_auto_step(.ark_breakpoint(browser(), "*url*", "*id*"))
+// #line *line* "*url*"
+// expression_to_break_on
+// ```
+//
+// - `.ark_auto_step()` is an identity function that serves as sentinel when R
+//   steps through code. If the user steps on an injected breakpoint, we detect
+//   the auto-step call in the `debug at` message emitted by R and automatically
+//   step over it (i.e. call `n`).
+//
+// - `.ark_breakpoint()` takes a `browser()` call promised in the current
+//   environment, a URL, and the breakpoint's unique ID. It only forces the
+//   browser argument if the breakpoint is active. Since the argument is promised
+//   in the call-site environment, this cause R to mark that environment as being
+//   debugged.
+//
+//   It does not stop quite at the right place though, inside the
+//   `.ark_breakpoint()` wrapper, with `.ark_auto_step()` on the stack as well. To
+//   solve this, there is a second condition triggering auto-stepping in
+//   ReadConsole: if the function of the top stack frame is `.ark_breakpoint()`
+//   (which we detect through a class assigned to the function), then we
+//   auto-step. This causes R to resume evaluation. Since the call-site
+//   environment is being debugged, it stops at the next expression automatically,
+//   in this case `expression_to_break_on`.
+//
+// - The `#line` directive right above `expression_to_break_on` maps the source
+//   references to the original location in the source document. When R stops on
+//   the expression, it emits the original location, allowing the DAP to
+//   communicate the appropriate stopping place to the frontend.
+
+// Source instrumentation
+//
+// `base::source()` and `devtools::load_all()` need two things:
+//
+// - Breakpoint injection as described above.
+//
+// - Top-level adjustments so it's possible to step through a script or
+//   top-level package file (the latter is rarely useful but is a side benefit
+//   from using the same implementation as `source()`).
+//
+// If the sourced file looks like:
+//
+// ```r
+// 1
+// 2
+// ```
+//
+// The instrumented version ends up as:
+//
+// ```r
+// {
+// #line 1 "file:///file.R"
+// 1
+// base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 2L))
+// #line 2 "file:///file.R"
+// 2
+// base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 2L, 3L))
+// }
+// ```
+//
+// - The whole source is wrapped in `{}` to allow R to step through the code.
+// - Line directives map each expression to original source.
+// - An auto-stepped `.ark_verify_breakpoints_range()` call after each
+//   expression lets the DAP know that any breakpoints spanned by the last
+//   expression are now "verified", i.e. the breakpoints have been injected and
+//   the code containing them has been evaluated.
+
 // Breakpoint injection happens in two phases:
 //
 // - We first collect "anchors", i.e. the syntax node where a breakpoint should
