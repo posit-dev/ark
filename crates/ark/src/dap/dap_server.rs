@@ -1,7 +1,7 @@
 //
 // dap_server.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -427,8 +427,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
         };
 
         log::trace!(
-            "DAP: URI {uri} now has {} breakpoints",
-            new_breakpoints.len()
+            "DAP: URI {uri} now has {} breakpoints:\n{:#?}",
+            new_breakpoints.len(),
+            new_breakpoints
         );
 
         state
