@@ -25,11 +25,11 @@ license = "MIT"
 authors = ["Posit Software, PBC"]
 
 [workspace.dependencies]
-biome_line_index = { path = "/Users/lionel/Sync/Projects/Positron/biome/crates/biome_line_index" }
-biome_rowan = { path = "/Users/lionel/Sync/Projects/Positron/biome/crates/biome_rowan" }
-aether_factory = { path = "/Users/lionel/Sync/Projects/Positron/air/crates/air_r_factory", package = "air_r_factory" }
-aether_lsp_utils = { path = "/Users/lionel/Sync/Projects/Positron/air/crates/aether_lsp_utils" }
-aether_parser = { path = "/Users/lionel/Sync/Projects/Positron/air/crates/air_r_parser", package = "air_r_parser" }
-aether_syntax = { path = "/Users/lionel/Sync/Projects/Positron/air/crates/air_r_syntax", package = "air_r_syntax" }
+biome_line_index = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
+biome_rowan = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
+aether_factory = { git = "https://github.com/posit-dev/air", rev = "9abbc6e68b270d3f5bf882fe811ce6a164f671ba", package = "air_r_factory" }
+aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "9abbc6e68b270d3f5bf882fe811ce6a164f671ba" }
+aether_parser = { git = "https://github.com/posit-dev/air", rev = "9abbc6e68b270d3f5bf882fe811ce6a164f671ba", package = "air_r_parser" }
+aether_syntax = { git = "https://github.com/posit-dev/air", rev = "9abbc6e68b270d3f5bf882fe811ce6a164f671ba", package = "air_r_syntax" }
 # For https://github.com/ebkalderon/tower-lsp/pull/428
 tower-lsp = { branch = "bugfix/patches", git = "https://github.com/lionel-/tower-lsp" }

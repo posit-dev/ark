@@ -209,10 +209,11 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 [[package]]
 name = "aether_lsp_utils"
 version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=9abbc6e68b270d3f5bf882fe811ce6a164f671ba#9abbc6e68b270d3f5bf882fe811ce6a164f671ba"
 dependencies = [
  "anyhow",
- "biome_line_index 0.1.0 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
- "biome_text_size 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_line_index",
+ "biome_text_size",
  "dissimilar",
  "itertools 0.13.0",
  "line_ending",
@@ -245,19 +246,21 @@ dependencies = [
 [[package]]
 name = "air_r_factory"
 version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=9abbc6e68b270d3f5bf882fe811ce6a164f671ba#9abbc6e68b270d3f5bf882fe811ce6a164f671ba"
 dependencies = [
  "air_r_syntax",
- "biome_rowan 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_rowan",
 ]
 
 [[package]]
 name = "air_r_parser"
 version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=9abbc6e68b270d3f5bf882fe811ce6a164f671ba#9abbc6e68b270d3f5bf882fe811ce6a164f671ba"
 dependencies = [
  "air_r_factory",
  "air_r_syntax",
  "biome_parser",
- "biome_rowan 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_rowan",
  "biome_unicode_table",
  "serde",
  "tracing",
@@ -268,8 +271,9 @@ dependencies = [
 [[package]]
 name = "air_r_syntax"
 version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=9abbc6e68b270d3f5bf882fe811ce6a164f671ba#9abbc6e68b270d3f5bf882fe811ce6a164f671ba"
 dependencies = [
- "biome_rowan 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_rowan",
  "serde",
 ]
 
@@ -351,8 +355,8 @@ dependencies = [
  "assert_matches",
  "async-trait",
  "base64 0.21.0",
- "biome_line_index 0.1.0",
- "biome_rowan 0.5.7",
+ "biome_line_index",
+ "biome_rowan",
  "blake3",
  "bus",
  "cc",
@@ -487,7 +491,7 @@ version = "0.5.7"
 source = "git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051#41d799cfa4cedd25625fc3f6bd7898532873f051"
 dependencies = [
  "biome_markup",
- "biome_text_size 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_text_size",
  "serde",
  "termcolor",
  "unicode-segmentation",
@@ -503,9 +507,9 @@ dependencies = [
  "biome_console",
  "biome_diagnostics_categories",
  "biome_diagnostics_macros",
- "biome_rowan 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
- "biome_text_edit 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
- "biome_text_size 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_rowan",
+ "biome_text_edit",
+ "biome_text_size",
  "enumflags2",
  "serde",
  "serde_json",
@@ -537,17 +541,9 @@ dependencies = [
 [[package]]
 name = "biome_line_index"
 version = "0.1.0"
-dependencies = [
- "biome_text_size 0.5.7",
- "rustc-hash",
-]
-
-[[package]]
-name = "biome_line_index"
-version = "0.1.0"
 source = "git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051#41d799cfa4cedd25625fc3f6bd7898532873f051"
 dependencies = [
- "biome_text_size 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_text_size",
  "rustc-hash",
 ]
 
@@ -568,7 +564,7 @@ source = "git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd789
 dependencies = [
  "biome_console",
  "biome_diagnostics",
- "biome_rowan 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_rowan",
  "biome_unicode_table",
  "drop_bomb",
  "enumflags2",
@@ -578,20 +574,10 @@ dependencies = [
 [[package]]
 name = "biome_rowan"
 version = "0.5.7"
-dependencies = [
- "biome_text_edit 0.5.7",
- "biome_text_size 0.5.7",
- "hashbrown 0.15.5",
- "rustc-hash",
-]
-
-[[package]]
-name = "biome_rowan"
-version = "0.5.7"
 source = "git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051#41d799cfa4cedd25625fc3f6bd7898532873f051"
 dependencies = [
- "biome_text_edit 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
- "biome_text_size 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_text_edit",
+ "biome_text_size",
  "hashbrown 0.15.5",
  "rustc-hash",
  "serde",
@@ -600,24 +586,12 @@ dependencies = [
 [[package]]
 name = "biome_text_edit"
 version = "0.5.7"
-dependencies = [
- "biome_text_size 0.5.7",
- "similar",
-]
-
-[[package]]
-name = "biome_text_edit"
-version = "0.5.7"
 source = "git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051#41d799cfa4cedd25625fc3f6bd7898532873f051"
 dependencies = [
- "biome_text_size 0.5.7 (git+https://github.com/lionel-/biome?rev=41d799cfa4cedd25625fc3f6bd7898532873f051)",
+ "biome_text_size",
  "serde",
  "similar",
 ]
-
-[[package]]
-name = "biome_text_size"
-version = "0.5.7"
 
 [[package]]
 name = "biome_text_size"
@@ -1993,6 +1967,7 @@ dependencies = [
 [[package]]
 name = "line_ending"
 version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=9abbc6e68b270d3f5bf882fe811ce6a164f671ba#9abbc6e68b270d3f5bf882fe811ce6a164f671ba"
 dependencies = [
  "memchr",
  "settings",
@@ -3087,6 +3062,7 @@ dependencies = [
 [[package]]
 name = "settings"
 version = "0.0.0"
+source = "git+https://github.com/posit-dev/air?rev=9abbc6e68b270d3f5bf882fe811ce6a164f671ba#9abbc6e68b270d3f5bf882fe811ce6a164f671ba"
 
 [[package]]
 name = "sha1"
