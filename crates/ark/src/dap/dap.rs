@@ -1,7 +1,7 @@
 //
 // dap.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -311,6 +311,34 @@ impl Dap {
                     .log_err();
                 }
             }
+        }
+    }
+
+    /// Verify a single breakpoint by ID
+    ///
+    /// Finds the breakpoint with the given ID for the URI and marks it as verified
+    /// if it was previously unverified. Sends a `BreakpointVerified` event.
+    pub fn verify_breakpoint(&mut self, uri: &Url, id: &str) {
+        let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
+            return;
+        };
+        let Some(bp) = bp_list.iter_mut().find(|bp| bp.id.to_string() == id) else {
+            return;
+        };
+
+        // Only verify unverified breakpoints
+        if !matches!(bp.state, BreakpointState::Unverified) {
+            return;
+        }
+
+        bp.state = BreakpointState::Verified;
+
+        if let Some(tx) = &self.backend_events_tx {
+            tx.send(DapBackendEvent::BreakpointState {
+                id: bp.id,
+                verified: true,
+            })
+            .log_err();
         }
     }
 
