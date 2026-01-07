@@ -416,8 +416,8 @@ pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
     let console = RMain::get_mut();
     let dap = console.debug_dap.lock().unwrap();
 
-    let enabled: RObject = dap.is_breakpoint_enabled(&uri, id).into();
-    Ok(enabled.sexp)
+    let enabled = dap.is_breakpoint_enabled(&uri, id);
+    Ok(RObject::from(enabled).sexp)
 }
 
 /// Verify breakpoints in the line range covered by a srcref.
