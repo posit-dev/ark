@@ -420,6 +420,24 @@ pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
     Ok(RObject::from(enabled).sexp)
 }
 
+/// Verify a single breakpoint by ID.
+/// Called when a breakpoint expression is about to be evaluated.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let id: String = RObject::view(id).try_into()?;
+
+    let Ok(uri) = Url::parse(&uri) else {
+        return Ok(libr::R_NilValue);
+    };
+
+    let main = RMain::get();
+    let mut dap = main.debug_dap.lock().unwrap();
+    dap.verify_breakpoint(&uri, &id);
+
+    Ok(libr::R_NilValue)
+}
+
 /// Verify breakpoints in the line range covered by a srcref.
 /// Called after each expression is successfully evaluated in source().
 #[harp::register]

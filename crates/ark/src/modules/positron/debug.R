@@ -702,6 +702,10 @@ is_breakpoint_enabled <- function(uri, id) {
     .ps.Call("ps_is_breakpoint_enabled", uri, id)
 }
 
+verify_breapoint <- function(uri, id) {
+    .ps.Call("ps_verify_breakpoint", uri, id)
+}
+
 # Injected breakpoint. This receives a `browser()` call in the `expr` argument.
 # The argument if forced if the breakpoint is enabled. Since `expr` is promised
 # in the calling frame environment, that environment is marked by R as being
@@ -712,6 +716,14 @@ is_breakpoint_enabled <- function(uri, id) {
 #' @export
 .ark_breakpoint <- structure(
     function(expr, uri, id) {
+        # Verify breakpoint right away, if not already the case We normally
+        # verify breakpoints after each top-level expression has finished
+        # evaluating, but if we stop on a breakpoint right away (e.g. because
+        # it's in an `lapply()` rather than an assigned function) we must verify
+        # it directly. Otherwise it's confusing for users to stop on an unverified
+        # breakpoint that appears invalid.
+        verify_breapoint(uri, id)
+
         enabled <- is_breakpoint_enabled(uri, id)
         log_trace(sprintf(
             "DAP: Breakpoint %s for %s enabled: %s",
