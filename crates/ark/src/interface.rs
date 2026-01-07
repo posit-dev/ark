@@ -1,7 +1,7 @@
 //
 // interface.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -559,14 +559,6 @@ impl RMain {
 
         let main = RMain::get_mut();
 
-        // Spawn handler loop for async messages
-        r_task::spawn_interrupt({
-            let dap_clone = main.debug_dap.clone();
-            || async move {
-                RMain::process_console_notifications(console_notification_rx, dap_clone).await
-            }
-        });
-
         let mut r_args = r_args.clone();
 
         // Record if the user has requested that we don't load the site/user level R profiles
@@ -689,6 +681,18 @@ impl RMain {
             "R has started and ark handlers have been registered, completing initialization."
         );
         Self::complete_initialization(main.banner.take(), kernel_init_tx);
+
+        // Spawn handler loop for async messages from other components (e.g., LSP).
+        // Note that we do it after init is complete to avoid deadlocking
+        // integration tests by spawning an async task. The deadlock is caused
+        // by the `block_on()` behaviour in
+        // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
+        r_task::spawn_interrupt({
+            let dap_clone = main.debug_dap.clone();
+            || async move {
+                RMain::process_console_notifications(console_notification_rx, dap_clone).await
+            }
+        });
 
         // Initialize the GD context on this thread.
         // Note that we do it after init is complete to avoid deadlocking
