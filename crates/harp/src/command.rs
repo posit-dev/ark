@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
 
+use anyhow::anyhow;
+
 use crate::sys::command::COMMAND_R_NAMES;
 
 /// Execute a `Command` for R, trying multiple names for the R executable
@@ -41,28 +43,41 @@ where
 }
 
 /// Use this before calling `r_command()` to ensure that `R_HOME` is set consistently
-pub fn r_home_setup() -> PathBuf {
-    match std::env::var("R_HOME") {
+pub fn r_home_setup() -> anyhow::Result<PathBuf> {
+    // Determine candidate path and the string form to set (we will overwrite
+    // R_HOME in the environment after validation, even if it was already set).
+    let home = match std::env::var("R_HOME") {
         Ok(home) => {
             // Get `R_HOME` from env var, typically set by Positron / CI / kernel specification
-            PathBuf::from(home)
+            home.clone()
         },
+
         Err(_) => {
             // Get `R_HOME` from `PATH`, via `R`
-            let Ok(result) = r_command_from_path(|command| {
+            let result = r_command_from_path(|command| {
                 command.arg("RHOME");
-            }) else {
-                panic!("Can't find R or `R_HOME`");
-            };
+            })
+            .map_err(|err| anyhow!("Can't find R or `R_HOME`: {err}"))?;
 
-            let r_home = String::from_utf8(result.stdout).unwrap();
-            let r_home = r_home.trim();
-
-            // Now set `R_HOME`. From now on, `r_command()` can be used to
-            // run exactly the same R as is running in Ark.
-            unsafe { std::env::set_var("R_HOME", r_home) };
-            PathBuf::from(r_home)
+            let home = String::from_utf8(result.stdout)
+                .map_err(|err| anyhow!("Invalid UTF-8 from R RHOME output: {err}"))?;
+            home.trim().to_string()
         },
+    };
+
+    // Validate the candidate path once.
+    let path = PathBuf::from(home.clone());
+    match path.try_exists() {
+        Ok(true) => {
+            // Ensure `R_HOME` is set in the environment after validation
+            unsafe { std::env::set_var("R_HOME", &home) };
+            Ok(path)
+        },
+        Ok(false) => Err(anyhow!(
+            "The `R_HOME` path '{}' does not exist.",
+            path.display()
+        )),
+        Err(err) => Err(anyhow!("Can't check if `R_HOME` path exists: {err}")),
     }
 }
 

@@ -552,13 +552,10 @@ impl RMain {
             startup::push_ignore_user_r_profile(&mut r_args);
         }
 
-        let r_home = r_home_setup();
-
-        match r_home.try_exists() {
-            Ok(true) => (),
-            Ok(false) => panic!("The `R_HOME` path '{}' does not exist.", r_home.display()),
-            Err(err) => panic!("Can't check if `R_HOME` path exists: {err}"),
-        }
+        let r_home = match r_home_setup() {
+            Ok(r_home) => r_home,
+            Err(err) => panic!("Can't set up `R_HOME`: {err}"),
+        };
 
         // `R_HOME` is now defined no matter what and will be used by
         // `r_command()`. Let's discover the other important environment
@@ -566,9 +563,11 @@ impl RMain {
         // https://github.com/posit-dev/positron/issues/3637
         match r_command(|command| {
             // From https://github.com/rstudio/rstudio/blob/74696236/src/cpp/core/r_util/REnvironmentPosix.cpp#L506-L515
-            command.arg("--vanilla").arg("-s").arg("-e").arg(
-                r#"cat(paste(R.home('share'), R.home('include'), R.home('doc'), sep=';'))"#,
-            );
+            command
+                .arg("--vanilla")
+                .arg("-s")
+                .arg("-e")
+                .arg(r#"cat(paste(R.home('share'), R.home('include'), R.home('doc'), sep=';'))"#);
         }) {
             Ok(output) => {
                 if let Ok(vars) = String::from_utf8(output.stdout) {
