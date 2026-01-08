@@ -65,12 +65,20 @@ pub fn r_home_setup() -> anyhow::Result<PathBuf> {
         },
     };
 
-    // Validate the candidate path once.
     let path = PathBuf::from(home.clone());
     match path.try_exists() {
         Ok(true) => {
-            // Ensure `R_HOME` is set in the environment after validation
+            // Ensure `R_HOME` is set in the environment after validation. From
+            // now on, `r_command()` can be used to run exactly the same R as is
+            // running in Ark.
             unsafe { std::env::set_var("R_HOME", &home) };
+
+            // Check that `R` can be called
+            r_command(|command| {
+                command.arg("RHOME");
+            })
+            .map_err(|err| anyhow!("Can't run R: {err}"))?;
+
             Ok(path)
         },
         Ok(false) => Err(anyhow!(
