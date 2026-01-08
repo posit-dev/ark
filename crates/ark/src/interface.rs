@@ -299,7 +299,7 @@ pub struct RMain {
     pub(crate) debug_session_index: u32,
 
     /// The current frame `id`. Unique across all frames within a single debug session.
-    /// Reset after `stop_debug()`, not between debug steps.
+    /// Reset after `debug_stop()`, not between debug steps.
     pub(crate) debug_current_frame_id: i64,
 
     /// Tracks how many nested `r_read_console()` calls are on the stack.
@@ -1012,9 +1012,10 @@ impl RMain {
             // from the last expression we evaluated
             self.debug_is_debugging = true;
             self.debug_start(self.debug_preserve_focus);
-        } else if self.debug_is_debugging {
-            self.debug_is_debugging = false;
-            self.debug_stop();
+
+            // Note that for simplicity this state is reset on exit via the
+            // cleanups registered in `r_read_console()`. Ideally we'd clean
+            // from here for symmetry.
         }
 
         if let Some(exception) = self.take_exception() {
@@ -2625,6 +2626,18 @@ pub extern "C-unwind" fn r_read_console(
 
             // Restore current frame
             main.read_console_frame.replace(old_current_frame);
+
+            // Always stop debug session when yielding back to R. This prevents
+            // the debug toolbar from lingering in situations like:
+            //
+            // ```r
+            // { local(browser()); Sys.sleep(10) }
+            // ```
+            //
+            // For a more practical example see Shiny app example in
+            // https://github.com/rstudio/rstudio/pull/14848
+            main.debug_is_debugging = false;
+            main.debug_stop();
         },
     )
 }
