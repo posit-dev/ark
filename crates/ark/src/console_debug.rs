@@ -100,7 +100,7 @@ impl RMain {
                 let mut dap = self.debug_dap.lock().unwrap();
                 dap.start_debug(stack, preserve_focus, fallback_sources)
             },
-            Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
+            Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
     }
 
