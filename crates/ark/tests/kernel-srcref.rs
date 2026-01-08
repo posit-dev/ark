@@ -154,6 +154,53 @@ $end
 }
 
 #[test]
+fn test_execute_request_srcref_location_multiline_trailing_newline() {
+    // Checks code location handling with trailing newline. We used to have a
+    // bug due to the `lines()` method ignoring trailing newlines.
+
+    let frontend = DummyArkFrontend::lock();
+
+    // Code spans lines 3-6 in the document, starting at column 4.
+    // The code ends with a trailing newline, so the range ends at line 6, character 0.
+    let code_location = JupyterPositronLocation {
+        uri: "file:///path/to/file.R".to_owned(),
+        range: JupyterPositronRange {
+            start: JupyterPositronPosition {
+                line: 2,
+                character: 4,
+            },
+            end: JupyterPositronPosition {
+                line: 5,
+                character: 0,
+            },
+        },
+    };
+
+    // Multiline function definition with trailing newline
+    let code = "fn <- function() {
+    1
+}; NULL
+";
+    frontend.execute_request_with_location(code, |_| (), code_location);
+
+    // `function` starts at column 7 on line 1, with start.character=4 offset -> line 3, col 11
+    // The closing brace is at column 1 on line 3 of code (line 5 in document)
+    frontend.execute_request(".ps.internal(get_srcref_range(fn))", |result| {
+        assert_eq!(
+            result,
+            "$start
+     line character\u{20}
+        3        11\u{20}
+
+$end
+     line character\u{20}
+        5         1\u{20}
+"
+        );
+    });
+}
+
+#[test]
 fn test_execute_request_srcref_location_with_emoji_utf8_shift() {
     let frontend = DummyArkFrontend::lock();
 
