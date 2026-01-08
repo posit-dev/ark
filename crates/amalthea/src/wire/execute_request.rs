@@ -107,8 +107,11 @@ impl ExecuteRequest {
             location.range.end.character
         };
 
-        let code_lines: Vec<&str> = self.code.lines().collect();
-        let code_line_count = code_lines.len().saturating_sub(1);
+        // Count newlines directly rather than with `lines()`. This correctly
+        // handles trailing newlines as distinct:
+        // - "a\nb\nc" has 2 newlines, spans lines 0-2 (span_lines = 2)
+        // - "a\nb\nc\n" has 3 newlines, spans lines 0-3 (span_lines = 3)
+        let code_line_count = self.code.matches('\n').count();
 
         // Sanity check: `code` conforms exactly to expected number of lines in the span
         if code_line_count != span_lines as usize {
@@ -119,8 +122,14 @@ impl ExecuteRequest {
             ));
         }
 
-        let last_line_idx = code_lines.len().saturating_sub(1);
-        let last_line = code_lines.get(last_line_idx).unwrap_or(&"");
+        // Get the last line for character count validation.
+        // If code ends with newline, the last "line" in terms of the span is empty.
+        let last_line = if self.code.ends_with('\n') {
+            ""
+        } else {
+            self.code.lines().last().unwrap_or("")
+        };
+
         let last_line = last_line.strip_suffix('\r').unwrap_or(last_line);
         let last_line_chars = last_line.chars().count() as u32;
 
