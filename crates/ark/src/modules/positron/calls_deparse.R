@@ -5,8 +5,8 @@
 #
 #
 
-call_deparse <- function(x) {
-    deparse(x, width.cutoff = 500L)
+deparse_string <- function(x, cutoff = 500L) {
+    paste_line(deparse(x, width.cutoff = cutoff))
 }
 
 as_label <- function(x) {
@@ -16,7 +16,7 @@ as_label <- function(x) {
     }
 
     # Retain only first line
-    out <- call_deparse(x)[[1]]
+    out <- deparse(x)[[1]]
 
     # And first 20 characters
     if (nchar(out) > 20) {
