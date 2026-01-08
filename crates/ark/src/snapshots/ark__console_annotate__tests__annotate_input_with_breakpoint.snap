@@ -8,5 +8,7 @@ expression: result
 base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "1"))
 #line 6 "file:///test.R"
 1
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 6L, 7L))
+#line 7 "file:///test.R"
 2
 }

@@ -7,19 +7,16 @@
 use aether_syntax::RBracedExpressions;
 use aether_syntax::RExpressionList;
 use aether_syntax::RLanguage;
-use aether_syntax::RRoot;
+use aether_syntax::RSyntaxElement;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
 use amalthea::wire::execute_request::CodeLocation;
 use anyhow::anyhow;
 use biome_line_index::LineIndex;
-use biome_rowan::syntax::SyntaxElementKey;
 use biome_rowan::AstNode;
-use biome_rowan::AstNodeList;
 use biome_rowan::SyntaxRewriter;
 use biome_rowan::TriviaPieceKind;
 use biome_rowan::VisitNodeSignal;
-use biome_rowan::WalkEvent;
 use harp::object::RObject;
 use libr::SEXP;
 use url::Url;
@@ -47,7 +44,18 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 //    calls to let Ark know a breakpoint is now active after evaluation. This is
 //    handled in a separate code path in `annotate_source()`.
 
-// Breakpoint injection
+// Breakpoint injection at parse-time rather than eval-time.
+//
+// Traditional approaches (like RStudio's) inject `browser()` calls into live
+// objects at eval-time. This is fragile: you must find all copies of the object
+// (explicit/implicit exports, method tables, etc.), preserve source references
+// after injection, and handle edge cases for each object system (R6, S7, ...).
+// These injection routines are ad hoc and require ongoing maintenance to add
+// missing injection places as the ecosystem evolves.
+//
+// By injecting breakpoints before R ever sees the code, we sidestep all of
+// this. R only evaluates code that already contains breakpoint calls, so we
+// never miss copies and source references are correct from the start.
 //
 // A breakpoint injected on `expression_to_break_on` looks like this:
 //
@@ -119,51 +127,49 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 //   expression are now "verified", i.e. the breakpoints have been injected and
 //   the code containing them has been evaluated.
 
-// Breakpoint injection happens in two phases:
+// Breakpoint injection uses a Biome `SyntaxRewriter`, a tree visitor with
+// preorder and postorder hooks that allows replacing nodes on the way out.
 //
-// - We first collect "anchors", i.e. the syntax node where a breakpoint should
-//   be injected, its line in document coordinates, and a unique identifier.
+// - Preorder (`visit_node`): Cache line information for braced expressions.
+//   We record where each expression starts and its line range. This must be
+//   done before any modifications because the postorder hook sees a partially
+//   rebuilt tree with shifted token offsets.
 //
-// - In a second pass we use a Biome `SyntaxRewriter` to go ahead and modify the
-//   code. This is a tree visitor that allows replacing the node on the way out
-//   (currently via an extension to the Biome API that will be submitted to Biome
-//   later on). This approach was chosen over `BatchMutation`, which collects
-//   changes and applies them from deepest to shallowest, because the latter:
+// - Postorder (`visit_node_post`): Process expression lists bottom-up. For
+//   lists inside braces, we inject breakpoint calls, add `#line` directives,
+//   and mark remaining breakpoints (e.g. on closing braces) as invalid. The
+//   cached line info represents original source positions, which is exactly
+//   what we need for anchoring breakpoints to document lines.
 //
-//   - Doesn't handle insertions in lists (though that could be contributed).
-//     Only replacements are currently supported.
+// Note: The line info cached in pre-order visit can potentially become stale in
+// the post-order hook, since the latter is operating on a reconstructed tree.
+// However, we only use the cached info to reason about where original
+// expressions lived in the source document, not where they end up in the
+// rewritten tree. This is safe as long as we don't reorder or remove
+// expressions (we only inject siblings and trivia).
 //
-//   - Doesn't handle nested changes in a node that is later _replaced_.
-//     If the scheduled changes were pure insertions (if insertions were
-//     supported) then nested changes would compose correctly. However, nested
-//     changes wouldn't work well as soon as a replacement is involved, because
-//     BatchMutation can't express "edit a descendant" and "replace an ancestor"
-//     in one batch without risking the ancestor replacement overwriting the
-//     descendant edit.
+// We use `SyntaxRewriter` instead of `BatchMutation` because the latter:
 //
-//     That limitation interacts badly with Biome's strict stance on mutation.
-//     For example, you can't add a comment to a node; you have to create a new one
-//     that features a comment. This issue arises when adding a line directive, e.g. in:
+// - Doesn't handle insertions in lists (only replacements).
 //
-//     ```r
-//     {     # BP 1
-//        1  # BP 2
-//     }
-//     ```
+// - Doesn't handle nested changes in a node that is later replaced. For example:
 //
-//     BP 2 causes changes inside the braces. Then BP 1 causes the whole brace
-//     expression to be replaced with a variant that has a line directive attached.
-//     But there is no way to express both these changes to BatchMutation because it
-//     takes modifications upfront. This is why we work instead with `SyntaxRewriter`
-//     which allows us to replace nodes from bottom to top as we go.
+//   ```r
+//   {     # BP 1
+//      1  # BP 2
+//   }
+//   ```
 //
-//     Note that Rust-Analyzer's version of Rowan is much more flexible and allow you to
-//     create a mutable syntax tree that you can freely update (see `clone_for_update()`
-//     and the tree editor API). Unfortunately Biome has adopted a strict stance on
-//     immutable data structures so we don't have access to such affordances.
+//   BP 2 causes changes inside the braces. Then BP 1 causes the whole brace
+//   expression to be replaced with a variant that has a `#line` directive.
+//   BatchMutation can't express both changes because it takes modifications
+//   upfront. `SyntaxRewriter` lets us replace nodes bottom-up as we go.
 
-// Called by ReadConsole to inject breakpoints (if any) and source reference
-// mapping (via a line directive)
+/// Annotate console input for `ReadConsole`.
+///
+/// - Adds a `#line` directive to map the code back to its document location.
+/// - Adds leading whitespace to align with the original character offset.
+/// - Injects breakpoint calls if any breakpoints are set.
 pub(crate) fn annotate_input(
     code: &str,
     location: CodeLocation,
@@ -172,9 +178,23 @@ pub(crate) fn annotate_input(
     // First, inject breakpoints into the original code. This must happen before
     // we add the outer line directive, otherwise the coordinates of inner line
     // directives are shifted by 1 line.
-    let code_with_breakpoints = if let Some(breakpoints) = breakpoints {
+    let annotated_code = if let Some(breakpoints) = breakpoints {
+        let root = aether_parser::parse(code, Default::default()).tree();
         let line_index = LineIndex::new(code);
-        inject_breakpoints(code, location.clone(), breakpoints, &line_index)?
+
+        // The line offset is `doc_line = code_line + line_offset`.
+        // Code line 0 corresponds to document line `location.start.line`.
+        let line_offset = location.start.line as i32;
+
+        let mut rewriter =
+            AnnotationRewriter::new(&location.uri, breakpoints, line_offset, &line_index);
+        let out = rewriter.transform(root.syntax().clone());
+
+        if let Some(err) = rewriter.take_err() {
+            return Err(err);
+        }
+
+        out.to_string()
     } else {
         code.to_string()
     };
@@ -192,473 +212,475 @@ pub(crate) fn annotate_input(
     let leading_padding = " ".repeat(location.start.character as usize);
 
     Ok(format!(
-        "{line_directive}\n{leading_padding}{code_with_breakpoints}"
+        "{line_directive}\n{leading_padding}{annotated_code}"
     ))
-}
-
-pub(crate) fn inject_breakpoints(
-    code: &str,
-    location: CodeLocation,
-    breakpoints: &mut [Breakpoint],
-    line_index: &LineIndex,
-) -> anyhow::Result<String> {
-    let root = aether_parser::parse(code, Default::default()).tree();
-
-    // The offset between document coordinates and code coordinates. Breakpoints
-    // are in document coordinates, but AST nodes are in code coordinates
-    // (starting at line 0).
-    let line_offset = location.start.line;
-
-    // Filter breakpoints to only those within the source's valid range. We
-    // collect both for simplicity and because we need to sort the vector
-    // later on.
-    let breakpoints: Vec<_> = breakpoints
-        .iter_mut()
-        .filter(|bp| bp.line >= location.start.line && bp.line <= location.end.line)
-        .collect();
-
-    if breakpoints.is_empty() {
-        return Ok(code.to_string());
-    }
-
-    // First collect all breakpoint anchors, then inject in a separate pass.
-    // This two-stage approach is not necessary but keeps the anchor-finding
-    // logic (with its edge cases like invalid breakpoints, nesting decisions,
-    // look-ahead) separate from the tree transformation with the
-    // `SyntaxRewriter`.
-    let anchors = find_breakpoint_anchors(root.syntax(), breakpoints, line_index, line_offset)?;
-
-    if anchors.is_empty() {
-        return Ok(code.to_string());
-    }
-
-    // Build map of anchor key -> (breakpoint_id, doc_line).
-    // Anchors already store document coordinates.
-    let breakpoint_map: std::collections::HashMap<_, _> = anchors
-        .into_iter()
-        .map(|a| (a.anchor.key(), (a.breakpoint_id, a.doc_line)))
-        .collect();
-
-    // Now inject breakpoints with a `SyntaxRewriter`. This is the most
-    // practical option we have with Biome's Rowan because `BatchMutation` does
-    // not support 1-to-2 splicing (insert breakpoint call before an expression,
-    // keeping the original).
-    let mut rewriter = BreakpointRewriter::new(&location.uri, breakpoint_map);
-    let transformed = rewriter.transform(root.syntax().clone());
-
-    if let Some(err) = rewriter.take_err() {
-        return Err(err);
-    }
-
-    Ok(transformed.to_string())
 }
 
 /// Annotate source code for `source()` and `pkgload::load_all()`.
 ///
-/// - Wraps the whole source in a `{}` block. This allows R to step through the
-///   top-level expressions.
+/// - Wraps the whole source in a `{}` block first. This allows R to step through
+///   top-level expressions and makes all breakpoints "nested" inside braces.
 /// - Injects breakpoint calls (`.ark_auto_step(.ark_breakpoint(...))`) at
 ///   breakpoint locations.
 /// - Injects verification calls (`.ark_auto_step(.ark_verify_breakpoints_range(...))`)
-///   after each top-level expression. Verifying expression by expression allows
-///   marking breakpoints as verified even when an expression fails mid-script.
-/// - `#line` directives before each original expression so the debugger knows
-///   where to step in the original file.
+///   after expressions containing breakpoints.
+/// - `#line` directives after injected calls to restore correct line mapping.
 pub(crate) fn annotate_source(
     code: &str,
     uri: &Url,
     breakpoints: &mut [Breakpoint],
 ) -> anyhow::Result<String> {
-    let line_index = LineIndex::new(code);
+    // Wrap code in braces first. This:
+    // 1. Allows R to step through top-level expressions
+    // 2. Makes all breakpoints valid (they're now inside braces, at top-level they'd be invalid)
+    // This enables uniform treatment by `AnnotationRewriter` for input and source cases.
+    let wrapped = format!("{{\n{code}\n}}");
+    let line_index = LineIndex::new(&wrapped);
 
-    let root = aether_parser::parse(code, Default::default()).tree();
-    let root_node = RRoot::cast(root.syntax().clone())
-        .ok_or_else(|| anyhow!("Failed to cast parsed tree to RRoot"))?;
+    let root = aether_parser::parse(&wrapped, Default::default()).tree();
 
-    // Collect line ranges for top-level expressions BEFORE any modifications
-    let top_level_ranges: Vec<std::ops::Range<u32>> = root_node
-        .expressions()
-        .into_iter()
-        .map(|expr| text_trimmed_line_range(expr.syntax(), &line_index))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    // `line_offset` = -1 because:
+    // - Wrapped line 0 is `{`
+    // - Wrapped line 1 is original line 0
+    // - doc_line = code_line + line_offset = code_line - 1
+    let line_offset: i32 = -1;
 
-    if top_level_ranges.is_empty() {
-        return Ok(code.to_string());
-    }
-
-    // Find breakpoint anchors (may be nested within top-level expressions)
-    let bp_vec: Vec<_> = breakpoints.iter_mut().collect();
-    let anchors = find_breakpoint_anchors(root.syntax(), bp_vec, &line_index, 0)?;
-
-    // Build map of anchor key -> (breakpoint_id, doc_line).
-    let breakpoint_map: std::collections::HashMap<_, _> = anchors
-        .into_iter()
-        .map(|a| (a.anchor.key(), (a.breakpoint_id, a.doc_line)))
-        .collect();
-
-    let mut rewriter = BreakpointRewriter::new(uri, breakpoint_map);
+    let mut rewriter = AnnotationRewriter::new(uri, breakpoints, line_offset, &line_index);
     let transformed = rewriter.transform(root.syntax().clone());
 
     if let Some(err) = rewriter.take_err() {
         return Err(err);
     }
 
-    let transformed_root = RRoot::cast(transformed)
-        .ok_or_else(|| anyhow!("Failed to cast transformed tree to RRoot"))?;
+    let transformed_code = transformed.to_string();
 
-    // Rebuild root expression list with #line directives and verify calls
-    let annotated = annotate_root_list(
-        transformed_root.expressions().syntax().clone(),
-        &top_level_ranges,
-        uri,
-    )?;
+    // Add a trailing verify call to handle any injected breakpoint in trailing
+    // position. Normally we'd inject a verify call as well a line directive
+    // that ensures source references remain correct after the verify call.
+    // But for the last expression in a list, there is no sibling node to attach
+    // the line directive trivia to. So, instead of adding a verify call, we
+    // rely on verification in a parent list instead. If trailing, there won't
+    // be any verification calls at all though, so we manually add one there:
+    //
+    // ```r
+    // {
+    //    foo({
+    //      .ark_auto_step(.breakpoint(...))
+    //      #line ...
+    //      expr
+    //    })
+    // }
+    // .ark_auto_step(.ark_verify_breakpoints(...))   # <- Manual injection
+    // ```
+    //
+    // This is unconditional for simplicity.
+    let last_line = code.lines().count() as u32;
+    let trailing_verify = format_verify_call(uri, &(0..last_line));
 
-    // Wrap in braces so R can step through expressions
-    Ok(format!("{{\n{annotated}}}\n"))
+    Ok(format!("{}\n{trailing_verify}\n", transformed_code.trim()))
 }
 
-struct BreakpointAnchor {
-    /// Unique identifier for the breakpoint, injected as argument in the code
-    breakpoint_id: i64,
-    /// The line in document coordinates (0-based)
-    doc_line: u32,
-    /// The anchor node (expression to place breakpoint before)
-    anchor: RSyntaxNode,
-}
-
-fn find_breakpoint_anchors(
-    root: &RSyntaxNode,
-    mut breakpoints: Vec<&mut Breakpoint>,
-    line_index: &LineIndex,
-    line_offset: u32,
-) -> anyhow::Result<Vec<BreakpointAnchor>> {
-    // Sort breakpoints by ascending line so we can walk the expression lists in
-    // DFS order, and match breakpoints to expressions by comparing lines. Both
-    // sequences proceed in roughly the same order (by line number), so we can
-    // consume breakpoints one by one as we find their anchors without needing
-    // to go backward in either sequence.
-    breakpoints.sort_by_key(|bp| bp.line);
-
-    // Peekable so we can inspect the next breakpoint's line without consuming it,
-    // deciding whether to place it at the current expression or continue to the
-    // next expression without consuming the current breakpoint.
-    let mut bp_iter = breakpoints.into_iter().peekable();
-
-    let mut anchors = Vec::new();
-
-    // Start from the root's expression list
-    let r =
-        RRoot::cast(root.clone()).ok_or_else(|| anyhow!("Failed to cast parsed tree to RRoot"))?;
-    let root_list = r.expressions();
-
-    find_anchors_in_list(
-        &root_list,
-        &mut bp_iter,
-        &mut anchors,
-        line_index,
-        line_offset,
-        true,
-    )?;
-
-    Ok(anchors)
-}
-
-// Takes an expression list, either from the root node or a brace node
-fn find_anchors_in_list<'a>(
-    list: &RExpressionList,
-    breakpoints: &mut std::iter::Peekable<impl Iterator<Item = &'a mut Breakpoint>>,
-    anchors: &mut Vec<BreakpointAnchor>,
-    line_index: &LineIndex,
-    line_offset: u32,
-    is_root: bool,
-) -> anyhow::Result<()> {
-    // Collect to allow indexed look-ahead and re-checking the same element
-    // without consuming an iterator
-    let elements: Vec<_> = list.into_iter().collect();
-
-    if elements.is_empty() {
-        return Ok(());
-    }
-
-    let mut i = 0;
-    while i < elements.len() {
-        let Some(bp) = breakpoints.peek() else {
-            // No more breakpoints
-            return Ok(());
-        };
-
-        // Convert breakpoint line from document coordinates to code coordinates
-        let bp_code_line = bp.line - line_offset;
-
-        let current = &elements[i];
-        let current_line = text_trimmed_line_range(current.syntax(), line_index)?.start;
-
-        let next_line = if i + 1 < elements.len() {
-            let next = &elements[i + 1];
-            let next_line = text_trimmed_line_range(next.syntax(), line_index)?.start;
-
-            // If the breakpoint is at or past the next element, move on
-            if bp_code_line >= next_line {
-                i += 1;
-                continue;
-            }
-
-            // Otherwise the breakpoint is either at `current_line` or between
-            // `current_line` and `next_line`
-            Some(next_line)
-        } else {
-            // There is no next element. The breakpoint either belongs to the
-            // current element or is past the current list and we need to
-            // backtrack and explore sibling trees.
-            None
-        };
-
-        // Try to place in a nested brace list first
-        let found_nested = find_anchors_in_nested_list(
-            current.syntax(),
-            breakpoints,
-            anchors,
-            line_index,
-            line_offset,
-        )?;
-
-        if found_nested {
-            let Some(bp) = breakpoints.peek() else {
-                // No breakpoints left to process
-                return Ok(());
-            };
-
-            let bp_code_line = bp.line - line_offset;
-
-            // If next breakpoint is at or past next element, advance
-            if next_line.is_some_and(|next| bp_code_line >= next) {
-                i += 1;
-                continue;
-            }
-
-            // Breakpoint is still within this element but wasn't placed.
-            // It means it's on a closing brace so consume it and mark invalid.
-            let bp = breakpoints.next().unwrap();
-            bp.state = BreakpointState::Invalid;
-
-            i += 1;
-            continue;
-        }
-
-        if is_root {
-            // We never place breakpoints at top-level. R can only step through a `{` list.
-            let bp = breakpoints.next().unwrap();
-            bp.state = BreakpointState::Invalid;
-
-            i += 1;
-            continue;
-        }
-
-        if next_line.is_none() && bp_code_line > current_line {
-            // Breakpoint is past this scope entirely, in a sibling tree. Let
-            // parent handle it.
-            return Ok(());
-        }
-
-        // Place breakpoint at current element of the `{` list
-        let bp = breakpoints.next().unwrap();
-        let doc_line = current_line + line_offset;
-        bp.line = doc_line;
-        anchors.push(BreakpointAnchor {
-            breakpoint_id: bp.id,
-            doc_line,
-            anchor: current.syntax().clone(),
-        });
-    }
-
-    Ok(())
-}
-
-fn find_anchors_in_nested_list<'a>(
-    element: &RSyntaxNode,
-    breakpoints: &mut std::iter::Peekable<impl Iterator<Item = &'a mut Breakpoint>>,
-    anchors: &mut Vec<BreakpointAnchor>,
-    line_index: &LineIndex,
-    line_offset: u32,
-) -> anyhow::Result<bool> {
-    let mut found_any = false;
-    let mut skip_until: Option<RSyntaxNode> = None;
-
-    // Search for brace lists in descendants
-    for event in element.preorder() {
-        match event {
-            WalkEvent::Leave(node) => {
-                // If we're leaving the node we're skipping, clear the skip flag
-                if skip_until.as_ref() == Some(&node) {
-                    skip_until = None;
-                }
-                continue;
-            },
-
-            WalkEvent::Enter(node) => {
-                // If we're currently skipping a subtree, continue
-                if skip_until.is_some() {
-                    continue;
-                }
-
-                if let Some(braced) = RBracedExpressions::cast(node.clone()) {
-                    let expr_list = braced.expressions();
-                    if !expr_list.is_empty() {
-                        // Found a non-empty brace list, recurse into it
-                        find_anchors_in_list(
-                            &expr_list,
-                            breakpoints,
-                            anchors,
-                            line_index,
-                            line_offset,
-                            false,
-                        )?;
-                        found_any = true;
-
-                        // Skip this node's subtree to avoid double-processing
-                        skip_until = Some(node);
-                    }
-                }
-            },
-        }
-    }
-
-    Ok(found_any)
-}
-
-/// Rewriter that injects breakpoint calls into expression lists.
-///
-/// We use `SyntaxRewriter` rather than `BatchMutation` because we need 1-to-2
-/// splicing (insert breakpoint call before an expression, keeping the
-/// original). `BatchMutation` only supports 1-to-1 or 1-to-0 replacements.
-struct BreakpointRewriter<'a> {
+/// Rewriter that handles all code annotation inside braced expression lists:
+/// - Breakpoint calls on statements
+/// - Verification calls after statements containing breakpoints
+/// - `#line` directives after injected calls to restore sourceref bookkeeping
+struct AnnotationRewriter<'a> {
     uri: &'a Url,
-
-    /// Map from anchor key to (breakpoint_id, line_in_document_coords)
-    breakpoint_map: std::collections::HashMap<SyntaxElementKey, (i64, u32)>,
-
-    /// Stack of pending injections, one frame per expression list we're inside.
-    injection_stack: Vec<Vec<PendingInjection>>,
-
+    /// Breakpoints in document coordinates, will be mutated to mark invalid ones
+    breakpoints: &'a mut [Breakpoint],
+    /// Offset for coordinate conversion: doc_line = code_line + line_offset
+    line_offset: i32,
+    /// Line index for the parsed code
+    line_index: &'a LineIndex,
+    /// Set of breakpoint IDs that have been consumed (placed in nested lists)
+    consumed: std::collections::HashSet<i64>,
+    /// Stack tracking braced expression context. Each entry contains precomputed
+    /// line information captured before child transformations (which can corrupt ranges).
+    brace_stack: Vec<BraceFrame>,
     /// First error encountered during transformation (if any)
     err: Option<anyhow::Error>,
 }
 
-/// Pending injection to be applied when visiting the parent expression list.
-struct PendingInjection {
-    /// Slot index in the parent list
-    slot_index: usize,
-    /// Nodes to insert before this slot
-    insert_before: Vec<RSyntaxNode>,
+/// Holds precomputed line information for a braced expression list.
+/// Captured on entry to a braced expression since line info becomes unreliable
+/// after child transformations.
+struct BraceFrame {
+    /// Code line of the opening `{`
+    brace_code_line: u32,
+    /// Line info for each expression (indexed by slot position)
+    expr_info: Vec<ExprLineInfo>,
 }
 
-impl<'a> BreakpointRewriter<'a> {
+/// Precomputed line information for a single expression in a braced list.
+struct ExprLineInfo {
+    /// Code line where the expression starts (from first token)
+    start: u32,
+    /// Code line range [start, end) for the expression
+    range: std::ops::Range<u32>,
+}
+
+impl<'a> AnnotationRewriter<'a> {
     fn new(
         uri: &'a Url,
-        breakpoint_map: std::collections::HashMap<SyntaxElementKey, (i64, u32)>,
+        breakpoints: &'a mut [Breakpoint],
+        line_offset: i32,
+        line_index: &'a LineIndex,
     ) -> Self {
+        // Sort so that `find_breakpoint_for_expr` (which uses `position()`) finds
+        // the earliest-line breakpoint first when multiple could match
+        breakpoints.sort_by_key(|bp| bp.line);
+
         Self {
             uri,
-            breakpoint_map,
-            injection_stack: Vec::new(),
+            breakpoints,
+            line_offset,
+            line_index,
+            consumed: std::collections::HashSet::new(),
+            brace_stack: Vec::new(),
             err: None,
         }
     }
 
-    /// Take the error (if any) out of the rewriter.
     fn take_err(&mut self) -> Option<anyhow::Error> {
         self.err.take()
     }
 
-    /// Record an error and return the original node unchanged.
     fn fail(&mut self, err: anyhow::Error, node: RSyntaxNode) -> RSyntaxNode {
         if self.err.is_none() {
             self.err = Some(err);
         }
         node
     }
+
+    /// Convert code line to document line. Can be negative for the wrapper
+    /// brace in `annotate_source().
+    fn to_doc_line(&self, code_line: u32) -> i32 {
+        code_line as i32 + self.line_offset
+    }
+
+    /// Check if a breakpoint is available (not consumed and not invalid)
+    fn is_available(&self, bp: &Breakpoint) -> bool {
+        !self.consumed.contains(&bp.id) && !matches!(bp.state, BreakpointState::Invalid)
+    }
+
+    /// Find all available breakpoints that anchor to this expression: At or
+    /// after the previous expression's end, up to and including the
+    /// expression's last line. Returns the indices of all matching breakpoints.
+    fn match_breakpoints(
+        &self,
+        prev_doc_end: Option<i32>,
+        expr_last_line: i32,
+    ) -> anyhow::Result<Vec<usize>> {
+        if expr_last_line < 0 {
+            return Err(anyhow!(
+                "Unexpected negative `expr_last_line` ({expr_last_line})"
+            ));
+        }
+        let expr_last_line = expr_last_line as u32;
+
+        let result: Vec<usize> = self
+            .breakpoints
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, bp)| {
+                if !self.is_available(bp) {
+                    return None;
+                }
+
+                // Breakpoint is after this expression
+                if bp.line > expr_last_line {
+                    return None;
+                }
+
+                // There is no previous expression so that's a match
+                let Some(prev_doc_end) = prev_doc_end else {
+                    return Some(idx);
+                };
+
+                // Breakpoint must be after the end of the previous expression.
+                // Note we allow blank lines between expressions to anchor to
+                // the next expression.
+                if (bp.line as i32) >= prev_doc_end {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Ok(result)
+    }
+
+    /// Check if any breakpoint (including consumed ones) falls within the line
+    /// range [start, end) in document coordinates. This is used to determine
+    /// whether a statement contains breakpoints and thus needs to be followed
+    /// by a verify call.
+    fn has_breakpoints_in_range(&self, start: i32, end: i32) -> bool {
+        self.breakpoints.iter().any(|bp| {
+            let bp_line = bp.line as i32;
+            !matches!(bp.state, BreakpointState::Invalid) && bp_line >= start && bp_line < end
+        })
+    }
 }
 
-impl SyntaxRewriter for BreakpointRewriter<'_> {
+impl SyntaxRewriter for AnnotationRewriter<'_> {
     type Language = RLanguage;
 
     fn visit_node(&mut self, node: RSyntaxNode) -> VisitNodeSignal<Self::Language> {
-        // Only push frames for expression lists, not other list types
-        if node.kind() == RSyntaxKind::R_EXPRESSION_LIST {
-            self.injection_stack.push(Vec::new());
+        if self.err.is_some() {
+            // Something is wrong but we can't short-circuit the visit. Just
+            // visit nodes until exhaustion.
+            return VisitNodeSignal::Traverse(node);
+        }
+
+        // Track `BraceFrame` information when we enter a braced expression.
+        // This must be done on entry, since the exit hook only sees the
+        // (partially) rebuilt tree with invalid line information.
+        //
+        // Note: we intentionally cache line info from the original parse tree.
+        // Downstream injections (breakpoint calls, `#line` trivia, verify calls)
+        // can change token offsets and make line lookups on the rebuilt nodes
+        // unreliable, but they do not change where the original expressions
+        // lived in the source. We only rely on these cached source positions
+        // when anchoring and invalidating breakpoints, tasks for which we need
+        // the _original_ coordinates, not the new ones.
+        if let Some(braced) = RBracedExpressions::cast(node.clone()) {
+            let Some(brace_code_line) = first_token_code_line(&node, self.line_index) else {
+                self.err = Some(anyhow!("Failed to get line for opening brace"));
+                return VisitNodeSignal::Traverse(node);
+            };
+
+            let mut expr_info = Vec::new();
+
+            for expr in braced.expressions() {
+                let Some(start) = first_token_code_line(expr.syntax(), self.line_index) else {
+                    self.err = Some(anyhow!("Failed to get start line for expression"));
+                    return VisitNodeSignal::Traverse(node);
+                };
+                let range = match text_trimmed_line_range(expr.syntax(), self.line_index) {
+                    Ok(range) => range,
+                    Err(err) => {
+                        self.err = Some(err);
+                        return VisitNodeSignal::Traverse(node);
+                    },
+                };
+
+                expr_info.push(ExprLineInfo { start, range });
+            }
+
+            self.brace_stack.push(BraceFrame {
+                brace_code_line,
+                expr_info,
+            });
         }
 
         VisitNodeSignal::Traverse(node)
     }
 
     fn visit_node_post(&mut self, node: RSyntaxNode) -> RSyntaxNode {
-        // If we already have an error, skip processing
         if self.err.is_some() {
+            // Something is wrong but we can't short-circuit the visit. Just
+            // visit nodes until exhaustion.
             return node;
         }
 
-        // If an expression list, apply any pending injections
-        if node.kind() == RSyntaxKind::R_EXPRESSION_LIST {
-            let injections = self.injection_stack.pop().unwrap_or_default();
+        // Only process expression lists
+        if node.kind() != RSyntaxKind::R_EXPRESSION_LIST {
+            return node;
+        }
 
-            if injections.is_empty() {
+        // Note we assume that only braced expressions and the root list have
+        // `R_EXPRESSION_LIST`, which is the case in our syntax
+        if let Some(frame) = self.brace_stack.pop() {
+            // Empty braces have no expressions to break on; any breakpoints
+            // in this range belong to an outer scope
+            if frame.expr_info.is_empty() {
                 return node;
-            } else {
-                return Self::apply_injections(node, injections);
             }
+
+            // Brace range in document coordinates. Since we checked for empty
+            // expr_info above, first/last are guaranteed to exist.
+            let Some(last_info) = frame.expr_info.last() else {
+                return self.fail(anyhow!("expr_info unexpectedly empty"), node);
+            };
+            let Some(first_info) = frame.expr_info.first() else {
+                return self.fail(anyhow!("expr_info unexpectedly empty"), node);
+            };
+
+            let brace_doc_start = self.to_doc_line(frame.brace_code_line);
+            let brace_doc_end = self.to_doc_line(last_info.range.end);
+            let first_expr_doc_start = self.to_doc_line(first_info.start);
+
+            // Annotate statements in the braced list
+            let result = self.annotate_braced_list(node, frame.brace_code_line, frame.expr_info);
+
+            // Mark any remaining breakpoints in this brace range as invalid
+            let invalidation_floor = breakpoint_floor(brace_doc_start, first_expr_doc_start);
+            self.mark_remaining_breakpoints_invalid(Some(invalidation_floor), Some(brace_doc_end));
+
+            result
+        } else {
+            // We're at the root expression list, mark all remaining breakpoints as invalid
+            self.mark_remaining_breakpoints_invalid(None, None);
+            node
         }
-
-        let Some(&(breakpoint_id, line)) = self.breakpoint_map.get(&node.key()) else {
-            // Not a breakpoint anchor, nothing to inject
-            return node;
-        };
-
-        // Anchors are always inside expression lists, so we must have a frame
-        let Some(frame) = self.injection_stack.last_mut() else {
-            return self.fail(
-                anyhow!("Breakpoint anchor found outside expression list"),
-                node,
-            );
-        };
-
-        // Add line directive to current node right away
-        let decorated_node = match add_line_directive_to_node(&node, line, self.uri) {
-            Ok(n) => n,
-            Err(err) => return self.fail(err, node),
-        };
-
-        // Queue breakpoint injection for parent expression list
-        let breakpoint_call = create_breakpoint_call(self.uri, breakpoint_id);
-        frame.push(PendingInjection {
-            slot_index: node.index(),
-            insert_before: vec![breakpoint_call],
-        });
-
-        decorated_node
     }
 }
 
-impl BreakpointRewriter<'_> {
-    /// Apply pending injections to an expression list node.
-    fn apply_injections(
-        mut node: RSyntaxNode,
-        mut injections: Vec<PendingInjection>,
+impl AnnotationRewriter<'_> {
+    /// Annotate an expression list inside braces with breakpoints, `#line`
+    /// directives, and verification calls.
+    fn annotate_braced_list(
+        &mut self,
+        list_node: RSyntaxNode,
+        brace_code_line: u32,
+        expr_info: Vec<ExprLineInfo>,
     ) -> RSyntaxNode {
-        // Sort by slot index descending so we can splice without invalidating indices
-        injections.sort_by(|a, b| b.slot_index.cmp(&a.slot_index));
+        let Some(list) = RExpressionList::cast(list_node.clone()) else {
+            return list_node;
+        };
 
-        for injection in injections {
-            // Insert before (at the slot index)
-            if !injection.insert_before.is_empty() {
-                node = node.splice_slots(
-                    injection.slot_index..injection.slot_index,
-                    injection.insert_before.into_iter().map(|n| Some(n.into())),
-                );
-            }
+        let elements: Vec<_> = list.into_iter().collect();
+        if elements.is_empty() {
+            return list_node;
         }
 
-        node
+        // Convert brace code line to document coordinates. This is the floor
+        // for breakpoint matching, breakpoints before this line belong to an
+        // outer scope, not this braced list. Note that due to the injected
+        // wrapper braces in `annotate_source()`, this can be -1 (before any doc
+        // line).
+        let brace_doc_start: i32 = self.to_doc_line(brace_code_line);
+
+        let mut result_slots: Vec<Option<RSyntaxElement>> = Vec::new();
+        let mut needs_line_directive = false;
+
+        let first_expr_doc_start = expr_info
+            .first()
+            .map(|info| self.to_doc_line(info.start))
+            .unwrap_or(brace_doc_start);
+        let mut prev_doc_end: Option<i32> =
+            Some(breakpoint_floor(brace_doc_start, first_expr_doc_start));
+
+        for (i, expr) in elements.iter().enumerate() {
+            // Use precomputed line info captured on the preorder visit, when
+            // positions were still valid
+            let Some(info) = expr_info.get(i) else {
+                return self.fail(anyhow!("Missing line info for expression {i}"), list_node);
+            };
+
+            let expr_doc_start = self.to_doc_line(info.start);
+            let expr_doc_end = self.to_doc_line(info.range.end);
+
+            // Find all breakpoints that anchor to this expression:
+            // - At or after the previous expression's end
+            // - At or before the expression's last line (expr_doc_end - 1, since end is exclusive)
+            // This includes breakpoints on blank lines before the expression and
+            // breakpoints inside multiline expressions (which all anchor to the start).
+            let bp_indices = match self.match_breakpoints(prev_doc_end, expr_doc_end - 1) {
+                Ok(indices) => indices,
+                Err(e) => return self.fail(e, list_node),
+            };
+
+            if !bp_indices.is_empty() {
+                // Use the first breakpoint's id for the injected call
+                let first_bp_id = self.breakpoints[bp_indices[0]].id;
+
+                // Update all matching breakpoints: anchor to expr start and mark consumed
+                for &bp_idx in &bp_indices {
+                    let bp = &mut self.breakpoints[bp_idx];
+                    bp.line = expr_doc_start as u32;
+                    self.consumed.insert(bp.id);
+                }
+
+                // Inject a single breakpoint call for all matching breakpoints
+                // (all breakpoints are shown at the same location in the
+                // frontend, once verified)
+                let breakpoint_call = create_breakpoint_call(self.uri, first_bp_id);
+                result_slots.push(Some(breakpoint_call.into()));
+
+                // We've injected an expression so we'll need to fix sourcerefs
+                // with a line directive
+                needs_line_directive = true;
+            }
+
+            // There are two reasons we might need a line directive:
+            // - We've just injected a breakpoint
+            // - We've injected a verify call at last iteration
+            let expr_node = if needs_line_directive {
+                match add_line_directive_to_node(expr.syntax(), expr_doc_start, self.uri) {
+                    Ok(n) => n,
+                    Err(e) => return self.fail(e, list_node),
+                }
+            } else {
+                expr.syntax().clone()
+            };
+            result_slots.push(Some(expr_node.into()));
+
+            // If this expression's range contains any breakpoints, we inject a
+            // verify call right after it to ensure that they are immediately
+            // verified after stepping over this expression. The very last
+            // expression in the list is an exception. We don't inject a verify
+            // call because we have nowhere to attach a corresponding line
+            // directive. Instead we rely on the parent list to verify.
+            let is_last = i == elements.len() - 1;
+            if !is_last && self.has_breakpoints_in_range(expr_doc_start, expr_doc_end) {
+                let start_u32 = expr_doc_start.max(0) as u32;
+                let end_u32 = expr_doc_end.max(0) as u32;
+                let verify_call = create_verify_call(self.uri, &(start_u32..end_u32));
+                result_slots.push(Some(verify_call.into()));
+
+                // Next expression will need a line directive no matter what
+                // (even if there is no injected breakpoint)
+                needs_line_directive = true;
+            } else {
+                needs_line_directive = false;
+            }
+
+            prev_doc_end = Some(expr_doc_end);
+        }
+
+        // Replace all slots with the new list
+        let slot_count = list_node.slots().count();
+        list_node.splice_slots(0..slot_count, result_slots)
     }
+
+    /// Mark remaining unconsumed breakpoints as invalid within the given range.
+    /// If range bounds are None, all remaining breakpoints are marked invalid.
+    fn mark_remaining_breakpoints_invalid(&mut self, start: Option<i32>, end: Option<i32>) {
+        for bp in self.breakpoints.iter_mut() {
+            let is_available =
+                !self.consumed.contains(&bp.id) && !matches!(bp.state, BreakpointState::Invalid);
+            if !is_available {
+                continue;
+            }
+
+            let bp_line = bp.line as i32;
+            let in_range =
+                start.map_or(true, |s| bp_line >= s) && end.map_or(true, |e| bp_line <= e);
+            if in_range {
+                bp.state = BreakpointState::Invalid;
+            }
+        }
+    }
+}
+
+/// Compute the floor line for breakpoint matching in a braced list. When
+/// content starts on a later line than the brace, we use `brace_doc_start + 1`
+/// to avoid claiming breakpoints on the brace line, as those belong to the
+/// parent scope.
+fn breakpoint_floor(brace_doc_start: i32, first_expr_doc_start: i32) -> i32 {
+    if first_expr_doc_start > brace_doc_start {
+        brace_doc_start + 1
+    } else {
+        brace_doc_start
+    }
+}
+
+/// Returns the code line of the node's first token.
+fn first_token_code_line(node: &RSyntaxNode, line_index: &LineIndex) -> Option<u32> {
+    let token = node.first_token()?;
+    let offset = token.text_trimmed_range().start();
+    line_index.line_col(offset).map(|lc| lc.line)
 }
 
 /// Returns the line range [start, end) for the node's trimmed text.
@@ -729,9 +751,16 @@ fn insert_before_trailing_whitespace(
 
 fn add_line_directive_to_node(
     node: &RSyntaxNode,
-    line: u32,
+    line: i32,
     uri: &Url,
 ) -> anyhow::Result<RSyntaxNode> {
+    if line < 0 {
+        return Err(anyhow!(
+            "Line directive line is negative ({line}), this shouldn't happen"
+        ));
+    }
+    let line = line as u32;
+
     let first_token = node
         .first_token()
         .ok_or_else(|| anyhow!("Node has no first token for line directive"))?;
@@ -757,43 +786,6 @@ fn add_line_directive_to_node(
         .ok_or_else(|| anyhow!("Failed to replace first token with line directive"))
 }
 
-/// Rebuild the root expression list with #line directives and verify calls for
-/// each expression.
-fn annotate_root_list(
-    list_node: RSyntaxNode,
-    ranges: &[std::ops::Range<u32>],
-    uri: &Url,
-) -> anyhow::Result<RSyntaxNode> {
-    let mut result_slots: Vec<Option<biome_rowan::SyntaxElement<RLanguage>>> = Vec::new();
-
-    // Use pre-computed line ranges (from before any transformations)
-    let mut range_iter = ranges.iter();
-
-    for slot in list_node.slots() {
-        let biome_rowan::SyntaxSlot::Node(node) = slot else {
-            result_slots.push(None);
-            continue;
-        };
-
-        // Get pre-computed line range for this expression
-        let Some(line_range) = range_iter.next() else {
-            result_slots.push(Some(node.into()));
-            continue;
-        };
-
-        // Add #line directive to expression
-        let decorated_node = add_line_directive_to_node(&node, line_range.start, uri)?;
-        result_slots.push(Some(decorated_node.into()));
-
-        let verify_call = create_verify_call(uri, line_range);
-        result_slots.push(Some(verify_call.into()));
-    }
-
-    // Replace all slots with the new list
-    let slot_count = list_node.slots().count();
-    Ok(list_node.splice_slots(0..slot_count, result_slots))
-}
-
 // We create new calls by parsing strings. Although less elegant, it's much less
 // verbose and easier to see what's going on.
 
@@ -809,13 +801,18 @@ fn create_breakpoint_call(uri: &Url, id: i64) -> RSyntaxNode {
 }
 
 fn create_verify_call(uri: &Url, line_range: &std::ops::Range<u32>) -> RSyntaxNode {
-    let code = format!(
-        "\nbase::{AUTO_STEP_FUNCTION}(base::.ark_verify_breakpoints_range(\"{}\", {}L, {}L))\n",
+    let code = format!("\n{}\n", format_verify_call(uri, line_range));
+    aether_parser::parse(&code, Default::default()).syntax()
+}
+
+/// Formats a verify call as a string. Takes 0-indexed line range.
+fn format_verify_call(uri: &Url, line_range: &std::ops::Range<u32>) -> String {
+    format!(
+        "base::{AUTO_STEP_FUNCTION}(base::.ark_verify_breakpoints_range(\"{}\", {}L, {}L))",
         uri,
         line_range.start + 1,
         line_range.end + 1
-    );
-    aether_parser::parse(&code, Default::default()).syntax()
+    )
 }
 
 #[harp::register]
@@ -938,11 +935,7 @@ mod tests {
             },
         };
         // Breakpoint at document line 5 (code line 2, i.e., `1`)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 5,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 5, BreakpointState::Unverified)];
 
         let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
@@ -967,14 +960,9 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 2, // `y <- 2`
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
         assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
@@ -994,21 +982,12 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 2, // `y <- 2`
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 4, // `w <- 4`
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 2, BreakpointState::Unverified),
+            Breakpoint::new(2, 4, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
         assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
         assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid));
@@ -1028,14 +1007,9 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 2,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
         assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
     }
@@ -1054,16 +1028,12 @@ mod tests {
                 character: 6,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 10,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 10, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
-        // Should return unchanged code
-        assert_eq!(result, code);
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        // annotate_input always adds #line directive for srcref mapping
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
         assert!(!matches!(breakpoints[0].state, BreakpointState::Verified));
     }
 
@@ -1085,25 +1055,130 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 3, // Inside function - `y <- 2`
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 6, // In outer braces - `w <- 4`
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 3, BreakpointState::Unverified),
+            Breakpoint::new(2, 6, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
         // Both breakpoints are valid (inside brace lists)
         assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
         assert!(!matches!(breakpoints[1].state, BreakpointState::Invalid));
+    }
+
+    #[test]
+    fn test_inject_breakpoints_inside_multiline_expr_anchors_to_start() {
+        // A breakpoint on an intermediate line of a multiline expression should
+        // anchor to the start of that expression.
+        // Lines:
+        //   0: {
+        //   1:   x +
+        //   2:     y
+        //   3:   z
+        //   4: }
+        let code = "{\n  x +\n    y\n  z\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
+
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        insta::assert_snapshot!(result);
+        // Breakpoint inside multiline expression should anchor to expression start
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
+        assert_eq!(breakpoints[0].line, 1); // Anchored to line 1 (x +)
+    }
+
+    #[test]
+    fn test_inject_breakpoints_on_blank_line_anchors_to_next() {
+        // A breakpoint on a blank line between expressions should anchor to
+        // the next expression.
+        // Lines:
+        //   0: {
+        //   1:   x <- 1
+        //   2:   (blank)
+        //   3:   y <- 2
+        //   4: }
+        let code = "{\n  x <- 1\n\n  y <- 2\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
+
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        insta::assert_snapshot!(result);
+        // Breakpoint on blank line should anchor to next expression (valid)
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
+        // Line should be updated to the actual anchor position (line 3)
+        assert_eq!(breakpoints[0].line, 3);
+    }
+
+    #[test]
+    fn test_multiple_breakpoints_collapse_to_same_line() {
+        // Multiple breakpoints matching the same expression should all anchor
+        // to the expression start, but only one breakpoint call is injected.
+        // Lines:
+        //   0: {
+        //   1:   (blank)
+        //   2:   foo(
+        //   3:     1
+        //   4:   )
+        //   5: }
+        let code = "{\n\n  foo(\n    1\n  )\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 5,
+                character: 1,
+            },
+        };
+        // Three breakpoints: blank line, expression start, and inside expression
+        let mut breakpoints = vec![
+            Breakpoint::new(1, 1, BreakpointState::Unverified),
+            Breakpoint::new(2, 2, BreakpointState::Unverified),
+            Breakpoint::new(3, 3, BreakpointState::Unverified),
+        ];
+
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        insta::assert_snapshot!(result);
+
+        // All breakpoints should be valid and anchored to line 2 (expression start)
+        for bp in &breakpoints {
+            assert!(
+                !matches!(bp.state, BreakpointState::Invalid),
+                "Breakpoint {} should be valid",
+                bp.id
+            );
+            assert_eq!(bp.line, 2, "Breakpoint {} should anchor to line 2", bp.id);
+        }
+
+        // Only one breakpoint call should be injected (count occurrences)
+        let bp_call_count = result.matches(".ark_breakpoint").count();
+        assert_eq!(
+            bp_call_count, 1,
+            "Only one breakpoint call should be injected"
+        );
     }
 
     #[test]
@@ -1122,14 +1197,9 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 4, // `y <- 2`
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 4, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
         assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
@@ -1150,16 +1220,12 @@ mod tests {
                 character: 6,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 2, // The `}` line
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
-        // Should return unchanged code since breakpoint is invalid
-        assert_eq!(result, code);
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        // annotate_input always adds #line directive for srcref mapping
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
         // Marked as invalid
         assert!(matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
@@ -1180,21 +1246,12 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 3, // The `}` line of the function - invalid
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 4, // `y <- 2` - in outer braces, valid
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 3, BreakpointState::Unverified),
+            Breakpoint::new(2, 4, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // First breakpoint is invalid (on closing brace)
@@ -1222,26 +1279,13 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 1, // `x <- 1` - in outer braces
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 3, // `y <- 2` - within nested function
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 3,
-                line: 6, // `w <- 4` - in outer braces
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 1, BreakpointState::Unverified),
+            Breakpoint::new(2, 3, BreakpointState::Unverified),
+            Breakpoint::new(3, 6, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
         // All breakpoints are valid (inside brace lists)
         assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
@@ -1273,16 +1317,11 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Breakpoint at document line 12 (which is code line 2, i.e., `y <- 2`)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 12,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 12, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // The breakpoint line should remain in document coordinates
@@ -1305,16 +1344,11 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Breakpoint at document line 22 (code line 2, i.e., `y <- 2`)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 22,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 22, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // The breakpoint line should remain in document coordinates
@@ -1338,16 +1372,11 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Breakpoint at line 2 (the `1` expression inside the inner braces)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 2,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // The breakpoint should be placed at line 2
@@ -1370,16 +1399,11 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Breakpoint at line 3 (the `1` expression inside the innermost braces)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 3,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 3, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // The breakpoint should be placed at line 3
@@ -1402,18 +1426,14 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Breakpoint at line 3 (the inner `}` line)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 3,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 3, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
-        // Should return unchanged code since breakpoint is invalid
-        assert_eq!(result, code);
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        // annotate_input always adds #line directive for srcref mapping
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
         // Marked as invalid
         assert!(matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
@@ -1433,16 +1453,12 @@ mod tests {
                 character: 6,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 1,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 1, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
-        // Code unchanged since breakpoint is invalid
-        assert_eq!(result, code);
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        // annotate_input always adds #line directive for srcref mapping
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
         // Breakpoint marked as invalid
         assert!(matches!(breakpoints[0].state, BreakpointState::Invalid));
     }
@@ -1462,23 +1478,15 @@ mod tests {
                 character: 6,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 0,
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 2,
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 0, BreakpointState::Unverified),
+            Breakpoint::new(2, 2, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
-        // Code unchanged since all breakpoints are invalid
-        assert_eq!(result, code);
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        // annotate_input always adds #line directive for srcref mapping
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
         // Both breakpoints marked as invalid
         assert!(matches!(breakpoints[0].state, BreakpointState::Invalid));
         assert!(matches!(breakpoints[1].state, BreakpointState::Invalid));
@@ -1499,26 +1507,13 @@ mod tests {
                 character: 6,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 0, // `x <- 1` - top-level, invalid
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 2, // `y <- 2` - inside function, valid
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 3,
-                line: 4, // `z <- 3` - top-level, invalid
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 0, BreakpointState::Unverified),
+            Breakpoint::new(2, 2, BreakpointState::Unverified),
+            Breakpoint::new(3, 4, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         // Code should contain breakpoint for nested expression only
         assert!(result.contains("base::.ark_breakpoint"));
         // Top-level breakpoints are invalid
@@ -1543,11 +1538,7 @@ mod tests {
         let code = "foo <- function() {\n  x <- 1\n  y <- 2\n}\nbar <- 3";
         let uri = Url::parse("file:///test.R").unwrap();
         // Breakpoint at line 2 (inside the function, 0-indexed)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 1,
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 1, BreakpointState::Unverified)];
         let result = annotate_source(code, &uri, &mut breakpoints).unwrap();
         insta::assert_snapshot!(result);
     }
@@ -1571,6 +1562,84 @@ mod tests {
     }
 
     #[test]
+    fn test_annotate_source_top_level_breakpoint() {
+        let code = "x <- 1\ny <- 2\nz <- 3";
+        let uri = Url::parse("file:///test.R").unwrap();
+        // Breakpoints on top-level expressions (lines 0, 1, 2 in 0-indexed)
+        let mut breakpoints = vec![
+            Breakpoint::new(1, 0, BreakpointState::Unverified),
+            Breakpoint::new(2, 2, BreakpointState::Unverified),
+        ];
+        let result = annotate_source(code, &uri, &mut breakpoints).unwrap();
+
+        // Top-level breakpoints should be valid in annotate_source (code is wrapped in braces)
+        assert_eq!(breakpoints[0].state, BreakpointState::Unverified);
+        assert_eq!(breakpoints[1].state, BreakpointState::Unverified);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_source_multiple_breakpoints_inside_braces() {
+        // Breakpoints at lines 1 and 2 (1-based), i.e. lines 0 and 1 (0-indexed)
+        // Line 0: `{`
+        // Line 1: `  1`
+        let code = "{\n  1\n  2\n}\n\n2";
+        let uri = Url::parse("file:///test.R").unwrap();
+        let mut breakpoints = vec![
+            Breakpoint::new(1, 0, BreakpointState::Unverified),
+            Breakpoint::new(2, 1, BreakpointState::Unverified),
+        ];
+        let result = annotate_source(code, &uri, &mut breakpoints).unwrap();
+
+        // Breakpoint 1 should be at line 0 (the `{`)
+        // Breakpoint 2 should be at line 1 (the `1`)
+        assert_eq!(breakpoints[0].line, 0);
+        assert_eq!(breakpoints[1].line, 1);
+        assert_eq!(breakpoints[0].state, BreakpointState::Unverified);
+        assert_eq!(breakpoints[1].state, BreakpointState::Unverified);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_source_breakpoint_on_opening_brace() {
+        // Breakpoint on line 0 (the `{` line) should anchor to the braced expression,
+        // not dive into the nested list and anchor to line 1.
+        let code = "{\n  1\n  2\n}\n\n2";
+        let uri = Url::parse("file:///test.R").unwrap();
+        let mut breakpoints = vec![Breakpoint::new(1, 0, BreakpointState::Unverified)];
+        let result = annotate_source(code, &uri, &mut breakpoints).unwrap();
+
+        // Breakpoint should remain at line 0, not shifted to line 1
+        assert_eq!(breakpoints[0].line, 0);
+        assert_eq!(breakpoints[0].state, BreakpointState::Unverified);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_annotate_source_breakpoint_on_function_definition_line() {
+        // Breakpoint on the function definition line (which includes the opening `{`)
+        // should anchor to the assignment expression, not dive into the function body.
+        // Line 0: `f <- function(x) {`
+        // Line 1: `  1`
+        // Line 2: `}`
+        let code = "f <- function(x) {\n  1\n}";
+        let uri = Url::parse("file:///test.R").unwrap();
+        let mut breakpoints = vec![
+            Breakpoint::new(1, 0, BreakpointState::Unverified),
+            Breakpoint::new(2, 1, BreakpointState::Unverified),
+        ];
+        let result = annotate_source(code, &uri, &mut breakpoints).unwrap();
+
+        // Breakpoint 1 should remain at line 0 (the function definition)
+        // Breakpoint 2 should be at line 1 (inside the function body)
+        assert_eq!(breakpoints[0].line, 0);
+        assert_eq!(breakpoints[1].line, 1);
+        assert_eq!(breakpoints[0].state, BreakpointState::Unverified);
+        assert_eq!(breakpoints[1].state, BreakpointState::Unverified);
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
     fn test_inject_breakpoints_if_else_both_branches() {
         let code = "if (TRUE) {\n  x <- 1\n} else {\n  y <- 2\n}";
         let location = CodeLocation {
@@ -1584,21 +1653,12 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 1, // `x <- 1` in if branch
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 3, // `y <- 2` in else branch
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 1, BreakpointState::Unverified),
+            Breakpoint::new(2, 3, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // Both breakpoints should be valid (not marked as invalid)
@@ -1633,24 +1693,16 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
         let mut breakpoints = vec![
-            Breakpoint {
-                id: 1,
-                line: 3, // closing brace of function
-                state: BreakpointState::Unverified,
-            },
-            Breakpoint {
-                id: 2,
-                line: 4, // closing brace of outer block
-                state: BreakpointState::Unverified,
-            },
+            Breakpoint::new(1, 3, BreakpointState::Unverified),
+            Breakpoint::new(2, 4, BreakpointState::Unverified),
         ];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
 
-        // Code should be unchanged (no valid breakpoints)
-        assert_eq!(result, code);
+        // annotate_input always adds #line directive for srcref mapping
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
 
         // Both breakpoints should be marked invalid
         assert!(
@@ -1682,14 +1734,9 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 2, // the empty {} expression
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
 
-        let result = inject_breakpoints(code, location, &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
         insta::assert_snapshot!(result);
 
         // Should anchor to the empty {} expression (it's a valid expression)
@@ -1718,49 +1765,35 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Test 1: Breakpoint on inner brace open line (valid - anchors to inner {} expression)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 1,
-            state: BreakpointState::Unverified,
-        }];
-        let result =
-            inject_breakpoints(code, location.clone(), &mut breakpoints, &line_index).unwrap();
+        let mut breakpoints = vec![Breakpoint::new(1, 1, BreakpointState::Unverified)];
+        let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
         assert!(
             !matches!(breakpoints[0].state, BreakpointState::Invalid),
             "Breakpoint on inner brace open should be valid"
         );
         assert!(result.contains(".ark_breakpoint"));
 
-        // Test 2: Breakpoint on inner closing brace (invalid)
-        let mut breakpoints = vec![Breakpoint {
-            id: 2,
-            line: 2,
-            state: BreakpointState::Unverified,
-        }];
-        let result =
-            inject_breakpoints(code, location.clone(), &mut breakpoints, &line_index).unwrap();
+        // Test 2: Breakpoint on inner closing brace (anchors to inner {} expression start)
+        let mut breakpoints = vec![Breakpoint::new(2, 2, BreakpointState::Unverified)];
+        let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
         assert!(
-            matches!(breakpoints[0].state, BreakpointState::Invalid),
-            "Breakpoint on inner closing brace should be invalid"
+            !matches!(breakpoints[0].state, BreakpointState::Invalid),
+            "Breakpoint on inner closing brace should anchor to inner {{ expression"
         );
-        assert_eq!(result, code);
+        assert_eq!(breakpoints[0].line, 1, "Should anchor to line 1");
+        assert!(result.contains(".ark_breakpoint"));
 
-        // Test 3: Breakpoint on outer closing brace (invalid)
-        let mut breakpoints = vec![Breakpoint {
-            id: 3,
-            line: 3,
-            state: BreakpointState::Unverified,
-        }];
-        let result =
-            inject_breakpoints(code, location.clone(), &mut breakpoints, &line_index).unwrap();
+        // Test 3: Breakpoint on outer closing brace (invalid - not part of any expression in the list)
+        let mut breakpoints = vec![Breakpoint::new(3, 3, BreakpointState::Unverified)];
+        let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
         assert!(
             matches!(breakpoints[0].state, BreakpointState::Invalid),
             "Breakpoint on outer closing brace should be invalid"
         );
-        assert_eq!(result, code);
+        let expected = format!("#line 1 \"file:///test.R\"\n{code}");
+        assert_eq!(result, expected);
     }
 
     #[test]
@@ -1780,41 +1813,33 @@ mod tests {
                 character: 2,
             },
         };
-        let line_index = LineIndex::new(code);
 
         // Test 1: Breakpoint on line 0 (valid - anchors to inner {} expression)
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 0,
-            state: BreakpointState::Unverified,
-        }];
-        let result =
-            inject_breakpoints(code, location.clone(), &mut breakpoints, &line_index).unwrap();
+        let mut breakpoints = vec![Breakpoint::new(1, 0, BreakpointState::Unverified)];
+        let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
         assert!(
             !matches!(breakpoints[0].state, BreakpointState::Invalid),
             "Breakpoint on {{ line should be valid"
         );
         assert!(result.contains(".ark_breakpoint"));
 
-        // Test 2: Breakpoint on line 1 (invalid - closing braces)
-        let mut breakpoints = vec![Breakpoint {
-            id: 2,
-            line: 1,
-            state: BreakpointState::Unverified,
-        }];
-        let result =
-            inject_breakpoints(code, location.clone(), &mut breakpoints, &line_index).unwrap();
+        // Test 2: Breakpoint on line 1 (anchors to inner {} which spans lines 0-1)
+        let mut breakpoints = vec![Breakpoint::new(2, 1, BreakpointState::Unverified)];
+        let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
+        // Breakpoint on }} line anchors to the inner {} expression start (line 0)
         assert!(
-            matches!(breakpoints[0].state, BreakpointState::Invalid),
-            "Breakpoint on }} line should be invalid"
+            !matches!(breakpoints[0].state, BreakpointState::Invalid),
+            "Breakpoint on }} line should anchor to inner {{ expression"
         );
-        assert_eq!(result, code);
+        assert_eq!(breakpoints[0].line, 0, "Should anchor to line 0");
+        assert!(result.contains(".ark_breakpoint"));
     }
 
     #[test]
     fn test_inject_breakpoints_inside_multiline_call() {
-        // Test breakpoint placed on a line inside a multi-line call expression
-        // The breakpoint is on the argument line, not the start of the expression
+        // Test breakpoint placed on a line inside a multi-line call expression.
+        // The breakpoint is on the argument line, not the start of the expression,
+        // but should anchor to the start of the expression.
         let code = "{\n  foo(\n    1\n  )\n}";
         // Line 0: {
         // Line 1:   foo(
@@ -1832,22 +1857,17 @@ mod tests {
                 character: 1,
             },
         };
-        let line_index = LineIndex::new(code);
 
-        let mut breakpoints = vec![Breakpoint {
-            id: 1,
-            line: 2, // Inside the foo() call, on the argument line
-            state: BreakpointState::Unverified,
-        }];
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
 
-        let result =
-            inject_breakpoints(code, location.clone(), &mut breakpoints, &line_index).unwrap();
+        let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
+        insta::assert_snapshot!(result);
 
-        // Breakpoint inside a multi-line expression (not at its start) is invalid
-        assert!(
-            matches!(breakpoints[0].state, BreakpointState::Invalid),
-            "Breakpoint inside multi-line call should be invalid"
+        // Breakpoint inside a multi-line expression should anchor to expression start
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid));
+        assert_eq!(
+            breakpoints[0].line, 1,
+            "Breakpoint should anchor to expression start"
         );
-        assert_eq!(result, code, "Invalid breakpoint should not modify code");
     }
 }

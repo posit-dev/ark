@@ -176,11 +176,12 @@ fn listen_dap_events<W: Write>(
                         Event::Terminated(None)
                     },
 
-                    DapBackendEvent::BreakpointState { id, verified } => {
+                    DapBackendEvent::BreakpointState { id, line, verified } => {
                         Event::Breakpoint(BreakpointEventBody {
                             reason: BreakpointEventReason::Changed,
                             breakpoint: dap::types::Breakpoint {
                                 id: Some(id),
+                                line: Some(Breakpoint::to_dap_line(line)),
                                 verified,
                                 ..Default::default()
                             },
@@ -360,10 +361,14 @@ impl<R: Read, W: Write> DapServer<R, W> {
             // Replace all existing breakpoints by new, unverified ones
             args_breakpoints
                 .iter()
-                .map(|bp| Breakpoint {
-                    id: state.next_breakpoint_id(),
-                    line: Breakpoint::from_dap_line(bp.line),
-                    state: BreakpointState::Unverified,
+                .map(|bp| {
+                    let line = Breakpoint::from_dap_line(bp.line);
+                    Breakpoint {
+                        id: state.next_breakpoint_id(),
+                        line,
+                        original_line: line,
+                        state: BreakpointState::Unverified,
+                    }
                 })
                 .collect()
         } else {
@@ -371,9 +376,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
             // Unwrap Safety: `doc_changed` is false, so `existing_breakpoints` is Some
             let (_, old_breakpoints) = old_breakpoints.unwrap();
+            // Use original_line for lookup since that's what the frontend sends back
             let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
                 .into_iter()
-                .map(|bp| (bp.line, bp))
+                .map(|bp| (bp.original_line, bp))
                 .collect();
 
             let mut breakpoints: Vec<Breakpoint> = Vec::new();
@@ -392,7 +398,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
                     breakpoints.push(Breakpoint {
                         id: old_bp.id,
-                        line,
+                        // Preserve the actual (anchored) line from previous verification
+                        line: old_bp.line,
+                        original_line: line,
                         state: new_state,
                     });
                 } else {
@@ -400,6 +408,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                     breakpoints.push(Breakpoint {
                         id: state.next_breakpoint_id(),
                         line,
+                        original_line: line,
                         state: BreakpointState::Unverified,
                     });
                 }
@@ -413,11 +422,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
             // Unverified/Invalid breakpoints on the other hand are simply
             // dropped since there's no verified state that needs to be
             // preserved.
-            for (line, old_bp) in old_by_line {
+            for (original_line, old_bp) in old_by_line {
                 if matches!(old_bp.state, BreakpointState::Verified) {
                     breakpoints.push(Breakpoint {
                         id: old_bp.id,
-                        line,
+                        line: old_bp.line,
+                        original_line,
                         state: BreakpointState::Disabled,
                     });
                 }

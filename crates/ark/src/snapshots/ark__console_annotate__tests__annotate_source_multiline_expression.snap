@@ -3,12 +3,9 @@ source: crates/ark/src/console_annotate.rs
 expression: result
 ---
 {
-#line 1 "file:///test.R"
 foo <- function(x) {
   x + 1
 }
-base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 4L))
-#line 4 "file:///test.R"
 bar <- 2
-base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 4L, 5L))
 }
+base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 5L))

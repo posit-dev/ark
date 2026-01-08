@@ -35,11 +35,26 @@ pub enum BreakpointState {
 #[derive(Debug, Clone)]
 pub struct Breakpoint {
     pub id: i64,
-    pub line: u32, // 0-based
+    /// The line where the breakpoint is actually placed (may be anchored to expression start).
+    /// 0-based.
+    pub line: u32,
+    /// The line originally requested by the user (before anchoring). Used to match breakpoints
+    /// across SetBreakpoints requests. 0-based.
+    pub original_line: u32,
     pub state: BreakpointState,
 }
 
 impl Breakpoint {
+    /// Create a new breakpoint. The `original_line` is set to the same as `line`.
+    pub fn new(id: i64, line: u32, state: BreakpointState) -> Self {
+        Self {
+            id,
+            line,
+            original_line: line,
+            state,
+        }
+    }
+
     /// Convert from DAP 1-based line to internal 0-based line
     pub fn from_dap_line(line: i64) -> u32 {
         (line - 1) as u32
@@ -65,7 +80,9 @@ pub enum DapBackendEvent {
     Stopped(DapStoppedEvent),
 
     /// Event sent when a breakpoint state changes (verified or unverified)
-    BreakpointState { id: i64, verified: bool },
+    /// The line is included so the frontend can update the breakpoint's position
+    /// (e.g., when a breakpoint inside a multiline expression anchors to its start)
+    BreakpointState { id: i64, line: u32, verified: bool },
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -306,6 +323,7 @@ impl Dap {
                 if let Some(tx) = &self.backend_events_tx {
                     tx.send(DapBackendEvent::BreakpointState {
                         id: bp.id,
+                        line: bp.line,
                         verified: true,
                     })
                     .log_err();
@@ -336,6 +354,7 @@ impl Dap {
         if let Some(tx) = &self.backend_events_tx {
             tx.send(DapBackendEvent::BreakpointState {
                 id: bp.id,
+                line: bp.line,
                 verified: true,
             })
             .log_err();
@@ -355,6 +374,7 @@ impl Dap {
         for bp in breakpoints {
             tx.send(DapBackendEvent::BreakpointState {
                 id: bp.id,
+                line: bp.line,
                 verified: false,
             })
             .log_err();
