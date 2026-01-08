@@ -1,7 +1,7 @@
 #
 # debug.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 #
 #
 
@@ -87,6 +87,7 @@ debugger_stack_info <- function(
 
 top_level_call_frame_info <- function(x) {
     source_name <- paste0(as_label(x), ".R")
+    contents <- deparse_string(x)
 
     srcref <- attr(x, "srcref", exact = TRUE)
     if (!is.null(srcref)) {
@@ -108,7 +109,7 @@ top_level_call_frame_info <- function(x) {
         source_name = source_name,
         frame_name = "<global>",
         file = NULL,
-        contents = x,
+        contents = contents,
         environment = NULL,
         start_line = 0L,
         start_column = 0L,
@@ -144,9 +145,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         attr(call, "srcref", exact = TRUE)
     })
     call_texts <- lapply(calls, function(call) {
-        call_lines <- call_deparse(call)
-        call_text <- paste_line(call_lines)
-        call_text
+        deparse_string(call)
     })
     frame_names <- lapply(frame_calls, function(call) as_label(call))
 
@@ -201,8 +200,7 @@ frame_info <- function(
     }
 
     # Only deparse if `srcref` failed!
-    fn_lines <- call_deparse(fn)
-    fn_text <- paste_line(fn_lines)
+    fn_text <- deparse_string(fn)
 
     # Reparse early on, so even if we fail to find `call_text` or fail to reparse,
     # we pass a `fn_text` to `frame_info_unknown_range()` where we've consistently removed
