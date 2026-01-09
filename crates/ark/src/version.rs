@@ -32,7 +32,7 @@ pub struct RVersion {
 }
 
 pub fn detect_r() -> anyhow::Result<RVersion> {
-    let r_home: String = r_home_setup().to_string_lossy().to_string();
+    let r_home: String = r_home_setup()?.to_string_lossy().to_string();
 
     let output = r_command(|command| {
         command
