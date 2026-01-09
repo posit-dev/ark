@@ -18,7 +18,12 @@ pub struct ObjectSchema {
 	pub name: String,
 
 	/// The object type (table, catalog, schema)
-	pub kind: String
+	pub kind: String,
+
+	/// Indicates if the object has children that can be listed. This property
+	/// is optional and when omitted, it is assumed that the object may have
+	/// children unless its kind is 'field'.
+	pub has_children: Option<bool>
 }
 
 /// FieldSchema in Schemas

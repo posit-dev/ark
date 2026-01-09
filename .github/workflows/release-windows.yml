@@ -18,7 +18,6 @@ jobs:
 
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
 
         strategy:
             matrix:
@@ -45,17 +44,60 @@ jobs:
                   cargo clean
                   cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-pc-windows-msvc
 
-            - name: Create archive
+            - name: Upload unsigned executable for signing
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-unsigned
+                  path: target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe
+
+    sign_windows:
+        name: "Sign Windows Binaries"
+        uses: posit-dev/posit-gh-actions/.github/workflows/sign-windows.yml@main
+        needs: [build_windows]
+        secrets: inherit
+        strategy:
+            matrix:
+                arch: [x64, arm64]
+                flavor: [debug, release]
+        with:
+            unsigned_artifact_name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-unsigned
+            signed_artifact_name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-signed
+
+    repackage_signed_windows:
+        name: Repackage Signed Windows Binaries
+        runs-on: windows-latest
+        needs: [sign_windows]
+        timeout-minutes: 10
+
+        env:
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+
+        strategy:
+            matrix:
+                arch: [x64, arm64]
+                flavor: [debug, release]
+
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Download signed executable
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-signed
+                  path: signed
+
+            - name: Create signed archive
               shell: pwsh
               run: |
-                  # Compress the kernel to an archive
+                  # Compress the signed kernel to an archive
                   $params = @{
-                    Path = "target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe", "LICENSE", "crates\ark\NOTICE"
+                    Path = "signed\ark.exe", "LICENSE", "crates\ark\NOTICE"
                     DestinationPath = "ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-windows-${{ matrix.arch }}.zip"
                   }
                   Compress-Archive @params
 
-            - name: Upload client archive
+            - name: Upload signed archive
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive

@@ -5,6 +5,7 @@
 //
 //
 
+use amalthea::comm::ui_comm::ShowHtmlFileDestination;
 use amalthea::comm::ui_comm::ShowHtmlFileParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::socket::iopub::IOPubMessage;
@@ -53,7 +54,7 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
     url: SEXP,
     label: SEXP,
     height: SEXP,
-    is_plot: SEXP,
+    destination: SEXP,
 ) -> anyhow::Result<SEXP> {
     // Convert url to a string; note that we are only passed URLs that
     // correspond to files in the temporary directory.
@@ -76,12 +77,18 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
                     }
                 },
                 SessionMode::Console => {
-                    let is_plot = RObject::view(is_plot).to::<bool>();
-                    let is_plot = match is_plot {
-                        Ok(is_plot) => is_plot,
+                    let destination = match RObject::view(destination).to::<String>() {
+                        Ok(s) => s.parse::<ShowHtmlFileDestination>().unwrap_or_else(|_| {
+                            log::warn!(
+                                "`destination` must be one of 'plot', 'editor', or 'viewer', using 'viewer' as a fallback."
+                            );
+                            ShowHtmlFileDestination::Viewer
+                        }),
                         Err(err) => {
-                            log::warn!("Can't convert `is_plot` into a bool, using `false` as a fallback: {err:?}");
-                            false
+                            log::warn!(
+                                "Can't convert `destination` to a string, using 'viewer' as a fallback: {err}"
+                            );
+                            ShowHtmlFileDestination::Viewer
                         },
                     };
 
@@ -98,7 +105,7 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
                         path,
                         title: label,
                         height,
-                        is_plot,
+                        destination,
                     };
 
                     let event = UiFrontendEvent::ShowHtmlFile(params);
