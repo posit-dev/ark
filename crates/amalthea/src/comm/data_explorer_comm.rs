@@ -1,7 +1,7 @@
 // @generated
 
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -60,6 +60,13 @@ pub struct FilterResult {
 	pub had_errors: Option<bool>
 }
 
+/// Result of setting import options
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetDatasetImportOptionsResult {
+	/// An error message if setting the options failed
+	pub error_message: Option<String>
+}
+
 /// The current backend state for the data explorer
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BackendState {
@@ -92,12 +99,13 @@ pub struct BackendState {
 	/// requests. This parameter may change.
 	pub connected: Option<bool>,
 
-    /// Optional experimental parameter to provide an explanation when
-    /// connected=false. This parameter may change.
-    pub error_message: Option<String>,
+	/// Optional experimental parameter to provide an explanation when
+	/// connected=false. This parameter may change.
+	pub error_message: Option<String>,
 
-    /// Optional formatting options for frontend display
-    pub format_options: Option<FormatOptions>,
+	/// Optional formatting options provided by the backend for displaying
+	/// data values
+	pub format_options: Option<FormatOptions>
 }
 
 /// Schema for a column in a table
@@ -706,6 +714,15 @@ pub struct ColumnSelection {
 	pub spec: ArraySelection
 }
 
+/// Import options for file-based data sources. Currently supports options
+/// for delimited text files (CSV, TSV).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DatasetImportOptions {
+	/// Whether the first row contains column headers (for delimited text
+	/// files)
+	pub has_header_row: Option<bool>
+}
+
 /// Possible values for SortOrder in SearchSchema
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum SearchSchemaSortOrder {
@@ -1196,6 +1213,13 @@ pub struct GetColumnProfilesParams {
 	pub format_options: FormatOptions,
 }
 
+/// Parameters for the SetDatasetImportOptions method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetDatasetImportOptionsParams {
+	/// Import options to apply
+	pub options: DatasetImportOptions,
+}
+
 /// Parameters for the ReturnColumnProfiles method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ReturnColumnProfilesParams {
@@ -1292,6 +1316,14 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_column_profiles")]
 	GetColumnProfiles(GetColumnProfilesParams),
 
+	/// Set import options for file-based data sources
+	///
+	/// Set import options for file-based data sources (like CSV files) and
+	/// reimport the data. This method is primarily used by file-based
+	/// backends like DuckDB.
+	#[serde(rename = "set_dataset_import_options")]
+	SetDatasetImportOptions(SetDatasetImportOptionsParams),
+
 	/// Get the state
 	///
 	/// Request the current backend state (table metadata, explorer state, and
@@ -1339,6 +1371,9 @@ pub enum DataExplorerBackendReply {
 
 	/// Reply for the get_column_profiles method (no result)
 	GetColumnProfilesReply(),
+
+	/// Result of setting import options
+	SetDatasetImportOptionsReply(SetDatasetImportOptionsResult),
 
 	/// The current backend state for the data explorer
 	GetStateReply(BackendState),
