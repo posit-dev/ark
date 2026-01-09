@@ -113,9 +113,13 @@ make_ark_source <- function(original_source) {
 
         parsed <- parse(text = annotated, keep.source = TRUE)
 
-        for (expr in parsed) {
-            eval(parsed, env)
+        if (length(parsed) != 1) {
+            log_trace("`source()`: Expected a single `{}` expression")
         }
+
+        # `eval()` loops over the expression vector, handling gracefully
+        # unexpected lengths (0 or >1)
+        eval(parsed, env)
     }
 }
 
