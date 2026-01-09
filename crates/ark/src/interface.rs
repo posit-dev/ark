@@ -1071,11 +1071,11 @@ impl RMain {
         //   look whether our sentinel `.ark_auto_step()` was emitted by R as part
         //   of the `Debug at` output.
         if self.debug_is_debugging {
-            // Did we just step onto an injected breakpoint or verification call
+            // Did we just step onto an injected call (breakpoint or verify)?
             let at_auto_step = matches!(
                 &self.debug_call_text,
                 DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
-                    if text.contains(".ark_auto_step")
+                    if text.trim_start().starts_with("base::.ark_auto_step")
             );
 
             // Are we stopped by an injected breakpoint
