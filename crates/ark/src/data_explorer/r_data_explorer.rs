@@ -551,6 +551,10 @@ impl RDataExplorer {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
             },
 
+            DataExplorerBackendRequest::SetDatasetImportOptions(_) => {
+                return Err(anyhow!("Data Explorer: Not yet supported"));
+            },
+
             DataExplorerBackendRequest::GetRowLabels(req) => {
                 let row_labels =
                     r_task(|| self.r_get_row_labels(req.selection, &req.format_options))?;
