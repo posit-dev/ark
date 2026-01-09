@@ -5,7 +5,7 @@ use anyhow::anyhow;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::inputs::library::Library;
 use crate::lsp::inputs::source_root::SourceRoot;
 
