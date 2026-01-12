@@ -57,6 +57,9 @@ pub struct Breakpoint {
     /// across SetBreakpoints requests. 0-based.
     pub original_line: u32,
     pub state: BreakpointState,
+    /// Whether this breakpoint was actually injected into code during annotation.
+    /// Only injected breakpoints can be verified by range-based verification.
+    pub injected: bool,
 }
 
 impl Breakpoint {
@@ -67,6 +70,7 @@ impl Breakpoint {
             line,
             original_line: line,
             state,
+            injected: false,
         }
     }
 
@@ -330,10 +334,14 @@ impl Dap {
         for bp in bp_list.iter_mut() {
             // Verified and Disabled breakpoints are both already verified.
             // Invalid breakpoints never get verified so we skip them too.
+            // Only injected breakpoints can be verified by range. Non-injected
+            // breakpoints were added by the user after the code was parsed and
+            // remain unverified until re-parsing / re-evaluation.
             if matches!(
                 bp.state,
                 BreakpointState::Verified | BreakpointState::Disabled | BreakpointState::Invalid(_)
-            ) {
+            ) || !bp.injected
+            {
                 continue;
             }
 
