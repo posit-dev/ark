@@ -644,10 +644,11 @@ impl AnnotationRewriter<'_> {
                 // Use the first breakpoint's id for the injected call
                 let first_bp_id = self.breakpoints[bp_indices[0]].id;
 
-                // Update all matching breakpoints: anchor to expr start and mark consumed
+                // Update all matching breakpoints: anchor to expr start and mark consumed/injected
                 for &bp_idx in &bp_indices {
                     let bp = &mut self.breakpoints[bp_idx];
                     bp.line = expr_doc_start as u32;
+                    bp.injected = true;
                     self.consumed.insert(bp.id);
                 }
 

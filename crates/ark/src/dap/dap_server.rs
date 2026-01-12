@@ -369,6 +369,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         line,
                         original_line: line,
                         state: BreakpointState::Unverified,
+                        injected: false,
                     }
                 })
                 .collect()
@@ -403,6 +404,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         line: old_bp.line,
                         original_line: line,
                         state: new_state,
+                        // Preserve injected status from old breakpoint
+                        injected: old_bp.injected,
                     });
                 } else {
                     // New breakpoints always start as Unverified, until they get evaluated once
@@ -411,6 +414,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         line,
                         original_line: line,
                         state: BreakpointState::Unverified,
+                        injected: false,
                     });
                 }
             }
@@ -430,6 +434,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         line: old_bp.line,
                         original_line,
                         state: BreakpointState::Disabled,
+                        injected: true,
                     });
                 }
             }
