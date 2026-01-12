@@ -367,9 +367,14 @@ impl<'a> AnnotationRewriter<'a> {
         code_line as i32 + self.line_offset
     }
 
-    /// Check if a breakpoint is available (not consumed and not invalid)
+    /// Check if a breakpoint is available (not consumed, not invalid, and not
+    /// disabled)
     fn is_available(&self, bp: &Breakpoint) -> bool {
-        !self.consumed.contains(&bp.id) && !matches!(bp.state, BreakpointState::Invalid(_))
+        !self.consumed.contains(&bp.id) &&
+            !matches!(
+                bp.state,
+                BreakpointState::Invalid(_) | BreakpointState::Disabled
+            )
     }
 
     /// Find all available breakpoints that anchor to this expression: At or
@@ -426,7 +431,11 @@ impl<'a> AnnotationRewriter<'a> {
     fn has_breakpoints_in_range(&self, start: i32, end: i32) -> bool {
         self.breakpoints.iter().any(|bp| {
             let bp_line = bp.line as i32;
-            !matches!(bp.state, BreakpointState::Invalid(_)) && bp_line >= start && bp_line < end
+            !matches!(
+                bp.state,
+                BreakpointState::Invalid(_) | BreakpointState::Disabled
+            ) && bp_line >= start &&
+                bp_line < end
         })
     }
 }
