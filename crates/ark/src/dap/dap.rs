@@ -28,8 +28,23 @@ use crate::thread::RThreadSafe;
 pub enum BreakpointState {
     Unverified,
     Verified,
-    Invalid,
+    Invalid(InvalidReason),
     Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidReason {
+    ClosingBrace,
+    EmptyBraces,
+}
+
+impl InvalidReason {
+    pub fn message(&self) -> &'static str {
+        match self {
+            InvalidReason::ClosingBrace => "Can't break on closing `}` brace",
+            InvalidReason::EmptyBraces => "Can't break inside empty braces",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -66,7 +81,7 @@ impl Breakpoint {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum DapBackendEvent {
     /// Event sent when a normal (non-browser) prompt marks the end of a
     /// debugging session.
@@ -79,10 +94,16 @@ pub enum DapBackendEvent {
     /// debugging session
     Stopped(DapStoppedEvent),
 
-    /// Event sent when a breakpoint state changes (verified or unverified)
+    /// Event sent when a breakpoint state changes (verified, unverified, or invalid)
     /// The line is included so the frontend can update the breakpoint's position
     /// (e.g., when a breakpoint inside a multiline expression anchors to its start)
-    BreakpointState { id: i64, line: u32, verified: bool },
+    /// The message is included for invalid breakpoints to explain why.
+    BreakpointState {
+        id: i64,
+        line: u32,
+        verified: bool,
+        message: Option<String>,
+    },
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -311,7 +332,7 @@ impl Dap {
             // Invalid breakpoints never get verified so we skip them too.
             if matches!(
                 bp.state,
-                BreakpointState::Verified | BreakpointState::Disabled | BreakpointState::Invalid
+                BreakpointState::Verified | BreakpointState::Disabled | BreakpointState::Invalid(_)
             ) {
                 continue;
             }
@@ -325,6 +346,7 @@ impl Dap {
                         id: bp.id,
                         line: bp.line,
                         verified: true,
+                        message: None,
                     })
                     .log_err();
                 }
@@ -356,6 +378,7 @@ impl Dap {
                 id: bp.id,
                 line: bp.line,
                 verified: true,
+                message: None,
             })
             .log_err();
         }
@@ -376,6 +399,28 @@ impl Dap {
                 id: bp.id,
                 line: bp.line,
                 verified: false,
+                message: None,
+            })
+            .log_err();
+        }
+    }
+
+    /// Notify the frontend about breakpoints that were marked invalid during annotation.
+    /// Sends a `BreakpointState` event with verified=false and a message for each.
+    pub fn notify_invalid_breakpoints(&self, breakpoints: &[Breakpoint]) {
+        let Some(tx) = &self.backend_events_tx else {
+            return;
+        };
+
+        for bp in breakpoints {
+            let BreakpointState::Invalid(reason) = &bp.state else {
+                continue;
+            };
+            tx.send(DapBackendEvent::BreakpointState {
+                id: bp.id,
+                line: bp.line,
+                verified: false,
+                message: Some(reason.message().to_string()),
             })
             .log_err();
         }

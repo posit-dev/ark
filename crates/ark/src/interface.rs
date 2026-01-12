@@ -1455,6 +1455,7 @@ impl RMain {
 
                 // Keep the DAP lock while we are updating breakpoints
                 let mut dap_guard = self.debug_dap.lock().unwrap();
+                let uri = loc.as_ref().map(|l| l.uri.clone());
                 let breakpoints = loc
                     .as_ref()
                     .and_then(|loc| dap_guard.breakpoints.get_mut(&loc.uri))
@@ -1472,6 +1473,13 @@ impl RMain {
                             "Error while parsing input: {err:?}"
                         )));
                     },
+                }
+
+                // Notify frontend about any breakpoints marked invalid during annotation
+                if let Some(uri) = &uri {
+                    if let Some((_, bps)) = dap_guard.breakpoints.get(uri) {
+                        dap_guard.notify_invalid_breakpoints(bps);
+                    }
                 }
                 drop(dap_guard);
 
