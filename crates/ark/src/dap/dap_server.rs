@@ -176,13 +176,14 @@ fn listen_dap_events<W: Write>(
                         Event::Terminated(None)
                     },
 
-                    DapBackendEvent::BreakpointState { id, line, verified } => {
+                    DapBackendEvent::BreakpointState { id, line, verified, message } => {
                         Event::Breakpoint(BreakpointEventBody {
                             reason: BreakpointEventReason::Changed,
                             breakpoint: dap::types::Breakpoint {
                                 id: Some(id),
                                 line: Some(Breakpoint::to_dap_line(line)),
                                 verified,
+                                message,
                                 ..Default::default()
                             },
                         })
@@ -451,11 +452,18 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let response_breakpoints: Vec<dap::types::Breakpoint> = new_breakpoints
             .iter()
             .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
-            .map(|bp| dap::types::Breakpoint {
-                id: Some(bp.id),
-                verified: matches!(bp.state, BreakpointState::Verified),
-                line: Some(Breakpoint::to_dap_line(bp.line)),
-                ..Default::default()
+            .map(|bp| {
+                let message = match &bp.state {
+                    BreakpointState::Invalid(reason) => Some(reason.message().to_string()),
+                    _ => None,
+                };
+                dap::types::Breakpoint {
+                    id: Some(bp.id),
+                    verified: matches!(bp.state, BreakpointState::Verified),
+                    line: Some(Breakpoint::to_dap_line(bp.line)),
+                    message,
+                    ..Default::default()
+                }
             })
             .collect();
 
