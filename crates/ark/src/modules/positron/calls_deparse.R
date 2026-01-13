@@ -11,7 +11,7 @@ deparse_string <- function(x, cutoff = 500L) {
 
 as_label <- function(x) {
     # Remove arguments of call expressions
-    if (call_print_type(x) == "prefix") {
+    if (is.call(x) && call_print_type(x) == "prefix") {
         x <- x[1]
     }
 
