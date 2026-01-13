@@ -202,6 +202,11 @@ impl Dap {
         shared
     }
 
+    /// Notify the frontend that we've entered the debugger.
+    ///
+    /// The DAP session is expected to always be connected (to receive breakpoint
+    /// updates). The `start_debug` comm message is a hint for the frontend to
+    /// show the debug toolbar, not a session lifecycle event.
     pub fn start_debug(
         &mut self,
         mut stack: Vec<FrameInfo>,
@@ -230,6 +235,12 @@ impl Dap {
         }
     }
 
+    /// Notify the frontend that we've exited the debugger.
+    ///
+    /// The DAP session remains connected. The `stop_debug` comm message is a
+    /// hint for the frontend to hide the debug toolbar. We send `Continued`
+    /// (not `Terminated`) so the DAP connection stays active for receiving
+    /// breakpoint updates.
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
@@ -246,8 +257,6 @@ impl Dap {
                     .send(amalthea::comm_rpc_message!("stop_debug"))
                     .log_err();
 
-                // Let frontend know we've quit the debugger so it can
-                // terminate the debugging session and disconnect.
                 if let Some(datp_tx) = &self.backend_events_tx {
                     datp_tx.send(DapBackendEvent::Continued).log_err();
                 }

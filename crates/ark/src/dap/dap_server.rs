@@ -316,6 +316,21 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.send_event(Event::Initialized);
     }
 
+    // Handle SetBreakpoints requests from the frontend.
+    //
+    // Breakpoint state survives DAP server disconnections via document hashing.
+    // Disconnections happen when the user uses the disconnect command (the
+    // frontend automatically reconnects) or when the console session goes to
+    // the background (the LSP is also disabled, so we don't receive document
+    // change notifications). When we come back online, we compare the document
+    // content against our stored hash to detect if breakpoints are now stale.
+    //
+    // Key implementation details:
+    // - We use `original_line` for lookup since the frontend doesn't know about
+    //   our line adjustments and always sends back the original line numbers.
+    // - When a user unchecks a breakpoint, it appears as a deletion (omitted
+    //   from the request). We preserve verified breakpoints as Disabled so we
+    //   can restore their state when re-enabled without requiring re-sourcing.
     fn handle_set_breakpoints(&mut self, req: Request, args: SetBreakpointsArguments) {
         let path = args.source.path.clone().unwrap_or_default();
 
