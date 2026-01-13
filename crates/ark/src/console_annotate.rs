@@ -644,7 +644,12 @@ impl AnnotationRewriter<'_> {
                 // Use the first breakpoint's id for the injected call
                 let first_bp_id = self.breakpoints[bp_indices[0]].id;
 
-                // Update all matching breakpoints: anchor to expr start and mark consumed/injected
+                // Update all matching breakpoints: anchor to expr start and
+                // mark consumed/injected. The `injected` flag is crucial:
+                // `verify_breakpoints()` only verifies breakpoints where
+                // `injected == true`. This prevents a bug where a breakpoint
+                // added _after_ parsing gets incorrectly verified when stopping
+                // at another breakpoint in the same function.
                 for &bp_idx in &bp_indices {
                     let bp = &mut self.breakpoints[bp_idx];
                     bp.line = expr_doc_start as u32;
