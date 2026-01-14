@@ -21,7 +21,7 @@ pub(crate) fn annotate_input(code: &str, location: CodeLocation) -> String {
 
     // Leading whitespace to ensure that R starts parsing expressions from
     // the expected `character` offset.
-    let leading_padding = " ".repeat(location.start.character);
+    let leading_padding = " ".repeat(location.start.character as usize);
 
     // Collect existing leading trivia as (kind, text) tuples
     let existing_trivia: Vec<_> = first_token
@@ -68,7 +68,7 @@ mod tests {
 
     use super::*;
 
-    fn make_location(line: u32, character: usize) -> CodeLocation {
+    fn make_location(line: u32, character: u32) -> CodeLocation {
         CodeLocation {
             uri: Url::parse("file:///test.R").unwrap(),
             start: Position { line, character },
