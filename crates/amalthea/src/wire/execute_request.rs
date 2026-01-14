@@ -79,7 +79,7 @@ pub struct CodeLocation {
 #[derive(Debug, Clone)]
 pub struct Position {
     pub line: u32,
-    pub character: usize,
+    pub character: u32,
 }
 
 impl ExecuteRequest {
@@ -157,11 +157,11 @@ impl ExecuteRequest {
 
         let start = Position {
             line: location.range.start.line,
-            character: character_start,
+            character: character_start as u32,
         };
         let end = Position {
             line: location.range.end.line,
-            character: character_end,
+            character: character_end as u32,
         };
 
         Ok(Some(CodeLocation { uri, start, end }))
