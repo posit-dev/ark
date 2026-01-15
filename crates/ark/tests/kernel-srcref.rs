@@ -204,7 +204,8 @@ $end
 fn test_execute_request_srcref_location_with_emoji_utf8_shift() {
     let frontend = DummyArkFrontend::lock();
 
-    // Starting at line 3, column 3 (these input positions are in Unicode code points)
+    // Starting at line 3, column 3 (these input positions are in UTF-8 bytes).
+    // The code is 29 UTF-8 bytes (the emoji 🙂 is 4 bytes), so end.character = 3 + 29 = 32.
     let code_location = JupyterPositronLocation {
         uri: "file:///path/to/file.R".to_owned(),
         range: JupyterPositronRange {
@@ -214,19 +215,17 @@ fn test_execute_request_srcref_location_with_emoji_utf8_shift() {
             },
             end: JupyterPositronPosition {
                 line: 2,
-                character: 26 + 3,
+                character: 29 + 3,
             },
         },
     };
 
-    // The function body contains a single emoji character. The input character positions above
-    // are specified as Unicode code points. The srcref we receive reports UTF-8 byte positions,
-    // so the presence of the multibyte emoji shifts the end position by the emoji's extra bytes.
+    // The function body contains a single emoji character which is 4 UTF-8 bytes.
     frontend.execute_request_with_location("fn <- function() \"🙂\"; NULL", |_| (), code_location);
 
-    // `function` starts at column 7 (code point counting), so with a start.character of 3 we get 10.
-    // The function body `"🙂"` ends at UTF-8 byte 20 locally (the closing quote), so with
-    // start.character=3 the reported end becomes 23.
+    // `function` starts at byte 7 in the code, so with start.character=3 we get 10.
+    // The function body `"🙂"` ends at byte 23 locally (the closing quote after the 4-byte emoji),
+    // so with start.character=3 the reported end becomes 23.
     frontend.execute_request(".ps.internal(get_srcref_range(fn))", |result| {
         assert_eq!(
             result,
