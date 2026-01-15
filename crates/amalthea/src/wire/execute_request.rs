@@ -94,6 +94,24 @@ impl ExecuteRequest {
 
         let uri = Url::parse(&location.uri).context("Failed to parse URI from code location")?;
 
+        // Validate that range is not inverted (end must be >= start)
+        if location.range.end.line < location.range.start.line {
+            return Err(anyhow::anyhow!(
+                "Invalid range: end line ({}) is before start line ({})",
+                location.range.end.line,
+                location.range.start.line
+            ));
+        }
+        if location.range.end.line == location.range.start.line &&
+            location.range.end.character < location.range.start.character
+        {
+            return Err(anyhow::anyhow!(
+                "Invalid range: end character ({}) is before start character ({})",
+                location.range.end.character,
+                location.range.start.character
+            ));
+        }
+
         // The location maps `self.code` to a range in the document. We'll first
         // do a sanity check that the span dimensions (end - start) match the
         // code extents.
@@ -116,9 +134,9 @@ impl ExecuteRequest {
         // Sanity check: `code` conforms exactly to expected number of lines in the span
         if code_line_count != span_lines as usize {
             return Err(anyhow::anyhow!(
-                "Line information does not match code line count (expected {}, got {})",
-                code_line_count,
-                span_lines
+                "Line count mismatch: location spans {} lines, but code has {} newlines",
+                span_lines,
+                code_line_count
             ));
         }
 
