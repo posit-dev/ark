@@ -198,7 +198,10 @@ fn test_execute_request_browser_stdin() {
         assert!(result.contains("Called from: top level"));
     });
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
     let code = "readline('prompt>')";
     frontend.send_execute_request(code, options);
     frontend.recv_iopub_busy();

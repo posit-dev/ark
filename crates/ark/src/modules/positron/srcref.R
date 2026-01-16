@@ -167,3 +167,11 @@ srcref_to_range <- function(x) {
         end_column = x[[loc_end_column]]
     )
 }
+
+get_srcref_range <- function(x) {
+    srcref <- attr(x, 'srcref')
+    list(
+        start = c(line = srcref[[1]], character = srcref[[5]]),
+        end = c(line = srcref[[3]], character = srcref[[6]])
+    )
+}

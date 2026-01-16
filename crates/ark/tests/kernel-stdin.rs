@@ -5,7 +5,10 @@ use ark::fixtures::DummyArkFrontend;
 fn test_stdin_basic_prompt() {
     let frontend = DummyArkFrontend::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "readline('prompt>')";
     frontend.send_execute_request(code, options);
@@ -30,7 +33,10 @@ fn test_stdin_basic_prompt() {
 fn test_stdin_followed_by_an_expression_on_the_same_line() {
     let frontend = DummyArkFrontend::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "val <- readline('prompt>'); paste0(val,'-there')";
     frontend.send_execute_request(code, options);
@@ -55,7 +61,10 @@ fn test_stdin_followed_by_an_expression_on_the_same_line() {
 fn test_stdin_followed_by_an_expression_on_the_next_line() {
     let frontend = DummyArkFrontend::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "1\nval <- readline('prompt>')\npaste0(val,'-there')";
     frontend.send_execute_request(code, options);
@@ -82,7 +91,10 @@ fn test_stdin_followed_by_an_expression_on_the_next_line() {
 fn test_stdin_single_line_buffer_overflow() {
     let frontend = DummyArkFrontend::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "1\nreadline('prompt>')";
     frontend.send_execute_request(code, options);
@@ -116,7 +128,10 @@ fn test_stdin_single_line_buffer_overflow() {
 fn test_stdin_from_menu() {
     let frontend = DummyArkFrontend::lock();
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
 
     let code = "menu(c('a', 'b'))\n3";
     frontend.send_execute_request(code, options);
