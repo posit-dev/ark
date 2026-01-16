@@ -124,10 +124,10 @@ make_ark_source <- function(original_source) {
 }
 
 #' @export
-.ark_annotate_source <- function(uri, source) {
+.ark_annotate_source <- function(source, uri) {
     stopifnot(
-        is_string(uri),
-        is_string(source)
+        is_string(source),
+        is_string(uri)
     )
-    .ps.Call("ps_annotate_source", uri, source)
+    .ps.Call("ps_annotate_source", source, uri)
 }
