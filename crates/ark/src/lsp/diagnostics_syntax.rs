@@ -259,7 +259,7 @@ fn diagnose_missing_loop_body(
 
     let range = token.range();
     let message = format!("Invalid {name} loop. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -287,7 +287,7 @@ fn diagnose_missing_if(
 
     let range = token.range();
     let message = format!("Invalid if statement. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -314,7 +314,7 @@ fn diagnose_missing_function_definition(
 
     let range = name.range();
     let message = format!("Invalid function definition. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
