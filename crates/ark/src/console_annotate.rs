@@ -557,19 +557,18 @@ impl SyntaxRewriter for AnnotationRewriter<'_> {
             let Some(last_info) = frame.expr_info.last() else {
                 return self.fail(anyhow!("expr_info unexpectedly empty"), node);
             };
-            let Some(first_info) = frame.expr_info.first() else {
-                return self.fail(anyhow!("expr_info unexpectedly empty"), node);
-            };
 
             let brace_doc_start = self.to_doc_line(frame.brace_code_line);
             let brace_doc_end = self.to_doc_line(last_info.range.end);
-            let first_expr_doc_start = self.to_doc_line(first_info.start);
 
             // Annotate statements in the braced list
             let result = self.annotate_braced_list(node, frame.brace_code_line, frame.expr_info);
 
-            // Mark any remaining breakpoints in this brace range as invalid (closing braces)
-            let invalidation_floor = breakpoint_floor(brace_doc_start, first_expr_doc_start);
+            // Mark any remaining breakpoints in this brace range as invalid
+            // (closing braces). Breakpoints on the brace line itself belong to
+            // the parent scope, so we start invalidation from brace_doc_start +
+            // 1.
+            let invalidation_floor = brace_doc_start + 1;
             self.mark_breakpoints_invalid(
                 Some(invalidation_floor),
                 Some(brace_doc_end),
@@ -613,12 +612,11 @@ impl AnnotationRewriter<'_> {
         let mut result_slots: Vec<Option<RSyntaxElement>> = Vec::new();
         let mut needs_line_directive = false;
 
-        let first_expr_doc_start = expr_info
-            .first()
-            .map(|info| self.to_doc_line(info.start))
-            .unwrap_or(brace_doc_start);
-        let mut prev_doc_end: Option<i32> =
-            Some(breakpoint_floor(brace_doc_start, first_expr_doc_start));
+        // Braced expressions never claim breakpoints on their opening brace
+        // line. This prevents injecting breakpoints inside `{ foo }` or `{{ foo
+        // }}` when they appear on a single line - those breakpoints belong to
+        // the parent scope.
+        let mut prev_doc_end: Option<i32> = Some(brace_doc_start + 1);
 
         for (i, expr) in elements.iter().enumerate() {
             // Use precomputed line info captured on the preorder visit, when
@@ -731,18 +729,6 @@ impl AnnotationRewriter<'_> {
                 bp.state = BreakpointState::Invalid(reason);
             }
         }
-    }
-}
-
-/// Compute the floor line for breakpoint matching in a braced list. When
-/// content starts on a later line than the brace, we use `brace_doc_start + 1`
-/// to avoid claiming breakpoints on the brace line, as those belong to the
-/// parent scope.
-fn breakpoint_floor(brace_doc_start: i32, first_expr_doc_start: i32) -> i32 {
-    if first_expr_doc_start > brace_doc_start {
-        brace_doc_start + 1
-    } else {
-        brace_doc_start
     }
 }
 
@@ -1893,14 +1879,16 @@ mod tests {
             },
         };
 
-        // Test 1: Breakpoint on line 0 (valid - anchors to inner {} expression)
+        // Test 1: Breakpoint on line 0 stays Unverified - braces never claim breakpoints
+        // on their opening line, and at top level there's no parent to claim it either
         let mut breakpoints = vec![Breakpoint::new(1, 0, BreakpointState::Unverified)];
         let result = annotate_input(code, location.clone(), Some(&mut breakpoints)).unwrap();
         assert!(
-            !matches!(breakpoints[0].state, BreakpointState::Invalid(_)),
-            "Breakpoint on {{ line should be valid"
+            matches!(breakpoints[0].state, BreakpointState::Unverified),
+            "Breakpoint on {{ line should remain Unverified at top level"
         );
-        assert!(result.contains(".ark_breakpoint"));
+        // No breakpoint injected (left for potential parent scope)
+        assert!(!result.contains(".ark_breakpoint"));
 
         // Test 2: Breakpoint on line 1 (}} line) is invalid - inner {} is empty
         let mut breakpoints = vec![Breakpoint::new(2, 1, BreakpointState::Unverified)];
@@ -1912,6 +1900,139 @@ mod tests {
         );
         // No breakpoint injected
         assert!(!result.contains(".ark_breakpoint"));
+    }
+
+    #[test]
+    fn test_inject_breakpoints_double_brace_injection_bug() {
+        // Test that breakpoints on a line with {{ foo }} don't inject inside the inner braces.
+        // The inner {{ }} is an rlang interpolation construct and shouldn't have breakpoints.
+        // Breakpoint on line 1 should inject BEFORE identity(), not inside {{ }}
+        let code = "{\n  identity({{ foo }})\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 1, BreakpointState::Unverified)];
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_call_with_braced_arg() {
+        // Test that breakpoints on a line with `foo({ bar })` don't inject inside the braces.
+        // Breakpoint on line 1 should inject BEFORE foo(), not inside { }
+        let code = "{\n  foo({ bar })\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 2,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 1, BreakpointState::Unverified)];
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_multiline_braced_arg_bp_on_opening_line() {
+        // Test breakpoint on opening line of multi-line braced arg `foo({ foo\n  bar })`.
+        // Breakpoint on line 1 should inject BEFORE foo(), at outer level
+        let code = "{\n  foo({ foo\n    bar\n  })\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 1, BreakpointState::Unverified)];
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_multiline_braced_arg_bp_on_inner_line() {
+        // Test breakpoint on inner line of multi-line braced arg `foo({ foo\n  bar })`.
+        // Breakpoint on line 2 should inject INSIDE the braces, before bar
+        let code = "{\n  foo({ foo\n    bar\n  })\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_braced_arg_on_separate_line() {
+        // Test breakpoint on a braced arg `{ foo }` that's on its own line.
+        // Breakpoint anchors to outer foo() call, not inside braces.
+        let code = "{\n  foo(\n    { foo }\n  )\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
+        insta::assert_snapshot!(result);
+    }
+
+    #[test]
+    fn test_inject_breakpoints_double_braced_arg_on_separate_line() {
+        // Test breakpoint on a double-braced arg `{{ foo }}` that's on its own line.
+        // Breakpoint anchors to outer foo() call, not inside braces.
+        let code = "{\n  foo(\n    {{ foo }}\n  )\n}";
+        let location = CodeLocation {
+            uri: Url::parse("file:///test.R").unwrap(),
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 4,
+                character: 1,
+            },
+        };
+        let mut breakpoints = vec![Breakpoint::new(1, 2, BreakpointState::Unverified)];
+        let result = annotate_input(code, location, Some(&mut breakpoints)).unwrap();
+        assert!(!matches!(breakpoints[0].state, BreakpointState::Invalid(_)));
+        insta::assert_snapshot!(result);
     }
 
     #[test]
