@@ -606,18 +606,14 @@ impl DeviceContext {
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
 
-        {
-            let mut metadata = self.metadata.borrow_mut();
-            metadata.insert(
-                id.clone(),
-                PlotMetadataInfo {
-                    name,
-                    kind,
-                    execution_id,
-                    code,
-                },
-            );
-        }
+        self.metadata
+            .borrow_mut()
+            .insert(id.clone(), PlotMetadataInfo {
+                name,
+                kind,
+                execution_id,
+                code,
+            });
 
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
@@ -667,18 +663,14 @@ impl DeviceContext {
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
 
-        {
-            let mut plot_metadata = self.metadata.borrow_mut();
-            plot_metadata.insert(
-                id.clone(),
-                PlotMetadataInfo {
-                    name,
-                    kind,
-                    execution_id,
-                    code,
-                },
-            );
-        }
+        self.metadata
+            .borrow_mut()
+            .insert(id.clone(), PlotMetadataInfo {
+                name,
+                kind,
+                execution_id,
+                code,
+            });
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
