@@ -872,7 +872,7 @@ fn format_verify_call(uri: &Url, line_range: &std::ops::Range<u32>) -> String {
 }
 
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_annotate_source(uri: SEXP, code: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_annotate_source(code: SEXP, uri: SEXP) -> anyhow::Result<SEXP> {
     let uri: String = RObject::view(uri).try_into()?;
     let code: String = RObject::view(code).try_into()?;
 
