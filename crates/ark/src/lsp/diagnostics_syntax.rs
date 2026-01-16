@@ -134,6 +134,13 @@ fn diagnose_missing(
         NodeType::Subset => diagnose_missing_subset(node, context, diagnostics),
         NodeType::Subset2 => diagnose_missing_subset2(node, context, diagnostics),
         NodeType::BinaryOperator(_) => diagnose_missing_binary_operator(node, context, diagnostics),
+        NodeType::ForStatement => diagnose_missing_for(node, context, diagnostics),
+        NodeType::WhileStatement => diagnose_missing_while(node, context, diagnostics),
+        NodeType::RepeatStatement => diagnose_missing_repeat(node, context, diagnostics),
+        NodeType::IfStatement => diagnose_missing_if(node, context, diagnostics),
+        NodeType::FunctionDefinition => {
+            diagnose_missing_function_definition(node, context, diagnostics)
+        },
         _ => Ok(()),
     }
 }
@@ -197,6 +204,114 @@ fn diagnose_missing_call_like(
     };
 
     diagnose_missing_close(arguments, context, diagnostics, close_token)
+}
+
+fn diagnose_missing_for(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_loop_body("for", node, context, diagnostics)
+}
+
+fn diagnose_missing_while(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_loop_body("while", node, context, diagnostics)
+}
+
+fn diagnose_missing_repeat(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    diagnose_missing_loop_body("repeat", node, context, diagnostics)
+}
+
+fn diagnose_missing_loop_body(
+    name: &str,
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let Some(body) = node.child_by_field_name("body") else {
+        return Ok(());
+    };
+
+    if !body.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    // Highlight just the loop's token name (like `while` or `for` or `repeat`).
+    // Don't want to highlight whole `node` because that can confusingly span many lines.
+    // Unfortunately we don't have a field name for these.
+    let Some(token) = node.child(0) else {
+        return Ok(());
+    };
+
+    let range = token.range();
+    let message = format!("Invalid {name} loop. Missing a body.");
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
+}
+
+fn diagnose_missing_if(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let Some(consequence) = node.child_by_field_name("consequence") else {
+        return Ok(());
+    };
+
+    if !consequence.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    // Highlight just the token name (i.e. `if`).
+    // Don't want to highlight whole `node` because that can confusingly span many lines.
+    // Unfortunately we don't have a field name for this.
+    let Some(token) = node.child(0) else {
+        return Ok(());
+    };
+
+    let range = token.range();
+    let message = format!("Invalid if statement. Missing a body.");
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
+}
+
+fn diagnose_missing_function_definition(
+    node: Node,
+    context: &DiagnosticContext,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> anyhow::Result<()> {
+    let Some(body) = node.child_by_field_name("body") else {
+        return Ok(());
+    };
+
+    if !body.is_missing() {
+        // Everything is normal
+        return Ok(());
+    }
+
+    // Highlight just the token name (i.e. `function`).
+    // Don't want to highlight whole `node` because that can confusingly span many lines.
+    let Some(name) = node.child_by_field_name("name") else {
+        return Ok(());
+    };
+
+    let range = name.range();
+    let message = format!("Invalid function definition. Missing a body.");
+    diagnostics.push(new_syntax_diagnostic(message, range, context));
+
+    Ok(())
 }
 
 fn diagnose_missing_binary_operator(
@@ -505,6 +620,89 @@ function(x {
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
+    }
+
+    #[test]
+    fn test_for_loop_with_no_body() {
+        let text = "for(i in 1:10)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `for`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 3));
+    }
+
+    #[test]
+    fn test_while_loop_with_no_body() {
+        let text = "while(1)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `while`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 5));
+    }
+
+    #[test]
+    fn test_repeat_loop_with_no_body() {
+        let text = "1\nrepeat";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `repeat`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(1, 0));
+        assert_eq!(diagnostic.range.end, Position::new(1, 6));
+    }
+
+    #[test]
+    fn test_if_statement_with_no_consequence() {
+        let text = "if (a)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `if`
+        // We call if an if "body" even though tree-sitter calls it a "consequence"
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 2));
+    }
+
+    #[test]
+    fn test_function_definition_with_no_body() {
+        let text = "function(a)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `function`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 8));
+
+        // Anonymous function
+        let text = r"\(a)";
+
+        let diagnostics = text_diagnostics(text);
+        assert_eq!(diagnostics.len(), 1);
+
+        // Diagnostic highlights the `function`
+        let diagnostic = diagnostics.get(0).unwrap();
+        insta::assert_snapshot!(diagnostic.message);
+        assert_eq!(diagnostic.range.start, Position::new(0, 0));
+        assert_eq!(diagnostic.range.end, Position::new(0, 1));
     }
 
     #[test]
