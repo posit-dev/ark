@@ -22,7 +22,7 @@ use crate::lsp::completions::completion_item::completion_item;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::completions::types::CompletionData;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
 pub(super) struct CommentSource;
@@ -40,7 +40,9 @@ impl CompletionSource for CommentSource {
     }
 }
 
-fn completions_from_comment(context: &DocumentContext) -> anyhow::Result<Option<Vec<CompletionItem>>> {
+fn completions_from_comment(
+    context: &DocumentContext,
+) -> anyhow::Result<Option<Vec<CompletionItem>>> {
     let node = context.node;
 
     if !node.is_comment() {
@@ -49,8 +51,8 @@ fn completions_from_comment(context: &DocumentContext) -> anyhow::Result<Option<
 
     let pattern = Regex::new(r"^.*\s")?;
 
-    let contents = context.document.contents.node_slice(&node)?.to_string();
-    let token = pattern.replace(contents.as_str(), "");
+    let contents = node.node_as_str(&context.document.contents)?;
+    let token = pattern.replace(contents, "");
 
     let mut completions: Vec<CompletionItem> = vec![];
 
@@ -142,7 +144,7 @@ fn inject_roxygen_comment_after_newline(x: &str) -> String {
 fn test_comment() {
     use tree_sitter::Point;
 
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
 
     r_task(|| {
@@ -167,7 +169,7 @@ fn test_roxygen_comment() {
     use libr::LOGICAL_ELT;
     use tree_sitter::Point;
 
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
 
     r_task(|| unsafe {

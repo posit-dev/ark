@@ -20,7 +20,6 @@ use crate::lsp::completions::completion_item::completion_item_from_data_variable
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::point::PointExt;
-use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -99,10 +98,9 @@ pub(super) fn filter_out_dot_prefixes(
 ) {
     // Remove completions that start with `.` unless the user explicitly requested them
     let user_requested_dot = context
-        .document
-        .contents
-        .node_slice(&context.node)
-        .and_then(|x| Ok(x.to_string().starts_with(".")))
+        .node
+        .node_as_str(&context.document.contents)
+        .map(|x| x.starts_with("."))
         .unwrap_or(false);
 
     if !user_requested_dot {
@@ -295,7 +293,7 @@ mod tests {
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;

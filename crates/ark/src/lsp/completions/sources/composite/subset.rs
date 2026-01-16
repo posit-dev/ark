@@ -12,7 +12,7 @@ use crate::lsp::completions::sources::common::subset::is_within_subset_delimiter
 use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
 use crate::lsp::completions::sources::CompletionSource;
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
@@ -80,7 +80,7 @@ pub(crate) fn completions_from_subset(
         return Ok(Some(vec![]));
     };
 
-    let text = context.document.contents.node_slice(&child)?.to_string();
+    let text = child.node_as_str(&context.document.contents)?.to_string();
 
     completions_from_evaluated_object_names(&text, ENQUOTE, node.node_type())
 }
@@ -92,8 +92,8 @@ mod tests {
 
     use crate::fixtures::package_is_installed;
     use crate::lsp::completions::sources::composite::subset::completions_from_subset;
+    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
     use crate::r_task;
 
     #[test]

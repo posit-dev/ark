@@ -10,8 +10,7 @@ use tree_sitter::Node;
 use tree_sitter::Range;
 
 use crate::lsp::diagnostics::DiagnosticContext;
-use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -81,10 +80,13 @@ fn syntax_diagnostic(node: Node, context: &DiagnosticContext) -> anyhow::Result<
     // would be able to report precise error locations/messages, because it "knows" why a
     // parse error occurred.
 
-    Ok(syntax_diagnostic_default(node, context))
+    syntax_diagnostic_default(node, context)
 }
 
-fn syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnostic {
+fn syntax_diagnostic_default(
+    node: Node,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
     let range = node.range();
     let row_span = range.end_point.row - range.start_point.row;
 
@@ -99,7 +101,10 @@ fn syntax_diagnostic_default(node: Node, context: &DiagnosticContext) -> Diagnos
 
 // If the syntax error spans more than 20 rows, just target the starting position
 // to avoid overwhelming the user.
-fn syntax_diagnostic_truncated_default(range: Range, context: &DiagnosticContext) -> Diagnostic {
+fn syntax_diagnostic_truncated_default(
+    range: Range,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
     // In theory this is an empty range, as they are constructed like `[ )`, but it
     // seems to work for the purpose of diagnostics, and getting the correct
     // coordinates exactly right seems challenging.
@@ -254,7 +259,7 @@ fn diagnose_missing_loop_body(
 
     let range = token.range();
     let message = format!("Invalid {name} loop. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -282,7 +287,7 @@ fn diagnose_missing_if(
 
     let range = token.range();
     let message = format!("Invalid if statement. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -309,7 +314,7 @@ fn diagnose_missing_function_definition(
 
     let range = name.range();
     let message = format!("Invalid function definition. Missing a body.");
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -334,10 +339,10 @@ fn diagnose_missing_binary_operator(
 
     let range = operator.range();
 
-    let text = context.contents.node_slice(&operator)?;
+    let text = operator.node_as_str(&context.doc.contents)?;
     let message = format!("Invalid binary operator '{text}'. Missing a right hand side.");
 
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -365,10 +370,10 @@ pub(crate) fn diagnose_missing_namespace_operator(
 
     let range = operator.range();
 
-    let text = context.contents.node_slice(&operator)?;
+    let text = operator.node_as_str(&context.doc.contents)?;
     let message = format!("Invalid namespace operator '{text}'. Missing a right hand side.");
 
-    diagnostics.push(new_syntax_diagnostic(message, range, context));
+    diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
 }
@@ -397,7 +402,7 @@ fn diagnose_missing_close(
         close_token,
         open.range(),
         context,
-    ));
+    )?);
 
     Ok(())
 }
@@ -406,14 +411,18 @@ fn new_missing_close_diagnostic(
     close_token: &str,
     range: Range,
     context: &DiagnosticContext,
-) -> Diagnostic {
+) -> anyhow::Result<Diagnostic> {
     let message = format!("Unmatched opening delimiter. Missing a closing '{close_token}'.");
     new_syntax_diagnostic(message, range, context)
 }
 
-fn new_syntax_diagnostic(message: String, range: Range, context: &DiagnosticContext) -> Diagnostic {
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    Diagnostic::new_simple(range, message)
+fn new_syntax_diagnostic(
+    message: String,
+    range: Range,
+    context: &DiagnosticContext,
+) -> anyhow::Result<Diagnostic> {
+    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+    Ok(Diagnostic::new_simple(range, message))
 }
 
 #[cfg(test)]
@@ -423,13 +432,13 @@ mod tests {
 
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::inputs::library::Library;
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
         let document = Document::new(text, None);
         let library = Library::default();
-        let context = DiagnosticContext::new(&document.contents, &None, &library);
+        let context = DiagnosticContext::new(&document, &None, &library);
         let diagnostics = syntax_diagnostics(document.ast.root_node(), &context).unwrap();
         diagnostics
     }
