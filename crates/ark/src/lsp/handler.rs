@@ -16,18 +16,24 @@ use crossbeam::channel::Sender;
 use stdext::spawn;
 use tokio::runtime::Builder;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use super::backend;
+use crate::interface::ConsoleNotification;
 use crate::interface::KernelInfo;
 
 pub struct Lsp {
     runtime: Arc<Runtime>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_initialized: bool,
+    console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 }
 
 impl Lsp {
-    pub fn new(kernel_init_rx: BusReader<KernelInfo>) -> Self {
+    pub fn new(
+        kernel_init_rx: BusReader<KernelInfo>,
+        console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
+    ) -> Self {
         let rt = Builder::new_multi_thread()
             .enable_all()
             // One for the main loop and one spare
@@ -41,6 +47,7 @@ impl Lsp {
             runtime: Arc::new(rt),
             kernel_init_rx,
             kernel_initialized: false,
+            console_notification_tx,
         }
     }
 }
@@ -68,8 +75,14 @@ impl ServerHandler for Lsp {
         // account for potential reconnects
         let runtime = self.runtime.clone();
 
+        let console_notification_tx = self.console_notification_tx.clone();
         spawn!("ark-lsp", move || {
-            backend::start_lsp(runtime, server_start, server_started_tx)
+            backend::start_lsp(
+                runtime,
+                server_start,
+                server_started_tx,
+                console_notification_tx,
+            )
         });
         return Ok(());
     }

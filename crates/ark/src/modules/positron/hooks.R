@@ -23,6 +23,7 @@ register_hooks <- function() {
         namespace = TRUE
     )
     register_getHook_hook()
+    register_source_hook()
 }
 
 rebind <- function(pkg, name, value, namespace = FALSE) {

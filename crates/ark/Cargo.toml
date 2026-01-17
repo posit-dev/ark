@@ -18,6 +18,7 @@ async-trait = "0.1.66"
 base64 = "0.21.0"
 biome_line_index.workspace = true
 biome_rowan.workspace = true
+blake3 = "1.8.2"
 bus = "2.3.0"
 cfg-if = "1.0.0"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
@@ -27,6 +28,7 @@ dashmap = "5.4.0"
 aether_parser.workspace = true
 aether_syntax.workspace = true
 aether_lsp_utils.workspace = true
+aether_factory.workspace = true
 ego-tree = "0.6.2"
 harp = { path = "../harp" }
 http = "0.2.9"

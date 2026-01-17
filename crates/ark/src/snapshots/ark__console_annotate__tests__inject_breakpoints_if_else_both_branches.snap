@@ -1,0 +1,14 @@
+---
+source: crates/ark/src/console_annotate.rs
+expression: result
+---
+#line 1 "file:///test.R"
+if (TRUE) {
+base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "1"))
+#line 2 "file:///test.R"
+  x <- 1
+} else {
+base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "2"))
+#line 4 "file:///test.R"
+  y <- 2
+}
