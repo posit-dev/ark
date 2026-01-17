@@ -27,6 +27,22 @@ pub struct IntrinsicSize {
 	pub source: String
 }
 
+/// The plot's metadata
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PlotMetadata {
+	/// A human-readable name for the plot
+	pub name: String,
+
+	/// The kind of plot e.g. 'Matplotlib', 'ggplot2', etc.
+	pub kind: String,
+
+	/// The ID of the code fragment that produced the plot
+	pub execution_id: String,
+
+	/// The code fragment that produced the plot
+	pub code: String
+}
+
 /// A rendered plot
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotResult {
@@ -133,6 +149,12 @@ pub enum PlotBackendRequest {
 	#[serde(rename = "get_intrinsic_size")]
 	GetIntrinsicSize,
 
+	/// Get metadata for the plot
+	///
+	/// Get metadata for the plot
+	#[serde(rename = "get_metadata")]
+	GetMetadata,
+
 	/// Render a plot
 	///
 	/// Requests a plot to be rendered. The plot data is returned in a
@@ -150,6 +172,9 @@ pub enum PlotBackendRequest {
 pub enum PlotBackendReply {
 	/// The intrinsic size of a plot, if known
 	GetIntrinsicSizeReply(Option<IntrinsicSize>),
+
+	/// The plot's metadata
+	GetMetadataReply(PlotMetadata),
 
 	/// A rendered plot
 	RenderReply(PlotResult),

@@ -876,6 +876,14 @@ impl RMain {
         &self.iopub_tx
     }
 
+    /// Get the current execution context if an active request exists.
+    /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
+    pub fn get_execution_context(&self) -> Option<(String, String)> {
+        self.active_request
+            .as_ref()
+            .map(|req| (req.originator.header.msg_id.clone(), req.request.code.clone()))
+    }
+
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
         // Reset the autoprint buffer
         self.autoprint_output = String::new();
@@ -1306,10 +1314,16 @@ impl RMain {
                 // Save `ExecuteCode` request so we can respond to it at next prompt
                 self.active_request = Some(ActiveReadConsoleRequest {
                     exec_count,
-                    request: exec_req,
-                    originator,
+                    request: exec_req.clone(),
+                    originator: originator.clone(),
                     reply_tx,
                 });
+
+                // Push execution context to graphics device for plot attribution
+                graphics_device::on_execute_request(
+                    originator.header.msg_id.clone(),
+                    exec_req.code.clone(),
+                );
 
                 input
             },
