@@ -716,8 +716,11 @@ impl AnnotationRewriter<'_> {
         reason: InvalidReason,
     ) {
         for bp in self.breakpoints.iter_mut() {
-            let is_available =
-                !self.consumed.contains(&bp.id) && !matches!(bp.state, BreakpointState::Invalid(_));
+            let is_available = !self.consumed.contains(&bp.id) &&
+                !matches!(
+                    bp.state,
+                    BreakpointState::Invalid(_) | BreakpointState::Disabled
+                );
             if !is_available {
                 continue;
             }
@@ -896,6 +899,13 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(code: SEXP, uri: SEXP) -> any
     // Notify frontend about any breakpoints marked invalid during annotation
     if let Some((_, breakpoints)) = dap_guard.breakpoints.get(&uri) {
         dap_guard.notify_invalid_breakpoints(breakpoints);
+    }
+
+    // Remove disabled breakpoints. Their verification state is now stale since
+    // they weren't injected during this annotation. If the user re-enables
+    // them, they'll be treated as new unverified breakpoints.
+    if let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri) {
+        breakpoints.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
     Ok(RObject::try_from(annotated)?.sexp)

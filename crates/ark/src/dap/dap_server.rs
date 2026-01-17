@@ -406,11 +406,15 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
                 if let Some(old_bp) = old_by_line.remove(&line) {
                     // Breakpoint already exists at this line
-                    let new_state = match old_bp.state {
-                        // This breakpoint used to be verified, was disabled, and is now back online
-                        BreakpointState::Disabled => BreakpointState::Verified,
+                    let (new_state, injected) = match old_bp.state {
+                        // This breakpoint used to be verified, was disabled, and is now back
+                        // online. Restore to Verified immediately.
+                        BreakpointState::Disabled => (BreakpointState::Verified, old_bp.injected),
+                        // Invalid breakpoints are reset to Unverified so they can be
+                        // re-validated on next source.
+                        BreakpointState::Invalid(_) => (BreakpointState::Unverified, false),
                         // We preserve other states (verified or unverified)
-                        other => other,
+                        other => (other, old_bp.injected),
                     };
 
                     breakpoints.push(Breakpoint {
@@ -419,8 +423,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         line: old_bp.line,
                         original_line: line,
                         state: new_state,
-                        // Preserve injected status from old breakpoint
-                        injected: old_bp.injected,
+                        injected,
                     });
                 } else {
                     // New breakpoints always start as Unverified, until they get evaluated once
