@@ -1279,14 +1279,10 @@ impl RMain {
                 ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
             });
 
-            // Extract execution context before req is consumed
-            let execution_id = req.originator.header.msg_id.clone();
-            let code = req.request.code.clone();
-
             // Check for pending graphics updates
             // (Important that this occurs while in the "busy" state of this ExecuteRequest
             // so that the `parent` message is set correctly in any Jupyter messages)
-            graphics_device::on_did_execute_request(execution_id, code);
+            graphics_device::on_did_execute_request();
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
@@ -1318,10 +1314,16 @@ impl RMain {
                 // Save `ExecuteCode` request so we can respond to it at next prompt
                 self.active_request = Some(ActiveReadConsoleRequest {
                     exec_count,
-                    request: exec_req,
-                    originator,
+                    request: exec_req.clone(),
+                    originator: originator.clone(),
                     reply_tx,
                 });
+
+                // Push execution context to graphics device for plot attribution
+                graphics_device::on_execute_request(
+                    originator.header.msg_id.clone(),
+                    exec_req.code.clone(),
+                );
 
                 input
             },

@@ -196,6 +196,11 @@ struct DeviceContext {
 
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
+
+    /// The current execution context (execution_id, code) from the active request.
+    /// Pushed here when an execute request starts via `on_execute_request()`,
+    /// cleared when the request completes.
+    execution_context: RefCell<Option<(String, String)>>,
 }
 
 impl DeviceContext {
@@ -220,7 +225,23 @@ impl DeviceContext {
                 pixel_ratio: 1.,
                 format: PlotRenderFormat::Png,
             }),
+            execution_context: RefCell::new(None),
         }
+    }
+
+    /// Set the current execution context (called when an execute request starts)
+    fn set_execution_context(&self, execution_id: String, code: String) {
+        *self.execution_context.borrow_mut() = Some((execution_id, code));
+    }
+
+    /// Clear the current execution context (called when an execute request completes)
+    fn clear_execution_context(&self) {
+        *self.execution_context.borrow_mut() = None;
+    }
+
+    /// Get the current execution context (clones the value)
+    fn get_execution_context(&self) -> Option<(String, String)> {
+        self.execution_context.borrow().clone()
     }
 
     /// Create a new id for this new plot page (from Positron's perspective)
@@ -267,7 +288,7 @@ impl DeviceContext {
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
     fn hook_deactivate(&self) {
-        self.process_changes(None);
+        self.process_changes();
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
@@ -305,8 +326,18 @@ impl DeviceContext {
         PlotId(Uuid::new_v4().to_string())
     }
 
-    /// Capture the current execution context for a new plot
+    /// Capture the current execution context for a new plot.
+    ///
+    /// First checks for context pushed via `on_execute_request()`, then falls back
+    /// to getting context from RMain's active request (for backwards compatibility
+    /// and edge cases).
     fn capture_execution_context(&self) -> (String, String) {
+        // First, check if we have a stored execution context from on_execute_request()
+        if let Some(ctx) = self.get_execution_context() {
+            return ctx;
+        }
+
+        // Fall back to getting context from RMain (for edge cases)
         RMain::with(|main| {
             main.get_execution_context().unwrap_or_else(|| {
                 // No active request - might be during startup or from R code
@@ -555,11 +586,10 @@ impl DeviceContext {
 
     /// Process outstanding plot changes
     ///
-    /// The optional `execution_context` parameter provides the execution ID and code
-    /// from the active request. When `None`, attempts to get context from the current
-    /// active request (which may not exist, e.g., during deactivation hooks).
+    /// Uses execution context stored via `on_execute_request()` or falls back to
+    /// getting context from RMain's active request.
     #[tracing::instrument(level = "trace", skip_all)]
-    fn process_changes(&self, execution_context: Option<(String, String)>) {
+    fn process_changes(&self) {
         let id = self.id();
 
         if !self.has_changes.replace(false) {
@@ -582,27 +612,25 @@ impl DeviceContext {
         Self::record_plot(&id);
 
         if self.is_new_page.replace(false) {
-            self.process_new_plot(&id, execution_context);
+            self.process_new_plot(&id);
         } else {
             self.process_update_plot(&id);
         }
     }
 
-    fn process_new_plot(&self, id: &PlotId, execution_context: Option<(String, String)>) {
+    fn process_new_plot(&self, id: &PlotId) {
         if self.should_use_dynamic_plots() {
-            self.process_new_plot_positron(id, execution_context);
+            self.process_new_plot_positron(id);
         } else {
-            self.process_new_plot_jupyter_protocol(id, execution_context);
+            self.process_new_plot_jupyter_protocol(id);
         }
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_positron(&self, id: &PlotId, execution_context: Option<(String, String)>) {
+    fn process_new_plot_positron(&self, id: &PlotId) {
         log::trace!("Notifying Positron of new plot");
 
-        // Use passed execution context, or fall back to capturing from active request
-        let (execution_id, code) = execution_context
-            .unwrap_or_else(|| self.capture_execution_context());
+        let (execution_id, code) = self.capture_execution_context();
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
 
@@ -654,12 +682,10 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_jupyter_protocol(&self, id: &PlotId, execution_context: Option<(String, String)>) {
+    fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Notifying Jupyter frontend of new plot");
 
-        // Use passed execution context, or fall back to capturing from active request
-        let (execution_id, code) = execution_context
-            .unwrap_or_else(|| self.capture_execution_context());
+        let (execution_id, code) = self.capture_execution_context();
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
 
@@ -923,6 +949,19 @@ pub(crate) fn on_process_idle_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
+/// Hook applied when an execute request starts
+///
+/// Pushes the execution context (execution_id, code) to the graphics device
+/// so it can be captured when new plots are created. This allows plots to be
+/// correctly attributed to the code that generated them.
+///
+/// Called from `handle_execute_request()` after setting the active request.
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) fn on_execute_request(execution_id: String, code: String) {
+    log::trace!("Entering on_execute_request");
+    DEVICE_CONTEXT.with_borrow(|cell| cell.set_execution_context(execution_id, code));
+}
+
 /// Hook applied after a code chunk has finished executing
 ///
 /// Not an official graphics device hook, instead we run this manually after
@@ -940,13 +979,13 @@ pub(crate) fn on_process_idle_events() {
 /// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
 /// but we can still render this intermediate state and show it to the user until
 /// they add more plots or advance to another new page.
-///
-/// The `execution_id` and `code` parameters are passed from the caller because
-/// the active request has already been taken by the time this is called.
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_did_execute_request(execution_id: String, code: String) {
+pub(crate) fn on_did_execute_request() {
     log::trace!("Entering on_did_execute_request");
-    DEVICE_CONTEXT.with_borrow(|cell| cell.process_changes(Some((execution_id, code))));
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.process_changes();
+        cell.clear_execution_context();
+    });
 }
 
 /// Activation callback
@@ -1124,8 +1163,7 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
     DEVICE_CONTEXT.with_borrow(|cell| {
         // Process changes related to the last plot before opening a new page.
         // Particularly important if we make multiple plots in a single chunk.
-        // Pass None here because the active request is still valid at this point.
-        cell.process_changes(None);
+        cell.process_changes();
     });
 
     Ok(harp::r_null())
