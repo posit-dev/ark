@@ -359,3 +359,54 @@ setHook(
         )
     }
 )
+
+# BigQuery Connection Support
+# These methods enable viewing BigQuery connections in the Connections Pane
+# from the Variables Pane
+
+# Register BigQuery connection methods when the bigrquery package is loaded
+setHook(
+    packageEvent("bigrquery", "onLoad"),
+    function(...) {
+        # Check if an object is a BigQuery connection
+        .ark.register_method(
+            "ark_positron_variable_is_connection",
+            "BigQueryConnection",
+            function(x) {
+                DBI::dbIsValid(x)
+            }
+        )
+
+        # View a BigQuery connection in the Connections Pane
+        .ark.register_method(
+            "ark_positron_variable_view_connection",
+            "BigQueryConnection",
+            function(x) {
+                # Reconstruct the connection code
+                code <- .ps.bigrquery_connection_code(x)
+
+                # Use bigrquery's built-in connection observer integration
+                bigrquery:::on_connection_opened(x, code = code)
+                invisible(TRUE)
+            }
+        )
+    }
+)
+
+# Helper to reconstruct BigQuery connection code
+.ps.bigrquery_connection_code <- function(con) {
+    project <- con@project
+    dataset <- con@dataset
+    billing <- con@billing
+
+    params <- c(sprintf('project = "%s"', project))
+
+    if (!is.null(dataset) && nzchar(dataset)) {
+        params <- c(params, sprintf('dataset = "%s"', dataset))
+    }
+    if (!is.null(billing) && nzchar(billing) && billing != project) {
+        params <- c(params, sprintf('billing = "%s"', billing))
+    }
+
+    sprintf("DBI::dbConnect(bigrquery::bigquery(), %s)", paste(params, collapse = ", "))
+}
