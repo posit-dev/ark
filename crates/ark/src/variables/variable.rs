@@ -640,15 +640,19 @@ pub fn is_connection(value: SEXP) -> bool {
 
 /// View a connection object in the Connections Pane.
 /// This dispatches to the `ark_positron_variable_view_connection` method.
+/// The method should return TRUE on success, FALSE otherwise.
 pub fn view_connection(value: SEXP) -> anyhow::Result<()> {
-    match ArkGenerics::VariableViewConnection.try_dispatch::<RObject>(value, vec![]) {
+    match ArkGenerics::VariableViewConnection.try_dispatch::<bool>(value, vec![]) {
         Err(err) => {
             return Err(anyhow!("Error viewing connection: {err}"));
         },
         Ok(None) => {
             return Err(anyhow!("No view_connection method found for this object"));
         },
-        Ok(Some(_)) => Ok(()),
+        Ok(Some(false)) => {
+            return Err(anyhow!("Failed to view connection"));
+        },
+        Ok(Some(true)) => Ok(()),
     }
 }
 

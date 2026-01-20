@@ -106,7 +106,7 @@ ark_methods_table$ark_positron_variable_is_connection <- new.env(
 #'
 #' @param x Connection object to view
 #' @param ... Additional arguments (unused)
-#' @return NULL, called for side effects
+#' @return Logical value: TRUE on success, FALSE otherwise
 ark_methods_table$ark_positron_variable_view_connection <- new.env(
     parent = emptyenv()
 )

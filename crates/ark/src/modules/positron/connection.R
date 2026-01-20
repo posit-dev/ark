@@ -302,7 +302,7 @@ setHook(
             "ark_positron_variable_is_connection",
             "OdbcConnection",
             function(x) {
-                inherits(x, "OdbcConnection") && odbc::dbIsValid(x)
+                odbc::dbIsValid(x)
             }
         )
 
@@ -317,7 +317,7 @@ setHook(
 
                 # Use odbc's built-in connection observer integration
                 odbc:::on_connection_opened(x, code = code)
-                invisible(NULL)
+                invisible(TRUE)
             }
         )
     }
