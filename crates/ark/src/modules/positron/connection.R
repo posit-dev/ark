@@ -177,6 +177,36 @@ connection_flatten_object_types <- function(object_tree) {
     return(TRUE)
 }
 
+# Helper to reconstruct ODBC connection code from connection info
+.ps.odbc_connection_code <- function(info) {
+    # Try to reconstruct a reasonable connection string
+    # Priority: DSN > connection string parameters
+    if (!is.null(info$sourcename) && nzchar(info$sourcename)) {
+        # DSN-based connection
+        sprintf('odbc::dbConnect(odbc::odbc(), dsn = "%s")', info$sourcename)
+    } else {
+        # Build connection string from available parameters
+        params <- character()
+
+        if (!is.null(info$servername) && nzchar(info$servername)) {
+            params <- c(params, sprintf('server = "%s"', info$servername))
+        }
+        if (!is.null(info$dbname) && nzchar(info$dbname)) {
+            params <- c(params, sprintf('database = "%s"', info$dbname))
+        }
+
+        if (length(params) > 0) {
+            sprintf(
+                "odbc::dbConnect(odbc::odbc(), %s)",
+                paste(params, collapse = ", ")
+            )
+        } else {
+            # Fallback if we can't determine connection parameters
+            "# Connection opened from Variables Pane"
+        }
+    }
+}
+
 #' @export
 .ps.connection_icon <- function(id, ...) {
     con <- get(id, getOption("connectionObserver")$.connections)
@@ -329,33 +359,3 @@ setHook(
         )
     }
 )
-
-# Helper to reconstruct ODBC connection code from connection info
-.ps.odbc_connection_code <- function(info) {
-    # Try to reconstruct a reasonable connection string
-    # Priority: DSN > connection string parameters
-    if (!is.null(info$sourcename) && nzchar(info$sourcename)) {
-        # DSN-based connection
-        sprintf('odbc::dbConnect(odbc::odbc(), dsn = "%s")', info$sourcename)
-    } else {
-        # Build connection string from available parameters
-        params <- character()
-
-        if (!is.null(info$servername) && nzchar(info$servername)) {
-            params <- c(params, sprintf('server = "%s"', info$servername))
-        }
-        if (!is.null(info$dbname) && nzchar(info$dbname)) {
-            params <- c(params, sprintf('database = "%s"', info$dbname))
-        }
-
-        if (length(params) > 0) {
-            sprintf(
-                "odbc::dbConnect(odbc::odbc(), %s)",
-                paste(params, collapse = ", ")
-            )
-        } else {
-            # Fallback if we can't determine connection parameters
-            "# Connection opened from Variables Pane"
-        }
-    }
-}
