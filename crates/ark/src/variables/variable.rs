@@ -594,6 +594,11 @@ fn has_viewer(value: SEXP) -> bool {
         return true;
     }
 
+    // Check if this is a connection that can be viewed
+    if is_connection(value) {
+        return true;
+    }
+
     if !(r_is_data_frame(value) || r_is_matrix(value)) {
         return false;
     }
@@ -612,6 +617,38 @@ fn has_viewer(value: SEXP) -> bool {
         Ok(None) => true,
         // The viewer method was found, use its result
         Ok(Some(val)) => val,
+    }
+}
+
+/// Check if the value is a connection that can be viewed in the Connections Pane.
+/// This dispatches to the `ark_positron_variable_is_connection` method.
+pub fn is_connection(value: SEXP) -> bool {
+    match ArkGenerics::VariableIsConnection.try_dispatch::<bool>(value, vec![]) {
+        Err(err) => {
+            log::error!(
+                "Error from '{}' method: {err}",
+                ArkGenerics::VariableIsConnection.to_string()
+            );
+            false
+        },
+        // No method found, not a connection
+        Ok(None) => false,
+        // Method found, use its result
+        Ok(Some(val)) => val,
+    }
+}
+
+/// View a connection object in the Connections Pane.
+/// This dispatches to the `ark_positron_variable_view_connection` method.
+pub fn view_connection(value: SEXP) -> anyhow::Result<()> {
+    match ArkGenerics::VariableViewConnection.try_dispatch::<RObject>(value, vec![]) {
+        Err(err) => {
+            return Err(anyhow!("Error viewing connection: {err}"));
+        },
+        Ok(None) => {
+            return Err(anyhow!("No view_connection method found for this object"));
+        },
+        Ok(Some(_)) => Ok(()),
     }
 }
 
