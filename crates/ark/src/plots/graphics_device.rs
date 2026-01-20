@@ -122,19 +122,6 @@ struct WrappedDeviceCallbacks {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PlotId(String);
 
-/// Metadata captured at plot creation time
-#[derive(Debug, Clone)]
-struct PlotMetadataInfo {
-    /// Human-readable name (e.g., "ggplot2 scatter plot 1")
-    name: String,
-    /// Kind of plot (e.g., "ggplot2 scatter plot", "histogram")
-    kind: String,
-    /// The Jupyter message ID of the execute_request that produced the plot
-    execution_id: String,
-    /// Code that produced the plot
-    code: String,
-}
-
 struct DeviceContext {
     /// Channel for sending [CommManagerEvent]s to Positron when plot events occur
     comm_manager_tx: Sender<CommManagerEvent>,
@@ -186,7 +173,7 @@ struct DeviceContext {
     sockets: RefCell<HashMap<PlotId, CommSocket>>,
 
     /// Mapping of plot ID to its metadata (captured at creation time)
-    metadata: RefCell<HashMap<PlotId, PlotMetadataInfo>>,
+    metadata: RefCell<HashMap<PlotId, PlotMetadata>>,
 
     /// Counters for generating unique plot names by kind
     kind_counters: RefCell<HashMap<String, u32>>,
@@ -634,14 +621,12 @@ impl DeviceContext {
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
 
-        self.metadata
-            .borrow_mut()
-            .insert(id.clone(), PlotMetadataInfo {
-                name,
-                kind,
-                execution_id,
-                code,
-            });
+        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
+            name,
+            kind,
+            execution_id,
+            code,
+        });
 
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
@@ -689,14 +674,12 @@ impl DeviceContext {
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
 
-        self.metadata
-            .borrow_mut()
-            .insert(id.clone(), PlotMetadataInfo {
-                name,
-                kind,
-                execution_id,
-                code,
-            });
+        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
+            name,
+            kind,
+            execution_id,
+            code,
+        });
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
