@@ -19,6 +19,7 @@ use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
+use amalthea::comm::plot_comm::PlotMetadata;
 use amalthea::comm::plot_comm::PlotRenderFormat;
 use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
@@ -171,11 +172,22 @@ struct DeviceContext {
     /// rendered results to the frontend.
     sockets: RefCell<HashMap<PlotId, CommSocket>>,
 
+    /// Mapping of plot ID to its metadata (captured at creation time)
+    metadata: RefCell<HashMap<PlotId, PlotMetadata>>,
+
+    /// Counters for generating unique plot names by kind
+    kind_counters: RefCell<HashMap<String, u32>>,
+
     /// The callbacks of the wrapped device, initialized on graphics device creation
     wrapped_callbacks: WrappedDeviceCallbacks,
 
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
+
+    /// The current execution context (execution_id, code) from the active request.
+    /// Pushed here when an execute request starts via `on_execute_request()`,
+    /// cleared when the request completes.
+    execution_context: RefCell<Option<(String, String)>>,
 }
 
 impl DeviceContext {
@@ -189,6 +201,8 @@ impl DeviceContext {
             should_render: Cell::new(true),
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
+            metadata: RefCell::new(HashMap::new()),
+            kind_counters: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
             prerender_settings: Cell::new(PlotRenderSettings {
                 size: PlotSize {
@@ -198,7 +212,23 @@ impl DeviceContext {
                 pixel_ratio: 1.,
                 format: PlotRenderFormat::Png,
             }),
+            execution_context: RefCell::new(None),
         }
+    }
+
+    /// Set the current execution context (called when an execute request starts)
+    fn set_execution_context(&self, execution_id: String, code: String) {
+        *self.execution_context.borrow_mut() = Some((execution_id, code));
+    }
+
+    /// Clear the current execution context (called when an execute request completes)
+    fn clear_execution_context(&self) {
+        *self.execution_context.borrow_mut() = None;
+    }
+
+    /// Get the current execution context (clones the value)
+    fn get_execution_context(&self) -> Option<(String, String)> {
+        self.execution_context.borrow().clone()
     }
 
     /// Create a new id for this new plot page (from Positron's perspective)
@@ -281,6 +311,57 @@ impl DeviceContext {
 
     fn new_id() -> PlotId {
         PlotId(Uuid::new_v4().to_string())
+    }
+
+    /// Capture the current execution context for a new plot.
+    ///
+    /// First checks for context pushed via `on_execute_request()`, then falls back
+    /// to getting context from RMain's active request (for backwards compatibility
+    /// and edge cases).
+    fn capture_execution_context(&self) -> (String, String) {
+        // First, check if we have a stored execution context from on_execute_request()
+        if let Some(ctx) = self.get_execution_context() {
+            return ctx;
+        }
+
+        // Fall back to getting context from RMain (for edge cases)
+        RMain::with(|main| {
+            main.get_execution_context().unwrap_or_else(|| {
+                // No active request - might be during startup or from R code
+                (String::new(), String::new())
+            })
+        })
+    }
+
+    /// Detect the kind of plot from the recording.
+    ///
+    /// Calls into R to inspect the plot recording and/or `.Last.value`.
+    fn detect_plot_kind(&self, id: &PlotId) -> String {
+        let result = RFunction::from(".ps.graphics.detect_plot_kind")
+            .param("id", id)
+            .call();
+
+        match result {
+            Ok(kind) => {
+                // Safety: We just called an R function that returns a string
+                unsafe { kind.to::<String>() }.unwrap_or_else(|err| {
+                    log::warn!("Failed to convert plot kind to string: {err:?}");
+                    "plot".to_string()
+                })
+            },
+            Err(err) => {
+                log::warn!("Failed to detect plot kind: {err:?}");
+                "plot".to_string()
+            },
+        }
+    }
+
+    /// Generate a unique name for a plot of the given kind
+    fn generate_plot_name(&self, kind: &str) -> String {
+        let mut counters = self.kind_counters.borrow_mut();
+        let counter = counters.entry(kind.to_string()).or_insert(0);
+        *counter += 1;
+        format!("{} {}", kind, counter)
     }
 
     /// Process outstanding RPC requests received from Positron
@@ -399,6 +480,34 @@ impl DeviceContext {
                 log::trace!("PlotBackendRequest::GetIntrinsicSize");
                 Ok(PlotBackendReply::GetIntrinsicSizeReply(None))
             },
+            PlotBackendRequest::GetMetadata => {
+                log::trace!("PlotBackendRequest::GetMetadata");
+
+                // Metadata was captured at plot creation time, just retrieve it
+                let stored_metadata = self.metadata.borrow();
+                let info = stored_metadata.get(id);
+
+                let plot_metadata = match info {
+                    Some(info) => PlotMetadata {
+                        name: info.name.clone(),
+                        kind: info.kind.clone(),
+                        execution_id: info.execution_id.clone(),
+                        code: info.code.clone(),
+                    },
+                    None => {
+                        // Fallback if metadata wasn't captured (shouldn't happen)
+                        log::warn!("No metadata found for plot id {id}");
+                        PlotMetadata {
+                            name: "plot".to_string(),
+                            kind: "plot".to_string(),
+                            execution_id: String::new(),
+                            code: String::new(),
+                        }
+                    },
+                };
+
+                Ok(PlotBackendReply::GetMetadataReply(plot_metadata))
+            },
             PlotBackendRequest::Render(plot_meta) => {
                 log::trace!("PlotBackendRequest::Render");
 
@@ -432,6 +541,9 @@ impl DeviceContext {
         // RefCell safety: Short borrows in the file
         self.sockets.borrow_mut().remove(id);
 
+        // Remove metadata for this plot
+        self.metadata.borrow_mut().remove(id);
+
         // The plot data is stored at R level. Assumes we're called on the R
         // thread at idle time so there's no race issues (see
         // `on_process_idle_events()`).
@@ -459,6 +571,10 @@ impl DeviceContext {
         }
     }
 
+    /// Process outstanding plot changes
+    ///
+    /// Uses execution context stored via `on_execute_request()` or falls back to
+    /// getting context from RMain's active request.
     #[tracing::instrument(level = "trace", skip_all)]
     fn process_changes(&self) {
         let id = self.id();
@@ -501,6 +617,17 @@ impl DeviceContext {
     fn process_new_plot_positron(&self, id: &PlotId) {
         log::trace!("Notifying Positron of new plot");
 
+        let (execution_id, code) = self.capture_execution_context();
+        let kind = self.detect_plot_kind(id);
+        let name = self.generate_plot_name(&kind);
+
+        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
+            name,
+            kind,
+            execution_id,
+            code,
+        });
+
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
@@ -542,6 +669,17 @@ impl DeviceContext {
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Notifying Jupyter frontend of new plot");
+
+        let (execution_id, code) = self.capture_execution_context();
+        let kind = self.detect_plot_kind(id);
+        let name = self.generate_plot_name(&kind);
+
+        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
+            name,
+            kind,
+            execution_id,
+            code,
+        });
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
@@ -794,6 +932,19 @@ pub(crate) fn on_process_idle_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
+/// Hook applied when an execute request starts
+///
+/// Pushes the execution context (execution_id, code) to the graphics device
+/// so it can be captured when new plots are created. This allows plots to be
+/// correctly attributed to the code that generated them.
+///
+/// Called from `handle_execute_request()` after setting the active request.
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) fn on_execute_request(execution_id: String, code: String) {
+    log::trace!("Entering on_execute_request");
+    DEVICE_CONTEXT.with_borrow(|cell| cell.set_execution_context(execution_id, code));
+}
+
 /// Hook applied after a code chunk has finished executing
 ///
 /// Not an official graphics device hook, instead we run this manually after
@@ -814,7 +965,10 @@ pub(crate) fn on_process_idle_events() {
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn on_did_execute_request() {
     log::trace!("Entering on_did_execute_request");
-    DEVICE_CONTEXT.with_borrow(|cell| cell.process_changes());
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.process_changes();
+        cell.clear_execution_context();
+    });
 }
 
 /// Activation callback
@@ -996,4 +1150,44 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
     });
 
     Ok(harp::r_null())
+}
+
+/// Retrieve plot metadata by plot ID (display_id).
+///
+/// Returns a named list with fields: name, kind, execution_id, code.
+/// Returns NULL if no metadata is found for the given ID.
+#[tracing::instrument(level = "trace", skip_all)]
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result<SEXP> {
+    let id_str: String = RObject::view(id).try_into()?;
+    let plot_id = PlotId(id_str);
+
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        let metadata = cell.metadata.borrow();
+        match metadata.get(&plot_id) {
+            Some(info) => {
+                // Create a list with the metadata values
+                let values: Vec<RObject> = vec![
+                    RObject::from(info.name.as_str()),
+                    RObject::from(info.kind.as_str()),
+                    RObject::from(info.execution_id.as_str()),
+                    RObject::from(info.code.as_str()),
+                ];
+                let list = RObject::try_from(values)?;
+
+                // Set the names attribute
+                let names: Vec<String> = vec![
+                    "name".to_string(),
+                    "kind".to_string(),
+                    "execution_id".to_string(),
+                    "code".to_string(),
+                ];
+                let names = RObject::from(names);
+                libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+
+                Ok(list.sexp)
+            },
+            None => Ok(harp::r_null()),
+        }
+    })
 }

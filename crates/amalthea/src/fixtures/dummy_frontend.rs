@@ -13,6 +13,7 @@ use crate::connection_file::ConnectionFile;
 use crate::registration_file::RegistrationFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::handshake_reply::HandshakeReply;
@@ -447,10 +448,39 @@ impl DummyFrontend {
         assert_matches!(msg, Message::DisplayData(_))
     }
 
+    /// Receive from IOPub and assert DisplayData message, returning the display_id
+    /// from the transient field.
+    #[track_caller]
+    pub fn recv_iopub_display_data_id(&self) -> String {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::DisplayData(data) => {
+            // Extract display_id from transient field
+            data.content.transient["display_id"]
+                .as_str()
+                .expect("display_id should be a string")
+                .to_string()
+        })
+    }
+
     #[track_caller]
     pub fn recv_iopub_update_display_data(&self) {
         let msg = self.recv_iopub();
         assert_matches!(msg, Message::UpdateDisplayData(_))
+    }
+
+    /// Send a comm message on the Shell socket.
+    /// The `data` should contain an `id` field to make it an RPC request.
+    pub fn send_shell_comm_msg(&self, comm_id: String, data: Value) -> String {
+        self.send_shell(CommWireMsg { comm_id, data })
+    }
+
+    /// Receive a comm message reply from the IOPub socket
+    #[track_caller]
+    pub fn recv_iopub_comm_msg(&self) -> CommWireMsg {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::CommMsg(data) => {
+            data.content
+        })
     }
 
     /// Receive from IOPub Stream
@@ -633,6 +663,16 @@ impl DummyFrontend {
             dbg!(WireMessage::read_from_socket(socket).unwrap());
             eprintln!("---");
         }
+    }
+
+    /// Receive from IOPub and assert CommOpen message.
+    /// Returns a tuple of (comm_id, target_name, data).
+    #[track_caller]
+    pub fn recv_iopub_comm_open(&self) -> (String, String, serde_json::Value) {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::CommOpen(data) => {
+            (data.content.comm_id, data.content.target_name, data.content.data)
+        })
     }
 
     pub fn is_installed(&self, package: &str) -> bool {
