@@ -151,30 +151,34 @@ detect_ggplot_kind <- function(gg) {
 # Returns plot kind string or NULL
 detect_kind_from_display_list <- function(dl) {
     # Display list entries are lists where first element is the C function name
-    call_names <- vapply(dl, function(x) {
-        if (is.list(x) && length(x) > 0) {
-            name <- x[[1]]
-            if (is.character(name)) name else ""
-        } else {
-            ""
-        }
-    }, character(1))
+    call_names <- vapply(
+        dl,
+        function(x) {
+            if (is.list(x) && length(x) > 0) {
+                name <- x[[1]]
+                if (is.character(name)) name else ""
+            } else {
+                ""
+            }
+        },
+        character(1)
+    )
 
     # Base graphics C functions to plot types
-    if (any(call_names == "C_plotHist")) return("histogram")
-    if (any(call_names == "C_image")) return("image")
-    if (any(call_names == "C_contour")) return("contour")
-    if (any(call_names == "C_persp")) return("3D surface")
-    if (any(call_names == "C_filledcontour")) return("filled contour")
-
-    # Check for grid graphics (ggplot2, lattice)
-    if (any(grepl("^L_", call_names))) {
-        return("grid")
+    if (any(call_names == "C_plotHist")) {
+        return("histogram")
     }
-
-    # Check for base graphics
-    if (any(grepl("^C_", call_names))) {
-        return("base")
+    if (any(call_names == "C_image")) {
+        return("image")
+    }
+    if (any(call_names == "C_contour")) {
+        return("contour")
+    }
+    if (any(call_names == "C_persp")) {
+        return("3D surface")
+    }
+    if (any(call_names == "C_filledcontour")) {
+        return("filled contour")
     }
 
     NULL
