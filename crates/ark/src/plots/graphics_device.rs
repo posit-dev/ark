@@ -1168,3 +1168,43 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
 
     Ok(harp::r_null())
 }
+
+/// Retrieve plot metadata by plot ID (display_id).
+///
+/// Returns a named list with fields: name, kind, execution_id, code.
+/// Returns NULL if no metadata is found for the given ID.
+#[tracing::instrument(level = "trace", skip_all)]
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result<SEXP> {
+    let id_str: String = RObject::view(id).try_into()?;
+    let plot_id = PlotId(id_str);
+
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        let metadata = cell.metadata.borrow();
+        match metadata.get(&plot_id) {
+            Some(info) => {
+                // Create a list with the metadata values
+                let values: Vec<RObject> = vec![
+                    RObject::from(info.name.as_str()),
+                    RObject::from(info.kind.as_str()),
+                    RObject::from(info.execution_id.as_str()),
+                    RObject::from(info.code.as_str()),
+                ];
+                let list = RObject::try_from(values)?;
+
+                // Set the names attribute
+                let names: Vec<String> = vec![
+                    "name".to_string(),
+                    "kind".to_string(),
+                    "execution_id".to_string(),
+                    "code".to_string(),
+                ];
+                let names = RObject::from(names);
+                libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+
+                Ok(list.sexp)
+            },
+            None => Ok(harp::r_null()),
+        }
+    })
+}

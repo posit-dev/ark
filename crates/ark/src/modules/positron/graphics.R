@@ -662,6 +662,16 @@ detect_ggplot_kind <- function(gg) {
     "ggplot2"
 }
 
+#' Retrieve plot metadata by display_id
+#'
+#' @param id The plot's display_id
+#' @return A named list with fields: name, kind, execution_id, code.
+#'   Returns NULL if no metadata is found for the given ID.
+#' @export
+.ps.graphics.get_metadata <- function(id) {
+    .ps.Call("ps_graphics_get_metadata", id)
+}
+
 # Detect plot kind from display list (base graphics)
 # Returns plot kind string or NULL
 detect_kind_from_display_list <- function(dl) {

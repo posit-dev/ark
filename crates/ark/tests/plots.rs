@@ -242,3 +242,116 @@ lockBinding("loadNamespace", .BaseNamespaceEnv)
 fn report_skipped(f: &str, pkg: &str) {
     println!("Skipping `{f}()`. {pkg} is not installed.");
 }
+
+/// Test that plots receive a unique display_id that can be used for plot attribution.
+///
+/// This test verifies that:
+/// 1. When a plot is created via execute_request, a display_data message is sent
+/// 2. The display_data contains a valid display_id in the transient field
+/// 3. The display_id is unique per plot
+///
+/// Note: Full GetMetadata RPC testing requires a Positron frontend with UI comm connected,
+/// which enables dynamic plots. In the standard Jupyter frontend used by tests, plots use
+/// the Jupyter protocol which sends display_data but doesn't create plot comm sockets.
+#[test]
+fn test_plot_has_display_id() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Receive display data and verify it has a display_id
+    let display_id = frontend.recv_iopub_display_data_id();
+
+    // Verify the display_id is non-empty (it's a UUID-like string)
+    assert!(!display_id.is_empty());
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Create a second plot and verify it gets a different display_id
+    let code2 = "plot(1:5)";
+    frontend.send_execute_request(code2, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input2 = frontend.recv_iopub_execute_input();
+    assert_eq!(input2.code, code2);
+
+    let display_id2 = frontend.recv_iopub_display_data_id();
+
+    // Verify the second plot has a different display_id
+    assert!(!display_id2.is_empty());
+    assert_ne!(display_id, display_id2);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input2.execution_count);
+}
+
+/// Test that plot metadata contains the correct execution_id.
+///
+/// This test verifies that when a plot is created, its metadata is stored
+/// with the correct execution_id matching the execute_request that produced it.
+/// The metadata is queried using the display_id from the display_data message.
+#[test]
+fn test_plot_get_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Execute code that creates a plot
+    let code = "plot(1:10)";
+    let msg_id = frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Receive display data and get the display_id
+    let display_id = frontend.recv_iopub_display_data_id();
+    assert!(!display_id.is_empty());
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Query the metadata using the display_id
+    let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query_code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // The result is a named list printed as:
+    // $name
+    // [1] "plot 1"
+    //
+    // $kind
+    // [1] "plot"
+    //
+    // $execution_id
+    // [1] "<msg_id>"
+    //
+    // $code
+    // [1] "plot(1:10)"
+
+    // Verify execution_id matches the msg_id of the execute_request
+    assert!(
+        result.contains(&msg_id),
+        "Metadata should contain execution_id '{msg_id}', got:\n{result}"
+    );
+
+    // Verify code matches
+    assert!(
+        result.contains(code),
+        "Metadata should contain code '{code}', got:\n{result}"
+    );
+
+    // Verify kind is "plot" for base R plots
+    assert!(
+        result.contains("$kind") && result.contains("\"plot\""),
+        "Metadata should contain kind 'plot', got:\n{result}"
+    );
+}
