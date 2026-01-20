@@ -22,6 +22,11 @@
 }
 
 #' @export
+.ps.connection_focus <- function(id) {
+    .ps.Call("ps_connection_focus", id)
+}
+
+#' @export
 .ps.connection_observer <- function() {
     connections <- new.env(parent = emptyenv())
 
@@ -45,6 +50,7 @@
         for (id in ls(envir = connections)) {
             con <- get(id, envir = connections)
             if (identical(con$host, host) && identical(con$type, type)) {
+                .ps.connection_focus(id)
                 return(invisible(id))
             }
         }
@@ -67,6 +73,7 @@
             # until the end of the connection.
             objectTypes = connection_flatten_object_types(listObjectTypes())
         )
+        .ps.connection_focus(id)
         invisible(id)
     }
 
