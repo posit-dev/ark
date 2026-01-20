@@ -45,8 +45,7 @@ use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
-use crate::variables::variable::is_connection;
-use crate::variables::variable::view_connection;
+use crate::variables::variable::try_custom_view;
 use crate::variables::variable::PositronVariable;
 use crate::view::view;
 
@@ -383,9 +382,8 @@ impl RVariables {
             let env = self.env.get().clone();
             let obj = PositronVariable::resolve_data_object(env.clone(), &path)?;
 
-            // Check if this is a connection that should be viewed in the Connections Pane
-            if is_connection(obj.sexp) {
-                view_connection(obj.sexp).map_err(harp::Error::Anyhow)?;
+            // Try custom view method first (e.g., for connections)
+            if try_custom_view(obj.sexp).map_err(harp::Error::Anyhow)? {
                 return Ok(None);
             }
 

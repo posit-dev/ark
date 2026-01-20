@@ -93,21 +93,12 @@ ark_methods_table$ark_positron_help_get_handler <- new.env(
     parent = emptyenv()
 )
 
-#' Check if object is a connection that can be viewed in the Connections Pane
+#' Custom view action for objects in Variables Pane
 #'
-#' @param x Object to check
-#' @param ... Additional arguments (unused)
-#' @return Logical value: TRUE if the object is a viewable connection, FALSE otherwise
-ark_methods_table$ark_positron_variable_is_connection <- new.env(
-    parent = emptyenv()
-)
-
-#' View a connection object in the Connections Pane
-#'
-#' @param x Connection object to view
+#' @param x Object to view
 #' @param ... Additional arguments (unused)
 #' @return Logical value: TRUE on success, FALSE otherwise
-ark_methods_table$ark_positron_variable_view_connection <- new.env(
+ark_methods_table$ark_positron_variable_view <- new.env(
     parent = emptyenv()
 )
 

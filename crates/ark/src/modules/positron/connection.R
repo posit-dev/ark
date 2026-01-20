@@ -334,9 +334,16 @@ connection_flatten_object_types <- function(object_tree) {
 setHook(
     packageEvent("odbc", "onLoad"),
     function(...) {
-        # Check if an object is an ODBC connection
+        # Mark ODBC connections as "connection" kind
         .ark.register_method(
-            "ark_positron_variable_is_connection",
+            "ark_positron_variable_kind",
+            "OdbcConnection",
+            function(x) "connection"
+        )
+
+        # Enable viewer for valid ODBC connections
+        .ark.register_method(
+            "ark_positron_variable_has_viewer",
             "OdbcConnection",
             function(x) {
                 odbc::dbIsValid(x)
@@ -345,7 +352,7 @@ setHook(
 
         # View an ODBC connection in the Connections Pane
         .ark.register_method(
-            "ark_positron_variable_view_connection",
+            "ark_positron_variable_view",
             "OdbcConnection",
             function(x) {
                 # Reconstruct the connection code from the connection info
@@ -368,9 +375,16 @@ setHook(
 setHook(
     packageEvent("bigrquery", "onLoad"),
     function(...) {
-        # Check if an object is a BigQuery connection
+        # Mark BigQuery connections as "connection" kind
         .ark.register_method(
-            "ark_positron_variable_is_connection",
+            "ark_positron_variable_kind",
+            "BigQueryConnection",
+            function(x) "connection"
+        )
+
+        # Enable viewer for valid BigQuery connections
+        .ark.register_method(
+            "ark_positron_variable_has_viewer",
             "BigQueryConnection",
             function(x) {
                 DBI::dbIsValid(x)
@@ -379,7 +393,7 @@ setHook(
 
         # View a BigQuery connection in the Connections Pane
         .ark.register_method(
-            "ark_positron_variable_view_connection",
+            "ark_positron_variable_view",
             "BigQueryConnection",
             function(x) {
                 # Reconstruct the connection code
