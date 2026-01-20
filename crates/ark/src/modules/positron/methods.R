@@ -92,6 +92,25 @@ ark_methods_table$ark_positron_variable_get_children <- new.env(
 ark_methods_table$ark_positron_help_get_handler <- new.env(
     parent = emptyenv()
 )
+
+#' Check if object is a connection that can be viewed in the Connections Pane
+#'
+#' @param x Object to check
+#' @param ... Additional arguments (unused)
+#' @return Logical value: TRUE if the object is a viewable connection, FALSE otherwise
+ark_methods_table$ark_positron_variable_is_connection <- new.env(
+    parent = emptyenv()
+)
+
+#' View a connection object in the Connections Pane
+#'
+#' @param x Connection object to view
+#' @param ... Additional arguments (unused)
+#' @return NULL, called for side effects
+ark_methods_table$ark_positron_variable_view_connection <- new.env(
+    parent = emptyenv()
+)
+
 lockEnvironment(ark_methods_table, TRUE)
 
 ark_methods_allowed_packages <- c("torch", "reticulate", "duckplyr")
@@ -169,7 +188,14 @@ call_ark_method <- function(generic, object, ...) {
         return(NULL)
     }
 
-    for (cls in class(object)) {
+    # Get all classes to check, including S4 superclasses
+    classes <- class(object)
+    if (isS4(object)) {
+        # For S4 objects, get the full inheritance hierarchy
+        classes <- methods::extends(class(object))
+    }
+
+    for (cls in classes) {
         if (!is.null(method <- get0(cls, envir = methods_table))) {
             return(eval(
                 as.call(list(method, object, ...)),
