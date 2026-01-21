@@ -5,6 +5,19 @@
 #
 #
 
+initialize_debug <- function() {
+    # Store `.ark_breakpoint` and friends in base namespace so they're maximally
+    # reachable. We might want to do that for all symbols exported from the
+    # Ark/Positron namespace.
+    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+    node_poke_cdr(as.symbol(".ark_auto_step"), .ark_auto_step)
+    node_poke_cdr(as.symbol(".ark_breakpoint"), .ark_breakpoint)
+    node_poke_cdr(
+        as.symbol(".ark_verify_breakpoints_range"),
+        .ark_verify_breakpoints_range
+    )
+}
+
 debugger_stack_info <- function(
     context_call_text,
     context_last_start_line,
@@ -750,17 +763,4 @@ verify_breapoint <- function(uri, id) {
 # `source()`.
 .ark_verify_breakpoints_range <- function(uri, start_line, end_line) {
     .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
-}
-
-debug_initialize <- function() {
-    # Store `.ark_breakpoint` and friends in base namespace so they're maximally
-    # reachable. We might want to do that for all symbols exported from the
-    # Ark/Positron namespace.
-    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
-    node_poke_cdr(as.symbol(".ark_auto_step"), .ark_auto_step)
-    node_poke_cdr(as.symbol(".ark_breakpoint"), .ark_breakpoint)
-    node_poke_cdr(
-        as.symbol(".ark_verify_breakpoints_range"),
-        .ark_verify_breakpoints_range
-    )
 }

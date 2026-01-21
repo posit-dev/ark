@@ -104,7 +104,6 @@ use crate::dap::dap::Breakpoint;
 use crate::dap::dap::BreakpointState;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
-use crate::errors;
 use crate::errors::stack_overflow_occurred;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
@@ -644,11 +643,6 @@ impl RMain {
                 },
             }
 
-            // Register all hooks once all modules have been imported
-            RFunction::from("register_hooks")
-                .call_in(ARK_ENVS.positron_ns)
-                .log_err();
-
             // Populate srcrefs for namespaces already loaded in the session.
             // Namespaces of future loaded packages will be populated on load.
             // (after r_task initialization)
@@ -658,18 +652,10 @@ impl RMain {
                 }
             }
 
-            // Set up the global error handler (after support function initialization)
-            errors::initialize();
-
             // Set default repositories
             if let Err(err) = apply_default_repos(default_repos) {
                 log::error!("Error setting default repositories: {err:?}");
             }
-
-            // Finish initilization of modules
-            RFunction::from("initialize")
-                .call_in(ARK_ENVS.positron_ns)
-                .log_err();
 
             // Initialise Ark's last value
             libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
