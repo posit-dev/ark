@@ -1,7 +1,7 @@
 //
-// repl_debug.rs
+// console_debug.rs
 //
-// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
 use anyhow::anyhow;
