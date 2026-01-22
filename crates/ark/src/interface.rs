@@ -101,7 +101,6 @@ use uuid::Uuid;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::dap::dap::Breakpoint;
-use crate::dap::dap::BreakpointState;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
@@ -1462,20 +1461,11 @@ impl RMain {
                     },
                 }
 
-                // Notify frontend about any breakpoints marked invalid during annotation
+                // Notify frontend about any breakpoints marked invalid during annotation.
+                // Remove disabled breakpoints.
                 if let Some(uri) = &uri {
-                    if let Some((_, bps)) = dap_guard.breakpoints.get(uri) {
-                        dap_guard.notify_invalid_breakpoints(bps);
-                    }
-                }
-
-                // Remove disabled breakpoints. Their verification state is now stale since
-                // they weren't injected during this annotation. If the user re-enables
-                // them, they'll be treated as new unverified breakpoints.
-                if let Some(uri) = &uri {
-                    if let Some((_, bps)) = dap_guard.breakpoints.get_mut(uri) {
-                        bps.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
-                    }
+                    dap_guard.notify_invalid_breakpoints(uri);
+                    dap_guard.remove_disabled_breakpoints(uri);
                 }
 
                 drop(dap_guard);

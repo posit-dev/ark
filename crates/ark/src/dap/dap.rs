@@ -424,8 +424,11 @@ impl Dap {
 
     /// Notify the frontend about breakpoints that were marked invalid during annotation.
     /// Sends a `BreakpointState` event with verified=false and a message for each.
-    pub fn notify_invalid_breakpoints(&self, breakpoints: &[Breakpoint]) {
+    pub fn notify_invalid_breakpoints(&self, uri: &Url) {
         let Some(tx) = &self.backend_events_tx else {
+            return;
+        };
+        let Some((_, breakpoints)) = self.breakpoints.get(uri) else {
             return;
         };
 
@@ -441,6 +444,14 @@ impl Dap {
             })
             .log_err();
         }
+    }
+
+    /// Remove disabled breakpoints for a given URI.
+    pub fn remove_disabled_breakpoints(&mut self, uri: &Url) {
+        let Some((_, bps)) = self.breakpoints.get_mut(uri) else {
+            return;
+        };
+        bps.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
     pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: String) -> bool {

@@ -897,9 +897,7 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(code: SEXP, uri: SEXP) -> any
     };
 
     // Notify frontend about any breakpoints marked invalid during annotation
-    if let Some((_, breakpoints)) = dap_guard.breakpoints.get(&uri) {
-        dap_guard.notify_invalid_breakpoints(breakpoints);
-    }
+    dap_guard.notify_invalid_breakpoints(&uri);
 
     // Remove disabled breakpoints. Their verification state is now stale since
     // they weren't injected during this annotation. If the user re-enables
