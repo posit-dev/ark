@@ -286,7 +286,7 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier(&self) -> bool;
     fn is_string(&self) -> bool;
     fn is_identifier_or_string(&self) -> bool;
-    fn get_identifier_or_string_text(&self, contents: &str) -> anyhow::Result<String>;
+    fn get_identifier_or_string_text<'a>(&self, contents: &'a str) -> anyhow::Result<&'a str>;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
     fn is_subset(&self) -> bool;
@@ -329,18 +329,16 @@ impl NodeTypeExt for Node<'_> {
         matches!(self.node_type(), NodeType::Identifier | NodeType::String)
     }
 
-    fn get_identifier_or_string_text(&self, contents: &str) -> anyhow::Result<String> {
+    fn get_identifier_or_string_text<'a>(&self, contents: &'a str) -> anyhow::Result<&'a str> {
         match self.node_type() {
-            NodeType::Identifier => return Ok(self.node_to_string(&contents)?),
+            NodeType::Identifier => Ok(self.node_as_str(contents)?),
             NodeType::String => {
                 let string_content = self
                     .child_by_field_name("content")
                     .ok_or_else(|| anyhow::anyhow!("Can't extract string's `content` field"))?;
-                return Ok(string_content.node_to_string(&contents)?);
+                Ok(string_content.node_as_str(contents)?)
             },
-            _ => {
-                return Err(anyhow::anyhow!("Not an identifier or string"));
-            },
+            _ => Err(anyhow::anyhow!("Not an identifier or string")),
         }
     }
 
