@@ -183,9 +183,8 @@ pub(crate) fn annotate_input(
     let annotated_code = if let Some(breakpoints) = breakpoints {
         let parse = aether_parser::parse(code, Default::default());
         if let Some(err) = parse.error() {
-            return Err(anyhow!(
-                "Unexpected parse error in `annotate_input()`: {err}"
-            ));
+            // Shouldn't happen since we're only operating on code that was parsed by R
+            return Err(anyhow!("Parse error in `annotate_input()`: {err}"));
         }
 
         let root = parse.tree();
@@ -246,7 +245,13 @@ pub(crate) fn annotate_source(
     let wrapped = format!("{{\n{code}\n}}");
     let line_index = LineIndex::new(&wrapped);
 
-    let root = aether_parser::parse(&wrapped, Default::default()).tree();
+    let parse = aether_parser::parse(&wrapped, Default::default());
+    if let Some(err) = parse.error() {
+        // Shouldn't happen since we're only operating on code that was parsed by R
+        return Err(anyhow!("Parse error in `annotate_input()`: {err}"));
+    }
+
+    let root = parse.tree();
 
     // `line_offset` = -1 because:
     // - Wrapped line 0 is `{`
