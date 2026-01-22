@@ -7,31 +7,11 @@
 
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::PositionEncoding;
-use anyhow::Result;
 use tower_lsp::lsp_types;
-use tree_sitter::InputEdit;
 use tree_sitter::Parser;
-use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp::config::DocumentConfig;
-
-fn compute_point(point: Point, text: &str) -> Point {
-    // figure out where the newlines in this edit are
-    let newline_indices: Vec<_> = text.match_indices('\n').collect();
-    let num_newlines = newline_indices.len();
-    let num_bytes = text.as_bytes().len();
-
-    if newline_indices.len() == 0 {
-        return Point::new(point.row, point.column + num_bytes);
-    } else {
-        let last_newline_index = newline_indices.last().unwrap();
-        return Point::new(
-            point.row + num_newlines,
-            num_bytes - last_newline_index.0 - 1,
-        );
-    }
-}
 
 #[derive(Clone)]
 pub struct Document {
@@ -105,6 +85,11 @@ impl Document {
         }
     }
 
+    // --- source
+    // authors = ["rust-analyzer team"]
+    // license = "MIT OR Apache-2.0"
+    // origin = "https://github.com/rust-lang/rust-analyzer/blob/master/crates/rust-analyzer/src/lsp/utils.rs"
+    // ---
     pub fn on_did_change(
         &mut self,
         parser: &mut Parser,
@@ -125,72 +110,66 @@ impl Document {
             }
         }
 
-        for event in &params.content_changes {
-            if let Err(err) = self.update(parser, event) {
-                panic!("Failed to update document: {err:?}");
+        let mut changes = params.content_changes.clone();
+
+        // If at least one of the changes is a full document change, use the last of them
+        // as the starting point and ignore all previous changes. We then know that all
+        // changes after this (if any!) are incremental changes.
+        //
+        // If we do have a full document change, that implies the `last_start_line`
+        // corresponding to that change is line 0, which will correctly force a rebuild
+        // of the line index before applying any incremental changes. We don't go ahead
+        // and rebuild the line index here, because it is guaranteed to be rebuilt for
+        // us on the way out.
+        let (changes, mut last_start_line) =
+            match changes.iter().rposition(|change| change.range.is_none()) {
+                Some(idx) => {
+                    let incremental = changes.split_off(idx + 1);
+                    // Unwrap: `rposition()` confirmed this index contains a full document change
+                    let change = changes.pop().unwrap();
+                    self.contents = change.text;
+                    (incremental, 0)
+                },
+                None => (changes, u32::MAX),
+            };
+
+        // Handle all incremental changes after the last full document change. We don't
+        // typically get >1 incremental change as the user types, but we do get them in a
+        // batch after a find-and-replace, or after a format-on-save request.
+        //
+        // Some editors like VS Code send the edits in reverse order (from the bottom of
+        // file -> top of file). We can take advantage of this, because applying an edit
+        // on, say, line 10, doesn't invalidate the `line_index` if we then need to apply
+        // an additional edit on line 5. That said, we may still have edits that cross
+        // lines, so rebuilding the `line_index` is not always unavoidable.
+        for change in changes {
+            let range = change
+                .range
+                .expect("`None` case already handled by finding the last full document change.");
+
+            // If the end of this change is at or past the start of the last change, then
+            // the `line_index` needed to apply this change is now invalid, so we have to
+            // rebuild it.
+            if range.end.line >= last_start_line {
+                self.line_index = biome_line_index::LineIndex::new(&self.contents);
             }
+            last_start_line = range.start.line;
+
+            // This is a panic if we can't convert. It means we can't keep the document up
+            // to date and something is very wrong.
+            let range: std::ops::Range<usize> =
+                from_proto::text_range(range, &self.line_index, self.position_encoding)
+                    .expect("Can convert `range` from `Position` to `TextRange`.")
+                    .into();
+
+            self.contents.replace_range(range, &change.text);
         }
 
-        // Set new version
-        self.version = Some(new_version);
-    }
-
-    fn update(
-        &mut self,
-        parser: &mut Parser,
-        change: &lsp_types::TextDocumentContentChangeEvent,
-    ) -> Result<()> {
-        let Some(range) = change.range else {
-            // No range means full document replacement per LSP spec
-            self.contents = change.text.clone();
-            self.ast = parser.parse(self.contents.as_str(), None).unwrap();
-            self.parse = aether_parser::parse(&self.contents, Default::default());
-            self.line_index = biome_line_index::LineIndex::new(&self.contents);
-            return Ok(());
-        };
-
-        let tree_sitter::Range {
-            start_byte,
-            end_byte: old_end_byte,
-            start_point,
-            end_point: old_end_point,
-        } = self.tree_sitter_range_from_lsp_range(range)?;
-
-        let new_end_point = compute_point(start_point, &change.text);
-        let new_end_byte = start_byte + change.text.as_bytes().len();
-
-        // Confusing tree sitter names, the `start_position` is really a `Point`
-        let edit = InputEdit {
-            start_byte,
-            old_end_byte,
-            new_end_byte,
-            start_position: start_point,
-            old_end_position: old_end_point,
-            new_end_position: new_end_point,
-        };
-
-        // Update the AST. We do this before updating the underlying document
-        // contents, because edit computations need to be done using the current
-        // state of the document (prior to the edit being applied) so that byte
-        // offsets can be computed correctly.
-        self.ast.edit(&edit);
-
-        // Now update the text before re-parsing so the AST reflects the new contents
-        self.contents
-            .replace_range(start_byte..old_end_byte, &change.text);
+        // Rebuild everything once at the end
         self.line_index = biome_line_index::LineIndex::new(&self.contents);
-
-        // We can now re-parse incrementally by providing the old edited AST
-        let ast = parser.parse(self.contents.as_str(), Some(&self.ast));
-        self.ast = ast.unwrap();
-
-        // Update the Rowan tree. This currently reparses with TS. We could pass
-        // down the TS tree if that turns out too expensive, but the long term
-        // plan is to remove any TS usage so we prefer not introduce TS trees in
-        // the public APIs.
         self.parse = aether_parser::parse(&self.contents, Default::default());
-
-        Ok(())
+        self.ast = parser.parse(self.contents.as_str(), None).unwrap();
+        self.version = Some(new_version);
     }
 
     pub fn get_line(&self, line: usize) -> Option<&str> {
@@ -297,28 +276,9 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
+    use tree_sitter::Point;
+
     use super::*;
-
-    #[test]
-    fn test_point_computation() {
-        // empty strings shouldn't do anything
-        let point = compute_point(Point::new(0, 0), "");
-        assert_eq!(point, Point::new(0, 0));
-
-        let point = compute_point(Point::new(42, 42), "");
-        assert_eq!(point, Point::new(42, 42));
-
-        // text insertion without newlines should just extend the column position
-        let point = compute_point(Point::new(0, 0), "abcdef");
-        assert_eq!(point, Point::new(0, 6));
-
-        // text insertion with newlines should change the row
-        let point = compute_point(Point::new(0, 0), "abc\ndef\nghi");
-        assert_eq!(point, Point::new(2, 3));
-
-        let point = compute_point(Point::new(0, 0), "abcdefghi\n");
-        assert_eq!(point, Point::new(1, 0));
-    }
 
     #[test]
     fn test_document_starts_at_0_0_with_leading_whitespace() {
