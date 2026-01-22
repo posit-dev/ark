@@ -12,6 +12,9 @@ rust-version.workspace = true
 
 [dependencies]
 actix-web = "4.4.0"
+aether_lsp_utils.workspace = true
+aether_parser.workspace = true
+aether_syntax.workspace = true
 amalthea = { path = "../amalthea" }
 anyhow = "1.0.80"
 async-trait = "0.1.66"
@@ -23,9 +26,6 @@ crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
 ctor = "0.1.26"
 dap = { git = "https://github.com/sztomi/dap-rs", branch = "main" }
 dashmap = "5.4.0"
-aether_parser.workspace = true
-aether_syntax.workspace = true
-aether_lsp_utils.workspace = true
 ego-tree = "0.6.2"
 harp = { path = "../harp" }
 http = "0.2.9"
@@ -51,7 +51,7 @@ streaming-iterator = "0.1.9"
 tokio = { version = "1.26.0", features = ["full"] }
 tower-lsp.workspace = true
 tree-sitter = "0.24.7"
-tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "daa26a2ff0d9546e9125c7d8bcec046027f02070" }
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "95aff097aa927a66bb357f715b58cde821be8867" }
 uuid = "1.3.0"
 url = "2.4.1"
 walkdir = "2"
