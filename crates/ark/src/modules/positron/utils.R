@@ -195,10 +195,12 @@ path_to_file_uri <- function(path) {
 
     # On Windows, paths like "C:/foo" need to become "file:///C:/foo"
     # On Unix, paths like "/foo" need to become "file:///foo"
-    if (startsWith(path, "/")) {
-        paste0("file://", path)
-    } else {
+
+    # Detect Windows by drive letter pattern (e.g. "C:")
+    if (grepl("^[A-Za-z]:", path)) {
         paste0("file:///", path)
+    } else {
+        paste0("file://", path)
     }
 }
 
