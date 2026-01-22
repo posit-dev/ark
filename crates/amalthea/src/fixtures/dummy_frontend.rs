@@ -16,6 +16,8 @@ use crate::socket::socket::Socket;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::execute_request::ExecuteRequestPositron;
+use crate::wire::execute_request::JupyterPositronLocation;
 use crate::wire::handshake_reply::HandshakeReply;
 use crate::wire::input_reply::InputReply;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -49,6 +51,7 @@ pub struct DummyFrontend {
 
 pub struct ExecuteRequestOptions {
     pub allow_stdin: bool,
+    pub positron: Option<ExecuteRequestPositron>,
 }
 
 impl DummyConnection {
@@ -234,6 +237,7 @@ impl DummyFrontend {
             user_expressions: serde_json::Value::Null,
             allow_stdin: options.allow_stdin,
             stop_on_error: false,
+            positron: options.positron,
         })
     }
 
@@ -265,7 +269,38 @@ impl DummyFrontend {
     where
         F: FnOnce(String),
     {
-        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.execute_request_with_options(code, result_check, Default::default())
+    }
+
+    #[track_caller]
+    pub fn execute_request_with_location<F>(
+        &self,
+        code: &str,
+        result_check: F,
+        code_location: JupyterPositronLocation,
+    ) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
+            positron: Some(ExecuteRequestPositron {
+                code_location: Some(code_location),
+            }),
+            ..Default::default()
+        })
+    }
+
+    #[track_caller]
+    pub fn execute_request_with_options<F>(
+        &self,
+        code: &str,
+        result_check: F,
+        options: ExecuteRequestOptions,
+    ) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.send_execute_request(code, options);
         self.recv_iopub_busy();
 
         let input = self.recv_iopub_execute_input();
@@ -703,6 +738,9 @@ impl DummyFrontend {
 
 impl Default for ExecuteRequestOptions {
     fn default() -> Self {
-        Self { allow_stdin: false }
+        Self {
+            allow_stdin: false,
+            positron: None,
+        }
     }
 }

@@ -38,6 +38,7 @@ use amalthea::wire::exception::Exception;
 use amalthea::wire::execute_error::ExecuteError;
 use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
+use amalthea::wire::execute_request::CodeLocation;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
 use amalthea::wire::input_reply::InputReply;
@@ -96,6 +97,8 @@ use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
+use crate::console_annotate::annotate_input;
+use crate::console_debug::FrameInfoId;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors;
@@ -118,7 +121,6 @@ use crate::r_task::BoxFuture;
 use crate::r_task::RTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
-use crate::repl_debug::FrameInfoId;
 use crate::repos::apply_default_repos;
 use crate::repos::DefaultRepos;
 use crate::request::debug_request_command;
@@ -332,14 +334,21 @@ enum ParseResult<T> {
 }
 
 impl PendingInputs {
-    pub(crate) fn read(input: &str) -> anyhow::Result<ParseResult<PendingInputs>> {
+    pub(crate) fn read(
+        code: &str,
+        location: Option<CodeLocation>,
+    ) -> anyhow::Result<ParseResult<PendingInputs>> {
         let mut _srcfile = None;
 
-        let input = if harp::get_option_bool("keep.source") {
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(input.into()));
+        let input = if let Some(location) = location {
+            let annotated_code = annotate_input(code, location);
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(annotated_code.into()));
+            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+        } else if harp::get_option_bool("keep.source") {
+            _srcfile = Some(SrcFile::new_virtual_empty_filename(code.into()));
             harp::ParseInput::SrcFile(&_srcfile.unwrap())
         } else {
-            harp::ParseInput::Text(input)
+            harp::ParseInput::Text(code)
         };
 
         let status = match harp::parse_status(&input) {
@@ -478,7 +487,7 @@ pub struct PromptInfo {
 
 pub enum ConsoleInput {
     EOF,
-    Input(String),
+    Input(String, Option<CodeLocation>),
 }
 
 #[derive(Debug)]
@@ -908,8 +917,13 @@ impl RMain {
             }
         }
 
+        let loc = req.code_location().log_err().flatten();
+
         // Return the code to the R console to be evaluated and the corresponding exec count
-        (ConsoleInput::Input(req.code.clone()), self.execution_count)
+        (
+            ConsoleInput::Input(req.code.clone(), loc),
+            self.execution_count,
+        )
     }
 
     /// Invoked by R to read console input from the user.
@@ -1338,14 +1352,14 @@ impl RMain {
 
                 // Translate requests from the debugger frontend to actual inputs for
                 // the debug interpreter
-                ConsoleInput::Input(debug_request_command(cmd))
+                ConsoleInput::Input(debug_request_command(cmd), None)
             },
         };
 
         match input {
-            ConsoleInput::Input(code) => {
+            ConsoleInput::Input(code, loc) => {
                 // Parse input into pending expressions
-                match PendingInputs::read(&code) {
+                match PendingInputs::read(&code, loc) {
                     Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },
@@ -1568,12 +1582,12 @@ impl RMain {
     /// in duplicate virtual editors being opened on the client side.
     pub fn load_fallback_sources(
         &mut self,
-        stack: &Vec<crate::repl_debug::FrameInfo>,
+        stack: &Vec<crate::console_debug::FrameInfo>,
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
         for frame in stack.iter() {
-            if let crate::repl_debug::FrameSource::Text(source) = &frame.source {
+            if let crate::console_debug::FrameSource::Text(source) = &frame.source {
                 let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
 
                 if self.has_virtual_document(&uri) {

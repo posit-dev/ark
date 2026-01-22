@@ -25,9 +25,10 @@ license = "MIT"
 authors = ["Posit Software, PBC"]
 
 [workspace.dependencies]
+biome_line_index = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
+biome_rowan = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
 aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
 aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
-biome_line_index = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
 # For https://github.com/ebkalderon/tower-lsp/pull/428
 tower-lsp = { branch = "bugfix/patches", git = "https://github.com/lionel-/tower-lsp" }

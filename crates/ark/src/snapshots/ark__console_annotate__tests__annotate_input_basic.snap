@@ -1,0 +1,7 @@
+---
+source: crates/ark/src/console_annotate.rs
+expression: result
+---
+#line 1 "file:///test.R"
+x <- 1
+y <- 2
