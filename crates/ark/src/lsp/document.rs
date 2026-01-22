@@ -6,6 +6,7 @@
 //
 
 use aether_lsp_utils::proto::from_proto;
+use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
 use tower_lsp::lsp_types;
 use tree_sitter::Parser;
@@ -209,10 +210,8 @@ impl Document {
         &self,
         position: lsp_types::Position,
     ) -> anyhow::Result<tree_sitter::Point> {
-        let offset = from_proto::offset(position, &self.line_index, self.position_encoding)?;
-        let line_col = self.line_index.line_col(offset).ok_or_else(|| {
-            anyhow::anyhow!("Failed to convert LSP position {position:?} to LineCol offset")
-        })?;
+        let line_col =
+            from_proto::line_col_from_position(position, &self.line_index, self.position_encoding);
         Ok(tree_sitter::Point::new(
             line_col.line as usize,
             line_col.col as usize,
@@ -227,22 +226,7 @@ impl Document {
             line: point.row as u32,
             col: point.column as u32,
         };
-
-        match self.position_encoding {
-            PositionEncoding::Utf8 => Ok(lsp_types::Position::new(line_col.line, line_col.col)),
-            PositionEncoding::Wide(wide_encoding) => {
-                let wide_line_col = self
-                    .line_index
-                    .to_wide(wide_encoding, line_col)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Failed to convert Tree-Sitter point {point:?} to wide line column for document")
-                    })?;
-                Ok(lsp_types::Position::new(
-                    wide_line_col.line as u32,
-                    wide_line_col.col as u32,
-                ))
-            },
-        }
+        to_proto::position_from_line_col(line_col, &self.line_index, self.position_encoding)
     }
 
     pub fn lsp_range_from_tree_sitter_range(
@@ -261,13 +245,11 @@ impl Document {
         let start_point = self.tree_sitter_point_from_lsp_position(range.start)?;
         let end_point = self.tree_sitter_point_from_lsp_position(range.end)?;
 
-        let start_offset =
-            from_proto::offset(range.start, &self.line_index, self.position_encoding)?;
-        let end_offset = from_proto::offset(range.end, &self.line_index, self.position_encoding)?;
+        let text_range = from_proto::text_range(range, &self.line_index, self.position_encoding)?;
 
         Ok(tree_sitter::Range {
-            start_byte: start_offset.into(),
-            end_byte: end_offset.into(),
+            start_byte: text_range.start().into(),
+            end_byte: text_range.end().into(),
             start_point,
             end_point,
         })
