@@ -332,9 +332,14 @@ impl<R: Read, W: Write> DapServer<R, W> {
     //   from the request). We preserve verified breakpoints as Disabled so we
     //   can restore their state when re-enabled without requiring re-sourcing.
     fn handle_set_breakpoints(&mut self, req: Request, args: SetBreakpointsArguments) {
-        let path = args.source.path.clone().unwrap_or_default();
+        let Some(path) = args.source.path.as_ref() else {
+            // We don't currently have virtual documents managed via source references
+            log::warn!("Missing a path to set breakpoints for.");
+            self.respond(req.error("Missing a path to set breakpoints for"));
+            return;
+        };
 
-        let uri = match Url::from_file_path(&path) {
+        let uri = match Url::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
                 log::error!("Failed to convert path to URI: '{path}'");
@@ -347,7 +352,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // Read document content to compute hash. We currently assume UTF-8 even
         // though the frontend supports files with different encodings (but
         // UTF-8 is the default).
-        let doc_content = match std::fs::read_to_string(&path) {
+        let doc_content = match std::fs::read_to_string(path) {
             Ok(content) => content,
             Err(err) => {
                 // TODO: What do we do with breakpoints in virtual documents?
