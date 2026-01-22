@@ -1,10 +1,11 @@
+use stdext::result::ResultExt;
 use tree_sitter::Node;
 
 use crate::lsp;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::args_find_call_args;
 use crate::treesitter::node_arg_value;
 use crate::treesitter::node_is_call;
-use crate::treesitter::node_text;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::UnaryOperatorType;
@@ -19,10 +20,7 @@ impl Default for TopLevelDeclare {
     }
 }
 
-pub(crate) fn top_level_declare(
-    ast: &tree_sitter::Tree,
-    contents: &ropey::Rope,
-) -> TopLevelDeclare {
+pub(crate) fn top_level_declare(ast: &tree_sitter::Tree, contents: &str) -> TopLevelDeclare {
     let mut decls = TopLevelDeclare::default();
 
     let Some(declare_args) = top_level_declare_args(ast, contents) else {
@@ -41,7 +39,7 @@ pub(crate) fn top_level_declare(
     let Some(enable) = iter.find_map(|n| node_arg_value(&n, "enable", contents)) else {
         return decls;
     };
-    let Some(enable_text) = node_text(&enable, contents) else {
+    let Some(enable_text) = enable.node_as_str(contents).log_err() else {
         return decls;
     };
 
@@ -56,7 +54,7 @@ pub(crate) fn top_level_declare(
 
 fn top_level_declare_args<'tree>(
     ast: &'tree tree_sitter::Tree,
-    contents: &ropey::Rope,
+    contents: &str,
 ) -> Option<Node<'tree>> {
     let root = ast.root_node();
     let mut cursor = root.walk();
@@ -81,17 +79,11 @@ fn top_level_declare_args<'tree>(
     first.child_by_field_name("arguments")
 }
 
-fn declare_ark_args<'tree>(
-    declare_args: Node<'tree>,
-    contents: &ropey::Rope,
-) -> Option<Node<'tree>> {
+fn declare_ark_args<'tree>(declare_args: Node<'tree>, contents: &str) -> Option<Node<'tree>> {
     args_find_call_args(declare_args, "ark", contents)
 }
 
-fn ark_diagnostics_args<'tree>(
-    ark_args: Node<'tree>,
-    contents: &ropey::Rope,
-) -> Option<Node<'tree>> {
+fn ark_diagnostics_args<'tree>(ark_args: Node<'tree>, contents: &str) -> Option<Node<'tree>> {
     args_find_call_args(ark_args, "diagnostics", contents)
 }
 
@@ -102,7 +94,7 @@ mod test {
     use crate::lsp::declarations::declare_ark_args;
     use crate::lsp::declarations::top_level_declare;
     use crate::lsp::declarations::top_level_declare_args;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     #[test]
     fn test_declare_args() {

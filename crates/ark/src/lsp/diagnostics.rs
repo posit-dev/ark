@@ -14,7 +14,6 @@ use anyhow::bail;
 use anyhow::Result;
 use harp::utils::is_symbol_valid;
 use harp::utils::sym_quote_invalid;
-use ropey::Rope;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -25,15 +24,13 @@ use tree_sitter::Range;
 use crate::lsp;
 use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
-use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
+use crate::lsp::document::Document;
 use crate::lsp::indexer;
 use crate::lsp::inputs::library::Library;
 use crate::lsp::inputs::package::Package;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::rope::RopeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
@@ -47,8 +44,8 @@ pub struct DiagnosticsConfig {
 
 #[derive(Clone)]
 pub struct DiagnosticContext<'a> {
-    /// The contents of the source document.
-    pub contents: &'a Rope,
+    /// The document under analysis
+    pub doc: &'a Document,
 
     /// The symbols currently defined and available in the session.
     pub session_symbols: HashSet<String>,
@@ -87,9 +84,9 @@ impl Default for DiagnosticsConfig {
 }
 
 impl<'a> DiagnosticContext<'a> {
-    pub fn new(contents: &'a Rope, root: &'a Option<SourceRoot>, library: &'a Library) -> Self {
+    pub fn new(doc: &'a Document, root: &'a Option<SourceRoot>, library: &'a Library) -> Self {
         Self {
-            contents,
+            doc,
             document_symbols: Vec::new(),
             session_symbols: HashSet::new(),
             workspace_symbols: HashSet::new(),
@@ -153,7 +150,7 @@ pub(crate) fn generate_diagnostics(
         return diagnostics;
     }
 
-    let mut context = DiagnosticContext::new(&doc.contents, &state.root, &state.library);
+    let mut context = DiagnosticContext::new(&doc, &state.root, &state.library);
 
     // Add a 'root' context for the document.
     context.document_symbols.push(HashMap::new());
@@ -369,9 +366,9 @@ fn recurse_for(
     });
 
     if variable.is_identifier() {
-        let name = context.contents.node_slice(&variable)?.to_string();
+        let name = variable.node_as_str(&context.doc.contents)?;
         let range = variable.range();
-        context.add_defined_variable(name.as_str(), range);
+        context.add_defined_variable(name, range);
     }
 
     // Now, scan the body, if it exists
@@ -556,9 +553,9 @@ fn handle_assignment_variable(
         return Ok(());
     }
 
-    let name = context.contents.node_slice(&identifier)?.to_string();
+    let name = identifier.node_as_str(&context.doc.contents)?;
     let range = identifier.range();
-    context.add_defined_variable(name.as_str(), range);
+    context.add_defined_variable(name, range);
 
     Ok(())
 }
@@ -588,7 +585,7 @@ fn handle_assignment_dotty(
         return Ok(());
     };
 
-    let dot = context.contents.node_slice(&dot)?;
+    let dot = dot.node_as_str(&context.doc.contents)?;
     if dot != "." {
         return Ok(());
     };
@@ -612,8 +609,8 @@ fn handle_assignment_dotty(
         // so we don't want to define a variable for `x` there.
         if let Some(name) = child.child_by_field_name("name") {
             let range = name.range();
-            let name = context.contents.node_slice(&name)?.to_string();
-            context.add_defined_variable(name.as_str(), range);
+            let name = name.node_as_str(&context.doc.contents)?;
+            context.add_defined_variable(name, range);
             continue;
         };
 
@@ -624,8 +621,8 @@ fn handle_assignment_dotty(
         // i.e. `.[x, y]` where `value` is just a name that dotty assigns to
         if value.is_identifier() {
             let range = value.range();
-            let name = context.contents.node_slice(&value)?.to_string();
-            context.add_defined_variable(name.as_str(), range);
+            let name = value.node_as_str(&context.doc.contents)?;
+            context.add_defined_variable(name, range);
             continue;
         }
 
@@ -655,7 +652,7 @@ fn node_find_magrittr_pipe<'tree>(
     node: &Node<'tree>,
     context: &DiagnosticContext,
 ) -> anyhow::Result<Option<Node<'tree>>> {
-    if node.is_magrittr_pipe_operator(&context.contents)? {
+    if node.is_magrittr_pipe_operator(&context.doc.contents)? {
         // Found one!
         return Ok(Some(*node));
     }
@@ -692,10 +689,10 @@ fn recurse_namespace(
     });
 
     // Check for a valid package name.
-    let package = context.contents.node_slice(&lhs)?.to_string();
-    if !context.installed_packages.contains(package.as_str()) {
+    let package = lhs.node_as_str(&context.doc.contents)?;
+    if !context.installed_packages.contains(package) {
         let range = lhs.range();
-        let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+        let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
         let message = format!("Package '{}' is not installed.", package);
         let diagnostic = Diagnostic::new_simple(range, message);
         diagnostics.push(diagnostic);
@@ -728,14 +725,10 @@ fn recurse_parameters(
             bail!("Missing a `name` field in a `parameter` node.");
         });
 
-        let symbol = unwrap!(context.contents.node_slice(&name), Err(error) => {
-            bail!("Failed to convert `name` node to a string due to: {error}");
-        });
-        let symbol = symbol.to_string();
-
+        let symbol = name.node_as_str(&context.doc.contents)?;
         let location = name.range();
 
-        context.add_defined_variable(symbol.as_str(), location);
+        context.add_defined_variable(symbol, location);
     }
 
     ().ok()
@@ -847,8 +840,7 @@ fn recurse_call(
     //
     // TODO: Handle certain 'scope-generating' function calls, e.g.
     // things like 'local({ ... })'.
-    let fun = context.contents.node_slice(&callee)?.to_string();
-    let fun = fun.as_str();
+    let fun = callee.node_as_str(&context.doc.contents)?;
 
     match fun {
         "library" | "require" => {
@@ -877,14 +869,14 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     // We'll do better when we have a more capable argument inspection
     // infrastructure.
     if let Some(_) = node
-        .arguments_names_as_string(context.contents)
+        .arguments_names_as_string(&context.doc.contents)
         .flatten()
         .find(|n| n == "character.only")
     {
         return Ok(());
     }
 
-    let package_name = package_node.get_identifier_or_string_text(context.contents)?;
+    let package_name = package_node.get_identifier_or_string_text(&context.doc.contents)?;
     let attach_pos = node.end_position();
 
     let package = insert_package_exports(&package_name, attach_pos, context)?;
@@ -1033,8 +1025,7 @@ fn check_invalid_na_comparison(
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        let contents = context.contents.node_slice(&child)?.to_string();
-        let contents = contents.as_str();
+        let contents = child.node_as_str(&context.doc.contents)?;
 
         if matches!(contents, "NA" | "NaN" | "NULL") {
             let message = match contents {
@@ -1044,7 +1035,7 @@ fn check_invalid_na_comparison(
                 _ => continue,
             };
             let range = child.range();
-            let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+            let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
             let mut diagnostic = Diagnostic::new_simple(range, message.into());
             diagnostic.severity = Some(DiagnosticSeverity::INFORMATION);
             diagnostics.push(diagnostic);
@@ -1078,7 +1069,7 @@ fn check_unexpected_assignment_in_if_conditional(
     }
 
     let range = condition.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
+    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
     let message = "Unexpected '='; use '==' to compare values for equality.";
     let diagnostic = Diagnostic::new_simple(range, message.into());
     diagnostics.push(diagnostic);
@@ -1119,15 +1110,15 @@ fn check_symbol_in_scope(
     }
 
     // Skip if a symbol with this name is in scope.
-    let name = context.contents.node_slice(&node)?.to_string();
-    if context.has_definition(name.as_str(), node.start_position()) {
+    let name = node.node_as_str(&context.doc.contents)?;
+    if context.has_definition(name, node.start_position()) {
         return false.ok();
     }
 
     // No symbol in scope; provide a diagnostic.
     let range = node.range();
-    let range = convert_tree_sitter_range_to_lsp_range(context.contents, range);
-    let identifier = context.contents.node_slice(&node)?.to_string();
+    let range = context.doc.lsp_range_from_tree_sitter_range(range)?;
+    let identifier = node.node_as_str(&context.doc.contents)?;
     let message = format!("No symbol named '{}' in scope.", identifier);
     let mut diagnostic = Diagnostic::new_simple(range, message);
     diagnostic.severity = Some(DiagnosticSeverity::WARNING);
@@ -1146,7 +1137,7 @@ mod tests {
     use tower_lsp::lsp_types::Position;
 
     use crate::interface::console_inputs;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::inputs::library::Library;
     use crate::lsp::inputs::package::Package;
     use crate::lsp::inputs::package_description::Dcf;

@@ -1,14 +1,14 @@
 //
 // references.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::path::Path;
 
 use anyhow::anyhow;
-use ropey::Rope;
+use stdext::result::ResultExt;
 use stdext::unwrap::IntoResult;
 use stdext::*;
 use tower_lsp::lsp_types::Location;
@@ -21,14 +21,12 @@ use tree_sitter::Point;
 use walkdir::WalkDir;
 
 use crate::lsp;
-use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::encoding::convert_position_to_point;
+use crate::lsp::document::Document;
 use crate::lsp::indexer::filter_entry;
 use crate::lsp::state::with_document;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::lsp::traits::url::UrlExt;
 use crate::treesitter::ExtractOperatorType;
 use crate::treesitter::NodeType;
@@ -75,23 +73,29 @@ struct Context {
     symbol: String,
 }
 
-fn add_reference(node: &Node, contents: &Rope, path: &Path, locations: &mut Vec<Location>) {
-    let start = convert_point_to_position(contents, node.start_position());
-    let end = convert_point_to_position(contents, node.end_position());
+fn add_reference(
+    node: &Node,
+    document: &Document,
+    path: &Path,
+    locations: &mut Vec<Location>,
+) -> anyhow::Result<()> {
+    let start = document.lsp_position_from_tree_sitter_point(node.start_position())?;
+    let end = document.lsp_position_from_tree_sitter_point(node.end_position())?;
 
     let location = Location::new(
         Url::from_file_path(path).expect("valid path"),
         Range::new(start, end),
     );
     locations.push(location);
+    Ok(())
 }
 
-fn found_match(node: &Node, contents: &Rope, context: &Context) -> bool {
+fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
     if !node.is_identifier() {
         return false;
     }
 
-    let symbol = contents.node_slice(node).unwrap().to_string();
+    let symbol = node.node_to_string(contents).unwrap();
     if symbol != context.symbol {
         return false;
     }
@@ -106,8 +110,8 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
     // Figure out the identifier we're looking for.
     let context = with_document(path.as_path(), state, |document| {
         let ast = &document.ast;
-        let contents = &document.contents;
-        let point = convert_position_to_point(contents, position);
+        let contents = document.contents.as_str();
+        let point = document.tree_sitter_point_from_lsp_position(position)?;
 
         let mut node = ast
             .root_node()
@@ -140,7 +144,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
         let kind = node_reference_kind(&node);
 
         // return identifier text contents
-        let symbol = document.contents.node_slice(&node)?.to_string();
+        let symbol = node.node_to_string(contents)?;
 
         Ok(Context { kind, symbol })
     });
@@ -165,8 +169,7 @@ fn find_references_in_folder(
 
         lsp::log_info!("found R file {}", path.display());
         let result = with_document(path, state, |document| {
-            find_references_in_document(context, path, document, locations);
-            return Ok(());
+            find_references_in_document(context, path, document, locations)
         });
 
         match result {
@@ -184,18 +187,19 @@ fn find_references_in_document(
     path: &Path,
     document: &Document,
     locations: &mut Vec<Location>,
-) {
+) -> anyhow::Result<()> {
     let ast = &document.ast;
-    let contents = &document.contents;
+    let contents = document.contents.as_str();
 
     let mut cursor = ast.walk();
     cursor.recurse(|node| {
         if found_match(&node, contents, &context) {
-            add_reference(&node, contents, path, locations);
+            add_reference(&node, document, path, locations).log_err();
         }
 
         return true;
     });
+    Ok(())
 }
 
 pub(crate) fn find_references(

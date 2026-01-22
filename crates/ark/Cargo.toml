@@ -12,10 +12,14 @@ rust-version.workspace = true
 
 [dependencies]
 actix-web = "4.4.0"
+aether_lsp_utils.workspace = true
+aether_parser.workspace = true
+aether_syntax.workspace = true
 amalthea = { path = "../amalthea" }
 anyhow = "1.0.80"
 async-trait = "0.1.66"
 base64 = "0.21.0"
+biome_line_index.workspace = true
 bus = "2.3.0"
 cfg-if = "1.0.0"
 crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
@@ -38,15 +42,15 @@ regex = "1.10.0"
 reqwest = { version = "0.12.5", default-features = false, features = ["json"] }
 reqwest-retry = "0.6.1"
 reqwest-middleware = "0.3.3"
-ropey = "1.6.0"
 rust-embed = "8.0.0"
 scraper = "0.15.0"
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"] }
 stdext = { path = "../stdext" }
+streaming-iterator = "0.1.9"
 tokio = { version = "1.26.0", features = ["full"] }
-tower-lsp = "0.19.0"
-tree-sitter = "0.23.0"
+tower-lsp.workspace = true
+tree-sitter = "0.24.7"
 tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "95aff097aa927a66bb357f715b58cde821be8867" }
 uuid = "1.3.0"
 url = "2.4.1"

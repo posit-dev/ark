@@ -8,7 +8,7 @@
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -98,7 +98,6 @@ impl<'a> DocumentContext<'a> {
 mod tests {
     use super::*;
     use crate::fixtures::point_from_cursor;
-    use crate::treesitter::node_text;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;
 
@@ -109,7 +108,10 @@ mod tests {
         let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            node_text(&context.node, &context.document.contents).unwrap(),
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             ""
         );
 
@@ -118,8 +120,28 @@ mod tests {
         let document = Document::new(text.as_str(), None);
         let context = DocumentContext::new(&document, point, None);
         assert_eq!(
-            node_text(&context.node, &context.document.contents).unwrap(),
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             "1"
+        );
+    }
+
+    #[test]
+    fn test_document_context_end_of_identifier() {
+        // Cursor at end of identifier "lib" at position (0, 3)
+        // This reproduced a panic where find_smallest_spanning_node returned None
+        let (text, point) = point_from_cursor("lib@");
+        let document = Document::new(text.as_str(), None);
+        let context = DocumentContext::new(&document, point, None);
+        // The node should be the identifier "lib"
+        assert_eq!(
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
+            "lib"
         );
     }
 
@@ -132,7 +154,10 @@ mod tests {
 
         assert_eq!(context.node.node_type(), NodeType::Program);
         assert_eq!(
-            node_text(&context.node, &context.document.contents).unwrap(),
+            context
+                .node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             "toupper(letters)\n"
         );
 
@@ -141,7 +166,10 @@ mod tests {
             NodeType::Anonymous(String::from(")"))
         );
         assert_eq!(
-            node_text(&context.closest_node, &context.document.contents).unwrap(),
+            context
+                .closest_node
+                .node_as_str(&context.document.contents)
+                .unwrap(),
             ")"
         );
     }

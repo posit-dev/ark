@@ -5,7 +5,6 @@
 //
 //
 
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::sync::LazyLock;
 
@@ -15,7 +14,7 @@ use tower_lsp::lsp_types::FoldingRangeKind;
 
 use super::symbols::parse_comment_as_section;
 use crate::lsp;
-use crate::lsp::documents::Document;
+use crate::lsp::document::Document;
 
 pub fn folding_range(document: &Document) -> anyhow::Result<Vec<FoldingRange>> {
     let mut folding_ranges: Vec<FoldingRange> = Vec::new();
@@ -82,10 +81,7 @@ fn parse_ts_node(
             }
 
             // Nested comment section handling
-            if let Some(comment_line) = document.contents.get_line(start.row) {
-                // O(n) if comment overlaps rope chunks, O(1) otherwise
-                let comment_line: Cow<'_, str> = comment_line.into();
-
+            if let Some(comment_line) = document.get_line(start.row) {
                 if let Err(err) =
                     nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
                 {
@@ -173,7 +169,7 @@ fn comment_range(start_line: usize, end_line: usize) -> FoldingRange {
 }
 
 fn count_leading_whitespaces(document: &Document, line_num: usize) -> usize {
-    let Some(line) = document.contents.get_line(line_num) else {
+    let Some(line) = document.get_line(line_num) else {
         return 0;
     };
 
@@ -365,7 +361,7 @@ fn end_node_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
 
     fn test_folding_range(code: &str) -> Vec<FoldingRange> {
         let doc = Document::new(code, None);

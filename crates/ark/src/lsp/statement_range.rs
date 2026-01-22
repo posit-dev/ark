@@ -1,7 +1,7 @@
 //
 // statement_range.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -9,7 +9,6 @@ use anyhow::bail;
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use ropey::Rope;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::unwrap;
@@ -19,10 +18,9 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
-use crate::lsp::documents::Document;
-use crate::lsp::encoding::convert_point_to_position;
+use crate::lsp::document::Document;
 use crate::lsp::traits::cursor::TreeCursorExt;
-use crate::lsp::traits::rope::RopeExt;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -53,20 +51,22 @@ pub struct StatementRangeResponse {
 static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
 
 pub(crate) fn statement_range(
-    root: tree_sitter::Node,
-    contents: &ropey::Rope,
+    document: &Document,
     point: Point,
 ) -> anyhow::Result<Option<StatementRangeResponse>> {
+    let root = document.ast.root_node();
+    let contents = &document.contents;
+
     // Initial check to see if we are in a roxygen2 comment, in which case we parse a
     // subdocument containing the `@examples` or `@examplesIf` section and locate a
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
     if let Some((range, code)) = find_roxygen_statement_range(&root, contents, point) {
-        return Ok(Some(new_statement_range_response(range, contents, code)));
+        return Ok(Some(new_statement_range_response(range, document, code)?));
     }
 
     if let Some(range) = find_statement_range(&root, point.row) {
-        return Ok(Some(new_statement_range_response(range, contents, None)));
+        return Ok(Some(new_statement_range_response(range, document, None)?));
     };
 
     Ok(None)
@@ -74,25 +74,20 @@ pub(crate) fn statement_range(
 
 fn new_statement_range_response(
     range: tree_sitter::Range,
-    contents: &Rope,
+    document: &Document,
     code: Option<String>,
-) -> StatementRangeResponse {
-    // Tree-sitter `Point`s
-    let start = range.start_point;
-    let end = range.end_point;
-
-    // To LSP `Position`s
-    let start = convert_point_to_position(contents, start);
-    let end = convert_point_to_position(contents, end);
+) -> anyhow::Result<StatementRangeResponse> {
+    // Tree-sitter `Point`s to LSP `Position`s
+    let start = document.lsp_position_from_tree_sitter_point(range.start_point)?;
+    let end = document.lsp_position_from_tree_sitter_point(range.end_point)?;
 
     let range = lsp_types::Range { start, end };
-
-    StatementRangeResponse { range, code }
+    Ok(StatementRangeResponse { range, code })
 }
 
 fn find_roxygen_statement_range(
     root: &Node,
-    contents: &Rope,
+    contents: &str,
     point: Point,
 ) -> Option<(tree_sitter::Range, Option<String>)> {
     // Refuse to look for roxygen comments in the face of parse errors
@@ -129,14 +124,14 @@ fn find_roxygen_statement_range(
     None
 }
 
-fn as_roxygen_comment_text(node: &Node, contents: &Rope) -> Option<String> {
+fn as_roxygen_comment_text(node: &Node, contents: &str) -> Option<String> {
     // Tree sitter doesn't know about the special `#'` marker,
     // but does tell us if we are in a `#` comment
     if !node.is_comment() {
         return None;
     }
 
-    let text = contents.node_slice(node).unwrap().to_string();
+    let text = node.node_to_string(contents).ok()?;
 
     // Does the roxygen2 prefix exist?
     if !RE_ROXYGEN2_COMMENT.is_match(&text) {
@@ -146,7 +141,7 @@ fn as_roxygen_comment_text(node: &Node, contents: &Rope) -> Option<String> {
     Some(text)
 }
 
-fn find_roxygen_examples_section(node: Node, contents: &Rope) -> Option<tree_sitter::Range> {
+fn find_roxygen_examples_section(node: Node, contents: &str) -> Option<tree_sitter::Range> {
     // Check that the `node` we start on is a valid roxygen comment line.
     // We check this `node` specially because the loops below start on the previous/next
     // sibling, and this one would go unchecked.
@@ -250,14 +245,14 @@ fn find_roxygen_examples_section(node: Node, contents: &Rope) -> Option<tree_sit
 fn find_roxygen_examples_range(
     root: &Node,
     range: tree_sitter::Range,
-    contents: &Rope,
+    contents: &str,
     point: Point,
 ) -> Option<(tree_sitter::Range, String)> {
     // Anchor row that we adjust relative to
     let row_adjustment = range.start_point.row;
 
     // Slice out the `@examples` or `@examplesIf` code block (with leading roxygen comments)
-    let Some(slice) = contents.get_byte_slice(range.start_byte..range.end_byte) else {
+    let Some(slice) = contents.get(range.start_byte..range.end_byte) else {
         return None;
     };
 
@@ -293,7 +288,7 @@ fn find_roxygen_examples_range(
     // Slice out code to execute from the subdocument
     let Some(slice) = subdocument
         .contents
-        .get_byte_slice(subdocument_range.start_byte..subdocument_range.end_byte)
+        .get(subdocument_range.start_byte..subdocument_range.end_byte)
     else {
         return None;
     };
@@ -703,12 +698,11 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
 
 #[cfg(test)]
 mod tests {
-    use ropey::Rope;
     use tree_sitter::Parser;
     use tree_sitter::Point;
 
     use crate::fixtures::point_and_offset_from_cursor;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
 
@@ -1720,9 +1714,10 @@ list({
         assert_eq!(find_statement_range(&root, row), None);
     }
 
-    fn get_text(range: tree_sitter::Range, contents: &Rope) -> String {
+    fn get_text(range: tree_sitter::Range, contents: &str) -> String {
         contents
-            .byte_slice(range.start_byte..range.end_byte)
+            .get(range.start_byte..range.end_byte)
+            .unwrap()
             .to_string()
     }
 

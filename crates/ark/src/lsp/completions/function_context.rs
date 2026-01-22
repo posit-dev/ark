@@ -1,18 +1,18 @@
 //
 // function_context.rs
 //
-// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2025-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
+use stdext::result::ResultExt;
+use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Range;
 use tree_sitter::Node;
 
 use crate::lsp::document_context::DocumentContext;
-use crate::lsp::encoding::convert_point_to_position;
-use crate::lsp::encoding::convert_tree_sitter_range_to_lsp_range;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::node_find_parent_call;
-use crate::treesitter::node_text;
 use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -54,25 +54,24 @@ pub(crate) enum ArgumentsStatus {
 }
 
 impl FunctionContext {
-    pub(crate) fn new(document_context: &DocumentContext) -> Self {
+    pub(crate) fn new(document_context: &DocumentContext) -> anyhow::Result<Self> {
         let completion_node = document_context.node;
 
         let Some(effective_function_node) = get_effective_function_node(completion_node) else {
             // We shouldn't ever attempt to instantiate a FunctionContext or
             // function-flavored CompletionItem in this degenerate case, but we
             // return a dummy FunctionContext just to be safe.
-            let node_end = convert_point_to_position(
-                &document_context.document.contents,
-                completion_node.range().end_point,
-            );
+            let node_end = document_context
+                .document
+                .lsp_position_from_tree_sitter_point(completion_node.range().end_point)?;
 
-            return Self {
+            return Ok(Self {
                 name: String::new(),
-                range: tower_lsp::lsp_types::Range::new(node_end, node_end),
+                range: lsp_types::Range::new(node_end, node_end),
                 usage: FunctionRefUsage::Call,
                 arguments_status: ArgumentsStatus::Absent,
                 cursor_is_at_end: true,
-            };
+            });
         };
 
         let usage = determine_function_usage(
@@ -93,7 +92,9 @@ impl FunctionContext {
             cursor.row == node_range.end_point.row && cursor.column == node_range.end_point.column;
 
         let name = match function_name_node {
-            Some(node) => node_text(&node, &document_context.document.contents).unwrap_or_default(),
+            Some(node) => node
+                .node_to_string(&document_context.document.contents)
+                .unwrap_or_default(),
             None => String::new(),
         };
 
@@ -107,26 +108,26 @@ impl FunctionContext {
             "FunctionContext created with name: '{name}', usage: {usage:?}, arguments: {arguments_status:?}, cursor at end: {is_cursor_at_end}"
         );
 
-        Self {
+        Ok(Self {
             name,
             range: match function_name_node {
-                Some(node) => convert_tree_sitter_range_to_lsp_range(
-                    &document_context.document.contents,
-                    node.range(),
-                ),
+                Some(node) => document_context
+                    .document
+                    .lsp_range_from_tree_sitter_range(node.range())?,
                 None => {
                     // Create a zero-width range at the end of the effective_function_node
-                    let node_end = convert_point_to_position(
-                        &document_context.document.contents,
-                        effective_function_node.range().end_point,
-                    );
-                    tower_lsp::lsp_types::Range::new(node_end, node_end)
+                    let node_end = document_context
+                        .document
+                        .lsp_position_from_tree_sitter_point(
+                            effective_function_node.range().end_point,
+                        )?;
+                    lsp_types::Range::new(node_end, node_end)
                 },
             },
             usage,
             arguments_status,
             cursor_is_at_end: is_cursor_at_end,
-        }
+        })
     }
 }
 
@@ -165,7 +166,7 @@ static FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE: &[&str] = &[
     "str",
 ];
 
-fn is_inside_special_function(node: &Node, contents: &ropey::Rope) -> bool {
+fn is_inside_special_function(node: &Node, contents: &str) -> bool {
     let Some(call_node) = node_find_parent_call(node) else {
         return false;
     };
@@ -174,9 +175,12 @@ fn is_inside_special_function(node: &Node, contents: &ropey::Rope) -> bool {
         return false;
     };
 
-    let call_name = node_text(&call_name_node, contents).unwrap_or_default();
+    let call_name = call_name_node
+        .node_as_str(contents)
+        .log_err()
+        .unwrap_or_default();
 
-    FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE.contains(&call_name.as_str())
+    FUNCTIONS_EXPECTING_A_FUNCTION_REFERENCE.contains(&call_name)
 }
 
 /// Checks if the node is inside a help operator context like `?foo` or `method?foo`
@@ -226,7 +230,7 @@ fn determine_arguments_status(function_container_node: &Node) -> ArgumentsStatus
     }
 }
 
-fn determine_function_usage(node: &Node, contents: &ropey::Rope) -> FunctionRefUsage {
+fn determine_function_usage(node: &Node, contents: &str) -> FunctionRefUsage {
     if is_inside_special_function(node, contents) || is_inside_help_operator(node) {
         FunctionRefUsage::Value
     } else {
