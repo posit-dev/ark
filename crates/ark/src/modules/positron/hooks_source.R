@@ -99,7 +99,7 @@ make_ark_source <- function(original_source) {
             readLines(uri, encoding = encoding, warn = FALSE),
             collapse = "\n"
         )
-        annotated <- .ps.Call("ps_annotate_source", uri, text)
+        annotated <- .ps.Call("ps_annotate_source", text, uri)
 
         # If NULL, no breakpoints exist for that URI, fall back
         if (is.null(annotated)) {
