@@ -181,7 +181,14 @@ pub(crate) fn annotate_input(
     // we add the outer line directive, otherwise the coordinates of inner line
     // directives are shifted by 1 line.
     let annotated_code = if let Some(breakpoints) = breakpoints {
-        let root = aether_parser::parse(code, Default::default()).tree();
+        let parse = aether_parser::parse(code, Default::default());
+        if let Some(err) = parse.error() {
+            return Err(anyhow!(
+                "Unexpected parse error in `annotate_input()`: {err}"
+            ));
+        }
+
+        let root = parse.tree();
         let line_index = LineIndex::new(code);
 
         // The line offset is `doc_line = code_line + line_offset`.
