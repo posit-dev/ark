@@ -115,10 +115,10 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 // {
 // #line 1 "file:///file.R"
 // 1
-// base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 2L))
+// base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///file.R", 1L, 2L))
 // #line 2 "file:///file.R"
 // 2
-// base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 2L, 3L))
+// base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///file.R", 2L, 3L))
 // }
 // ```
 //
@@ -295,7 +295,8 @@ pub(crate) fn annotate_source(
 /// - `#line` directives after injected calls to restore sourceref bookkeeping
 struct AnnotationRewriter<'a> {
     uri: &'a Url,
-    /// Breakpoints in document coordinates, will be mutated to mark invalid ones
+    /// Breakpoints in document coordinates, will be mutated to mark invalid ones,
+    /// which is propagated back through the DAP to the frontend
     breakpoints: &'a mut [Breakpoint],
     /// Offset for coordinate conversion: doc_line = code_line + line_offset
     line_offset: i32,
@@ -468,7 +469,7 @@ impl SyntaxRewriter for AnnotationRewriter<'_> {
         // lived in the source. We only rely on these cached source positions
         // when anchoring and invalidating breakpoints, tasks for which we need
         // the _original_ coordinates, not the new ones.
-        if let Some(braced) = RBracedExpressions::cast(node.clone()) {
+        if let Some(braced) = RBracedExpressions::cast_ref(&node) {
             let Some(brace_code_line) = first_token_code_line(&node, self.line_index) else {
                 self.err = Some(anyhow!("Failed to get line for opening brace"));
                 return VisitNodeSignal::Traverse(node);

@@ -1,7 +1,7 @@
 //
 // backend.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -516,7 +516,7 @@ pub fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client, console_notification_tx.clone());
+            let state = GlobalState::new(client, console_notification_tx);
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive

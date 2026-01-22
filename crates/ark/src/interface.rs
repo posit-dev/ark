@@ -1442,9 +1442,9 @@ impl RMain {
                 // Keep the DAP lock while we are updating breakpoints
                 let mut dap_guard = self.debug_dap.lock().unwrap();
                 let uri = loc.as_ref().map(|l| l.uri.clone());
-                let breakpoints = loc
+                let breakpoints = uri
                     .as_ref()
-                    .and_then(|loc| dap_guard.breakpoints.get_mut(&loc.uri))
+                    .and_then(|uri| dap_guard.breakpoints.get_mut(uri))
                     .map(|(_, v)| v.as_mut_slice());
 
                 match PendingInputs::read(&code, loc, breakpoints) {

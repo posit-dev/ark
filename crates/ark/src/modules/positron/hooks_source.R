@@ -5,7 +5,8 @@ initialize_hooks_source <- function() {
     # - The input path is a file that has breakpoints
     # - No other arguments than `echo` (used by Positron) or `local` are provided
     # We opt into a code path where breakpoints are injected and the whole source is
-    # wrapped in `{}` to allow stepping through it.
+    # wrapped in `{}` to allow stepping through it. Note that `echo` has no
+    # effect in the injection code path.
     rebind("base", "source", make_ark_source(base::source), namespace = TRUE)
 }
 

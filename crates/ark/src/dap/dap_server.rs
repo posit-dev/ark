@@ -396,7 +396,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         } else {
             log::trace!("DAP: Document unchanged for {uri}, preserving breakpoint states");
 
-            // Unwrap Safety: `doc_changed` is false, so `existing_breakpoints` is Some
+            // Unwrap Safety: `doc_changed` is false, so `old_breakpoints` is Some
             let (_, old_breakpoints) = old_breakpoints.unwrap();
             // Use original_line for lookup since that's what the frontend sends back
             let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
@@ -471,12 +471,6 @@ impl<R: Read, W: Write> DapServer<R, W> {
             new_breakpoints
         );
 
-        state
-            .breakpoints
-            .insert(uri, (doc_hash, new_breakpoints.clone()));
-
-        drop(state);
-
         let response_breakpoints: Vec<dap::types::Breakpoint> = new_breakpoints
             .iter()
             .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
@@ -494,6 +488,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 }
             })
             .collect();
+
+        state.breakpoints.insert(uri, (doc_hash, new_breakpoints));
+
+        drop(state);
 
         let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
             breakpoints: response_breakpoints,

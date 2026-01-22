@@ -254,7 +254,7 @@ frame_info <- function(
 }
 
 frame_info_from_srcref <- function(
-    source_name,
+    source_name_fallback,
     frame_name,
     srcref,
     environment
@@ -266,6 +266,8 @@ frame_info_from_srcref <- function(
 
     if (is_string(info$file)) {
         source_name <- basename(info$file)
+    } else {
+        source_name <- source_name_fallback
     }
 
     new_frame_info(
@@ -718,7 +720,7 @@ verify_breapoint <- function(uri, id) {
 }
 
 # Injected breakpoint. This receives a `browser()` call in the `expr` argument.
-# The argument if forced if the breakpoint is enabled. Since `expr` is promised
+# The argument is forced if the breakpoint is enabled. Since `expr` is promised
 # in the calling frame environment, that environment is marked by R as being
 # debugged (with `SET_RDEBUG`), allowing to step through it. We're stopped in
 # the wrong frame (`.ark_breakpoint()`'s) but the console automatically steps to
@@ -727,7 +729,7 @@ verify_breapoint <- function(uri, id) {
 #' @export
 .ark_breakpoint <- structure(
     function(expr, uri, id) {
-        # Verify breakpoint right away, if not already the case We normally
+        # Verify breakpoint right away, if not already the case. We normally
         # verify breakpoints after each top-level expression has finished
         # evaluating, but if we stop on a breakpoint right away (e.g. because
         # it's in an `lapply()` rather than an assigned function) we must verify
@@ -761,6 +763,7 @@ verify_breapoint <- function(uri, id) {
 
 # Verify breakpoints in a line range. Called after each top-level expression in
 # `source()`.
+#' @export
 .ark_verify_breakpoints_range <- function(uri, start_line, end_line) {
     .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
 }

@@ -442,8 +442,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
 /// Called after each expression is successfully evaluated in source().
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_verify_breakpoints(srcref: SEXP) -> anyhow::Result<SEXP> {
-    let srcref = RObject::view(srcref);
-    RMain::get().verify_breakpoints(srcref.clone());
+    RMain::get().verify_breakpoints(RObject::view(srcref));
     Ok(libr::R_NilValue)
 }
 
