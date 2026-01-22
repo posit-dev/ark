@@ -1,7 +1,7 @@
 //
 // references.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -95,7 +95,7 @@ fn found_match(node: &Node, contents: &str, context: &Context) -> bool {
         return false;
     }
 
-    let symbol = NodeExt::node_to_string(node, contents).unwrap();
+    let symbol = node.node_to_string(contents).unwrap();
     if symbol != context.symbol {
         return false;
     }

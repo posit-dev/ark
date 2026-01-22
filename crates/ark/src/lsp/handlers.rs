@@ -1,7 +1,7 @@
 //
 // handlers.rs
 //
-// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -39,7 +39,6 @@ use tower_lsp::lsp_types::WorkspaceEdit;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
 use tower_lsp::Client;
 use tracing::Instrument;
-use tree_sitter::Point;
 
 use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
@@ -295,12 +294,11 @@ pub(crate) fn handle_selection_range(
     let document = state.get_document(&params.text_document.uri)?;
 
     // Get tree-sitter points to return selection ranges for
-    let points: anyhow::Result<Vec<Point>> = params
+    let points = params
         .positions
         .into_iter()
         .map(|position| document.tree_sitter_point_from_lsp_position(position))
-        .collect();
-    let points = points?;
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let Some(selections) = selection_range(&document.ast, points) else {
         return Ok(None);

@@ -1,7 +1,7 @@
 //
 // function_context.rs
 //
-// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2025-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -92,7 +92,9 @@ impl FunctionContext {
             cursor.row == node_range.end_point.row && cursor.column == node_range.end_point.column;
 
         let name = match function_name_node {
-            Some(node) => node.node_to_string(&document_context.document.contents)?,
+            Some(node) => node
+                .node_to_string(&document_context.document.contents)
+                .unwrap_or_default(),
             None => String::new(),
         };
 

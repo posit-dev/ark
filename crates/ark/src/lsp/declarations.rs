@@ -1,3 +1,4 @@
+use stdext::result::ResultExt;
 use tree_sitter::Node;
 
 use crate::lsp;
@@ -38,7 +39,7 @@ pub(crate) fn top_level_declare(ast: &tree_sitter::Tree, contents: &str) -> TopL
     let Some(enable) = iter.find_map(|n| node_arg_value(&n, "enable", contents)) else {
         return decls;
     };
-    let Ok(enable_text) = enable.node_as_str(contents) else {
+    let Some(enable_text) = enable.node_as_str(contents).log_err() else {
         return decls;
     };
 

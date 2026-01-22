@@ -1,7 +1,7 @@
 //
 // statement_range.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -131,7 +131,7 @@ fn as_roxygen_comment_text(node: &Node, contents: &str) -> Option<String> {
         return None;
     }
 
-    let text = NodeExt::node_to_string(node, contents).ok()?;
+    let text = node.node_to_string(contents).ok()?;
 
     // Does the roxygen2 prefix exist?
     if !RE_ROXYGEN2_COMMENT.is_match(&text) {
@@ -171,7 +171,7 @@ fn find_roxygen_examples_section(node: Node, contents: &str) -> Option<tree_sitt
     // right after that is the `start` node.
     //
     // Note: Cleaner to use `cursor.goto_prev_sibling()` but that seems to have
-    // a bug in it (it gets the `kind()` right, but `node&()` returns off by
+    // a bug in it (it gets the `kind()` right, but `utf8_text()` returns off by
     // one results).
     while let Some(sibling) = last_sibling.prev_sibling() {
         // Have we exited roxygen comments?

@@ -1,6 +1,6 @@
 // node.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -277,7 +277,7 @@ impl<'tree> NodeExt for Node<'tree> {
         // Note: capture `contents` by reference into the closure so the iterator
         // can outlive the stack frame where this method is called.
         self.arguments_names().map(move |maybe_node| {
-            maybe_node.and_then(|node| match node.node_as_str(&contents) {
+            maybe_node.and_then(|node| match node.node_as_str(contents) {
                 Err(err) => {
                     tracing::error!("Can't convert argument name to text: {err:?}");
                     None

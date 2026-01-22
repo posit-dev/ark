@@ -1,7 +1,7 @@
 //
 // symbols.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -389,7 +389,7 @@ where
 
     for child in node.children(&mut cursor) {
         if let NodeType::Comment = child.node_type() {
-            let comment_text = child.node_to_string(&doc.contents)?;
+            let comment_text = child.node_as_str(&doc.contents)?;
 
             // If we have a section comment, add it to our stack and close any sections if needed
             if let Some((level, title)) = parse_comment_as_section(&comment_text) {
@@ -477,8 +477,8 @@ fn collect_call(
     };
 
     if callee.is_identifier() {
-        let fun_symbol = callee.node_to_string(&doc.contents)?;
-        match fun_symbol.as_str() {
+        let fun_symbol = callee.node_as_str(&doc.contents)?;
+        match fun_symbol {
             "test_that" => return collect_call_test_that(ctx, node, doc, symbols),
             _ => {}, // fallthrough
         }
@@ -594,7 +594,7 @@ fn collect_call_test_that(
         }
     }
 
-    let name = string.node_to_string(&doc.contents)?;
+    let name = string.node_as_str(&doc.contents)?;
     let name = format!("Test: {name}");
 
     let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;

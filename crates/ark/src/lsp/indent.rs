@@ -27,6 +27,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Tex
     let line_count = if text.is_empty() {
         1
     } else {
+        // Note that `lines().count()` doesn't count trailing newlines
         text.chars().filter(|c| *c == '\n').count() + 1
     };
     if line >= line_count {

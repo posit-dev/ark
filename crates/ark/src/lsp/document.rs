@@ -1,7 +1,7 @@
 //
 // document.rs
 //
-// Copyright (C) 2022-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -84,7 +84,11 @@ impl Document {
 
     pub fn new_with_parser(contents: &str, parser: &mut Parser, version: Option<i32>) -> Self {
         let contents = String::from(contents);
+
+        // Legacy Tree-Sitter AST
         let ast = parser.parse(contents.as_str(), None).unwrap();
+
+        // Preferred Rowan AST and accompanying line index
         let parse = aether_parser::parse(&contents, Default::default());
         let line_index = biome_line_index::LineIndex::new(&contents);
 
@@ -136,10 +140,13 @@ impl Document {
         parser: &mut Parser,
         change: &lsp_types::TextDocumentContentChangeEvent,
     ) -> Result<()> {
-        // Extract edit range. Return without doing anything if there wasn't any actual edit.
-        let range = match change.range {
-            Some(r) => r,
-            None => return Ok(()),
+        let Some(range) = change.range else {
+            // No range means full document replacement per LSP spec
+            self.contents = change.text.clone();
+            self.ast = parser.parse(self.contents.as_str(), None).unwrap();
+            self.parse = aether_parser::parse(&self.contents, Default::default());
+            self.line_index = biome_line_index::LineIndex::new(&self.contents);
+            return Ok(());
         };
 
         let tree_sitter::Range {
