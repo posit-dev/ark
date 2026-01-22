@@ -427,7 +427,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
     let uri: String = RObject::view(uri).try_into()?;
     let id: String = RObject::view(id).try_into()?;
 
-    let Ok(uri) = Url::parse(&uri) else {
+    let Some(uri) = Url::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
@@ -459,7 +459,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     let start_line: i32 = RObject::view(start_line).try_into()?;
     let end_line: i32 = RObject::view(end_line).try_into()?;
 
-    let Ok(uri) = Url::parse(&uri) else {
+    let Some(uri) = Url::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
