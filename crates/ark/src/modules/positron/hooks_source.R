@@ -1,11 +1,11 @@
-# Hook for `source()` to support breakpoints in sourced files.
-#
-# When:
-# - The input path is a file that has breakpoints
-# - No other arguments than `echo` (used by Positron) or `local` are provided
-# We opt into a code path where breakpoints are injected and the whole source is
-# wrapped in `{}` to allow stepping through it.
-register_source_hook <- function() {
+initialize_hooks_source <- function() {
+    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+
+    # When:
+    # - The input path is a file that has breakpoints
+    # - No other arguments than `echo` (used by Positron) or `local` are provided
+    # We opt into a code path where breakpoints are injected and the whole source is
+    # wrapped in `{}` to allow stepping through it.
     rebind("base", "source", make_ark_source(base::source), namespace = TRUE)
 }
 

@@ -173,4 +173,5 @@ if (!exists("the", inherits = FALSE)) {
 initialize <- function() {
     initialize_debug()
     initialize_hooks()
+    initialize_hooks_source()
 }
