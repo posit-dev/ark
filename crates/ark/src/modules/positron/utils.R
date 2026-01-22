@@ -182,6 +182,29 @@ system_path <- function(pkg) {
     ""
 }
 
+# Convert a file path to a file:// URI
+path_to_file_uri <- function(path) {
+    # `winslash` takes care of Windows backslashes
+    path <- tryCatch(
+        normalizePath(path, winslash = "/", mustWork = TRUE),
+        error = function(e) NULL
+    )
+    if (is.null(path)) {
+        return(NULL)
+    }
+
+    # On Windows, paths like "C:/foo" need to become "file:///C:/foo"
+    # On Unix, paths like "/foo" need to become "file:///foo"
+
+    # Detect Windows by drive letter pattern (e.g. "C:")
+    if (grepl("^[A-Za-z]:", path)) {
+        paste0("file:///", path)
+    } else {
+        paste0("file://", path)
+    }
+}
+
+
 # `NULL` if successful, otherwise an error condition
 try_load_namespace <- function(package) {
     tryCatch(
@@ -218,4 +241,8 @@ log_warning <- function(msg) {
 log_error <- function(msg) {
     stopifnot(is_string(msg))
     .Call("ark_log_error", msg)
+}
+
+paste_line <- function(x) {
+    paste0(x, collapse = "\n")
 }

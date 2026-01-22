@@ -1,7 +1,7 @@
 //
 // interface.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -95,13 +95,14 @@ use serde_json::json;
 use stdext::result::ResultExt;
 use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
+use url::Url;
 use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
+use crate::dap::dap::Breakpoint;
 use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
-use crate::errors;
 use crate::errors::stack_overflow_occurred;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
@@ -155,8 +156,21 @@ pub enum SessionMode {
 #[derive(Clone, Debug)]
 pub enum DebugCallText {
     None,
-    Capturing(String),
-    Finalized(String),
+    Capturing(String, DebugCallTextKind),
+    Finalized(String, DebugCallTextKind),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum DebugCallTextKind {
+    Debug,
+    DebugAt,
+}
+
+/// Notifications from other components (e.g., LSP) to the Console
+#[derive(Debug)]
+pub enum ConsoleNotification {
+    /// Notification that a document has changed, requiring breakpoint invalidation.
+    DidChangeDocument(Url),
 }
 
 // --- Globals ---
@@ -284,7 +298,7 @@ pub struct RMain {
     pub(crate) debug_session_index: u32,
 
     /// The current frame `id`. Unique across all frames within a single debug session.
-    /// Reset after `stop_debug()`, not between debug steps.
+    /// Reset after `debug_stop()`, not between debug steps.
     pub(crate) debug_current_frame_id: i64,
 
     /// Tracks how many nested `r_read_console()` calls are on the stack.
@@ -337,16 +351,23 @@ impl PendingInputs {
     pub(crate) fn read(
         code: &str,
         location: Option<CodeLocation>,
+        breakpoints: Option<&mut [Breakpoint]>,
     ) -> anyhow::Result<ParseResult<PendingInputs>> {
-        let mut _srcfile = None;
-
         let input = if let Some(location) = location {
-            let annotated_code = annotate_input(code, location);
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(annotated_code.into()));
-            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+            match annotate_input(code, location, breakpoints) {
+                Ok(annotated_code) => {
+                    log::trace!("Annotated code: \n```\n{annotated_code}\n```");
+                    harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(
+                        annotated_code.into(),
+                    ))
+                },
+                Err(err) => {
+                    log::warn!("{err:?}");
+                    harp::ParseInput::Text(code)
+                },
+            }
         } else if harp::get_option_bool("keep.source") {
-            _srcfile = Some(SrcFile::new_virtual_empty_filename(code.into()));
-            harp::ParseInput::SrcFile(&_srcfile.unwrap())
+            harp::ParseInput::SrcFile(&SrcFile::new_virtual_empty_filename(code.into()))
         } else {
             harp::ParseInput::Text(code)
         };
@@ -517,6 +538,7 @@ impl RMain {
         session_mode: SessionMode,
         default_repos: DefaultRepos,
         graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
+        console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
         // Must happen before doing anything that checks `RMain::on_main_thread()`,
@@ -629,12 +651,6 @@ impl RMain {
                 },
             }
 
-            // Register all hooks once all modules have been imported
-            let hook_result = RFunction::from("register_hooks").call_in(ARK_ENVS.positron_ns);
-            if let Err(err) = hook_result {
-                log::error!("Error registering some hooks: {err:?}");
-            }
-
             // Populate srcrefs for namespaces already loaded in the session.
             // Namespaces of future loaded packages will be populated on load.
             // (after r_task initialization)
@@ -643,9 +659,6 @@ impl RMain {
                     log::error!("Can't populate srcrefs for loaded packages: {err:?}");
                 }
             }
-
-            // Set up the global error handler (after support function initialization)
-            errors::initialize();
 
             // Set default repositories
             if let Err(err) = apply_default_repos(default_repos) {
@@ -663,6 +676,18 @@ impl RMain {
             "R has started and ark handlers have been registered, completing initialization."
         );
         Self::complete_initialization(main.banner.take(), kernel_init_tx);
+
+        // Spawn handler loop for async messages from other components (e.g., LSP).
+        // Note that we do it after init is complete to avoid deadlocking
+        // integration tests by spawning an async task. The deadlock is caused
+        // by the `block_on()` behaviour in
+        // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
+        r_task::spawn_interrupt({
+            let dap_clone = main.debug_dap.clone();
+            || async move {
+                RMain::process_console_notifications(console_notification_rx, dap_clone).await
+            }
+        });
 
         // Initialize the GD context on this thread.
         // Note that we do it after init is complete to avoid deadlocking
@@ -888,9 +913,29 @@ impl RMain {
     /// Get the current execution context if an active request exists.
     /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
     pub fn get_execution_context(&self) -> Option<(String, String)> {
-        self.active_request
-            .as_ref()
-            .map(|req| (req.originator.header.msg_id.clone(), req.request.code.clone()))
+        self.active_request.as_ref().map(|req| {
+            (
+                req.originator.header.msg_id.clone(),
+                req.request.code.clone(),
+            )
+        })
+    }
+
+    // Async messages for the Console. Processed at interrupt time.
+    async fn process_console_notifications(
+        mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
+        dap: Arc<Mutex<Dap>>,
+    ) {
+        loop {
+            while let Some(notification) = console_notification_rx.recv().await {
+                match notification {
+                    ConsoleNotification::DidChangeDocument(uri) => {
+                        let mut dap = dap.lock().unwrap();
+                        dap.did_change_document(&uri);
+                    },
+                }
+            }
+        }
     }
 
     fn init_execute_request(&mut self, req: &ExecuteRequest) -> (ConsoleInput, u32) {
@@ -962,9 +1007,10 @@ impl RMain {
             // from the last expression we evaluated
             self.debug_is_debugging = true;
             self.debug_start(self.debug_preserve_focus);
-        } else if self.debug_is_debugging {
-            self.debug_is_debugging = false;
-            self.debug_stop();
+
+            // Note that for simplicity this state is reset on exit via the
+            // cleanups registered in `r_read_console()`. Ideally we'd clean
+            // from here for symmetry.
         }
 
         if let Some(exception) = self.take_exception() {
@@ -998,6 +1044,48 @@ impl RMain {
             // fall through to event loop
             let result = self.take_result();
             self.handle_active_request(&info, ConsoleValue::Success(result));
+
+            // Reset debug flag on the global environment. This is a workaround
+            // for when a breakpoint was entered at top-level, in a `{}` block.
+            // In that case `browser()` marks the global environment as being
+            // debugged here: https://github.com/r-devel/r-svn/blob/476ffd4c/src/main/main.c#L1492-L1494.
+            // Only do it when the call stack is empty, as removing the flag
+            // prevents normal stepping with `source()`.
+            if harp::r_n_frame().unwrap_or(0) == 0 {
+                unsafe { libr::SET_RDEBUG(libr::R_GlobalEnv, 0) };
+            }
+        }
+
+        // If debugger is active, to prevent injected expressions from
+        // interfering with debug-stepping, we might need to automatically step
+        // over to the next statement by returning `n` to R. Two cases:
+        // - We've just stopped due to an injected breakpoint. In this case
+        //   we're in the `.ark_breakpoint()` function and can look at the current
+        //   `sys.function()` to detect this.
+        // - We've just stepped to another injected breakpoint. In this case we
+        //   look whether our sentinel `.ark_auto_step()` was emitted by R as part
+        //   of the `Debug at` output.
+        if self.debug_is_debugging {
+            // Did we just step onto an injected call (breakpoint or verify)?
+            let at_auto_step = matches!(
+                &self.debug_call_text,
+                DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
+                    if text.trim_start().starts_with("base::.ark_auto_step")
+            );
+
+            // Are we stopped by an injected breakpoint
+            let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
+
+            if in_injected_breakpoint || at_auto_step {
+                let kind = if in_injected_breakpoint { "in" } else { "at" };
+                log::trace!("Auto-step expression reached ({kind}), moving to next expression");
+
+                self.debug_preserve_focus = false;
+                self.debug_send_dap(DapBackendEvent::Continued);
+
+                Self::on_console_input(buf, buflen, String::from("n")).unwrap();
+                return ConsoleResult::NewInput;
+            }
         }
 
         // In the future we'll also send browser information, see
@@ -1300,7 +1388,7 @@ impl RMain {
 
             // Let frontend know the last request is complete. This turns us
             // back to Idle.
-            Self::reply_execute_request(&self.iopub_tx, req, &info, value);
+            Self::reply_execute_request(&self.iopub_tx, req, value);
         } else {
             log::info!("No active request to handle, discarding: {value:?}");
         }
@@ -1359,19 +1447,37 @@ impl RMain {
         match input {
             ConsoleInput::Input(code, loc) => {
                 // Parse input into pending expressions
-                match PendingInputs::read(&code, loc) {
+
+                // Keep the DAP lock while we are updating breakpoints
+                let mut dap_guard = self.debug_dap.lock().unwrap();
+                let uri = loc.as_ref().map(|l| l.uri.clone());
+                let breakpoints = uri
+                    .as_ref()
+                    .and_then(|uri| dap_guard.breakpoints.get_mut(uri))
+                    .map(|(_, v)| v.as_mut_slice());
+
+                match PendingInputs::read(&code, loc, breakpoints) {
                     Ok(ParseResult::Success(inputs)) => {
                         self.pending_inputs = inputs;
                     },
                     Ok(ParseResult::SyntaxError(message)) => {
-                        return Some(ConsoleResult::Error(message))
+                        return Some(ConsoleResult::Error(message));
                     },
                     Err(err) => {
                         return Some(ConsoleResult::Error(format!(
                             "Error while parsing input: {err:?}"
-                        )))
+                        )));
                     },
                 }
+
+                // Notify frontend about any breakpoints marked invalid during annotation.
+                // Remove disabled breakpoints.
+                if let Some(uri) = &uri {
+                    dap_guard.notify_invalid_breakpoints(uri);
+                    dap_guard.remove_disabled_breakpoints(uri);
+                }
+
+                drop(dap_guard);
 
                 // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
@@ -1929,12 +2035,9 @@ impl RMain {
     fn reply_execute_request(
         iopub_tx: &Sender<IOPubMessage>,
         req: ActiveReadConsoleRequest,
-        prompt_info: &PromptInfo,
         value: ConsoleValue,
     ) {
-        let prompt = &prompt_info.input_prompt;
-
-        log::trace!("Got R prompt '{}', completing execution", prompt);
+        log::trace!("Completing execution after receiving prompt");
 
         let exec_count = req.exec_count;
 
@@ -2527,6 +2630,18 @@ pub extern "C-unwind" fn r_read_console(
 
             // Restore current frame
             main.read_console_frame.replace(old_current_frame);
+
+            // Always stop debug session when yielding back to R. This prevents
+            // the debug toolbar from lingering in situations like:
+            //
+            // ```r
+            // { local(browser()); Sys.sleep(10) }
+            // ```
+            //
+            // For a more practical example see Shiny app example in
+            // https://github.com/rstudio/rstudio/pull/14848
+            main.debug_is_debugging = false;
+            main.debug_stop();
         },
     )
 }
@@ -2575,6 +2690,10 @@ fn r_read_console_impl(
                     RMain::on_console_input(buf, buflen, String::from(" ")).unwrap();
                     main.read_console_nested_return.set(false);
                 }
+
+                // We verify breakpoints _after_ evaluation is complete. An
+                // error will prevent verification.
+                main.verify_breakpoints(RObject::from(srcref));
 
                 libr::Rf_unprotect(2);
                 return 1;

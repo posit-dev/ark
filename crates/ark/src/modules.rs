@@ -17,6 +17,7 @@ use libr::Rf_ScalarLogical;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
+use stdext::result::ResultExt;
 
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
@@ -141,6 +142,21 @@ pub fn initialize() -> anyhow::Result<RObject> {
             log::error!("Can't find ark R modules from sources");
         }
     }
+
+    // Register all hooks once all modules have been imported
+    RFunction::from("register_hooks")
+        .call_in(namespace.sexp)
+        .log_err();
+
+    // Finish initialization of modules
+    RFunction::from("initialize")
+        .call_in(namespace.sexp)
+        .log_err();
+
+    // Do this separately with a bare eval because `errors_initialize()` should
+    // be called without any condition handlers on the stack
+    let init = RFunction::from("initialize_errors");
+    unsafe { libr::Rf_eval(init.call.build().sexp, namespace.sexp) };
 
     return Ok(namespace);
 }

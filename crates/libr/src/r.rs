@@ -274,6 +274,8 @@ functions::generate! {
 
     pub fn RDEBUG(x: SEXP) -> std::ffi::c_int;
 
+    pub fn SET_RDEBUG(x: SEXP, i: std::ffi::c_int);
+
     pub fn REAL(x: SEXP) -> *mut f64;
 
     pub fn REAL_ELT(x: SEXP, i: R_xlen_t) -> f64;

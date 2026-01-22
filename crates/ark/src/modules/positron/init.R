@@ -166,3 +166,12 @@ if (!exists("the", inherits = FALSE)) {
 
     the$cli_version <- NULL
 }
+
+
+# `initialize_errors()` is called separately in an unsafe context because it
+# doesn't support being called with condition handlers on the stack
+initialize <- function() {
+    initialize_debug()
+    initialize_hooks()
+    initialize_hooks_source()
+}

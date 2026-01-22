@@ -1,7 +1,7 @@
 //
 // dap_server.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -30,7 +30,10 @@ use dap::server::ServerOutput;
 use dap::types::*;
 use stdext::result::ResultExt;
 use stdext::spawn;
+use url::Url;
 
+use super::dap::Breakpoint;
+use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::console_debug::FrameInfo;
@@ -172,6 +175,19 @@ fn listen_dap_events<W: Write>(
                     DapBackendEvent::Terminated => {
                         Event::Terminated(None)
                     },
+
+                    DapBackendEvent::BreakpointState { id, line, verified, message } => {
+                        Event::Breakpoint(BreakpointEventBody {
+                            reason: BreakpointEventReason::Changed,
+                            breakpoint: dap::types::Breakpoint {
+                                id: Some(id),
+                                line: Some(Breakpoint::to_dap_line(line)),
+                                verified,
+                                message,
+                                ..Default::default()
+                            },
+                        })
+                    },
                 };
 
                 let mut output = output.lock().unwrap();
@@ -217,7 +233,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Some(req) => req,
             None => return false,
         };
-        log::trace!("DAP: Got request: {:?}", req);
+        log::trace!("DAP: Got request: {:#?}", req);
 
         let cmd = req.command.clone();
 
@@ -236,6 +252,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
             },
             Command::Threads => {
                 self.handle_threads(req);
+            },
+            Command::SetBreakpoints(args) => {
+                self.handle_set_breakpoints(req, args);
             },
             Command::SetExceptionBreakpoints(args) => {
                 self.handle_set_exception_breakpoints(req, args);
@@ -297,19 +316,198 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.send_event(Event::Initialized);
     }
 
+    // Handle SetBreakpoints requests from the frontend.
+    //
+    // Breakpoint state survives DAP server disconnections via document hashing.
+    // Disconnections happen when the user uses the disconnect command (the
+    // frontend automatically reconnects) or when the console session goes to
+    // the background (the LSP is also disabled, so we don't receive document
+    // change notifications). When we come back online, we compare the document
+    // content against our stored hash to detect if breakpoints are now stale.
+    //
+    // Key implementation details:
+    // - We use `original_line` for lookup since the frontend doesn't know about
+    //   our line adjustments and always sends back the original line numbers.
+    // - When a user unchecks a breakpoint, it appears as a deletion (omitted
+    //   from the request). We preserve verified breakpoints as Disabled so we
+    //   can restore their state when re-enabled without requiring re-sourcing.
+    fn handle_set_breakpoints(&mut self, req: Request, args: SetBreakpointsArguments) {
+        let Some(path) = args.source.path.as_ref() else {
+            // We don't currently have virtual documents managed via source references
+            log::warn!("Missing a path to set breakpoints for.");
+            self.respond(req.error("Missing a path to set breakpoints for"));
+            return;
+        };
+
+        let uri = match Url::from_file_path(path) {
+            Ok(uri) => uri,
+            Err(()) => {
+                log::error!("Failed to convert path to URI: '{path}'");
+                let rsp = req.error(&format!("Invalid path: {path}"));
+                self.respond(rsp);
+                return;
+            },
+        };
+
+        // Read document content to compute hash. We currently assume UTF-8 even
+        // though the frontend supports files with different encodings (but
+        // UTF-8 is the default).
+        let doc_content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(err) => {
+                // TODO: What do we do with breakpoints in virtual documents?
+                log::error!("Failed to read file '{path}': {err}");
+                let rsp = req.error(&format!("Failed to read file: {path}"));
+                self.respond(rsp);
+                return;
+            },
+        };
+
+        let args_breakpoints = args.breakpoints.unwrap_or_default();
+
+        let mut state = self.state.lock().unwrap();
+        let old_breakpoints = state.breakpoints.get(&uri).cloned();
+
+        // Breakpoints are associated with this hash. If the document has
+        // changed after a reconnection, the breakpoints are no longer valid.
+        let doc_hash = blake3::hash(doc_content.as_bytes());
+        let doc_changed = match &old_breakpoints {
+            Some((existing_hash, _)) => existing_hash != &doc_hash,
+            None => true,
+        };
+
+        let new_breakpoints = if doc_changed {
+            log::trace!("DAP: Document changed for {uri}, discarding old breakpoints");
+
+            // Replace all existing breakpoints by new, unverified ones
+            args_breakpoints
+                .iter()
+                .map(|bp| {
+                    let line = Breakpoint::from_dap_line(bp.line);
+                    Breakpoint {
+                        id: state.next_breakpoint_id(),
+                        line,
+                        original_line: line,
+                        state: BreakpointState::Unverified,
+                        injected: false,
+                    }
+                })
+                .collect()
+        } else {
+            log::trace!("DAP: Document unchanged for {uri}, preserving breakpoint states");
+
+            // Unwrap Safety: `doc_changed` is false, so `old_breakpoints` is Some
+            let (_, old_breakpoints) = old_breakpoints.unwrap();
+            // Use original_line for lookup since that's what the frontend sends back
+            let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
+                .into_iter()
+                .map(|bp| (bp.original_line, bp))
+                .collect();
+
+            let mut breakpoints: Vec<Breakpoint> = Vec::new();
+
+            for bp in &args_breakpoints {
+                let line = Breakpoint::from_dap_line(bp.line);
+
+                if let Some(old_bp) = old_by_line.remove(&line) {
+                    // Breakpoint already exists at this line
+                    let (new_state, injected) = match old_bp.state {
+                        // This breakpoint used to be verified, was disabled, and is now back
+                        // online. Restore to Verified immediately.
+                        BreakpointState::Disabled => (BreakpointState::Verified, old_bp.injected),
+                        // Invalid breakpoints are reset to Unverified so they can be
+                        // re-validated on next source.
+                        BreakpointState::Invalid(_) => (BreakpointState::Unverified, false),
+                        // We preserve other states (verified or unverified)
+                        other => (other, old_bp.injected),
+                    };
+
+                    breakpoints.push(Breakpoint {
+                        id: old_bp.id,
+                        // Preserve the actual (anchored) line from previous verification
+                        line: old_bp.line,
+                        original_line: line,
+                        state: new_state,
+                        injected,
+                    });
+                } else {
+                    // New breakpoints always start as Unverified, until they get evaluated once
+                    breakpoints.push(Breakpoint {
+                        id: state.next_breakpoint_id(),
+                        line,
+                        original_line: line,
+                        state: BreakpointState::Unverified,
+                        injected: false,
+                    });
+                }
+            }
+
+            // Remaining verified breakpoints need to be preserved in memory
+            // when deleted. That's because when user unchecks a breakpoint on
+            // the frontend, the breakpoint is actually deleted (i.e. omitted)
+            // by a `SetBreakpoints()` request. When the user reenables the
+            // breakpoint, we have to restore the verification state.
+            // Unverified/Invalid breakpoints on the other hand are simply
+            // dropped since there's no verified state that needs to be
+            // preserved.
+            for (original_line, old_bp) in old_by_line {
+                if matches!(old_bp.state, BreakpointState::Verified) {
+                    breakpoints.push(Breakpoint {
+                        id: old_bp.id,
+                        line: old_bp.line,
+                        original_line,
+                        state: BreakpointState::Disabled,
+                        injected: true,
+                    });
+                }
+            }
+
+            breakpoints
+        };
+
+        log::trace!(
+            "DAP: URI {uri} now has {} breakpoints:\n{:#?}",
+            new_breakpoints.len(),
+            new_breakpoints
+        );
+
+        let response_breakpoints: Vec<dap::types::Breakpoint> = new_breakpoints
+            .iter()
+            .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
+            .map(|bp| {
+                let message = match &bp.state {
+                    BreakpointState::Invalid(reason) => Some(reason.message().to_string()),
+                    _ => None,
+                };
+                dap::types::Breakpoint {
+                    id: Some(bp.id),
+                    verified: matches!(bp.state, BreakpointState::Verified),
+                    line: Some(Breakpoint::to_dap_line(bp.line)),
+                    message,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        state.breakpoints.insert(uri, (doc_hash, new_breakpoints));
+
+        drop(state);
+
+        let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+            breakpoints: response_breakpoints,
+        }));
+
+        self.respond(rsp);
+    }
+
     fn handle_attach(&mut self, req: Request, _args: AttachRequestArguments) {
         let rsp = req.success(ResponseBody::Attach);
         self.respond(rsp);
 
-        self.send_event(Event::Stopped(StoppedEventBody {
-            reason: StoppedEventReason::Step,
-            description: Some(String::from("Execution paused")),
-            thread_id: Some(THREAD_ID),
-            preserve_focus_hint: Some(false),
-            text: None,
-            all_threads_stopped: None,
-            hit_breakpoint_ids: None,
-        }))
+        self.send_event(Event::Thread(ThreadEventBody {
+            reason: ThreadEventReason::Started,
+            thread_id: THREAD_ID,
+        }));
     }
 
     fn handle_disconnect(&mut self, req: Request, _args: DisconnectArguments) {
@@ -341,7 +539,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let rsp = req.success(ResponseBody::Threads(ThreadsResponse {
             threads: vec![Thread {
                 id: THREAD_ID,
-                name: String::from("Main thread"),
+                name: String::from("R console"),
             }],
         }));
         self.respond(rsp);

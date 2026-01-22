@@ -1,7 +1,7 @@
 //
 // backend.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -21,6 +21,7 @@ use stdext::result::ResultExt;
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
+use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 use tower_lsp::jsonrpc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::request::GotoImplementationParams;
@@ -34,6 +35,7 @@ use tower_lsp::LspService;
 use tower_lsp::Server;
 
 use super::main_loop::LSP_HAS_CRASHED;
+use crate::interface::ConsoleNotification;
 use crate::interface::RMain;
 use crate::lsp::handlers::VirtualDocumentParams;
 use crate::lsp::handlers::VirtualDocumentResponse;
@@ -479,6 +481,7 @@ pub fn start_lsp(
     runtime: Arc<Runtime>,
     server_start: ServerStartMessage,
     server_started_tx: Sender<ServerStartedMessage>,
+    console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 ) {
     runtime.block_on(async {
         let ip_address = server_start.ip_address();
@@ -513,7 +516,7 @@ pub fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client);
+            let state = GlobalState::new(client, console_notification_tx);
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive
