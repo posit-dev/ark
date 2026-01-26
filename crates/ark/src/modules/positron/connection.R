@@ -21,8 +21,7 @@
     .ps.Call("ps_connection_updated", id)
 }
 
-#' @export
-.ps.connection_focus <- function(id) {
+connection_focus <- function(id) {
     .ps.Call("ps_connection_focus", id)
 }
 
@@ -50,7 +49,7 @@
         for (id in ls(envir = connections)) {
             con <- get(id, envir = connections)
             if (identical(con$host, host) && identical(con$type, type)) {
-                .ps.connection_focus(id)
+                connection_focus(id)
                 return(invisible(id))
             }
         }
@@ -73,7 +72,7 @@
             # until the end of the connection.
             objectTypes = connection_flatten_object_types(listObjectTypes())
         )
-        .ps.connection_focus(id)
+        connection_focus(id)
         invisible(id)
     }
 
@@ -178,7 +177,7 @@ connection_flatten_object_types <- function(object_tree) {
 }
 
 # Helper to reconstruct ODBC connection code from connection info
-.ps.odbc_connection_code <- function(info) {
+odbc_connection_code <- function(info) {
     # Try to reconstruct a reasonable connection string
     # Priority: DSN > connection string parameters
     if (!is.null(info$sourcename) && nzchar(info$sourcename)) {
@@ -357,7 +356,7 @@ setHook(
             function(x) {
                 # Reconstruct the connection code from the connection info
                 info <- x@info
-                code <- .ps.odbc_connection_code(info)
+                code <- odbc_connection_code(info)
 
                 # Use odbc's built-in connection observer integration
                 odbc:::on_connection_opened(x, code = code)
@@ -397,7 +396,7 @@ setHook(
             "BigQueryConnection",
             function(x) {
                 # Reconstruct the connection code
-                code <- .ps.bigrquery_connection_code(x)
+                code <- bigrquery_connection_code(x)
 
                 # Use bigrquery's built-in connection observer integration
                 bigrquery:::on_connection_opened(x, code = code)
@@ -408,7 +407,7 @@ setHook(
 )
 
 # Helper to reconstruct BigQuery connection code
-.ps.bigrquery_connection_code <- function(con) {
+bigrquery_connection_code <- function(con) {
     project <- con@project
     dataset <- con@dataset
     billing <- con@billing

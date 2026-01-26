@@ -615,7 +615,7 @@ fn has_viewer(value: SEXP) -> bool {
 /// This dispatches to the `ark_positron_variable_view` method.
 /// Returns Ok(true) if a custom view was handled, Ok(false) if no method found,
 /// or Err if the method failed.
-pub fn try_custom_view(value: SEXP) -> anyhow::Result<bool> {
+pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
     match ArkGenerics::VariableView.try_dispatch::<bool>(value, vec![]) {
         Err(err) => {
             return Err(anyhow!("Error in custom view: {err}"));
