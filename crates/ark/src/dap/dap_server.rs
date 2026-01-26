@@ -345,8 +345,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let uri = match Url::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
-                log::error!("Failed to convert path to URI: '{path}'");
-                let rsp = req.error(&format!("Invalid path: {path}"));
+                log::warn!("Can't set breakpoints for non-file path: '{path}'");
+                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints: vec![],
+                }));
                 self.respond(rsp);
                 return;
             },
