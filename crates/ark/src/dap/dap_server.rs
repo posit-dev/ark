@@ -342,6 +342,21 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let uri = match Url::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
+                // Non-file URIs (e.g., "untitled:Untitled-1") currently can't
+                // have breakpoints, return empty success
+                if let Ok(parsed) = Url::parse(path) {
+                    log::trace!(
+                        "DAP: Ignoring breakpoints for non-file URI scheme '{}': '{path}'",
+                        parsed.scheme()
+                    );
+                    let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                        breakpoints: vec![],
+                    }));
+                    self.respond(rsp);
+                    return;
+                }
+
+                // Not a URI, return an error
                 log::error!("Failed to convert path to URI: '{path}'");
                 let rsp = req.error(&format!("Invalid path: {path}"));
                 self.respond(rsp);
