@@ -358,3 +358,22 @@ pub unsafe extern "C-unwind" fn ps_connection_updated(id: SEXP) -> Result<SEXP, 
 
     Ok(R_NilValue)
 }
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_connection_focus(id: SEXP) -> Result<SEXP, anyhow::Error> {
+    if !RMain::is_initialized() {
+        return Ok(R_NilValue);
+    }
+
+    let main = RMain::get();
+    let comm_id: String = RObject::view(id).to::<String>()?;
+
+    let event = ConnectionsFrontendEvent::Focus;
+
+    main.get_comm_manager_tx().send(CommManagerEvent::Message(
+        comm_id,
+        CommMsg::Data(serde_json::to_value(event)?),
+    ))?;
+
+    Ok(R_NilValue)
+}

@@ -45,6 +45,7 @@ use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
 use crate::thread::RThreadSafe;
+use crate::variables::variable::try_dispatch_view;
 use crate::variables::variable::PositronVariable;
 use crate::view::view;
 
@@ -380,6 +381,11 @@ impl RVariables {
         r_task(|| {
             let env = self.env.get().clone();
             let obj = PositronVariable::resolve_data_object(env.clone(), &path)?;
+
+            // Try custom view method first (e.g., for connections)
+            if try_dispatch_view(obj.sexp).map_err(harp::Error::Anyhow)? {
+                return Ok(None);
+            }
 
             if r_is_function(obj.sexp) {
                 harp::as_result(view(&obj, &path, &env))?;

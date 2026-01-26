@@ -594,11 +594,7 @@ fn has_viewer(value: SEXP) -> bool {
         return true;
     }
 
-    if !(r_is_data_frame(value) || r_is_matrix(value)) {
-        return false;
-    }
-
-    // We have a data.frame or matrix. Dispatch to the has_viewer method
+    // Dispatch to the has_viewer method for any object
     match ArkGenerics::VariableHasViewer.try_dispatch::<bool>(value, vec![]) {
         Err(err) => {
             log::error!(
@@ -608,10 +604,30 @@ fn has_viewer(value: SEXP) -> bool {
             // The viewer method exists, but failed
             false
         },
-        // A matching viewer method was not found
-        Ok(None) => true,
         // The viewer method was found, use its result
         Ok(Some(val)) => val,
+        // No method found, fall back to default logic for data frames/matrices
+        Ok(None) => r_is_data_frame(value) || r_is_matrix(value),
+    }
+}
+
+/// Try to view an object using a custom view method.
+/// This dispatches to the `ark_positron_variable_view` method.
+/// Returns Ok(true) if a custom view was handled, Ok(false) if no method found,
+/// or Err if the method failed.
+pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
+    match ArkGenerics::VariableView.try_dispatch::<bool>(value, vec![]) {
+        Err(err) => {
+            return Err(anyhow!("Error in custom view: {err}"));
+        },
+        Ok(None) => {
+            // No custom view method found
+            Ok(false)
+        },
+        Ok(Some(false)) => {
+            return Err(anyhow!("Custom view method failed"));
+        },
+        Ok(Some(true)) => Ok(true),
     }
 }
 
@@ -1780,9 +1796,8 @@ mod tests {
 
             assert_eq!(variable.kind, VariableKind::Other);
 
-            // Even though the viewer method returns TRUE, the object is not a data.frame
-            // or matrix, so it doesn't have a viewer.
-            assert_eq!(variable.has_viewer, false);
+            // The has_viewer method returns TRUE, so the object has a viewer
+            assert_eq!(variable.has_viewer, true);
 
             // Now inspect `x`
             let path = vec![String::from("x")];
