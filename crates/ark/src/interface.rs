@@ -1482,6 +1482,14 @@ impl RMain {
                 // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
                     Some(self.handle_pending_input(input, buf, buflen))
+                } else if self.debug_is_debugging &&
+                    !harp::options::get_option_bool("browserNLdisabled")
+                {
+                    // Empty input in the debugger counts as `n` unless
+                    // `browserNLdisabled` is TRUE. This matches RStudio
+                    // and base R behaviour.
+                    // https://github.com/posit-dev/ark/issues/1006
+                    Some(self.debug_forward_continue_command(buf, buflen, String::from("n")))
                 } else {
                     // Otherwise we got an empty input, e.g. `""` and there's
                     // nothing to do. Close active request.
@@ -1545,14 +1553,7 @@ impl RMain {
 
                 if DEBUG_COMMANDS.contains(&&sym[..]) {
                     if DEBUG_COMMANDS_CONTINUE.contains(&&sym[..]) {
-                        // For continue-like commands, we do not preserve focus,
-                        // i.e. we let the cursor jump to the stopped
-                        // position. Set the preserve focus hint for the
-                        // next iteration of ReadConsole.
-                        self.debug_preserve_focus = false;
-
-                        // Let the DAP client know that execution is now continuing
-                        self.debug_send_dap(DapBackendEvent::Continued);
+                        return self.debug_forward_continue_command(buf, buflen, sym);
                     }
 
                     // All debug commands are forwarded to the base REPL as
@@ -1565,6 +1566,27 @@ impl RMain {
         }
 
         ConsoleResult::NewPendingInput(input)
+    }
+
+    /// Forward a debug command that continues execution (like `n`, `c`, `f`) to
+    /// R's base REPL.
+    fn debug_forward_continue_command(
+        &mut self,
+        buf: *mut c_uchar,
+        buflen: c_int,
+        cmd: String,
+    ) -> ConsoleResult {
+        // For debug commands, we do not preserve focus, i.e. we let the cursor
+        // jump to the stopped position
+        self.debug_preserve_focus = false;
+
+        // Let the DAP client know that execution is now continuing
+        self.debug_send_dap(DapBackendEvent::Continued);
+
+        // Forward the command to R's base REPL.
+        // Unwrap safety: A debug command fits in the buffer.
+        Self::on_console_input(buf, buflen, cmd).unwrap();
+        ConsoleResult::NewInput
     }
 
     fn pop_pending(&mut self) -> Option<PendingInput> {
