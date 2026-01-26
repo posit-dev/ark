@@ -66,6 +66,7 @@ jobs:
         if: matrix.arch == 'x64'
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          dependencies: '"hard"'
           packages:
             data.table
             dplyr
