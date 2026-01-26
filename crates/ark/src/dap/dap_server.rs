@@ -339,6 +339,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
             return;
         };
 
+        // We currently only support "path" URIs as Positron never sends URIs.
+        // In principle the DAP frontend can negotiate whether it sends URIs or
+        // file paths via the `pathFormat` field of the `Initialize` request.
         let uri = match Url::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
