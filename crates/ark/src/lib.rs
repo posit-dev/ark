@@ -44,6 +44,7 @@ pub mod thread;
 pub mod traps;
 pub mod treesitter;
 pub mod ui;
+pub mod url;
 pub mod variables;
 pub mod version;
 pub mod view;
