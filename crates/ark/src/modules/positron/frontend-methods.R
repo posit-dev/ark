@@ -38,8 +38,8 @@
     line = 0L,
     column = 0L
 ) {
-    # Don't normalize if that's an `ark:` URI
-    if (is_ark_uri(file)) {
+    # Don't normalize if that's already a URI
+    if (is_uri(file)) {
         kind <- "uri"
     } else {
         kind <- "path"
