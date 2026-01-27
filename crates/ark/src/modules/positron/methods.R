@@ -104,7 +104,12 @@ ark_methods_table$ark_positron_variable_view <- new.env(
 
 lockEnvironment(ark_methods_table, TRUE)
 
-ark_methods_allowed_packages <- c("torch", "reticulate", "duckplyr")
+ark_methods_allowed_packages <- c(
+    "torch",
+    "reticulate",
+    "duckplyr",
+    "connections"
+)
 
 # check if the calling package is allowed to touch the methods table
 check_caller_allowed <- function() {
