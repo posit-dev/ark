@@ -143,11 +143,6 @@ pub fn initialize() -> anyhow::Result<RObject> {
         }
     }
 
-    // Register all hooks once all modules have been imported
-    RFunction::from("register_hooks")
-        .call_in(namespace.sexp)
-        .log_err();
-
     // Finish initialization of modules
     RFunction::from("initialize")
         .call_in(namespace.sexp)
