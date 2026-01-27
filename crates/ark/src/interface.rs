@@ -1482,21 +1482,23 @@ impl RMain {
                 // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
                     Some(self.handle_pending_input(input, buf, buflen))
-                } else if self.debug_is_debugging &&
-                    !harp::options::get_option_bool("browserNLdisabled")
-                {
-                    // Empty input in the debugger counts as `n` unless
-                    // `browserNLdisabled` is TRUE. This matches RStudio
-                    // and base R behaviour.
-                    // https://github.com/posit-dev/ark/issues/1006
-                    Some(self.debug_forward_continue_command(buf, buflen, String::from("n")))
                 } else {
-                    // Otherwise we got an empty input, e.g. `""` and there's
-                    // nothing to do. Close active request.
-                    self.handle_active_request(info, ConsoleValue::Success(Default::default()));
+                    if self.debug_is_debugging &&
+                        !harp::options::get_option_bool("browserNLdisabled")
+                    {
+                        // Empty input in the debugger counts as `n` unless
+                        // `browserNLdisabled` is TRUE. This matches RStudio
+                        // and base R behaviour.
+                        // https://github.com/posit-dev/ark/issues/1006
+                        Some(self.debug_forward_continue_command(buf, buflen, String::from("n")))
+                    } else {
+                        // Otherwise we got an empty input, e.g. `""` and there's
+                        // nothing to do. Close active request.
+                        self.handle_active_request(info, ConsoleValue::Success(Default::default()));
 
-                    // And return to event loop
-                    None
+                        // And return to event loop
+                        None
+                    }
                 }
             },
 
