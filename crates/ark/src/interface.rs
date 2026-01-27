@@ -140,6 +140,12 @@ use crate::ui::UiCommSender;
 pub static CAPTURE_CONSOLE_OUTPUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
+/// All debug commands as documented in `?browser`
+const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
+
+// The subset of debug commands that continue execution
+const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone, Copy)]
 pub enum SessionMode {
@@ -1490,7 +1496,7 @@ impl RMain {
                         // `browserNLdisabled` is TRUE. This matches RStudio
                         // and base R behaviour.
                         // https://github.com/posit-dev/ark/issues/1006
-                        Some(self.debug_forward_continue_command(buf, buflen, String::from("n")))
+                        Some(self.debug_forward_command(buf, buflen, String::from("n")))
                     } else {
                         // Otherwise we got an empty input, e.g. `""` and there's
                         // nothing to do. Close active request.
@@ -1544,25 +1550,10 @@ impl RMain {
             // are entered as symbols). Whether or not it parses as a symbol,
             // if we're currently debugging we must set `debug_preserve_focus`.
             if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
-                // All debug commands as documented in `?browser`
-                const DEBUG_COMMANDS: &[&str] =
-                    &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
-
-                // The subset of debug commands that continue execution
-                const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
-
                 let sym = String::from(sym);
 
                 if DEBUG_COMMANDS.contains(&&sym[..]) {
-                    if DEBUG_COMMANDS_CONTINUE.contains(&&sym[..]) {
-                        return self.debug_forward_continue_command(buf, buflen, sym);
-                    }
-
-                    // All debug commands are forwarded to the base REPL as
-                    // is so that R can interpret them.
-                    // Unwrap safety: A debug command fits in the buffer.
-                    Self::on_console_input(buf, buflen, sym).unwrap();
-                    return ConsoleResult::NewInput;
+                    return self.debug_forward_command(buf, buflen, sym);
                 }
             }
         }
@@ -1570,20 +1561,26 @@ impl RMain {
         ConsoleResult::NewPendingInput(input)
     }
 
-    /// Forward a debug command that continues execution (like `n`, `c`, `f`) to
-    /// R's base REPL.
-    fn debug_forward_continue_command(
+    /// Forward a debug command to R's base REPL.
+    fn debug_forward_command(
         &mut self,
         buf: *mut c_uchar,
         buflen: c_int,
         cmd: String,
     ) -> ConsoleResult {
-        // For debug commands, we do not preserve focus, i.e. we let the cursor
-        // jump to the stopped position
-        self.debug_preserve_focus = false;
+        debug_assert!(
+            DEBUG_COMMANDS.contains(&&cmd[..]),
+            "Expected a debug command, got: {cmd}"
+        );
 
-        // Let the DAP client know that execution is now continuing
-        self.debug_send_dap(DapBackendEvent::Continued);
+        if DEBUG_COMMANDS_CONTINUE.contains(&&cmd[..]) {
+            // For continue-like commands, we do not preserve focus,
+            // i.e. we let the cursor jump to the stopped position.
+            self.debug_preserve_focus = false;
+
+            // Let the DAP client know that execution is now continuing
+            self.debug_send_dap(DapBackendEvent::Continued);
+        }
 
         // Forward the command to R's base REPL.
         // Unwrap safety: A debug command fits in the buffer.
