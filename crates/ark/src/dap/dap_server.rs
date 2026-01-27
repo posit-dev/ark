@@ -649,19 +649,21 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
-        let state = self.state.lock().unwrap();
-        let variables_reference_to_r_object = &state.variables_reference_to_r_object;
+        // Wait until we're in the `r_task()` to lock
+        // See https://github.com/posit-dev/positron/issues/5024
+        let state = self.state.clone();
 
-        let Some(object) = variables_reference_to_r_object.get(&variables_reference) else {
-            log::error!(
-                "Failed to locate R object for `variables_reference` {variables_reference}."
-            );
-            return Vec::new();
-        };
+        let variables = r_task(move || {
+            let state = state.lock().unwrap();
+            let variables_reference_to_r_object = &state.variables_reference_to_r_object;
 
-        // Should be safe to run an r-task while paused in the debugger, tasks
-        // are still run while polling within the read console hook
-        let variables = r_task(|| {
+            let Some(object) = variables_reference_to_r_object.get(&variables_reference) else {
+                log::error!(
+                    "Failed to locate R object for `variables_reference` {variables_reference}."
+                );
+                return Vec::new();
+            };
+
             let object = object.get();
             object_variables(object.sexp)
         });
