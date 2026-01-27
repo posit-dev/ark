@@ -195,6 +195,11 @@ is_ark_uri <- function(path) {
     startsWith(path, "ark:")
 }
 
+is_uri <- function(path) {
+    # Require scheme to be at least 2 chars to exclude Windows drive letters like "C:"
+    grepl("^[a-zA-Z][a-zA-Z0-9+.-]+:", path)
+}
+
 ark_ns_uri <- function(path) {
     .ps.Call("ps_ark_ns_uri", path)
 }
