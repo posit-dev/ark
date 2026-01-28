@@ -150,9 +150,18 @@ fn listen_dap_events<W: Write>(
     loop {
         select!(
             recv(backend_events_rx) -> event => {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(err) => {
+                        // Channel closed, sender dropped
+                        log::info!("DAP: Event channel closed: {err:?}");
+                        return;
+                    },
+                };
+
                 log::trace!("DAP: Got event from backend: {:?}", event);
 
-                let event = match event.unwrap() {
+                let event = match event {
                     DapBackendEvent::Continued => {
                         Event::Continued(ContinuedEventBody {
                             thread_id: THREAD_ID,
@@ -191,7 +200,10 @@ fn listen_dap_events<W: Write>(
                 };
 
                 let mut output = output.lock().unwrap();
-                output.send_event(event).unwrap();
+                if let Err(err) = output.send_event(event) {
+                    log::warn!("DAP: Failed to send event, closing: {err}");
+                    return;
+                }
             },
 
             // Break the loop and terminate the thread
@@ -229,9 +241,13 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
     pub fn serve(&mut self) -> bool {
         log::trace!("DAP: Polling");
-        let req = match self.server.poll_request().unwrap() {
-            Some(req) => req,
-            None => return false,
+        let req = match self.server.poll_request() {
+            Ok(Some(req)) => req,
+            Ok(None) => return false,
+            Err(err) => {
+                log::warn!("DAP: Connection closed: {err}");
+                return false;
+            },
         };
         log::trace!("DAP: Got request: {:#?}", req);
 
