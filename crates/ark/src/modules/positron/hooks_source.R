@@ -43,31 +43,41 @@ make_ark_source <- function(original_source) {
             local <- parent.frame()
         }
 
+        args <- alist(
+            file = file,
+            local = local,
+            echo = echo,
+            print.eval = print.eval,
+            exprs = exprs,
+            spaced = spaced,
+            verbose = verbose,
+            prompt.echo = prompt.echo,
+            max.deparse.length = max.deparse.length,
+            width.cutoff = width.cutoff,
+            deparseCtrl = deparseCtrl,
+            chdir = chdir,
+            catch.aborts = catch.aborts,
+            encoding = encoding,
+            continue.echo = continue.echo,
+            skip.echo = skip.echo,
+            keep.source = keep.source,
+            ...
+        )
+
+        # Remove arguments that are not yet supported
+        if (getRversion() <= "4.4.0") {
+            args$catch.aborts <- NULL
+        }
+
         # DRY: Promise for calling `original_source` with all arguments.
         # Evaluated lazily only when needed for fallback paths.
-        delayedAssign(
-            "fall_back",
-            original_source(
-                file = file,
-                local = local,
-                echo = echo,
-                print.eval = print.eval,
-                exprs = exprs,
-                spaced = spaced,
-                verbose = verbose,
-                prompt.echo = prompt.echo,
-                max.deparse.length = max.deparse.length,
-                width.cutoff = width.cutoff,
-                deparseCtrl = deparseCtrl,
-                chdir = chdir,
-                catch.aborts = catch.aborts,
-                encoding = encoding,
-                continue.echo = continue.echo,
-                skip.echo = skip.echo,
-                keep.source = keep.source,
-                ...
-            )
-        )
+        eval(bquote(
+            delayedAssign(
+                "fall_back",
+                original_source(..(args))
+            ),
+            splice = TRUE
+        ))
 
         # Fall back if hook is disabled
         if (!isTRUE(getOption("ark.source_hook", default = TRUE))) {
