@@ -53,10 +53,8 @@ impl ExtUrl {
             return uri;
         };
 
-        let mut uri = Url::from_file_path(&path).unwrap_or(uri);
-        uppercase_windows_drive_in_uri(&mut uri);
-
-        uri
+        let uri = Url::from_file_path(&path).unwrap_or(uri);
+        uppercase_windows_drive_in_uri(uri)
     }
 
     /// No-op on non-Windows platforms.
@@ -68,7 +66,7 @@ impl ExtUrl {
 
 /// Uppercase the drive letter in a Windows file URI for consistent hashing.
 #[cfg(windows)]
-fn uppercase_windows_drive_in_uri(uri: &mut Url) {
+fn uppercase_windows_drive_in_uri(mut uri: Url) -> Url {
     let path = uri.path();
     let mut chars = path.chars();
 
@@ -79,7 +77,7 @@ fn uppercase_windows_drive_in_uri(uri: &mut Url) {
     );
 
     if !is_windows_path {
-        return;
+        return uri;
     }
 
     let drive = path.chars().nth(1).unwrap();
@@ -89,6 +87,8 @@ fn uppercase_windows_drive_in_uri(uri: &mut Url) {
         let new_path = format!("/{upper}{}", &path[2..]);
         uri.set_path(&new_path);
     }
+
+    uri
 }
 
 #[cfg(test)]
