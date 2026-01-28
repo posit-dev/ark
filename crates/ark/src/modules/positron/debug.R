@@ -254,7 +254,7 @@ frame_info <- function(
 }
 
 frame_info_from_srcref <- function(
-    source_name_fallback,
+    source_name,
     frame_name,
     srcref,
     environment
@@ -266,8 +266,6 @@ frame_info_from_srcref <- function(
 
     if (is_string(info$file)) {
         source_name <- basename(info$file)
-    } else {
-        source_name <- source_name_fallback
     }
 
     new_frame_info(
