@@ -136,6 +136,7 @@ use crate::startup;
 use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
+use crate::url::ExtUrl;
 
 pub static CAPTURE_CONSOLE_OUTPUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
@@ -968,7 +969,12 @@ impl RMain {
             }
         }
 
-        let loc = req.code_location().log_err().flatten();
+        let loc = req.code_location().log_err().flatten().map(|mut loc| {
+            // Normalize URI for Windows compatibility. Positron sends URIs like
+            // `file:///c%3A/...` which do not match DAP's breakpoint path keys.
+            loc.uri = ExtUrl::normalize(loc.uri);
+            loc
+        });
 
         // Return the code to the R console to be evaluated and the corresponding exec count
         (

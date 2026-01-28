@@ -118,7 +118,7 @@ srcref_info <- function(srcref) {
     lines <- srcfile$lines
 
     if (!identical(file, "") && !identical(file, "<text>")) {
-        if (!is_ark_uri(file)) {
+        if (!is_uri(file)) {
             # TODO: Handle absolute paths by using `wd`
             file <- normalizePath(file, mustWork = FALSE)
         }

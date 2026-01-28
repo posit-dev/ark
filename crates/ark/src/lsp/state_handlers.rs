@@ -57,6 +57,7 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::state::workspace_uris;
 use crate::lsp::state::WorldState;
+use crate::url::ExtUrl;
 
 // Handlers that mutate the world state
 
@@ -254,10 +255,13 @@ pub(crate) fn did_change(
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
-    // Notify console about document change to invalidate breakpoints
+    // Notify console about document change to invalidate breakpoints.
+    // Normalize URI to avoid Windows issues with `file:///c%3A` paths.
     lsp_state
         .console_notification_tx
-        .send(ConsoleNotification::DidChangeDocument(uri.clone()))
+        .send(ConsoleNotification::DidChangeDocument(ExtUrl::normalize(
+            uri.clone(),
+        )))
         .log_err();
 
     Ok(())
