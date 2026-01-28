@@ -9,7 +9,7 @@ fn test_source_local() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     write!(file, "foobar\n").unwrap();
 
-    let path = file.path().to_str().unwrap();
+    let path = file.path().to_str().unwrap().replace("\\", "/");
 
     // Breakpoint injection path
     let code = format!(
@@ -43,7 +43,7 @@ fn test_source_global() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     write!(file, "foo\n").unwrap();
 
-    let path = file.path().to_str().unwrap();
+    let path = file.path().to_str().unwrap().replace("\\", "/");
 
     // Breakpoint injection path
     frontend.execute_request_invisibly(r#"foo <- "worked!""#);
