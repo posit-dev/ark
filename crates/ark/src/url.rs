@@ -71,16 +71,11 @@ fn uppercase_windows_drive_in_uri(mut uri: Url) -> Url {
     let mut chars = path.chars();
 
     // Match pattern: "/" + drive letter + ":"
-    let is_windows_path = matches!(
-        (chars.next(), chars.next(), chars.next()),
-        (Some('/'), Some(drive), Some(':')) if drive.is_ascii_alphabetic()
-    );
+    let drive = match (chars.next(), chars.next(), chars.next()) {
+        (Some('/'), Some(drive), Some(':')) if drive.is_ascii_alphabetic() => drive,
+        _ => return uri,
+    };
 
-    if !is_windows_path {
-        return uri;
-    }
-
-    let drive = path.chars().nth(1).unwrap();
     let upper = drive.to_ascii_uppercase();
 
     if drive != upper {
