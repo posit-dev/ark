@@ -38,7 +38,8 @@ make_ark_source <- function(original_source) {
         # fallback calls.
         use_file <- missing(exprs)
 
-        # Capture environment early if local evaluation is requested
+        # Capture environment early if local evaluation is requested.
+        # This is necessary if we have to fallback when `local = TRUE`.
         if (isTRUE(local)) {
             local <- parent.frame()
         }
@@ -102,10 +103,9 @@ make_ark_source <- function(original_source) {
         }
 
         env <- if (isTRUE(local)) {
-            # That would be very unexpected since we captured the local
-            # environment in `local` when set to `TRUE`. But just for peace of
-            # mind we handle it here.
-            parent.frame()
+            stop(
+                "Internal error: `local = TRUE` should have been converted to an environment above."
+            )
         } else if (isFALSE(local)) {
             .GlobalEnv
         } else if (is.environment(local)) {
