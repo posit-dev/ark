@@ -49,11 +49,14 @@ impl ExtUrl {
 
         // Round-trip through filesystem path to get canonical form.
         // This decodes URL-encoded characters like %3A -> :
-        let Ok(path) = uri.to_file_path() else {
+        let Some(uri) = uri
+            .to_file_path()
+            .ok()
+            .and_then(|path| Url::from_file_path(&path).ok())
+        else {
+            log::warn!("Failed to normalize file URI: {uri}");
             return uri;
         };
-
-        let uri = Url::from_file_path(&path).unwrap_or(uri);
         uppercase_windows_drive_in_uri(uri)
     }
 
