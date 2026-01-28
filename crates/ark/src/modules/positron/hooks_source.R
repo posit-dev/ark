@@ -38,6 +38,11 @@ make_ark_source <- function(original_source) {
         # fallback calls.
         use_file <- missing(exprs)
 
+        # Capture environment early if local evaluation is requested
+        if (isTRUE(local)) {
+            local <- parent.frame()
+        }
+
         # DRY: Promise for calling `original_source` with all arguments.
         # Evaluated lazily only when needed for fallback paths.
         delayedAssign(
@@ -87,6 +92,9 @@ make_ark_source <- function(original_source) {
         }
 
         env <- if (isTRUE(local)) {
+            # That would be very unexpected since we captured the local
+            # environment in `local` when set to `TRUE`. But just for peace of
+            # mind we handle it here.
             parent.frame()
         } else if (isFALSE(local)) {
             .GlobalEnv
