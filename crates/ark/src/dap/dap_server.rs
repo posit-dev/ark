@@ -202,7 +202,7 @@ fn listen_dap_events<W: Write>(
 
                 let mut output = output.lock().unwrap();
                 if let Err(err) = output.send_event(event) {
-                    log::warn!("DAP: Failed to send event, closing: {err}");
+                    log::warn!("DAP: Failed to send event, closing: {err:?}");
                     return;
                 }
             },
@@ -246,7 +246,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Ok(Some(req)) => req,
             Ok(None) => return false,
             Err(err) => {
-                log::warn!("DAP: Connection closed: {err}");
+                log::warn!("DAP: Connection closed: {err:?}");
                 return false;
             },
         };
@@ -291,7 +291,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         };
 
         if let Err(err) = result {
-            log::warn!("DAP: Handler failed, closing connection: {err}");
+            log::warn!("DAP: Handler failed, closing connection: {err:?}");
             return false;
         }
 
@@ -368,7 +368,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Ok(content) => content,
             Err(err) => {
                 // TODO: What do we do with breakpoints in virtual documents?
-                log::warn!("Failed to read file '{path}': {err}");
+                log::warn!("Failed to read file '{path}': {err:?}");
                 let rsp = req.error(&format!("Failed to read file: {path}"));
                 return self.respond(rsp);
             },
