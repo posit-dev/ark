@@ -79,7 +79,7 @@ fn uppercase_windows_drive_in_uri(mut uri: Url) -> Url {
     let upper = drive.to_ascii_uppercase();
 
     if drive != upper {
-        let new_path = format!("/{upper}{}", &path[2..]);
+        let new_path = format!("/{upper}:{}", &path[3..]);
         uri.set_path(&new_path);
     }
 
