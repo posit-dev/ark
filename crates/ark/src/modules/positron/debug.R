@@ -9,10 +9,10 @@ initialize_debug <- function() {
     # Store `.ark_breakpoint` and friends in base namespace so they're maximally
     # reachable. We might want to do that for all symbols exported from the
     # Ark/Positron namespace.
-    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
-    node_poke_cdr(as.symbol(".ark_auto_step"), .ark_auto_step)
-    node_poke_cdr(as.symbol(".ark_breakpoint"), .ark_breakpoint)
-    node_poke_cdr(
+    base_bind(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+    base_bind(as.symbol(".ark_auto_step"), .ark_auto_step)
+    base_bind(as.symbol(".ark_breakpoint"), .ark_breakpoint)
+    base_bind(
         as.symbol(".ark_verify_breakpoints_range"),
         .ark_verify_breakpoints_range
     )

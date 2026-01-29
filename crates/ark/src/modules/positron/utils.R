@@ -133,6 +133,15 @@ node_poke_cdr <- function(node, cdr) {
     .ps.Call("ark_node_poke_cdr", node, cdr)
 }
 
+# Alias to make intent clear. We store values in symbols so they are reachable
+# via `base::`.
+base_bind <- function(sym, value) {
+    stopifnot(is.symbol(sym))
+
+    # The CDR corresponds to SYMVALUE
+    node_poke_cdr(sym, value)
+}
+
 is_string <- function(x) {
     is.character(x) && length(x) == 1 && !is.na(x)
 }

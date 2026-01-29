@@ -262,8 +262,7 @@ poke_traceback <- function() {
     # `traceback()` expects a pairlist
     traceback <- as.pairlist(traceback)
 
-    # The CDR corresponds to SYMVALUE
-    node_poke_cdr(as.symbol(".Traceback"), traceback)
+    base_bind(as.symbol(".Traceback"), traceback)
 }
 
 # Because this init function calls `globalCallingHandlers()`, it must be called
