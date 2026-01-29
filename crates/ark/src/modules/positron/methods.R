@@ -92,9 +92,24 @@ ark_methods_table$ark_positron_variable_get_children <- new.env(
 ark_methods_table$ark_positron_help_get_handler <- new.env(
     parent = emptyenv()
 )
+
+#' Custom view action for objects in Variables Pane
+#'
+#' @param x Object to view
+#' @param ... Additional arguments (unused)
+#' @return Logical value: TRUE on success, FALSE otherwise
+ark_methods_table$ark_positron_variable_view <- new.env(
+    parent = emptyenv()
+)
+
 lockEnvironment(ark_methods_table, TRUE)
 
-ark_methods_allowed_packages <- c("torch", "reticulate", "duckplyr")
+ark_methods_allowed_packages <- c(
+    "torch",
+    "reticulate",
+    "duckplyr",
+    "connections"
+)
 
 # check if the calling package is allowed to touch the methods table
 check_caller_allowed <- function() {
@@ -169,7 +184,14 @@ call_ark_method <- function(generic, object, ...) {
         return(NULL)
     }
 
-    for (cls in class(object)) {
+    # Get all classes to check, including S4 superclasses
+    classes <- class(object)
+    if (isS4(object)) {
+        # For S4 objects, get the full inheritance hierarchy
+        classes <- methods::extends(class(object))
+    }
+
+    for (cls in classes) {
         if (!is.null(method <- get0(cls, envir = methods_table))) {
             return(eval(
                 as.call(list(method, object, ...)),

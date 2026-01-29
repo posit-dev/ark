@@ -19,7 +19,7 @@ use crate::vector::Vector;
 
 #[harp_macros::vector]
 pub struct IntegerVector {
-    object: RObject,
+    pub object: RObject,
 }
 
 impl Vector for IntegerVector {

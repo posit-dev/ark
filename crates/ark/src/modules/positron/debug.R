@@ -1,9 +1,22 @@
 #
 # debug.R
 #
-# Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 #
 #
+
+initialize_debug <- function() {
+    # Store `.ark_breakpoint` and friends in base namespace so they're maximally
+    # reachable. We might want to do that for all symbols exported from the
+    # Ark/Positron namespace.
+    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+    node_poke_cdr(as.symbol(".ark_auto_step"), .ark_auto_step)
+    node_poke_cdr(as.symbol(".ark_breakpoint"), .ark_breakpoint)
+    node_poke_cdr(
+        as.symbol(".ark_verify_breakpoints_range"),
+        .ark_verify_breakpoints_range
+    )
+}
 
 debugger_stack_info <- function(
     context_call_text,
@@ -14,11 +27,6 @@ debugger_stack_info <- function(
     calls
 ) {
     n <- length(fns)
-
-    if (n == 0L) {
-        # Must have at least 1 frame on the stack to proceed
-        return(list())
-    }
     if (n != length(environments) || n != length(calls)) {
         message <- paste0(
             "`sys.function()`, `sys.frames()`, and `sys.calls()` didn't return consistent results. ",
@@ -27,8 +35,15 @@ debugger_stack_info <- function(
         stop(sprintf(message, n, length(environments), length(calls)))
     }
 
-    # Top level call never has source references.
-    # It's what comes through the console input.
+    if (n == 0L) {
+        return(list(frame_info_from_srcref(
+            source_name = "<global>.R",
+            frame_name = "<global>",
+            srcref = context_srcref,
+            environment = NULL
+        )))
+    }
+
     top_level_loc <- 1L
     top_level_call <- calls[[top_level_loc]]
 
@@ -84,16 +99,30 @@ debugger_stack_info <- function(
 }
 
 top_level_call_frame_info <- function(x) {
-    x <- call_deparse(x)
-    x <- lines_join(x)
+    source_name <- paste0(as_label(x), ".R")
+    contents <- deparse_string(x)
+
+    srcref <- attr(x, "srcref", exact = TRUE)
+    if (!is.null(srcref)) {
+        out <- frame_info_from_srcref(
+            source_name = source_name,
+            frame_name = "<global>",
+            srcref = srcref,
+            environment = NULL
+        )
+
+        if (!is.null(out)) {
+            return(out)
+        }
+    }
 
     # We return `0`s to avoid highlighting anything in the top level call.
     # We just want to show it in the editor, and that's really it.
     new_frame_info(
-        source_name = x,
+        source_name = source_name,
         frame_name = "<global>",
         file = NULL,
-        contents = x,
+        contents = contents,
         environment = NULL,
         start_line = 0L,
         start_column = 0L,
@@ -110,18 +139,8 @@ context_frame_info <- function(
     frame_call,
     last_start_line
 ) {
-    frame_call_name <- call_name(frame_call)
-    if (!is.null(frame_call_name)) {
-        # Figure out the frame function's name and use that as a simpler
-        # `frame_name` and `source_name`
-        frame_name <- paste0(frame_call_name, "()")
-        source_name <- frame_name
-    } else {
-        # Otherwise fall back to standard deparsing of `frame_call`
-        frame_lines <- call_deparse(frame_call)
-        frame_name <- lines_join(frame_lines)
-        source_name <- frame_name
-    }
+    frame_name <- as_label(frame_call)
+    source_name <- paste0(frame_name, ".R")
 
     frame_info(
         source_name,
@@ -139,15 +158,9 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         attr(call, "srcref", exact = TRUE)
     })
     call_texts <- lapply(calls, function(call) {
-        call_lines <- call_deparse(call)
-        call_text <- lines_join(call_lines)
-        call_text
+        deparse_string(call)
     })
-    frame_names <- lapply(frame_calls, function(call) {
-        call_lines <- call_deparse(call)
-        call_text <- lines_join(call_lines)
-        call_text
-    })
+    frame_names <- lapply(frame_calls, function(call) as_label(call))
 
     # Currently only tracked for the context frame, as that is where it is most useful,
     # since that is where the user is actively stepping.
@@ -163,7 +176,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         frame_name <- frame_names[[i]]
 
         out[[i]] <- frame_info(
-            source_name = call_text,
+            source_name = paste0(frame_name, ".R"),
             frame_name = frame_name,
             srcref = srcref,
             fn = fn,
@@ -200,8 +213,7 @@ frame_info <- function(
     }
 
     # Only deparse if `srcref` failed!
-    fn_lines <- call_deparse(fn)
-    fn_text <- lines_join(fn_lines)
+    fn_text <- deparse_string(fn)
 
     # Reparse early on, so even if we fail to find `call_text` or fail to reparse,
     # we pass a `fn_text` to `frame_info_unknown_range()` where we've consistently removed
@@ -250,6 +262,10 @@ frame_info_from_srcref <- function(
     info <- srcref_info(srcref)
     if (is.null(info)) {
         return(NULL)
+    }
+
+    if (is_string(info$file)) {
+        source_name <- basename(info$file)
     }
 
     new_frame_info(
@@ -366,14 +382,6 @@ new_frame_info <- function(
         end_line = end_line,
         end_column = end_column
     )
-}
-
-call_deparse <- function(x) {
-    deparse(x, width.cutoff = 500L)
-}
-
-lines_join <- function(x) {
-    paste0(x, collapse = "\n")
 }
 
 #' @param fn_expr A function expression returned from `parse_function_text()`, which
@@ -699,4 +707,61 @@ non_parseable_pattern_info <- function(pattern, replacement) {
 }
 non_parseable_fixed_info <- function(pattern, replacement) {
     list(pattern = pattern, replacement = replacement, fixed = TRUE)
+}
+
+is_breakpoint_enabled <- function(uri, id) {
+    .ps.Call("ps_is_breakpoint_enabled", uri, id)
+}
+
+verify_breapoint <- function(uri, id) {
+    .ps.Call("ps_verify_breakpoint", uri, id)
+}
+
+# Injected breakpoint. This receives a `browser()` call in the `expr` argument.
+# The argument is forced if the breakpoint is enabled. Since `expr` is promised
+# in the calling frame environment, that environment is marked by R as being
+# debugged (with `SET_RDEBUG`), allowing to step through it. We're stopped in
+# the wrong frame (`.ark_breakpoint()`'s) but the console automatically steps to
+# the next expression whenever it detects that the current function (retrieved
+# with `sys.function()`) inherits from `ark_breakpoint`.
+#' @export
+.ark_breakpoint <- structure(
+    function(expr, uri, id) {
+        # Verify breakpoint right away, if not already the case. We normally
+        # verify breakpoints after each top-level expression has finished
+        # evaluating, but if we stop on a breakpoint right away (e.g. because
+        # it's in an `lapply()` rather than an assigned function) we must verify
+        # it directly. Otherwise it's confusing for users to stop on an unverified
+        # breakpoint that appears invalid.
+        verify_breapoint(uri, id)
+
+        enabled <- is_breakpoint_enabled(uri, id)
+        log_trace(sprintf(
+            "DAP: Breakpoint %s for %s enabled: %s",
+            id,
+            uri,
+            enabled
+        ))
+
+        # Force `browser()` call only if breakpoint is enabled
+        if (enabled) {
+            expr
+        }
+    },
+    class = "ark_breakpoint"
+)
+
+# Wrapper for expressions that should be auto-stepped over in the debugger. The
+# debugger detects this by checking if R emitted a `debug at` line containing
+# `.ark_auto_step` and automatically steps past it.
+#' @export
+.ark_auto_step <- function(expr) {
+    expr
+}
+
+# Verify breakpoints in a line range. Called after each top-level expression in
+# `source()`.
+#' @export
+.ark_verify_breakpoints_range <- function(uri, start_line, end_line) {
+    .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
 }

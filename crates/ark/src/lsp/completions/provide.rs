@@ -12,7 +12,7 @@ use crate::lsp::completions::sources::composite;
 use crate::lsp::completions::sources::unique;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
-use crate::treesitter::node_text;
+use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
 // Entry point for completions.
@@ -23,7 +23,9 @@ pub(crate) fn provide_completions(
 ) -> anyhow::Result<Vec<CompletionItem>> {
     log::info!(
         "provide_completions() - Completion node text: '{node_text}', Node type: '{node_type:?}'",
-        node_text = node_text(&document_context.node, &document_context.document.contents)
+        node_text = document_context
+            .node
+            .node_as_str(&document_context.document.contents)
             .unwrap_or_default(),
         node_type = document_context.node.node_type()
     );

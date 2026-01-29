@@ -1,35 +1,9 @@
 #
 # errors.R
 #
-# Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 #
 #
-
-#' @export
-.ps.errors.initializeGlobalErrorHandler <- function() {
-    if (getRversion() < "4.0.0") {
-        # `globalCallingHandlers()` didn't exist here.
-        # In this case, we simply print errors to the console.
-        # We will never throw an `ExecuteReplyException` here.
-        return(invisible(NULL))
-    }
-
-    # Unregister all handlers and hold onto them
-    handlers <- globalCallingHandlers(NULL)
-
-    # Inject our global error handler at the end.
-    # This allows other existing error handlers to run ahead of us.
-    handlers <- c(
-        handlers,
-        list(
-            error = .ps.errors.globalErrorHandler,
-            message = .ps.errors.globalMessageHandler
-        )
-    )
-    do.call(globalCallingHandlers, handlers)
-
-    invisible(NULL)
-}
 
 #' @export
 .ps.errors.globalErrorHandler <- function(cnd) {
@@ -251,4 +225,31 @@ poke_traceback <- function() {
 
     # The CDR corresponds to SYMVALUE
     node_poke_cdr(as.symbol(".Traceback"), traceback)
+}
+
+# Because this init function calls `globalCallingHandlers()`, it must be called
+# without any handlers on the stack (so not from `initialize()`)
+initialize_errors <- function() {
+    if (getRversion() < "4.0.0") {
+        # `globalCallingHandlers()` didn't exist here.
+        # In this case, we simply print errors to the console.
+        # We will never throw an `ExecuteReplyException` here.
+        return(invisible(NULL))
+    }
+
+    # Unregister all handlers and hold onto them
+    handlers <- globalCallingHandlers(NULL)
+
+    # Inject our global error handler at the end.
+    # This allows other existing error handlers to run ahead of us.
+    handlers <- c(
+        handlers,
+        list(
+            error = .ps.errors.globalErrorHandler,
+            message = .ps.errors.globalMessageHandler
+        )
+    )
+    do.call(globalCallingHandlers, handlers)
+
+    invisible(NULL)
 }

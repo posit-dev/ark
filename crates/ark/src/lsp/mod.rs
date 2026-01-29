@@ -16,8 +16,7 @@ pub mod definitions;
 pub mod diagnostics;
 pub mod diagnostics_syntax;
 pub mod document_context;
-pub mod documents;
-pub mod encoding;
+pub mod document;
 pub mod events;
 pub mod folding_range;
 pub mod handler;
@@ -31,7 +30,7 @@ pub mod input_boundaries;
 pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
-pub mod offset;
+
 pub mod references;
 pub mod selection_range;
 pub mod signature_help;

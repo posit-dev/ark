@@ -89,7 +89,7 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 - When a `match` expression is the last expression in a function, omit `return` keywords in match arms. Let the expression evaluate to the function's return value.
 
-- For error messages and logging, prefer direct formatting syntax: `Err(anyhow!("Message: {err}"))` instead of `Err(anyhow!("Message: {}", err))`. This also applies to `log::error!` and `log::warn!` and `log::info!` macros.
+- For error messages and logging, prefer direct formatting syntax: `Err(anyhow!("Message: {err}"))` instead of `Err(anyhow!("Message: {}", err))`. This also applies to `log::error!` and `log::warn!` and `log::info!` macros. For logging errors specifically, use Debug formatting `{err:?}` to get more detailed error information.
 
 - Use `log::trace!` instead of `log::debug!`.
 

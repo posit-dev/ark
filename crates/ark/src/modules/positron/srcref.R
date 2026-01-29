@@ -118,7 +118,7 @@ srcref_info <- function(srcref) {
     lines <- srcfile$lines
 
     if (!identical(file, "") && !identical(file, "<text>")) {
-        if (!is_ark_uri(file)) {
+        if (!is_uri(file)) {
             # TODO: Handle absolute paths by using `wd`
             file <- normalizePath(file, mustWork = FALSE)
         }
@@ -165,5 +165,13 @@ srcref_to_range <- function(x) {
         start_column = x[[loc_start_column]],
         end_line = x[[loc_end_line]],
         end_column = x[[loc_end_column]]
+    )
+}
+
+get_srcref_range <- function(x) {
+    srcref <- attr(x, 'srcref')
+    list(
+        start = c(line = srcref[[1]], character = srcref[[5]]),
+        end = c(line = srcref[[3]], character = srcref[[6]])
     )
 }

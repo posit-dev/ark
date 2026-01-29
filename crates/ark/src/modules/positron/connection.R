@@ -21,6 +21,10 @@
     .ps.Call("ps_connection_updated", id)
 }
 
+connection_focus <- function(id) {
+    .ps.Call("ps_connection_focus", id)
+}
+
 #' @export
 .ps.connection_observer <- function() {
     connections <- new.env(parent = emptyenv())
@@ -45,6 +49,7 @@
         for (id in ls(envir = connections)) {
             con <- get(id, envir = connections)
             if (identical(con$host, host) && identical(con$type, type)) {
+                connection_focus(id)
                 return(invisible(id))
             }
         }
@@ -67,6 +72,7 @@
             # until the end of the connection.
             objectTypes = connection_flatten_object_types(listObjectTypes())
         )
+        connection_focus(id)
         invisible(id)
     }
 
@@ -168,6 +174,36 @@ connection_flatten_object_types <- function(object_tree) {
     # will remove the connection from the list of connections
     con$disconnect(...)
     return(TRUE)
+}
+
+# Helper to reconstruct ODBC connection code from connection info
+odbc_connection_code <- function(info) {
+    # Try to reconstruct a reasonable connection string
+    # Priority: DSN > connection string parameters
+    if (!is.null(info$sourcename) && nzchar(info$sourcename)) {
+        # DSN-based connection
+        sprintf('odbc::dbConnect(odbc::odbc(), dsn = "%s")', info$sourcename)
+    } else {
+        # Build connection string from available parameters
+        params <- character()
+
+        if (!is.null(info$servername) && nzchar(info$servername)) {
+            params <- c(params, sprintf('server = "%s"', info$servername))
+        }
+        if (!is.null(info$dbname) && nzchar(info$dbname)) {
+            params <- c(params, sprintf('database = "%s"', info$dbname))
+        }
+
+        if (length(params) > 0) {
+            sprintf(
+                "odbc::dbConnect(odbc::odbc(), %s)",
+                paste(params, collapse = ", ")
+            )
+        } else {
+            # Fallback if we can't determine connection parameters
+            "# Connection opened from Variables Pane"
+        }
+    }
 }
 
 #' @export
@@ -283,6 +319,107 @@ connection_flatten_object_types <- function(object_tree) {
         actions = NULL
     )
 
-    if (is.null(id)) return("hello")
+    if (is.null(id)) {
+        return("hello")
+    }
     id
+}
+
+# ODBC Connection Support
+# These methods enable viewing ODBC connections in the Connections Pane
+# from the Variables Pane
+
+# Register ODBC connection methods when the odbc package is loaded
+setHook(
+    packageEvent("odbc", "onLoad"),
+    function(...) {
+        # Mark ODBC connections as "connection" kind
+        .ark.register_method(
+            "ark_positron_variable_kind",
+            "OdbcConnection",
+            function(x) "connection"
+        )
+
+        # Enable viewer for valid ODBC connections
+        .ark.register_method(
+            "ark_positron_variable_has_viewer",
+            "OdbcConnection",
+            function(x) {
+                odbc::dbIsValid(x)
+            }
+        )
+
+        # View an ODBC connection in the Connections Pane
+        .ark.register_method(
+            "ark_positron_variable_view",
+            "OdbcConnection",
+            function(x) {
+                # Reconstruct the connection code from the connection info
+                info <- x@info
+                code <- odbc_connection_code(info)
+
+                # Use odbc's built-in connection observer integration
+                odbc:::on_connection_opened(x, code = code)
+                invisible(TRUE)
+            }
+        )
+    }
+)
+
+# BigQuery Connection Support
+# These methods enable viewing BigQuery connections in the Connections Pane
+# from the Variables Pane
+
+# Register BigQuery connection methods when the bigrquery package is loaded
+setHook(
+    packageEvent("bigrquery", "onLoad"),
+    function(...) {
+        # Mark BigQuery connections as "connection" kind
+        .ark.register_method(
+            "ark_positron_variable_kind",
+            "BigQueryConnection",
+            function(x) "connection"
+        )
+
+        # Enable viewer for valid BigQuery connections
+        .ark.register_method(
+            "ark_positron_variable_has_viewer",
+            "BigQueryConnection",
+            function(x) {
+                DBI::dbIsValid(x)
+            }
+        )
+
+        # View a BigQuery connection in the Connections Pane
+        .ark.register_method(
+            "ark_positron_variable_view",
+            "BigQueryConnection",
+            function(x) {
+                # Reconstruct the connection code
+                code <- bigrquery_connection_code(x)
+
+                # Use bigrquery's built-in connection observer integration
+                bigrquery:::on_connection_opened(x, code = code)
+                invisible(TRUE)
+            }
+        )
+    }
+)
+
+# Helper to reconstruct BigQuery connection code
+bigrquery_connection_code <- function(con) {
+    project <- con@project
+    dataset <- con@dataset
+    billing <- con@billing
+
+    params <- c(sprintf('project = "%s"', project))
+
+    if (!is.null(dataset) && nzchar(dataset)) {
+        params <- c(params, sprintf('dataset = "%s"', dataset))
+    }
+    if (!is.null(billing) && nzchar(billing) && billing != project) {
+        params <- c(params, sprintf('billing = "%s"', billing))
+    }
+
+    sprintf("DBI::dbConnect(bigrquery::bigquery(), %s)", paste(params, collapse = ", "))
 }

@@ -45,6 +45,9 @@ pub enum ArkGenerics {
 
     #[strum(serialize = "ark_positron_help_get_handler")]
     HelpGetHandler,
+
+    #[strum(serialize = "ark_positron_variable_view")]
+    VariableView,
 }
 
 impl ArkGenerics {

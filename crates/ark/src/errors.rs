@@ -9,14 +9,9 @@ use amalthea::wire::exception::Exception;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::RE_STACK_OVERFLOW;
 use harp::object::RObject;
-use harp::r_symbol;
 use harp::session::r_format_traceback;
-use libr::R_GlobalEnv;
 use libr::R_NilValue;
-use libr::Rf_eval;
-use libr::Rf_lcons;
 use libr::SEXP;
-use log::info;
 use log::warn;
 use stdext::unwrap;
 
@@ -57,18 +52,6 @@ unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> an
 #[harp::register]
 unsafe extern "C-unwind" fn ps_format_traceback(calls: SEXP) -> anyhow::Result<SEXP> {
     Ok(r_format_traceback(calls.into())?.sexp)
-}
-
-pub unsafe fn initialize() {
-    // Must be called after the public Positron function environment is set up
-    info!("Initializing global error handler");
-
-    let call = RObject::new(Rf_lcons(
-        r_symbol!(".ps.errors.initializeGlobalErrorHandler"),
-        R_NilValue,
-    ));
-
-    Rf_eval(*call, R_GlobalEnv);
 }
 
 #[harp::register]

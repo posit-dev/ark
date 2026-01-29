@@ -13,8 +13,11 @@ use crate::connection_file::ConnectionFile;
 use crate::registration_file::RegistrationFile;
 use crate::session::Session;
 use crate::socket::socket::Socket;
+use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::execute_request::ExecuteRequestPositron;
+use crate::wire::execute_request::JupyterPositronLocation;
 use crate::wire::handshake_reply::HandshakeReply;
 use crate::wire::input_reply::InputReply;
 use crate::wire::jupyter_message::JupyterMessage;
@@ -48,6 +51,7 @@ pub struct DummyFrontend {
 
 pub struct ExecuteRequestOptions {
     pub allow_stdin: bool,
+    pub positron: Option<ExecuteRequestPositron>,
 }
 
 impl DummyConnection {
@@ -233,6 +237,7 @@ impl DummyFrontend {
             user_expressions: serde_json::Value::Null,
             allow_stdin: options.allow_stdin,
             stop_on_error: false,
+            positron: options.positron,
         })
     }
 
@@ -264,7 +269,38 @@ impl DummyFrontend {
     where
         F: FnOnce(String),
     {
-        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.execute_request_with_options(code, result_check, Default::default())
+    }
+
+    #[track_caller]
+    pub fn execute_request_with_location<F>(
+        &self,
+        code: &str,
+        result_check: F,
+        code_location: JupyterPositronLocation,
+    ) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
+            positron: Some(ExecuteRequestPositron {
+                code_location: Some(code_location),
+            }),
+            ..Default::default()
+        })
+    }
+
+    #[track_caller]
+    pub fn execute_request_with_options<F>(
+        &self,
+        code: &str,
+        result_check: F,
+        options: ExecuteRequestOptions,
+    ) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.send_execute_request(code, options);
         self.recv_iopub_busy();
 
         let input = self.recv_iopub_execute_input();
@@ -447,10 +483,39 @@ impl DummyFrontend {
         assert_matches!(msg, Message::DisplayData(_))
     }
 
+    /// Receive from IOPub and assert DisplayData message, returning the display_id
+    /// from the transient field.
+    #[track_caller]
+    pub fn recv_iopub_display_data_id(&self) -> String {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::DisplayData(data) => {
+            // Extract display_id from transient field
+            data.content.transient["display_id"]
+                .as_str()
+                .expect("display_id should be a string")
+                .to_string()
+        })
+    }
+
     #[track_caller]
     pub fn recv_iopub_update_display_data(&self) {
         let msg = self.recv_iopub();
         assert_matches!(msg, Message::UpdateDisplayData(_))
+    }
+
+    /// Send a comm message on the Shell socket.
+    /// The `data` should contain an `id` field to make it an RPC request.
+    pub fn send_shell_comm_msg(&self, comm_id: String, data: Value) -> String {
+        self.send_shell(CommWireMsg { comm_id, data })
+    }
+
+    /// Receive a comm message reply from the IOPub socket
+    #[track_caller]
+    pub fn recv_iopub_comm_msg(&self) -> CommWireMsg {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::CommMsg(data) => {
+            data.content
+        })
     }
 
     /// Receive from IOPub Stream
@@ -635,6 +700,16 @@ impl DummyFrontend {
         }
     }
 
+    /// Receive from IOPub and assert CommOpen message.
+    /// Returns a tuple of (comm_id, target_name, data).
+    #[track_caller]
+    pub fn recv_iopub_comm_open(&self) -> (String, String, serde_json::Value) {
+        let msg = self.recv_iopub();
+        assert_matches!(msg, Message::CommOpen(data) => {
+            (data.content.comm_id, data.content.target_name, data.content.data)
+        })
+    }
+
     pub fn is_installed(&self, package: &str) -> bool {
         let code = format!(".ps.is_installed('{package}')");
         self.send_execute_request(&code, ExecuteRequestOptions::default());
@@ -663,6 +738,9 @@ impl DummyFrontend {
 
 impl Default for ExecuteRequestOptions {
     fn default() -> Self {
-        Self { allow_stdin: false }
+        Self {
+            allow_stdin: false,
+            positron: None,
+        }
     }
 }

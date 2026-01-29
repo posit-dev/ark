@@ -220,8 +220,8 @@ mod tests {
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::composite::get_completions;
     use crate::lsp::completions::sources::composite::is_identifier_like;
+    use crate::lsp::document::Document;
     use crate::lsp::document_context::DocumentContext;
-    use crate::lsp::documents::Document;
     use crate::lsp::state::WorldState;
     use crate::r_task;
     use crate::treesitter::NodeType;

@@ -19,6 +19,14 @@ call_name <- function(x) {
     )
 }
 
+simple_call_name <- function(x) {
+    if (is_simple_call(x)) {
+        call_name(x)
+    } else {
+        NULL
+    }
+}
+
 call_type <- function(x) {
     stopifnot(typeof(x) == "language")
 

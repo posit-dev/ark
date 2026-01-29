@@ -6,22 +6,17 @@ on:
 
 jobs:
   windows:
-    runs-on: ${{ matrix.runs_on }}
-    name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}, Arch: ${{ matrix.arch }}"
-
+    name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}, OS: ${{ matrix.config.runs_on }}"
+    runs-on: ${{ matrix.config.runs_on }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, arm64]
         config:
-          - { rust: 'stable', r: 'release' }
-        include:
-          - arch: x64
-            runs_on: windows-latest
-          - arch: arm64
-            runs_on: windows-11-arm
-
-    timeout-minutes: 30
+          # x64
+          - { rust: 'stable', r: 'release', runs_on: 'windows-latest' }
+          # arm64
+          - { rust: 'stable', r: 'release', runs_on: 'windows-11-arm' }
+    timeout-minutes: 40
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -38,34 +33,16 @@ jobs:
         with:
           tool: cargo-nextest
 
-      # x86_64: Use setup-r
-      - name: Install R (x64)
-        if: matrix.arch == 'x64'
+      - name: Install R
         uses: r-lib/actions/setup-r@v2
         with:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
 
-      # arm64: Manual R install (until setup-r supports arm64)
-      - name: Install R (arm64)
-        if: matrix.arch == 'arm64'
-        run: |
-          curl -L -o R-installer.exe https://www.r-project.org/nosvn/winutf8/aarch64/R-4-signed/R-4.5.1-aarch64.exe
-          Start-Process -Wait -FilePath .\R-installer.exe -ArgumentList '/VERYSILENT', '/DIR=C:\R'
-          echo "C:\R\bin" >> $env:GITHUB_PATH
-
-      # arm64: Install Rtools (until setup-r supports arm64)
-      - name: Install Rtools45 (arm64)
-        if: matrix.arch == 'arm64'
-        run: |
-          curl -L -o rtools45-installer.exe https://github.com/r-hub/rtools45/releases/download/latest/rtools45-aarch64.exe
-          Start-Process -Wait -FilePath .\rtools45-installer.exe -ArgumentList '/VERYSILENT'
-
-      # x86_64: Use setup-r-dependencies
-      - name: Install R Packages Required For Tests (x64)
-        if: matrix.arch == 'x64'
+      - name: Install R Packages Required For Tests
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          dependencies: '"hard"'
           packages:
             data.table
             dplyr
@@ -75,12 +52,6 @@ jobs:
             rstudioapi
             survival
             tibble
-
-      # arm64: Manual install.packages (until setup-r-dependencies supports arm64)
-      - name: Install R Packages Required For Tests (arm64)
-        if: matrix.arch == 'arm64'
-        run: |
-          Rscript -e "install.packages(c('data.table', 'dplyr', 'haven', 'R6', 'ragg', 'rstudioapi', 'survival', 'tibble'), repos = 'https://cloud.r-project.org')"
 
       - name: Build
         run: |

@@ -28,6 +28,7 @@ static mut NFRAME_CALL: Option<SEXP> = None;
 static mut SYS_CALLS_CALL: Option<SEXP> = None;
 static mut SYS_FRAMES_CALL: Option<SEXP> = None;
 static mut CURRENT_ENV_CALL: Option<SEXP> = None;
+static mut CURRENT_FUNCTION_CALL: Option<SEXP> = None;
 
 pub fn r_n_frame() -> crate::Result<i32> {
     SESSION_INIT.call_once(init_interface);
@@ -64,6 +65,11 @@ pub fn r_sys_frames() -> crate::Result<RObject> {
 pub fn r_current_frame() -> RObject {
     SESSION_INIT.call_once(init_interface);
     unsafe { libr::Rf_eval(CURRENT_ENV_CALL.unwrap_unchecked(), R_BaseEnv) }.into()
+}
+
+pub fn r_current_function() -> RObject {
+    SESSION_INIT.call_once(init_interface);
+    unsafe { libr::Rf_eval(CURRENT_FUNCTION_CALL.unwrap_unchecked(), R_BaseEnv) }.into()
 }
 
 pub fn r_sys_functions() -> crate::Result<SEXP> {
@@ -167,5 +173,10 @@ fn init_interface() {
         let current_env_call = r_lang!(closure.sexp);
         R_PreserveObject(current_env_call);
         CURRENT_ENV_CALL = Some(current_env_call);
+
+        let closure = harp::parse_eval_base("function() sys.function(-1)").unwrap();
+        let current_function_call = r_lang!(closure.sexp);
+        R_PreserveObject(current_function_call);
+        CURRENT_FUNCTION_CALL = Some(current_function_call);
     }
 }

@@ -1,11 +1,9 @@
 use anyhow::anyhow;
+use tower_lsp::lsp_types::TextEdit;
 
 use crate::lsp::config::IndentStyle;
 use crate::lsp::config::IndentationConfig;
-use crate::lsp::documents::Document;
-use crate::lsp::offset::ArkPoint;
-use crate::lsp::offset::ArkRange;
-use crate::lsp::offset::ArkTextEdit;
+use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
@@ -21,13 +19,18 @@ use crate::treesitter::NodeTypeExt;
 ///
 /// Once we implement a full formatter, indentation will be provided for any
 /// constructs based on the formatter and will be fully consistent with it.
-pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<ArkTextEdit>>> {
+pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<TextEdit>>> {
     let text = &doc.contents;
     let ast = &doc.ast;
     let config = &doc.config.indent;
 
-    // Rope counts from 1, we count from 0
-    if line >= text.len_lines() {
+    let line_count = if text.is_empty() {
+        1
+    } else {
+        // Note that `lines().count()` doesn't count trailing newlines
+        text.chars().filter(|c| *c == '\n').count() + 1
+    };
+    if line >= line_count {
         return Err(anyhow!("`line` is OOB"));
     }
 
@@ -65,8 +68,11 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
 
     // Iterator over characters following `line`'s indent
     let text_at_indent = || {
-        text.chars_at(text.line_to_char(line))
-            .skip_while(|c| *c == ' ' || *c == '\t')
+        text.lines()
+            .nth(line)
+            .map(|line_text| line_text.chars().skip_while(|c| *c == ' ' || *c == '\t'))
+            .into_iter()
+            .flatten()
     };
 
     // The indentation of the line the node starts on
@@ -154,16 +160,21 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Ark
 
     let new_text = new_line_indent(config, new_indent);
 
-    let beg = ArkPoint {
-        row: line,
-        column: 0,
+    let range = tree_sitter::Range {
+        start_byte: 0, // Not used by lsp_range_from_tree_sitter_range
+        end_byte: 0,   // Not used by lsp_range_from_tree_sitter_range
+        start_point: tree_sitter::Point {
+            row: line,
+            column: 0,
+        },
+        end_point: tree_sitter::Point {
+            row: line,
+            column: old_indent_byte,
+        },
     };
-    let end = ArkPoint {
-        row: line,
-        column: old_indent_byte,
-    };
-    let edit = ArkTextEdit {
-        range: ArkRange { start: beg, end },
+
+    let edit = TextEdit {
+        range: doc.lsp_range_from_tree_sitter_range(range)?,
         new_text,
     };
 
@@ -205,12 +216,15 @@ fn brace_parent(node: tree_sitter::Node) -> tree_sitter::Node {
 }
 
 /// Returns indent as a pair of space size and byte size
-pub fn line_indent(text: &ropey::Rope, line: usize, config: &IndentationConfig) -> (usize, usize) {
+pub fn line_indent(text: &str, line: usize, config: &IndentationConfig) -> (usize, usize) {
     let mut byte_indent = 0;
     let mut indent = 0;
-    let mut iter = text.chars_at(text.line_to_char(line));
 
-    while let Some(next_char) = iter.next() {
+    let Some(line_text) = text.lines().nth(line) else {
+        return (0, 0);
+    };
+
+    for next_char in line_text.chars() {
         if next_char == ' ' {
             indent = indent + 1;
             byte_indent = byte_indent + 1;
@@ -248,14 +262,25 @@ pub fn find_enclosing_brace(node: tree_sitter::Node) -> Option<tree_sitter::Node
 
 #[cfg(test)]
 mod tests {
+    use aether_lsp_utils::proto::from_proto;
     use stdext::assert_match;
+    use tower_lsp::lsp_types::TextEdit;
 
     use crate::lsp::config::IndentStyle;
     use crate::lsp::config::IndentationConfig;
-    use crate::lsp::documents::Document;
+    use crate::lsp::document::Document;
     use crate::lsp::indent::indent_edit;
     use crate::lsp::indent::new_line_indent;
-    use crate::lsp::offset::apply_text_edits;
+
+    fn apply_text_edits(edits: Vec<TextEdit>, doc: &mut Document) {
+        from_proto::apply_text_edits(
+            &mut doc.contents,
+            edits,
+            &mut doc.line_index,
+            doc.position_encoding,
+        );
+        *doc = test_doc(&doc.contents);
+    }
 
     // NOTE: If we keep adding tests we might want to switch to snapshot tests
 
@@ -298,36 +323,28 @@ mod tests {
 
     #[test]
     fn test_line_indent_chains() {
-        let mut text = String::from("foo +\n  bar +\n    baz + qux |>\nfoofy()");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("foo +\n  bar +\n    baz + qux |>\nfoofy()");
 
         // Indenting the first two lines doesn't change the text
         assert_match!(indent_edit(&doc, 0), Ok(None));
         assert_match!(indent_edit(&doc, 1), Ok(None));
 
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(
-            text,
-            String::from("foo +\n  bar +\n  baz + qux |>\nfoofy()")
-        );
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "foo +\n  bar +\n  baz + qux |>\nfoofy()");
 
         let edit = indent_edit(&doc, 3).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(
-            text,
-            String::from("foo +\n  bar +\n  baz + qux |>\n  foofy()")
-        );
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "foo +\n  bar +\n  baz + qux |>\n  foofy()");
     }
 
     #[test]
     fn test_line_indent_chains_trailing_space() {
-        let mut text = String::from("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("foo +\n  bar(\n    x\n  ) +\n    baz\n  ");
 
         let edit = indent_edit(&doc, 4).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("foo +\n  bar(\n    x\n  ) +\n  baz\n  "));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "foo +\n  bar(\n    x\n  ) +\n  baz\n  ");
     }
 
     #[test]
@@ -340,43 +357,36 @@ mod tests {
 
     #[test]
     fn test_line_indent_chains_deep() {
-        let mut text = String::from("deep()()[] +\n    deep()()[]");
-        let expected = String::from("deep()()[] +\n  deep()()[]");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("deep()()[] +\n    deep()()[]");
 
         let edit = indent_edit(&doc, 0).unwrap();
         assert!(edit.is_none());
 
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, expected);
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "deep()()[] +\n  deep()()[]");
     }
 
     #[test]
     fn test_line_indent_chains_deep_newlines() {
         // With newlines in the way
-        let mut text = String::from("deep(\n)()[] +\ndeep(\n)()[]");
-        let expected = String::from("deep(\n)()[] +\n  deep(\n)()[]");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("deep(\n)()[] +\ndeep(\n)()[]");
 
         let edit = indent_edit(&doc, 0).unwrap();
         assert!(edit.is_none());
 
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, expected);
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "deep(\n)()[] +\n  deep(\n)()[]");
     }
 
     #[test]
     fn test_line_indent_chains_calls() {
-        let mut text = String::from("foo() +\n  bar() +\nbaz()");
-        let expected = String::from("foo() +\n  bar() +\n  baz()");
-
-        let doc = test_doc(&text);
+        let mut doc = test_doc("foo() +\n  bar() +\nbaz()");
 
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, expected);
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "foo() +\n  bar() +\n  baz()");
 
         // Indenting the first two lines doesn't change the text
         let edit = indent_edit(&doc, 0).unwrap();
@@ -392,82 +402,74 @@ mod tests {
 
     #[test]
     fn test_line_indent_braced_expression() {
-        let mut text = String::from("{\nbar\n}");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("{\nbar\n}");
 
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("{\n  bar\n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "{\n  bar\n}");
 
-        let mut text = String::from("function() {\nbar\n}");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("function() {\nbar\n}");
 
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("function() {\n  bar\n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "function() {\n  bar\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_closing() {
-        let mut text = String::from("{\n  }");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("{\n  }");
 
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("{\n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "{\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_closing_multiline() {
         // https://github.com/posit-dev/positron/issues/3484
-        let mut text = String::from("{\n\n    }");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("{\n\n    }");
 
         let edit = indent_edit(&doc, 1).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("{\n  \n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "{\n  \n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_multiline() {
-        let mut text = String::from("function(\n        ) {\nfoo\n}");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("function(\n        ) {\nfoo\n}");
 
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("function(\n        ) {\n  foo\n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "function(\n        ) {\n  foo\n}");
     }
 
     #[test]
     fn test_line_indent_braced_expression_multiline_empty() {
-        let mut text = String::from("function(\n        ) {\n\n}");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("function(\n        ) {\n\n}");
 
         let edit = indent_edit(&doc, 2).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("function(\n        ) {\n  \n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "function(\n        ) {\n  \n}");
     }
 
     #[test]
     fn test_line_indent_minimum() {
         // https://github.com/posit-dev/positron/issues/1683
-        let mut text = String::from("function() {\n  ({\n  }\n)\n}");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("function() {\n  ({\n  }\n)\n}");
 
         let edit = indent_edit(&doc, 3).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("function() {\n  ({\n  }\n  )\n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "function() {\n  ({\n  }\n  )\n}");
     }
 
     #[test]
     fn test_line_indent_minimum_nested() {
         // Nested R function test with multiple levels of nesting
-        let mut text = String::from("{\n  {\n    ({\n    }\n  )\n  }\n}");
-        let doc = test_doc(&text);
+        let mut doc = test_doc("{\n  {\n    ({\n    }\n  )\n  }\n}");
 
         let edit = indent_edit(&doc, 4).unwrap().unwrap();
-        apply_text_edits(edit, &mut text).unwrap();
-        assert_eq!(text, String::from("{\n  {\n    ({\n    }\n    )\n  }\n}"));
+        apply_text_edits(edit, &mut doc);
+        assert_eq!(doc.contents, "{\n  {\n    ({\n    }\n    )\n  }\n}");
     }
 
     #[test]
@@ -526,20 +528,19 @@ mod tests {
     fn test_indent_snapshot() {
         let orig = read_text_asset("lsp/snapshots/indent.R");
 
-        let doc = test_doc(&orig);
+        let mut doc = test_doc(&orig);
 
-        let mut text = orig.clone();
-        let n_lines = text.matches('\n').count();
+        let n_lines = doc.contents.matches('\n').count();
 
         for i in 0..n_lines {
             if let Some(edit) = indent_edit(&doc, i).unwrap() {
-                apply_text_edits(edit, &mut text).unwrap();
+                apply_text_edits(edit, &mut doc);
             }
         }
 
-        write_asset("lsp/snapshots/indent.R", &text);
+        write_asset("lsp/snapshots/indent.R", &doc.contents);
 
-        if orig != text {
+        if orig != doc.contents {
             panic!("Indentation snapshots have changed.\nPlease see git diff.");
         }
     }

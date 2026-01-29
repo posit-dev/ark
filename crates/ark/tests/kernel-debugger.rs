@@ -23,6 +23,83 @@ fn test_execute_request_browser_continue() {
     frontend.execute_request_invisibly("n");
 }
 
+// Empty input in the debugger should count as `n` and advance the debugger.
+// https://github.com/posit-dev/ark/issues/1006
+#[test]
+fn test_execute_request_browser_empty_input() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request("{browser(); 1; 2}", |result| {
+        assert!(result.contains("Called from: top level"));
+    });
+
+    // Step past browser() with empty input
+    let code = "";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    // Stepping produces debug output
+    assert!(frontend.recv_iopub_execute_result().contains("debug at"));
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Step past `1` with empty input
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+    assert!(frontend.recv_iopub_execute_result().contains("debug at"));
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Step past `2` with empty input - this exits the debugger and returns the result
+    frontend.execute_request("", |result| {
+        assert!(result.contains("[1] 2"));
+    });
+
+    // Now we should be out of the debugger. Verify by running normal code.
+    frontend.execute_request("1 + 1", |result| {
+        assert!(result.contains("[1] 2"));
+    });
+}
+
+// When `browserNLdisabled = TRUE`, empty input should not advance the debugger.
+// https://github.com/posit-dev/ark/issues/1006
+#[test]
+fn test_execute_request_browser_empty_input_disabled() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Set the option to disable empty input advancing the debugger
+    frontend.execute_request_invisibly("options(browserNLdisabled = TRUE)");
+
+    frontend.execute_request("browser()", |result| {
+        assert!(result.contains("Called from: top level"));
+    });
+
+    // Empty input should NOT advance the debugger, we should still be in the browser
+    let code = "";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    frontend.recv_iopub_idle();
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+
+    // Verify we're still in the browser by evaluating something
+    frontend.execute_request("42", |result| {
+        assert!(result.contains("[1] 42"));
+    });
+
+    // Now quit the browser
+    frontend.execute_request_invisibly("Q");
+
+    // Reset the option
+    frontend.execute_request_invisibly("options(browserNLdisabled = FALSE)");
+}
+
 #[test]
 fn test_execute_request_browser_nested() {
     // Test nested browser() calls - entering a browser within a browser
@@ -198,7 +275,10 @@ fn test_execute_request_browser_stdin() {
         assert!(result.contains("Called from: top level"));
     });
 
-    let options = ExecuteRequestOptions { allow_stdin: true };
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
     let code = "readline('prompt>')";
     frontend.send_execute_request(code, options);
     frontend.recv_iopub_busy();
@@ -355,6 +435,25 @@ fn test_browser_in_base_env() {
 
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}
+
+#[test]
+fn test_execute_request_browser_braced_step_out() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Evaluate `{browser()}` which enters the debugger
+    frontend.execute_request("{browser()}", |result| {
+        assert!(result.contains("Called from: top level"));
+    });
+
+    // Step once with `n` to leave the debugger (the braced expression completes)
+    frontend.execute_request_invisibly("n");
+
+    // Now evaluate `{1}` - this should NOT trigger the debugger
+    // and should return the result normally
+    frontend.execute_request("{1}", |result| {
+        assert!(result.contains("[1] 1"));
+    });
 }
 
 // The minimal environment we can debug in: access to base via `::`. This might

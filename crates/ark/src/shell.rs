@@ -42,6 +42,7 @@ use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 use crate::ark_comm::ArkComm;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
+use crate::interface::ConsoleNotification;
 use crate::interface::KernelInfo;
 use crate::interface::RMain;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
@@ -59,6 +60,7 @@ pub struct Shell {
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+    console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 }
 
 #[derive(Debug)]
@@ -75,6 +77,7 @@ impl Shell {
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+        console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
         Self {
             comm_manager_tx,
@@ -84,6 +87,7 @@ impl Shell {
             kernel_init_rx,
             kernel_info: None,
             graphics_device_tx,
+            console_notification_tx,
         }
     }
 
@@ -234,6 +238,7 @@ impl ShellHandler for Shell {
                 self.stdin_request_tx.clone(),
                 self.kernel_request_tx.clone(),
                 self.graphics_device_tx.clone(),
+                self.console_notification_tx.clone(),
             ),
             Comm::Help => handle_comm_open_help(comm),
             Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
@@ -258,6 +263,7 @@ fn handle_comm_open_ui(
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+    _console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 ) -> amalthea::Result<bool> {
     // Create a frontend to wrap the comm channel we were just given. This starts
     // a thread that proxies messages to the frontend.

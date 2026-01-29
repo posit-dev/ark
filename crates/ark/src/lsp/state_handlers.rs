@@ -6,6 +6,7 @@
 //
 
 use anyhow::anyhow;
+use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
 use tower_lsp::lsp_types::CompletionOptionsCompletionItem;
@@ -42,13 +43,13 @@ use tracing::Instrument;
 use tree_sitter::Parser;
 use url::Url;
 
+use crate::interface::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
-use crate::lsp::documents::Document;
-use crate::lsp::encoding::get_position_encoding_kind;
+use crate::lsp::document::Document;
 use crate::lsp::inputs::package::Package;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
@@ -56,6 +57,7 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::state::workspace_uris;
 use crate::lsp::state::WorldState;
+use crate::url::ExtUrl;
 
 // Handlers that mutate the world state
 
@@ -133,7 +135,9 @@ pub(crate) fn initialize(
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }),
         capabilities: ServerCapabilities {
-            position_encoding: Some(get_position_encoding_kind()),
+            // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
+            // once/if Ark becomes an independent LSP
+            position_encoding: Some(lsp_types::PositionEncodingKind::UTF16),
             text_document_sync: Some(TextDocumentSyncCapability::Kind(
                 TextDocumentSyncKind::INCREMENTAL,
             )),
@@ -250,6 +254,15 @@ pub(crate) fn did_change(
     document.on_did_change(&mut parser, &params);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
+
+    // Notify console about document change to invalidate breakpoints.
+    // Normalize URI to avoid Windows issues with `file:///c%3A` paths.
+    lsp_state
+        .console_notification_tx
+        .send(ConsoleNotification::DidChangeDocument(ExtUrl::normalize(
+            uri.clone(),
+        )))
+        .log_err();
 
     Ok(())
 }

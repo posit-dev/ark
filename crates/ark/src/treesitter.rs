@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
 use anyhow::anyhow;
+use stdext::result::ResultExt;
+use streaming_iterator::StreamingIterator;
 use tree_sitter::Node;
 
 use crate::lsp::traits::node::NodeExt;
-use crate::lsp::traits::rope::RopeExt;
 
 #[derive(Debug, PartialEq)]
 pub enum NodeType {
@@ -285,7 +286,7 @@ pub trait NodeTypeExt: Sized {
     fn is_identifier(&self) -> bool;
     fn is_string(&self) -> bool;
     fn is_identifier_or_string(&self) -> bool;
-    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String>;
+    fn get_identifier_or_string_text<'a>(&self, contents: &'a str) -> anyhow::Result<&'a str>;
     fn is_keyword(&self) -> bool;
     fn is_call(&self) -> bool;
     fn is_subset(&self) -> bool;
@@ -302,8 +303,8 @@ pub trait NodeTypeExt: Sized {
     fn is_binary_operator(&self) -> bool;
     fn is_binary_operator_of_kind(&self, kind: BinaryOperatorType) -> bool;
     fn is_native_pipe_operator(&self) -> bool;
-    fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
-    fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool>;
+    fn is_magrittr_pipe_operator(&self, contents: &str) -> anyhow::Result<bool>;
+    fn is_pipe_operator(&self, contents: &str) -> anyhow::Result<bool>;
 }
 
 impl NodeTypeExt for Node<'_> {
@@ -328,18 +329,16 @@ impl NodeTypeExt for Node<'_> {
         matches!(self.node_type(), NodeType::Identifier | NodeType::String)
     }
 
-    fn get_identifier_or_string_text(&self, contents: &ropey::Rope) -> anyhow::Result<String> {
+    fn get_identifier_or_string_text<'a>(&self, contents: &'a str) -> anyhow::Result<&'a str> {
         match self.node_type() {
-            NodeType::Identifier => return Ok(contents.node_slice(self)?.to_string()),
+            NodeType::Identifier => Ok(self.node_as_str(contents)?),
             NodeType::String => {
                 let string_content = self
                     .child_by_field_name("content")
                     .ok_or_else(|| anyhow::anyhow!("Can't extract string's `content` field"))?;
-                Ok(contents.node_slice(&string_content)?.to_string())
+                Ok(string_content.node_as_str(contents)?)
             },
-            _ => {
-                return Err(anyhow::anyhow!("Not an identifier or string"));
-            },
+            _ => Err(anyhow::anyhow!("Not an identifier or string")),
         }
     }
 
@@ -418,7 +417,7 @@ impl NodeTypeExt for Node<'_> {
         self.node_type() == NodeType::BinaryOperator(BinaryOperatorType::Pipe)
     }
 
-    fn is_magrittr_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool> {
+    fn is_magrittr_pipe_operator(&self, contents: &str) -> anyhow::Result<bool> {
         if self.node_type() != NodeType::BinaryOperator(BinaryOperatorType::Special) {
             return Ok(false);
         }
@@ -427,12 +426,14 @@ impl NodeTypeExt for Node<'_> {
             return Ok(false);
         };
 
-        let text = contents.node_slice(&operator)?;
+        let Ok(text) = operator.node_as_str(&contents) else {
+            return Ok(false);
+        };
 
         Ok(text == "%>%")
     }
 
-    fn is_pipe_operator(&self, contents: &ropey::Rope) -> anyhow::Result<bool> {
+    fn is_pipe_operator(&self, contents: &str) -> anyhow::Result<bool> {
         if self.is_native_pipe_operator() {
             return Ok(true);
         }
@@ -443,10 +444,6 @@ impl NodeTypeExt for Node<'_> {
 
         Ok(false)
     }
-}
-
-pub(crate) fn node_text(node: &Node, contents: &ropey::Rope) -> Option<String> {
-    contents.node_slice(node).ok().map(|f| f.to_string())
 }
 
 pub(crate) fn node_has_error_or_missing(node: &Node) -> bool {
@@ -471,14 +468,14 @@ pub(crate) fn node_in_string(node: &Node) -> bool {
     node_find_string(node).is_some()
 }
 
-pub(crate) fn node_is_call(node: &Node, name: &str, contents: &ropey::Rope) -> bool {
+pub(crate) fn node_is_call(node: &Node, name: &str, contents: &str) -> bool {
     if !node.is_call() {
         return false;
     }
     let Some(fun) = node.child_by_field_name("function") else {
         return false;
     };
-    let Some(fun) = node_text(&fun, contents) else {
+    let Ok(fun) = fun.node_as_str(contents) else {
         return false;
     };
     fun == name
@@ -488,7 +485,7 @@ pub(crate) fn node_is_namespaced_call(
     node: &Node,
     namespace: &str,
     name: &str,
-    contents: &ropey::Rope,
+    contents: &str,
 ) -> bool {
     if !node.is_call() {
         return false;
@@ -506,10 +503,10 @@ pub(crate) fn node_is_namespaced_call(
     else {
         return false;
     };
-    let Some(node_namespace) = node_text(&node_namespace, contents) else {
+    let Ok(node_namespace) = node_namespace.node_as_str(contents) else {
         return false;
     };
-    let Some(node_name) = node_text(&node_name, contents) else {
+    let Some(node_name) = node_name.node_as_str(contents).log_err() else {
         return false;
     };
 
@@ -553,7 +550,7 @@ pub(crate) fn node_find_parent_call<'tree>(node: &Node<'tree>) -> Option<Node<'t
 pub(crate) fn node_arg_value<'tree>(
     args: &Node<'tree>,
     name: &str,
-    contents: &ropey::Rope,
+    contents: &str,
 ) -> Option<Node<'tree>> {
     if args.node_type() != NodeType::Argument {
         return None;
@@ -564,7 +561,7 @@ pub(crate) fn node_arg_value<'tree>(
     let Some(value_node) = args.child_by_field_name("value") else {
         return None;
     };
-    let Some(name_text) = node_text(&name_node, contents) else {
+    let Some(name_text) = name_node.node_as_str(contents).log_err() else {
         return None;
     };
     (name_text == name).then_some(value_node)
@@ -573,7 +570,7 @@ pub(crate) fn node_arg_value<'tree>(
 pub(crate) fn args_find_call<'tree>(
     args: Node<'tree>,
     name: &str,
-    contents: &ropey::Rope,
+    contents: &str,
 ) -> Option<Node<'tree>> {
     let mut cursor = args.walk();
     let mut iter = args.children(&mut cursor);
@@ -587,7 +584,7 @@ pub(crate) fn args_find_call<'tree>(
 pub(crate) fn args_find_call_args<'tree>(
     args: Node<'tree>,
     name: &str,
-    contents: &ropey::Rope,
+    contents: &str,
 ) -> Option<Node<'tree>> {
     let call = args_find_call(args, name, contents)?;
     call.child_by_field_name("arguments")
@@ -625,15 +622,19 @@ pub(crate) fn node_find_containing_call<'tree>(node: Node<'tree>) -> Option<Node
 
 pub(crate) fn point_end_of_previous_row(
     mut point: tree_sitter::Point,
-    contents: &ropey::Rope,
+    contents: &str,
 ) -> tree_sitter::Point {
     if point.row > 0 {
         let prev_row = point.row - 1;
-        let line = contents.line(prev_row as usize);
-        let line_len = line.len_chars().saturating_sub(1); // Subtract 1 for newline
-        tree_sitter::Point {
-            row: prev_row,
-            column: line_len,
+        if let Some(line) = contents.lines().nth(prev_row) {
+            let line_len = line.chars().count();
+            tree_sitter::Point {
+                row: prev_row,
+                column: line_len,
+            }
+        } else {
+            point.column = 0;
+            point
         }
     } else {
         // We're at the very beginning of the document, can't go back further
@@ -792,50 +793,49 @@ impl<'tree, 'query, 'contents> Iterator for AllCaptures<'tree, 'query, 'contents
 
 #[cfg(test)]
 mod tests {
-    use ropey::Rope;
     use tree_sitter::Point;
 
     use super::*;
 
     #[test]
     fn test_point_end_of_previous_row() {
-        let contents = Rope::from_str("hello world\nfoo bar\nbaz");
+        let contents = "hello world\nfoo bar\nbaz";
         let point = Point { row: 2, column: 1 };
-        let result = point_end_of_previous_row(point, &contents);
+        let result = point_end_of_previous_row(point, contents);
         assert_eq!(result, Point { row: 1, column: 7 });
     }
 
     #[test]
     fn test_point_end_of_previous_row_first_row() {
-        let contents = Rope::from_str("hello world\nfoo bar\nbaz");
+        let contents = "hello world\nfoo bar\nbaz";
         let point = Point { row: 0, column: 5 };
-        let result = point_end_of_previous_row(point, &contents);
+        let result = point_end_of_previous_row(point, contents);
         assert_eq!(result, Point { row: 0, column: 0 });
     }
 
     #[test]
     fn test_point_end_of_previous_row_empty_previous_line() {
-        let contents = Rope::from_str("hello\n\nworld");
+        let contents = "hello\n\nworld";
 
         let point = Point { row: 2, column: 1 };
-        let result = point_end_of_previous_row(point, &contents);
+        let result = point_end_of_previous_row(point, contents);
         assert_eq!(result, Point { row: 1, column: 0 });
 
         let point = Point { row: 1, column: 1 };
-        let result = point_end_of_previous_row(point, &contents);
+        let result = point_end_of_previous_row(point, contents);
         assert_eq!(result, Point { row: 0, column: 5 });
     }
 
     #[test]
     fn test_point_end_of_previous_row_single_line() {
-        let contents = Rope::from_str("hello world");
+        let contents = "hello world";
 
         let point = Point { row: 0, column: 0 };
-        let result = point_end_of_previous_row(point, &contents);
+        let result = point_end_of_previous_row(point, contents);
         assert_eq!(result, Point { row: 0, column: 0 });
 
         let point = Point { row: 0, column: 5 };
-        let result = point_end_of_previous_row(point, &contents);
+        let result = point_end_of_previous_row(point, contents);
         assert_eq!(result, Point { row: 0, column: 0 });
     }
 }

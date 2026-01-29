@@ -1,7 +1,7 @@
 //
-// repl_debug.rs
+// console_debug.rs
 //
-// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
 use anyhow::anyhow;
@@ -14,12 +14,16 @@ use harp::r_string;
 use harp::session::r_sys_calls;
 use harp::session::r_sys_frames;
 use harp::session::r_sys_functions;
+use harp::srcref::SrcRef;
 use harp::utils::r_is_null;
+use libr::SEXP;
 use regex::Regex;
 use stdext::result::ResultExt;
+use url::Url;
 
 use crate::dap::dap::DapBackendEvent;
 use crate::interface::DebugCallText;
+use crate::interface::DebugCallTextKind;
 use crate::interface::RMain;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
@@ -96,7 +100,7 @@ impl RMain {
                 let mut dap = self.debug_dap.lock().unwrap();
                 dap.start_debug(stack, preserve_focus, fallback_sources)
             },
-            Err(err) => log::error!("ReadConsole: Can't get stack info: {err}"),
+            Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
     }
 
@@ -126,16 +130,16 @@ impl RMain {
             // If not debugging, nothing to do.
             DebugCallText::None => (),
             // If already finalized, keep what we have.
-            DebugCallText::Finalized(_) => (),
+            DebugCallText::Finalized(_, _) => (),
             // If capturing, transition to finalized.
-            DebugCallText::Capturing(call_text) => {
-                self.debug_call_text = DebugCallText::Finalized(call_text.clone())
+            DebugCallText::Capturing(call_text, kind) => {
+                self.debug_call_text = DebugCallText::Finalized(call_text.clone(), *kind)
             },
         }
     }
 
     pub(crate) fn debug_handle_write_console(&mut self, content: &str) {
-        if let DebugCallText::Capturing(ref mut call_text) = self.debug_call_text {
+        if let DebugCallText::Capturing(ref mut call_text, _) = self.debug_call_text {
             // Append to current expression if we are currently capturing stdout
             call_text.push_str(content);
             return;
@@ -145,7 +149,17 @@ impl RMain {
         // the current expression we are debugging, so we use that as a signal to begin
         // capturing.
         if content == "debug: " {
-            self.debug_call_text = DebugCallText::Capturing(String::new());
+            self.debug_call_text =
+                DebugCallText::Capturing(String::new(), DebugCallTextKind::Debug);
+            return;
+        }
+
+        // `debug at *PATH*: *EXPR*` is emitted by R when stepping through
+        // blocks that have srcrefs. We use this to detect that we've just
+        // stepped to an injected breakpoint and need to move on automatically.
+        if content.starts_with("debug at ") {
+            self.debug_call_text =
+                DebugCallText::Capturing(String::new(), DebugCallTextKind::DebugAt);
             return;
         }
 
@@ -164,13 +178,14 @@ impl RMain {
         // recreate the debugger state after their code execution.
         let call_text = match self.debug_call_text.clone() {
             DebugCallText::None => None,
-            DebugCallText::Capturing(call_text) => {
+            DebugCallText::Capturing(call_text, _) => {
                 log::error!(
                     "Call text is in `Capturing` state, but should be `Finalized`: '{call_text}'."
                 );
                 None
             },
-            DebugCallText::Finalized(call_text) => Some(call_text),
+            DebugCallText::Finalized(call_text, DebugCallTextKind::Debug) => Some(call_text),
+            DebugCallText::Finalized(_, DebugCallTextKind::DebugAt) => None,
         };
 
         let last_start_line = self.debug_last_line;
@@ -241,6 +256,8 @@ impl RMain {
                 out.push(as_frame_info(frame, id)?);
             }
 
+            log::trace!("DAP: Current call stack:\n{out:#?}");
+
             Ok(out)
         }
     }
@@ -272,7 +289,7 @@ impl RMain {
         let hash = format!("{:x}", hasher.finish());
 
         ark_uri(&format!(
-            "debug/session{i}/{hash}/{source_name}.R",
+            "debug/session{i}/{hash}/{source_name}",
             i = debug_session_index,
         ))
     }
@@ -282,6 +299,33 @@ impl RMain {
         static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
         let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
         re.is_match(uri)
+    }
+
+    pub(crate) fn verify_breakpoints(&self, srcref: RObject) {
+        let Some(srcref) = SrcRef::try_from(srcref).warn_on_err() else {
+            return;
+        };
+
+        let Some(filename) = srcref
+            .srcfile()
+            .and_then(|srcfile| srcfile.filename())
+            .log_err()
+        else {
+            return;
+        };
+
+        // Only process file:// URIs (from our #line directives).
+        // Plain file paths or empty filenames are skipped silently.
+        if !filename.starts_with("file://") {
+            return;
+        }
+
+        let Some(uri) = Url::parse(&filename).warn_on_err() else {
+            return;
+        };
+
+        let mut dap = self.debug_dap.lock().unwrap();
+        dap.verify_breakpoints(&uri, srcref.line_virtual.start, srcref.line_virtual.end);
     }
 }
 
@@ -357,4 +401,70 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
             end_column: end_column.try_into()?,
         })
     }
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
+    uri: SEXP,
+    id: SEXP,
+) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let uri = Url::parse(&uri)?;
+
+    let id: String = RObject::view(id).try_into()?;
+
+    let console = RMain::get_mut();
+    let dap = console.debug_dap.lock().unwrap();
+
+    let enabled = dap.is_breakpoint_enabled(&uri, id);
+    Ok(RObject::from(enabled).sexp)
+}
+
+/// Verify a single breakpoint by ID.
+/// Called when a breakpoint expression is about to be evaluated.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let id: String = RObject::view(id).try_into()?;
+
+    let Some(uri) = Url::parse(&uri).log_err() else {
+        return Ok(libr::R_NilValue);
+    };
+
+    let main = RMain::get();
+    let mut dap = main.debug_dap.lock().unwrap();
+    dap.verify_breakpoint(&uri, &id);
+
+    Ok(libr::R_NilValue)
+}
+
+/// Verify breakpoints in the line range covered by a srcref.
+/// Called after each expression is successfully evaluated in source().
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_verify_breakpoints(srcref: SEXP) -> anyhow::Result<SEXP> {
+    RMain::get().verify_breakpoints(RObject::view(srcref));
+    Ok(libr::R_NilValue)
+}
+
+/// Verify breakpoints in an explicit line range.
+/// Called after each top-level expression in source() when using the source hook.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
+    uri: SEXP,
+    start_line: SEXP,
+    end_line: SEXP,
+) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+    let start_line: i32 = RObject::view(start_line).try_into()?;
+    let end_line: i32 = RObject::view(end_line).try_into()?;
+
+    let Some(uri) = Url::parse(&uri).log_err() else {
+        return Ok(libr::R_NilValue);
+    };
+
+    let main = RMain::get();
+    let mut dap = main.debug_dap.lock().unwrap();
+    dap.verify_breakpoints(&uri, start_line as u32, end_line as u32);
+
+    Ok(libr::R_NilValue)
 }

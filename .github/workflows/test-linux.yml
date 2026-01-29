@@ -23,7 +23,7 @@ jobs:
           - { rust: 'stable',  r: '4.2' }
           # Nightly rust
           - { rust: 'nightly', r: 'release' }
-    timeout-minutes: 30
+    timeout-minutes: 40
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -59,6 +59,7 @@ jobs:
       - name: Install R Packages Required For Tests
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
+          dependencies: '"hard"'
           packages:
             data.table
             dplyr

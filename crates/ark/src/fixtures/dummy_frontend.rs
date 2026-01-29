@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
@@ -68,6 +67,8 @@ impl DummyArkFrontend {
     #[cfg(unix)]
     #[track_caller]
     pub fn wait_for_cleanup() {
+        use std::time::Duration;
+
         use crate::sys::interface::CLEANUP_SIGNAL;
 
         let (lock, cvar) = &CLEANUP_SIGNAL;

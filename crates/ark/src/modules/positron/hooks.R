@@ -1,11 +1,11 @@
 #
 # hooks.R
 #
-# Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 #
 #
 
-register_hooks <- function() {
+initialize_hooks <- function() {
     rebind("utils", "View", view, namespace = TRUE)
     rebind("base", "debug", new_ark_debug(base::debug), namespace = TRUE)
     rebind(
