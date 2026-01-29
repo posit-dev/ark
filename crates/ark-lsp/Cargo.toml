@@ -1,0 +1,31 @@
+[package]
+name = "ark-lsp"
+version = "0.1.0"
+description = "Static R Language Server for VS Code and Zed"
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "ark-lsp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.80"
+log = "0.4.17"
+env_logger = "0.11"
+serde = { version = "1.0.183", features = ["derive"] }
+serde_json = { version = "1.0.94", features = ["preserve_order"] }
+tokio = { version = "1.26.0", features = ["full"] }
+tower-lsp.workspace = true
+tree-sitter = "0.24.7"
+tree-sitter-r = { git = "https://github.com/r-lib/tree-sitter-r", rev = "95aff097aa927a66bb357f715b58cde821be8867" }
+url = "2.4.1"
+walkdir = "2"
+dashmap = "5.4.0"
+regex = "1.10.0"
+ropey = "1.6"
+
+[target.'cfg(unix)'.dependencies]
+xdg = "2.5.2"

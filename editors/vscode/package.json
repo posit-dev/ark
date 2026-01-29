@@ -1,0 +1,61 @@
+{
+  "name": "ark-r",
+  "displayName": "Ark R Language Server",
+  "description": "R language support via ark-lsp static analysis",
+  "version": "0.1.0",
+  "publisher": "posit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/posit-dev/ark"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": [
+    "onLanguage:r"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "r",
+        "aliases": ["R", "r"],
+        "extensions": [".r", ".R", ".rmd", ".Rmd", ".qmd"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Ark R",
+      "properties": {
+        "ark-r.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Path to ark-lsp binary. If empty, uses bundled binary."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "npm run compile && node scripts/bundle.js && vsce package"
+  },
+  "files": [
+    "out/**",
+    "bin/**",
+    "language-configuration.json"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^2.22.0",
+    "typescript": "^5.0.0"
+  }
+}

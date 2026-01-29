@@ -12,6 +12,7 @@ resolver = "2"
 members = [
     "crates/amalthea",
     "crates/ark",
+    "crates/ark-lsp",
     "crates/echo",
     "crates/harp",
     "crates/libr",

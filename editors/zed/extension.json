@@ -1,0 +1,8 @@
+{
+  "id": "ark-r",
+  "name": "Ark R",
+  "version": "0.1.0",
+  "description": "R language support via ark-lsp",
+  "authors": ["Posit Software, PBC"],
+  "repository": "https://github.com/posit-dev/ark"
+}
