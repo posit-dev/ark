@@ -62,7 +62,8 @@ debugger_stack_info <- function(
     context_srcref,
     fns,
     environments,
-    calls
+    calls,
+    top_env
 ) {
     n <- length(fns)
     if (n != length(environments) || n != length(calls)) {
@@ -129,8 +130,20 @@ debugger_stack_info <- function(
         intermediate_environments,
         intermediate_frame_calls
     )
+
+    # When `top_env` differs from `context_environment`, it means that (a) the
+    # current expression is evaluated from C, e.g. we might be forcing a promise
+    # via `list(...)`, and (b) we're adding a synthetic top environment based on
+    # the context srcref. Unfortunately, we don't have any srcref information
+    # for the R-level top in that case, as neither `R_Srcref` nor the last call
+    # in `sys.calls()` point to the location of the call. So we let it fall back
+    # to the virtual source from the function.
+    has_synthetic_top <- !is.null(top_env) &&
+        !identical(top_env, context_environment)
+    last_context_srcref <- if (has_synthetic_top) NULL else context_srcref
+
     last_frame_info <- context_frame_info(
-        context_srcref,
+        last_context_srcref,
         context_fn,
         context_environment,
         context_call_text,
@@ -143,6 +156,21 @@ debugger_stack_info <- function(
         intermediate_frame_infos,
         list(last_frame_info)
     )
+
+    # If the captured top-level environment differs from the R-level top frame,
+    # append a synthetic frame. This happens when evaluating from C (e.g.
+    # promise forcing).
+    if (has_synthetic_top) {
+        top_frame_info <- frame_info_from_srcref(
+            source_name = "<top>.R",
+            frame_name = "<top>",
+            srcref = context_srcref,
+            environment = top_env
+        )
+        if (!is.null(top_frame_info)) {
+            out <- c(out, list(top_frame_info))
+        }
+    }
 
     out
 }
