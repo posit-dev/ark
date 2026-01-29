@@ -271,7 +271,7 @@ impl RHelp {
             let env = (|| {
                 #[cfg(not(test))]
                 if Console::is_initialized() {
-                    return RMain::get().read_console_frame();
+                    return Console::get().read_console_env();
                 }
 
                 RObject::from(R_GlobalEnv)

@@ -356,7 +356,7 @@ pub struct Console {
     /// Stack of topmost environments while waiting for input in ReadConsole.
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
-    pub(crate) read_console_frame_stack: RefCell<Vec<RObject>>,
+    pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
 }
 
 /// Stack of pending inputs
@@ -615,6 +615,11 @@ enum ReadConsolePendingAction {
     /// No pending action, proceed with normal read-console logic.
     #[default]
     None,
+
+    /// We just evaluated `.ark_capture_top_level_environment()` to capture the
+    /// top-level environment into `.ark_top_level_env`. Now retrieve it and
+    /// push onto the frame stack.
+    CaptureEnv,
 
     /// Execute a saved input upon re-entering `r_read_console()`.
     ExecuteInput(String),
@@ -941,7 +946,7 @@ impl Console {
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
-            read_console_frame_stack: RefCell::new(Vec::new()),
+            read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
         }
     }
@@ -1736,11 +1741,9 @@ impl Console {
         buflen: c_int,
         is_debugging: bool,
     ) {
-        let frame = self.eval_frame();
-
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
-            let frame = libr::Rf_protect(frame.into());
+            let frame = libr::Rf_protect(self.eval_frame().sexp);
 
             // The global source reference is stored in this global variable by
             // the R REPL before evaluation. We do the same here.
@@ -2720,49 +2723,57 @@ impl Console {
         }
     }
 
-    #[cfg(not(test))] // Avoid warnings in unit test
-    pub(crate) fn read_console_frame(&self) -> RObject {
-        self.read_console_frame_stack
+    pub(crate) fn read_console_env(&self) -> RObject {
+        self.read_console_env_stack
             .borrow()
             .last()
             .cloned()
             .unwrap_or_else(|| R_ENVS.global.into())
     }
 
-    /// Called when entering `r_read_console()`, which nests in a reentrant way
-    /// when a `browser()` is hit. This handler manages state transitions for
-    /// nested REPL tracking and state.
-    fn on_read_console_enter(&mut self) {
-        // If this is > 1, we're debugging
+    fn do_read_console_entry(&mut self, env: RObject) {
         self.read_console_depth
             .set(self.read_console_depth.get() + 1);
 
-        // Track the current top-level environment for console evaluations
-        self.read_console_frame_stack
-            .borrow_mut()
-            .push(harp::r_current_frame());
-
         self.read_console_nested_return.set(false);
         self.read_console_threw_error.set(true);
+
+        self.read_console_env_stack.borrow_mut().push(env);
     }
 
-    /// Called when exiting `r_read_console()`. Manages state transitions for
-    /// nested REPL tracking.
-    fn on_read_console_exit(&mut self) {
+    fn do_read_console_exit(&mut self) {
         self.read_console_depth
             .set(self.read_console_depth.get() - 1);
 
-        self.read_console_frame_stack.borrow_mut().pop();
+        self.read_console_env_stack.borrow_mut().pop();
 
         self.read_console_nested_return.set(true);
 
-        // Unconditionally stop debugging session, if any
-        self.debug_is_debugging = false;
+        // Always stop debug session when yielding back to R. This prevents
+        // the debug toolbar from lingering in situations like:
+        //
+        // ```r
+        // { local(browser()); Sys.sleep(10) }
+        // ```
+        //
+        // For a more practical example see Shiny app example in
+        // https://github.com/rstudio/rstudio/pull/14848
         self.debug_stop();
     }
 
     pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
         self.debug_selected_frame_id.set(frame_id);
+    }
+
+    /// Check if this is a browser prompt for which we need to capture the
+    /// evaluation environment
+    fn needs_browser_capture(&self, prompt: *const c_char) -> bool {
+        let prompt_str = unsafe { std::ffi::CStr::from_ptr(prompt) }.to_string_lossy();
+        let is_browser = RE_DEBUG_PROMPT.is_match(&prompt_str);
+
+        // Skip capture if there's a pending error, we need `read_console()` to
+        // process it via `take_exception()` first.
+        is_browser && self.last_error.is_none()
     }
 }
 
@@ -2858,16 +2869,49 @@ pub extern "C-unwind" fn r_read_console(
     }
 
     // Handle any pending action from a previous `r_read_console` call.
-    match main.read_console_pending_action.take() {
-        ReadConsolePendingAction::None => {},
+    // These are multi-step operations that required returning control to R.
+    let env: RObject = match console.read_console_pending_action.take() {
+        ReadConsolePendingAction::None => {
+            // Check if this is a browser prompt that needs environment capture.
+            // If so, return capture call WITHOUT doing any entry bookkeeping.
+            if console.needs_browser_capture(prompt) {
+                console
+                    .read_console_pending_action
+                    .set(ReadConsolePendingAction::CaptureEnv);
+
+                // For browser REPLs, we capture the top-level environment by
+                // returning an expression to R that basically does
+                // `parent.frame()` and store it in a base symbol. There is no
+                // way to reliably get this environment via regular evaluation:
+                //
+                // - Evaluating requires supplying an environment, which
+                //   interferes with approaches based on `parent.frame()`.
+                // - Looking at the call stack via `sys.frames()` does not work
+                //   when the browser is evaluating a promise or some other
+                //   C-level `Rf_eval()`.
+                let input = String::from("base::.ark_capture_top_level_environment()");
+                Console::on_console_input(buf, buflen, input).unwrap();
+                return 1;
+            }
+
+            // At top-level: Use global env
+            R_ENVS.global.into()
+        },
+
         ReadConsolePendingAction::ExecuteInput(next_input) => {
             // We've finished evaluating a dummy value to reset state in R's REPL,
-            // and are now ready to evaluate the actual input, which is typically
-            // just `.ark_last_value`.
+            // and are now ready to evaluate the actual input.
             Console::on_console_input(buf, buflen, next_input).unwrap();
             return 1;
         },
-    }
+
+        ReadConsolePendingAction::CaptureEnv => {
+            // We just evaluated `.ark_capture_top_level_environment()`.
+            // Retrieve the captured environment from base namespace for entry
+            // bookkeeping below.
+            unsafe { libr::CDR(r_symbol!(".ark_top_level_env")) }.into()
+        },
+    };
 
     // In case of error, we haven't had a chance to evaluate ".ark_last_value".
     // So we return to the R REPL to give R a chance to run the state
@@ -2891,7 +2935,9 @@ pub extern "C-unwind" fn r_read_console(
         return 1;
     }
 
-    console.on_read_console_enter();
+    // Entry bookkeeping: increment depth, set flags, push frame.
+    // Cleanup happens in the exit branch of `exec_with_cleanup()`.
+    console.do_read_console_entry(env);
 
     exec_with_cleanup(
         || {
@@ -2904,7 +2950,7 @@ pub extern "C-unwind" fn r_read_console(
             result
         },
         || {
-            Console::get_mut().on_read_console_exit();
+            Console::get_mut().do_read_console_exit();
         },
     )
 }
