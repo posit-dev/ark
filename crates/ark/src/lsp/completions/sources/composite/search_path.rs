@@ -53,7 +53,7 @@ fn completions_from_search_path(
         // Iterate through environments starting from the current frame environment.
         #[cfg(not(test))] // Unit tests do not have an `Console`
         // Mem-Safety: Object protected by `Console` for the duration of the `r_task()`
-        let mut env = crate::console::Console::get().read_console_frame().sexp;
+        let mut env = crate::console::Console::get().read_console_env().sexp;
         #[cfg(test)]
         let mut env = libr::R_GlobalEnv;
 
