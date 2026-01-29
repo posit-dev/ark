@@ -236,6 +236,12 @@ impl RMain {
             let calls = r_sys_calls()?;
             protect.add(calls.sexp);
 
+            // The captured top-level environment may differ from
+            // `sys.frame(sys.nframe())` when evaluating in a promise
+            // environment. Pass it so we can add a synthetic frame to the
+            // stack.
+            let top_env = self.read_console_env();
+
             let info = RFunction::new("", "debugger_stack_info")
                 .add(context_call_text)
                 .add(context_last_start_line)
@@ -243,6 +249,7 @@ impl RMain {
                 .add(functions)
                 .add(environments)
                 .add(calls)
+                .add(top_env)
                 .call_in(ARK_ENVS.positron_ns)?;
 
             let n: isize = libr::Rf_xlength(info.sexp);
