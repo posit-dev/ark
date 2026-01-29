@@ -16,6 +16,10 @@ initialize_debug <- function() {
         as.symbol(".ark_verify_breakpoints_range"),
         .ark_verify_breakpoints_range
     )
+    base_bind(
+        as.symbol(".ark_capture_top_level_environment"),
+        .ark_capture_top_level_environment
+    )
 }
 
 debugger_stack_info <- function(
@@ -764,4 +768,11 @@ verify_breapoint <- function(uri, id) {
 #' @export
 .ark_verify_breakpoints_range <- function(uri, start_line, end_line) {
     .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
+}
+
+.ark_capture_top_level_environment <- function() {
+    invisible(base_bind(
+        as.symbol(".ark_top_level_env"),
+        parent.frame()
+    ))
 }
