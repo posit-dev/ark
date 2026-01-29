@@ -271,9 +271,7 @@ impl RHelp {
             let env = (|| {
                 #[cfg(not(test))]
                 if RMain::is_initialized() {
-                    if let Ok(debug_env) = &RMain::get().read_console_frame.try_borrow() {
-                        return (*debug_env).clone();
-                    }
+                    return RMain::get().read_console_frame();
                 }
 
                 RObject::from(R_GlobalEnv)
@@ -283,9 +281,13 @@ impl RHelp {
                 Ok(obj) => obj,
                 Err(err) => {
                     // Could not parse/eval the topic; no custom handler.
-                    log::warn!("Could not parse/eval help topic expression '{}': {:?}", topic, err);
+                    log::warn!(
+                        "Could not parse/eval help topic expression '{}': {:?}",
+                        topic,
+                        err
+                    );
                     return Ok(None);
-                }
+                },
             };
 
             let handler: Option<RObject> =
