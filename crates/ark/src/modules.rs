@@ -268,13 +268,22 @@ mod debug {
 
     pub fn import_directory(directory: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
         log::info!("Loading modules from directory: {}", directory.display());
-        let entries = std::fs::read_dir(directory)?;
+
+        // Collect and sort entries alphabetically to match RustEmbed iteration order.
+        // https://github.com/posit-dev/positron/issues/11591#issuecomment-3816838107
+        let mut entries: Vec<_> = std::fs::read_dir(directory)?
+            .filter_map(|entry| match entry {
+                Ok(entry) => Some(entry),
+                Err(err) => {
+                    log::error!("Can't read directory entry: {err:?}");
+                    None
+                },
+            })
+            .collect();
+        entries.sort_by_key(|entry| entry.path());
 
         for entry in entries {
-            match entry {
-                Ok(entry) => import_file(&entry.path(), src, env)?,
-                Err(err) => log::error!("Can't load modules from file: {err:?}"),
-            };
+            import_file(&entry.path(), src, env)?;
         }
 
         Ok(())
