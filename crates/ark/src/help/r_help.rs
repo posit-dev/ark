@@ -271,9 +271,7 @@ impl RHelp {
             let env = (|| {
                 #[cfg(not(test))]
                 if Console::is_initialized() {
-                    if let Ok(debug_env) = &Console::get().read_console_frame.try_borrow() {
-                        return (*debug_env).clone();
-                    }
+                    return RMain::get().read_console_frame();
                 }
 
                 RObject::from(R_GlobalEnv)

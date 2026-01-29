@@ -353,9 +353,10 @@ pub struct Console {
     /// consoles to get R to shut down
     read_console_shutdown: Cell<bool>,
 
-    /// Current topmost environment on the stack while waiting for input in ReadConsole.
+    /// Stack of topmost environments while waiting for input in ReadConsole.
+    /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
-    pub(crate) read_console_frame: RefCell<RObject>,
+    pub(crate) read_console_frame_stack: RefCell<Vec<RObject>>,
 }
 
 /// Stack of pending inputs
@@ -940,8 +941,7 @@ impl Console {
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
-            // Can't use `R_ENVS.global` here as it isn't initialised yet
-            read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
+            read_console_frame_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
         }
     }
@@ -2722,7 +2722,43 @@ impl Console {
 
     #[cfg(not(test))] // Avoid warnings in unit test
     pub(crate) fn read_console_frame(&self) -> RObject {
-        self.read_console_frame.borrow().clone()
+        self.read_console_frame_stack
+            .borrow()
+            .last()
+            .cloned()
+            .unwrap_or_else(|| R_ENVS.global.into())
+    }
+
+    /// Called when entering `r_read_console()`, which nests in a reentrant way
+    /// when a `browser()` is hit. This handler manages state transitions for
+    /// nested REPL tracking and state.
+    fn on_read_console_enter(&mut self) {
+        // If this is > 1, we're debugging
+        self.read_console_depth
+            .set(self.read_console_depth.get() + 1);
+
+        // Track the current top-level environment for console evaluations
+        self.read_console_frame_stack
+            .borrow_mut()
+            .push(harp::r_current_frame());
+
+        self.read_console_nested_return.set(false);
+        self.read_console_threw_error.set(true);
+    }
+
+    /// Called when exiting `r_read_console()`. Manages state transitions for
+    /// nested REPL tracking.
+    fn on_read_console_exit(&mut self) {
+        self.read_console_depth
+            .set(self.read_console_depth.get() - 1);
+
+        self.read_console_frame_stack.borrow_mut().pop();
+
+        self.read_console_nested_return.set(true);
+
+        // Unconditionally stop debugging session, if any
+        self.debug_is_debugging = false;
+        self.debug_stop();
     }
 
     pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
@@ -2855,25 +2891,7 @@ pub extern "C-unwind" fn r_read_console(
         return 1;
     }
 
-    // Keep track of state that we care about
-
-    // - Track nesting depth of ReadConsole REPLs
-    console
-        .read_console_depth
-        .set(console.read_console_depth.get() + 1);
-
-    // - Set current frame environment
-    let old_current_frame = console.read_console_frame.replace(harp::r_current_frame());
-
-    // Keep track of state that we use for workarounds while interacting
-    // with the R REPL and force it to reset state
-
-    // - Reset flag that helps us figure out when a nested REPL returns
-    console.read_console_nested_return.set(false);
-
-    // - Reset flag that helps us figure out when an error occurred and needs a
-    //   reset of `R_EvalDepth` and friends
-    console.read_console_threw_error.set(true);
+    console.on_read_console_enter();
 
     exec_with_cleanup(
         || {
@@ -2886,31 +2904,7 @@ pub extern "C-unwind" fn r_read_console(
             result
         },
         || {
-            let console = Console::get_mut();
-
-            // We're exiting, decrease depth of nested consoles
-            console
-                .read_console_depth
-                .set(console.read_console_depth.get() - 1);
-
-            // Set flag so that parent read console, if any, can detect that a
-            // nested console returned (if it indeed returns instead of looping
-            // for another iteration)
-            console.read_console_nested_return.set(true);
-
-            // Restore current frame
-            console.read_console_frame.replace(old_current_frame);
-
-            // Always stop debug session when yielding back to R. This prevents
-            // the debug toolbar from lingering in situations like:
-            //
-            // ```r
-            // { local(browser()); Sys.sleep(10) }
-            // ```
-            //
-            // For a more practical example see Shiny app example in
-            // https://github.com/rstudio/rstudio/pull/14848
-            console.debug_stop();
+            Console::get_mut().on_read_console_exit();
         },
     )
 }
