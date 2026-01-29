@@ -42,7 +42,8 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "npm run compile && node scripts/bundle.js && vsce package"
+    "package": "npm run compile && node scripts/bundle.js && vsce package",
+    "package:target": "npm run compile && node scripts/bundle.js && vsce package --target"
   },
   "files": [
     "out/**",

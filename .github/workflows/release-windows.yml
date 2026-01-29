@@ -44,14 +44,20 @@ jobs:
                   cargo clean
                   cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-pc-windows-msvc
 
-            - name: Upload unsigned executable for signing
+            - name: Upload unsigned ark executable for signing
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-unsigned
                   path: target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark.exe
 
+            - name: Upload unsigned ark-lsp executable for signing
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-windows-${{ matrix.arch }}-unsigned
+                  path: target\${{ matrix.rust_target_prefix }}-pc-windows-msvc\${{ matrix.flavor }}\ark-lsp.exe
+
     sign_windows:
-        name: "Sign Windows Binaries"
+        name: "Sign Windows ark Binaries"
         uses: posit-dev/posit-gh-actions/.github/workflows/sign-windows.yml@main
         needs: [build_windows]
         secrets: inherit
@@ -63,8 +69,21 @@ jobs:
             unsigned_artifact_name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-unsigned
             signed_artifact_name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-signed
 
+    sign_windows_ark_lsp:
+        name: "Sign Windows ark-lsp Binaries"
+        uses: posit-dev/posit-gh-actions/.github/workflows/sign-windows.yml@main
+        needs: [build_windows]
+        secrets: inherit
+        strategy:
+            matrix:
+                arch: [x64, arm64]
+                flavor: [debug, release]
+        with:
+            unsigned_artifact_name: ark-lsp-${{ matrix.flavor }}-windows-${{ matrix.arch }}-unsigned
+            signed_artifact_name: ark-lsp-${{ matrix.flavor }}-windows-${{ matrix.arch }}-signed
+
     repackage_signed_windows:
-        name: Repackage Signed Windows Binaries
+        name: Repackage Signed Windows ark Binaries
         runs-on: windows-latest
         needs: [sign_windows]
         timeout-minutes: 10
@@ -102,3 +121,43 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
                   path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-windows-${{ matrix.arch }}.zip
+
+    repackage_signed_windows_ark_lsp:
+        name: Repackage Signed Windows ark-lsp Binaries
+        runs-on: windows-latest
+        needs: [sign_windows_ark_lsp]
+        timeout-minutes: 10
+
+        env:
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+
+        strategy:
+            matrix:
+                arch: [x64, arm64]
+                flavor: [debug, release]
+
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Download signed executable
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-windows-${{ matrix.arch }}-signed
+                  path: signed
+
+            - name: Create signed archive
+              shell: pwsh
+              run: |
+                  # Compress the signed ark-lsp to an archive
+                  $params = @{
+                    Path = "signed\ark-lsp.exe", "LICENSE", "crates\ark\NOTICE"
+                    DestinationPath = "ark-lsp-${{ inputs.version }}${{ env.DEBUG_FLAG }}-windows-${{ matrix.arch }}.zip"
+                  }
+                  Compress-Archive @params
+
+            - name: Upload signed archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-windows-${{ matrix.arch }}-archive
+                  path: ark-lsp-${{ inputs.version }}${{ env.DEBUG_FLAG }}-windows-${{ matrix.arch }}.zip

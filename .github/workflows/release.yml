@@ -80,10 +80,18 @@ jobs:
         with:
             version: ${{ needs.get_version.outputs.ARK_VERSION }}
 
+    build_vscode:
+        name: Build VS Code Extension
+        uses: ./.github/workflows/release-vscode.yml
+        needs: [do_release, get_version, build_macos, build_windows, build_linux]
+        secrets: inherit
+        with:
+            version: ${{ needs.get_version.outputs.ARK_VERSION }}
+
     create_release:
         name: Create Release
         runs-on: ubuntu-latest
-        needs: [do_release, get_version, build_macos, build_windows, build_linux]
+        needs: [do_release, get_version, build_macos, build_windows, build_linux, build_vscode]
         env:
             GITHUB_TOKEN: ${{ github.token }}
         steps:
@@ -136,6 +144,74 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-linux-arm64-archive
 
+            # Download ark-lsp binaries (release only)
+            - name: Download macOS universal ark-lsp (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-darwin-universal-archive
+
+            - name: Download Windows x64 ark-lsp (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-windows-x64-archive
+
+            - name: Download Windows arm64 ark-lsp (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-windows-arm64-archive
+
+            - name: Download Linux x64 ark-lsp (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-linux-x64-archive
+
+            - name: Download Linux arm64 ark-lsp (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-linux-arm64-archive
+
+            # Download VS Code extensions (release only)
+            - name: Download VS Code extension darwin-x64 (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-darwin-x64-vsix
+
+            - name: Download VS Code extension darwin-arm64 (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-darwin-arm64-vsix
+
+            - name: Download VS Code extension linux-x64 (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-linux-x64-vsix
+
+            - name: Download VS Code extension linux-arm64 (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-linux-arm64-vsix
+
+            - name: Download VS Code extension win32-x64 (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-win32-x64-vsix
+
+            - name: Download VS Code extension win32-arm64 (${{ matrix.flavor}})
+              if: matrix.flavor == 'release'
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-win32-arm64-vsix
+
             - name: Upload macOS release artifact (universal)
               uses: softprops/action-gh-release@v2
               env:
@@ -175,6 +251,107 @@ jobs:
               with:
                   tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-linux-arm64.zip
+
+            # Upload ark-lsp binaries (release only)
+            - name: Upload macOS ark-lsp release artifact (universal)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-lsp-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-universal.zip
+
+            - name: Upload Windows ark-lsp release artifact (x64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-lsp-${{ needs.get_version.outputs.ARK_VERSION }}-windows-x64.zip
+
+            - name: Upload Windows ark-lsp release artifact (arm64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-lsp-${{ needs.get_version.outputs.ARK_VERSION }}-windows-arm64.zip
+
+            - name: Upload Linux ark-lsp release artifact (x64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-lsp-${{ needs.get_version.outputs.ARK_VERSION }}-linux-x64.zip
+
+            - name: Upload Linux ark-lsp release artifact (arm64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-lsp-${{ needs.get_version.outputs.ARK_VERSION }}-linux-arm64.zip
+
+            # Upload VS Code extensions (release only)
+            - name: Upload VS Code extension (darwin-x64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-r-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-x64.vsix
+
+            - name: Upload VS Code extension (darwin-arm64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-r-${{ needs.get_version.outputs.ARK_VERSION }}-darwin-arm64.vsix
+
+            - name: Upload VS Code extension (linux-x64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-r-${{ needs.get_version.outputs.ARK_VERSION }}-linux-x64.vsix
+
+            - name: Upload VS Code extension (linux-arm64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-r-${{ needs.get_version.outputs.ARK_VERSION }}-linux-arm64.vsix
+
+            - name: Upload VS Code extension (win32-x64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-r-${{ needs.get_version.outputs.ARK_VERSION }}-win32-x64.vsix
+
+            - name: Upload VS Code extension (win32-arm64)
+              if: matrix.flavor == 'release'
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-r-${{ needs.get_version.outputs.ARK_VERSION }}-win32-arm64.vsix
 
     cleanup:
         name: Clean up Failed Releases

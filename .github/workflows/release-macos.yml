@@ -82,7 +82,7 @@ jobs:
                   cargo build ${{ matrix.flavor == 'release' && '--release' || '' }} --target ${{ matrix.rust_target_prefix }}-apple-darwin
 
             # Compress kernel to a zip file
-            - name: Create archive
+            - name: Create ark archive
               run: |
                   # Enter the build directory
                   pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
@@ -94,11 +94,30 @@ jobs:
                   popd
 
             # Create build artifact
-            - name: Upload client archive
+            - name: Upload ark archive
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
                   path: ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
+
+            # Compress ark-lsp to a zip file
+            - name: Create ark-lsp archive
+              run: |
+                  # Enter the build directory
+                  pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
+
+                  # Compress ark-lsp to an archive
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-lsp-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
+                  zip -Xry $ARCHIVE ark-lsp
+
+                  popd
+
+            # Create build artifact for ark-lsp
+            - name: Upload ark-lsp archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
+                  path: ark-lsp-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
 
 
     build_universal:
@@ -132,8 +151,18 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-darwin-x64-archive
 
+            - name: Download macOS arm64 ark-lsp (${{ matrix.flavor }})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-darwin-arm64-archive
+
+            - name: Download macOS x64 ark-lsp (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-darwin-x64-archive
+
             # Combine macOS binaries to a single binary with lipo
-            - name: Create macOS universal binary
+            - name: Create macOS universal binary for ark
               run: |
                   # Decompress x64 builds
                   rm -rf x64 && mkdir x64
@@ -156,8 +185,37 @@ jobs:
                   [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
                   zip -Xry $ARCHIVE ark LICENSE NOTICE
 
-            - name: Upload client archive
+            - name: Create macOS universal binary for ark-lsp
+              run: |
+                  # Decompress x64 builds
+                  rm -rf x64-lsp && mkdir x64-lsp
+                  pushd x64-lsp
+                  unzip ../ark-lsp-${{ inputs.version }}-${{ matrix.flavor }}-darwin-x64.zip
+                  popd
+
+                  # Decompress arm64 build
+                  rm -rf arm64-lsp && mkdir arm64-lsp
+                  pushd arm64-lsp
+                  unzip ../ark-lsp-${{ inputs.version }}-${{ matrix.flavor }}-darwin-arm64.zip
+                  popd
+
+                  # Create a universal binary
+                  lipo -create x64-lsp/ark-lsp arm64-lsp/ark-lsp -output ark-lsp
+
+                  # Compress and bundle licenses
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-lsp-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-universal.zip"
+                  [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark-lsp LICENSE NOTICE
+
+            - name: Upload ark archive
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-darwin-universal-archive
                   path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
+
+            - name: Upload ark-lsp archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-darwin-universal-archive
+                  path: ark-lsp-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-universal.zip

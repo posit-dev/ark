@@ -57,7 +57,7 @@ jobs:
                   cargo zigbuild --target ${ARCH_FLAG}-unknown-linux-gnu.$GLIBC_MAX_VERSION $TARGET_FLAG
 
             # Compress kernel to a zip file
-            - name: Create archive
+            - name: Create ark archive
               run: |
                   # Enter the build directory
                   pushd target/${ARCH_FLAG}-unknown-linux-gnu/${{ matrix.flavor }}
@@ -70,8 +70,27 @@ jobs:
 
                   popd
 
-            - name: Upload archive
+            - name: Upload ark archive
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-linux-${{ matrix.arch }}-archive
                   path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-linux-${{ matrix.arch }}.zip
+
+            - name: Create ark-lsp archive
+              run: |
+                  # Enter the build directory
+                  pushd target/${ARCH_FLAG}-unknown-linux-gnu/${{ matrix.flavor }}
+
+                  # Compress ark-lsp to an archive
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-lsp-${{ inputs.version }}${{ env.DEBUG_FLAG }}-linux-${{ matrix.arch }}.zip"
+                  [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark-lsp LICENSE NOTICE
+
+                  popd
+
+            - name: Upload ark-lsp archive
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-lsp-${{ matrix.flavor }}-linux-${{ matrix.arch }}-archive
+                  path: ark-lsp-${{ inputs.version }}${{ env.DEBUG_FLAG }}-linux-${{ matrix.arch }}.zip

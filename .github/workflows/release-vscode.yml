@@ -1,0 +1,106 @@
+name: "Build VS Code Extension"
+
+on:
+    workflow_call:
+      inputs:
+        version:
+          required: true
+          description: "The Ark version"
+          type: string
+    workflow_dispatch:
+      inputs:
+        version:
+          required: false
+          description: "The Ark version"
+          default: dev
+          type: string
+
+jobs:
+    build_vscode:
+        name: Build VS Code Extension
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+
+        env:
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
+
+        strategy:
+            matrix:
+                flavor: [release]
+                target:
+                    - vscode_target: darwin-x64
+                      ark_lsp_artifact: ark-lsp-release-darwin-universal-archive
+                      ark_lsp_zip: ark-lsp-$VERSION-darwin-universal.zip
+                      binary_name: ark-lsp
+                    - vscode_target: darwin-arm64
+                      ark_lsp_artifact: ark-lsp-release-darwin-universal-archive
+                      ark_lsp_zip: ark-lsp-$VERSION-darwin-universal.zip
+                      binary_name: ark-lsp
+                    - vscode_target: linux-x64
+                      ark_lsp_artifact: ark-lsp-release-linux-x64-archive
+                      ark_lsp_zip: ark-lsp-$VERSION-linux-x64.zip
+                      binary_name: ark-lsp
+                    - vscode_target: linux-arm64
+                      ark_lsp_artifact: ark-lsp-release-linux-arm64-archive
+                      ark_lsp_zip: ark-lsp-$VERSION-linux-arm64.zip
+                      binary_name: ark-lsp
+                    - vscode_target: win32-x64
+                      ark_lsp_artifact: ark-lsp-release-windows-x64-archive
+                      ark_lsp_zip: ark-lsp-$VERSION-windows-x64.zip
+                      binary_name: ark-lsp.exe
+                    - vscode_target: win32-arm64
+                      ark_lsp_artifact: ark-lsp-release-windows-arm64-archive
+                      ark_lsp_zip: ark-lsp-$VERSION-windows-arm64.zip
+                      binary_name: ark-lsp.exe
+
+        steps:
+            - name: Checkout sources
+              uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+
+            - name: Download ark-lsp binary
+              uses: actions/download-artifact@v4
+              with:
+                  name: ${{ matrix.target.ark_lsp_artifact }}
+                  path: ark-lsp-download
+
+            - name: Extract and place ark-lsp binary
+              run: |
+                  VERSION="${{ inputs.version }}"
+                  ZIP_NAME=$(echo "${{ matrix.target.ark_lsp_zip }}" | sed "s/\$VERSION/$VERSION/g")
+
+                  cd ark-lsp-download
+                  unzip "$ZIP_NAME"
+
+                  cd ../editors/vscode
+                  mkdir -p bin
+                  cp "../../ark-lsp-download/${{ matrix.target.binary_name }}" "bin/${{ matrix.target.binary_name }}"
+                  chmod +x "bin/${{ matrix.target.binary_name }}"
+
+            - name: Update extension version
+              working-directory: editors/vscode
+              run: |
+                  # Update package.json version to match ark version
+                  npm pkg set version="${{ inputs.version }}"
+
+            - name: Install dependencies
+              working-directory: editors/vscode
+              run: npm ci
+
+            - name: Compile TypeScript
+              working-directory: editors/vscode
+              run: npm run compile
+
+            - name: Package extension
+              working-directory: editors/vscode
+              run: npx vsce package --target ${{ matrix.target.vscode_target }} -o "ark-r-${{ inputs.version }}-${{ matrix.target.vscode_target }}.vsix"
+
+            - name: Upload vsix artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ark-r-${{ matrix.flavor }}-${{ matrix.target.vscode_target }}-vsix
+                  path: editors/vscode/ark-r-${{ inputs.version }}-${{ matrix.target.vscode_target }}.vsix
