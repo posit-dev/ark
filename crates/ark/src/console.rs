@@ -346,9 +346,8 @@ pub struct Console {
     /// evaluation to reset things like `R_ConsoleIob`.
     read_console_nested_return: Cell<bool>,
 
-    /// Used to track an input to evaluate upon returning to `r_read_console()`,
-    /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
-    read_console_nested_return_next_input: Cell<Option<String>>,
+    /// Pending action to perform at the start of the next `r_read_console()` call.
+    read_console_pending_action: Cell<ReadConsolePendingAction>,
 
     /// We've received a Shutdown signal and need to return EOF from all nested
     /// consoles to get R to shut down
@@ -605,6 +604,19 @@ impl Drop for ConsoleOutputCapture {
         // Restore previous capture state
         console.captured_output = self.previous_output.take();
     }
+}
+
+/// Pending action to perform at the start of the next `r_read_console()` call.
+/// This is used to implement multi-step operations that require returning
+/// control to R between steps.
+#[derive(Default)]
+enum ReadConsolePendingAction {
+    /// No pending action, proceed with normal read-console logic.
+    #[default]
+    None,
+
+    /// Execute a saved input upon re-entering `r_read_console()`.
+    ExecuteInput(String),
 }
 
 impl Console {
@@ -927,7 +939,7 @@ impl Console {
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
-            read_console_nested_return_next_input: Cell::new(None),
+            read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
             // Can't use `R_ENVS.global` here as it isn't initialised yet
             read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
             read_console_shutdown: Cell::new(false),
@@ -2809,12 +2821,16 @@ pub extern "C-unwind" fn r_read_console(
         return 0;
     }
 
-    // We've finished evaluating a dummy value to reset state in R's REPL,
-    // and are now ready to evaluate the actual input, which is typically
-    // just `.ark_last_value`.
-    if let Some(next_input) = console.read_console_nested_return_next_input.take() {
-        Console::on_console_input(buf, buflen, next_input).unwrap();
-        return 1;
+    // Handle any pending action from a previous `r_read_console` call.
+    match main.read_console_pending_action.take() {
+        ReadConsolePendingAction::None => {},
+        ReadConsolePendingAction::ExecuteInput(next_input) => {
+            // We've finished evaluating a dummy value to reset state in R's REPL,
+            // and are now ready to evaluate the actual input, which is typically
+            // just `.ark_last_value`.
+            Console::on_console_input(buf, buflen, next_input).unwrap();
+            return 1;
+        },
     }
 
     // In case of error, we haven't had a chance to evaluate ".ark_last_value".
@@ -2934,8 +2950,8 @@ fn r_read_console_impl(
                 if console.read_console_nested_return.get() {
                     let next_input = Console::console_input(buf, buflen);
                     console
-                        .read_console_nested_return_next_input
-                        .set(Some(next_input));
+                        .read_console_pending_action
+                        .set(ReadConsolePendingAction::ExecuteInput(next_input));
 
                     // Evaluating a space causes a `PARSE_NULL` event. Don't
                     // evaluate a newline, that would cause a parent debug REPL
