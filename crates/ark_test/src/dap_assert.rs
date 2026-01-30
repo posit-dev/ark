@@ -49,3 +49,18 @@ pub fn assert_vdoc_frame(frame: &StackFrame, name: &str, line: i64, end_column: 
         "Expected path ending with {name}.R, got {path}"
     );
 }
+
+/// Assert a stack frame matches expected values for a file-based frame.
+#[track_caller]
+pub fn assert_file_frame(frame: &StackFrame, path: &str, line: i64, end_column: i64) {
+    let source = frame.source.as_ref().expect("Expected source");
+    let frame_path = source.path.as_ref().expect("Expected path");
+
+    assert!(
+        frame_path.ends_with(path),
+        "Expected path ending with {path}, got {frame_path}"
+    );
+    assert_eq!(frame.line, line, "line mismatch");
+    assert_eq!(frame.end_line, Some(line), "end_line mismatch");
+    assert_eq!(frame.end_column, Some(end_column), "end_column mismatch");
+}
