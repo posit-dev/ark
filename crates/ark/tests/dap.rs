@@ -41,6 +41,13 @@ fn test_dap_stopped_at_browser() {
     // line: 1, column: 10 corrsponds to `browser()`
     assert_vdoc_frame(&stack[0], "<global>", 1, 10);
 
+    // Execute an expression that doesn't advance the debugger
+    // FIXME: `preserve_focus_hint` should be false
+    // https://github.com/posit-dev/positron/issues/11604
+    frontend.debug_send_expr("1");
+    dap.recv_continued();
+    dap.recv_stopped();
+
     frontend.debug_send_quit();
     dap.recv_continued();
 }

@@ -239,6 +239,26 @@ impl DummyArkFrontend {
         self.debug_send_step("c")
     }
 
+    /// Execute an expression while in debug mode and receive all expected messages.
+    ///
+    /// This is for evaluating expressions that don't advance the debugger (e.g., `1`, `x`).
+    /// The caller must still receive the DAP `Stopped` event with `preserve_focus_hint=true`.
+    #[track_caller]
+    pub fn debug_send_expr(&self, expr: &str) -> u32 {
+        self.send_execute_request(expr, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+            Box::new(|msg| matches!(msg, Message::ExecuteResult(_))),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
+
     /// Helper for debug step commands that continue execution.
     #[track_caller]
     fn debug_send_step(&self, cmd: &str) -> u32 {
