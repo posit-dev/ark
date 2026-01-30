@@ -66,11 +66,11 @@ use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
-use ark::fixtures::r_test_lock;
-use ark::fixtures::socket_rpc_request;
 use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
+use ark_test::r_test_lock;
+use ark_test::socket_rpc_request;
 use crossbeam::channel::bounded;
 use harp::environment::R_ENVS;
 use harp::object::RObject;
@@ -2238,7 +2238,11 @@ fn test_search_schema_data_type_filters() {
 
     // Test filter for all numeric-like types: Integer, Floating and Date
     let req = RequestBuilder::search_schema_data_types(
-        vec![ColumnDisplayType::Integer, ColumnDisplayType::Floating, ColumnDisplayType::Date],
+        vec![
+            ColumnDisplayType::Integer,
+            ColumnDisplayType::Floating,
+            ColumnDisplayType::Date,
+        ],
         SearchSchemaSortOrder::Original,
     );
     TestAssertions::assert_search_matches(socket, req, vec![1, 2, 4]); // age, score, date_joined
@@ -3004,11 +3008,9 @@ fn test_empty_data_frame_state() {
     let _lock = r_test_lock();
 
     // Test state request with 0-row data frame
-    let socket = open_data_explorer_from_expression(
-        "data.frame(x = numeric(0), y = character(0))",
-        None,
-    )
-    .unwrap();
+    let socket =
+        open_data_explorer_from_expression("data.frame(x = numeric(0), y = character(0))", None)
+            .unwrap();
 
     assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
@@ -3032,8 +3034,10 @@ fn test_empty_data_frame_column_profiles() {
     .unwrap();
 
     // Test histogram profile for empty numeric column
-    let histogram_req = ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
-    let req = RequestBuilder::get_column_profiles("empty_histogram".to_string(), vec![histogram_req]);
+    let histogram_req =
+        ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
+    let req =
+        RequestBuilder::get_column_profiles("empty_histogram".to_string(), vec![histogram_req]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
@@ -3043,7 +3047,8 @@ fn test_empty_data_frame_column_profiles() {
 
     // Test frequency table for empty string column
     let freq_table_req = ProfileBuilder::small_frequency_table(1, 5);
-    let req = RequestBuilder::get_column_profiles("empty_freq_table".to_string(), vec![freq_table_req]);
+    let req =
+        RequestBuilder::get_column_profiles("empty_freq_table".to_string(), vec![freq_table_req]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
@@ -3070,8 +3075,10 @@ fn test_single_row_data_frame_column_profiles() {
     .unwrap();
 
     // Test histogram profile for single value numeric column
-    let histogram_req = ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
-    let req = RequestBuilder::get_column_profiles("single_histogram".to_string(), vec![histogram_req]);
+    let histogram_req =
+        ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
+    let req =
+        RequestBuilder::get_column_profiles("single_histogram".to_string(), vec![histogram_req]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
@@ -3081,7 +3088,8 @@ fn test_single_row_data_frame_column_profiles() {
 
     // Test frequency table for single value string column
     let freq_table_req = ProfileBuilder::small_frequency_table(1, 5);
-    let req = RequestBuilder::get_column_profiles("single_freq_table".to_string(), vec![freq_table_req]);
+    let req =
+        RequestBuilder::get_column_profiles("single_freq_table".to_string(), vec![freq_table_req]);
 
     expect_column_profile_results(&socket, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
@@ -3099,7 +3107,10 @@ fn test_single_row_data_frame_column_profiles() {
 
     for method in histogram_methods {
         let histogram_req = ProfileBuilder::small_histogram(3, method.clone(), 10, None); // single_int column
-        let req = RequestBuilder::get_column_profiles(format!("single_histogram_{:?}", method), vec![histogram_req]);
+        let req =
+            RequestBuilder::get_column_profiles(format!("single_histogram_{:?}", method), vec![
+                histogram_req,
+            ]);
 
         expect_column_profile_results(&socket, req, |profiles| {
             let histogram = profiles[0].small_histogram.clone().unwrap();

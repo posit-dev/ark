@@ -1,7 +1,15 @@
-pub mod dap_client;
-pub mod dummy_frontend;
-pub mod utils;
+//
+// fixtures/mod.rs
+//
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
+//
+//
 
-pub use dap_client::*;
-pub use dummy_frontend::*;
+//! Test utilities for ark's internal unit tests.
+//!
+//! For integration test utilities (DummyArkFrontend, DapClient, etc.),
+//! use the `ark_test` crate instead.
+
+mod utils;
+
 pub use utils::*;

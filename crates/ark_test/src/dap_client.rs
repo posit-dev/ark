@@ -227,6 +227,10 @@ impl DapClient {
 
 impl Drop for DapClient {
     fn drop(&mut self) {
-        self.disconnect();
+        // Don't try to disconnect if we're already panicking, as this could
+        // obscure the original error
+        if !std::thread::panicking() {
+            self.disconnect();
+        }
     }
 }

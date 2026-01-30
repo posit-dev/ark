@@ -5,7 +5,7 @@
 //
 //
 
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 
 #[test]
 fn test_dap_initialize_and_disconnect() {
