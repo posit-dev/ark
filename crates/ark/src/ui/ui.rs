@@ -8,6 +8,7 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
+use amalthea::comm::ui_comm::EditorContextChangedParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -150,6 +151,9 @@ impl UiComm {
             UiBackendRequest::DidChangePlotsRenderSettings(params) => {
                 self.handle_did_change_plot_render_settings(params)
             },
+            UiBackendRequest::EditorContextChanged(params) => {
+                self.handle_editor_context_changed(params)
+            },
         }
     }
 
@@ -215,6 +219,18 @@ impl UiComm {
             .unwrap();
 
         Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
+    }
+
+    fn handle_editor_context_changed(
+        &self,
+        params: EditorContextChangedParams,
+    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+        log::trace!(
+            "Editor context changed: document_uri={}, is_execution_source={}",
+            params.document_uri,
+            params.is_execution_source
+        );
+        Ok(UiBackendReply::EditorContextChangedReply())
     }
 
     /**

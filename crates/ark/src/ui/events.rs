@@ -76,6 +76,7 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
         line: RObject::view(line).try_into()?,
         column: RObject::view(column).try_into()?,
         kind,
+        pinned: None,
     };
 
     let event = UiFrontendEvent::OpenEditor(params);

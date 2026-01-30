@@ -1,7 +1,7 @@
 // @generated
 
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -166,6 +166,17 @@ pub struct CallMethodParams {
 	pub params: Vec<Param>,
 }
 
+/// Parameters for the EditorContextChanged method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EditorContextChangedParams {
+	/// The URI of the active document, or empty string if no editor is active
+	pub document_uri: String,
+
+	/// Whether this editor is the source of code being executed. When true,
+	/// the backend may temporarily add the file's directory to sys.path.
+	pub is_execution_source: bool,
+}
+
 /// Parameters for the Busy method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BusyParams {
@@ -188,6 +199,10 @@ pub struct OpenEditorParams {
 	/// How to interpret the 'file' argument: as a file path or as a URI. If
 	/// omitted, defaults to 'path'.
 	pub kind: OpenEditorKind,
+
+	/// Whether to open the editor pinned (non-preview mode). If omitted,
+	/// defaults to true.
+	pub pinned: Option<bool>,
 }
 
 /// Parameters for the NewDocument method.
@@ -399,6 +414,15 @@ pub enum UiBackendRequest {
 	#[serde(rename = "call_method")]
 	CallMethod(CallMethodParams),
 
+	/// Active editor context changed
+	///
+	/// This notification is sent from the frontend to the backend when the
+	/// active text editor changes or when code is about to be executed from a
+	/// file. It provides the document URI and indicates whether this is the
+	/// source file for code execution.
+	#[serde(rename = "editor_context_changed")]
+	EditorContextChanged(EditorContextChangedParams),
+
 }
 
 /**
@@ -412,6 +436,9 @@ pub enum UiBackendReply {
 
 	/// The method result
 	CallMethodReply(CallMethodResult),
+
+	/// Unused response to notification
+	EditorContextChangedReply(),
 
 }
 
