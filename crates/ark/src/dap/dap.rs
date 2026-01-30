@@ -247,9 +247,11 @@ impl Dap {
         self.fallback_sources.clear();
         self.clear_variables_reference_maps();
         self.reset_variables_reference_count();
+
+        let was_debugging = self.is_debugging;
         self.is_debugging = false;
 
-        if self.is_connected {
+        if was_debugging && self.is_connected {
             log::trace!("DAP: Sending `stop_debug` events");
 
             if let Some(comm_tx) = &self.comm_tx {
