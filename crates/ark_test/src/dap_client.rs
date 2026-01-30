@@ -17,7 +17,9 @@ use anyhow::anyhow;
 use dap::base_message::BaseMessage;
 use dap::base_message::Sendable;
 use dap::events::Event;
+use dap::requests::AttachRequestArguments;
 use dap::requests::Command;
+use dap::requests::ContinueArguments;
 use dap::requests::DisconnectArguments;
 use dap::requests::InitializeArguments;
 use dap::requests::Request;
@@ -92,7 +94,54 @@ impl DapClient {
         caps
     }
 
+    /// Attach to the debuggee.
+    ///
+    /// Sends Attach request and consumes the Thread (started) event.
+    #[track_caller]
+    pub fn attach(&mut self) {
+        let seq = self
+            .send(Command::Attach(AttachRequestArguments {
+                ..Default::default()
+            }))
+            .expect("Failed to send Attach request");
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Attach request failed");
+        assert!(
+            matches!(response.body, Some(ResponseBody::Attach)),
+            "Expected Attach response body, got {:?}",
+            response.body
+        );
+
+        let event = self.recv_event();
+        let Event::Thread(thread) = event else {
+            panic!("Expected Thread event, got {:?}", event);
+        };
+        assert_eq!(thread.thread_id, -1, "Expected thread_id -1");
+    }
+
+    /// Send continue execution (exit browser/debugger) to server.
+    #[track_caller]
+    pub fn continue_execution(&mut self) {
+        let seq = self
+            .send(Command::Continue(ContinueArguments {
+                thread_id: -1,
+                single_thread: None,
+            }))
+            .expect("Failed to send Continue request");
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Continue request failed");
+        assert!(
+            matches!(response.body, Some(ResponseBody::Continue(_))),
+            "Expected Continue response body, got {:?}",
+            response.body
+        );
+    }
+
     /// Disconnect from the DAP server.
+    ///
+    /// This method drains any pending events before expecting the disconnect response.
     pub fn disconnect(&mut self) {
         if !self.connected {
             return;
@@ -105,18 +154,43 @@ impl DapClient {
         })) {
             Ok(seq) => seq,
             Err(err) => {
-                log::warn!("Failed to send Disconnect request: {err:?}");
-                return;
+                panic!("Failed to send Disconnect request: {err:?}");
             },
         };
 
-        let response = self.recv_response(seq);
-        assert!(response.success, "Disconnect request failed");
-        assert!(
-            matches!(response.body, Some(ResponseBody::Disconnect)),
-            "Expected Disconnect response body, got {:?}",
-            response.body
-        );
+        // Drain any pending events before expecting the response
+        loop {
+            let msg = match self.recv() {
+                Ok(msg) => msg,
+                Err(err) => {
+                    panic!("Failed to receive DAP message during disconnect: {err:?}");
+                },
+            };
+
+            match msg {
+                Sendable::Response(response) => {
+                    assert_eq!(
+                        response.request_seq, seq,
+                        "Response request_seq mismatch during disconnect"
+                    );
+                    assert!(response.success, "Disconnect request failed");
+                    assert!(
+                        matches!(response.body, Some(ResponseBody::Disconnect)),
+                        "Expected Disconnect response body, got {:?}",
+                        response.body
+                    );
+                    break;
+                },
+                Sendable::Event(_event) => {
+                    // Events (like Continued) may arrive before the Disconnect
+                    // response due to async processing. Drain them silently.
+                    continue;
+                },
+                Sendable::ReverseRequest(req) => {
+                    panic!("Unexpected ReverseRequest during disconnect: {:?}", req);
+                },
+            }
+        }
 
         self.connected = false;
     }
@@ -222,6 +296,28 @@ impl DapClient {
                 panic!("Expected Event, got ReverseRequest: {:?}", req);
             },
         }
+    }
+
+    /// Receive and assert the next message is a Continued event.
+    #[track_caller]
+    pub fn recv_continued(&mut self) {
+        let event = self.recv_event();
+        assert!(
+            matches!(event, Event::Continued(_)),
+            "Expected Continued event, got {:?}",
+            event
+        );
+    }
+
+    /// Receive and assert the next message is a Stopped event.
+    #[track_caller]
+    pub fn recv_stopped(&mut self) {
+        let event = self.recv_event();
+        assert!(
+            matches!(event, Event::Stopped(_)),
+            "Expected Stopped event, got {:?}",
+            event
+        );
     }
 }
 

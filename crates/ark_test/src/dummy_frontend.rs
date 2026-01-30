@@ -7,8 +7,11 @@ use std::sync::OnceLock;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::comm_open::CommOpen;
+
 use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::status::ExecutionState;
 use ark::interface::SessionMode;
 use ark::repos::DefaultRepos;
 
@@ -140,9 +143,121 @@ impl DummyArkFrontend {
         let mut client =
             DapClient::connect("127.0.0.1", port).expect("Failed to connect to DAP server");
         client.initialize();
+        client.attach();
         client
     }
 
+    /// Receive exactly `n` iopub messages, returning a wrapper for inspection.
+    ///
+    /// Use this when multiple messages may arrive in non-deterministic order
+    /// (e.g., from different threads sending to iopub concurrently).
+    ///
+    /// Use `pop()` to extract expected messages and `assert_all_consumed()` to
+    /// verify no unexpected messages remain.
+    #[track_caller]
+    pub fn recv_iopub_n(&self, n: usize) -> UnorderedMessages {
+        let mut messages = Vec::with_capacity(n);
+        for _ in 0..n {
+            messages.push(self.recv_iopub());
+        }
+        UnorderedMessages { messages }
+    }
+
+    /// Receive iopub messages and match each against a predicate.
+    ///
+    /// Receives exactly as many messages as there are predicates, matches each
+    /// one (in any order), and asserts no extra messages remain.
+    #[track_caller]
+    pub fn recv_iopub_all(&self, predicates: Vec<Box<dyn FnMut(&Message) -> bool>>) {
+        let mut messages = self.recv_iopub_n(predicates.len());
+        for p in predicates {
+            messages.pop(p);
+        }
+        messages.assert_all_consumed();
+    }
+
+    /// Execute `browser()` and receive all expected messages.
+    #[track_caller]
+    pub fn debug_send_browser(&self) -> u32 {
+        self.send_execute_request("browser()", ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        // Receive 3 messages in non-deterministic order: start_debug, execute_result, idle.
+        // Message ordering is non-deterministic because they originate from different
+        // threads (comm manager vs shell handler) that both send to the iopub socket.
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+            Box::new(|msg| {
+                let Message::ExecuteResult(result) = msg else {
+                    return false;
+                };
+                let text = result.content.data["text/plain"].as_str().unwrap_or("");
+                assert!(text.contains("Called from: top level"));
+                true
+            }),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
+
+    /// Execute `Q` to quit the browser and receive all expected messages.
+    #[track_caller]
+    pub fn debug_send_quit(&self) -> u32 {
+        self.send_execute_request("Q", ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        // Receive 3 messages in non-deterministic order: stop_debug (x2), idle.
+        // FIXME: Fix duplicate stop_debug messages, then this can be 2.
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
+}
+
+/// Wrapper for messages that may arrive in non-deterministic order.
+///
+/// Use `pop()` to extract expected messages and `assert_all_consumed()` to
+/// verify no unexpected messages remain.
+pub struct UnorderedMessages {
+    messages: Vec<Message>,
+}
+
+impl UnorderedMessages {
+    /// Remove and return the first message matching the predicate.
+    ///
+    /// Panics if no message matches.
+    #[track_caller]
+    pub fn pop<F>(&mut self, mut predicate: F) -> Message
+    where
+        F: FnMut(&Message) -> bool,
+    {
+        let pos = self
+            .messages
+            .iter()
+            .position(|m| predicate(m))
+            .expect("No message matched the predicate");
+        self.messages.remove(pos)
+    }
+
+    /// Assert that all messages have been consumed.
+    ///
+    /// Panics with details of remaining messages if any exist.
+    #[track_caller]
+    pub fn assert_all_consumed(self) {
+        if !self.messages.is_empty() {
+            panic!("Unexpected messages remaining: {:#?}", self.messages);
+        }
+    }
+}
+
+impl DummyArkFrontend {
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
         // These are the hard-coded defaults. Call `init()` explicitly to
         // override.
