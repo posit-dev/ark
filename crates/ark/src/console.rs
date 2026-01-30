@@ -630,7 +630,7 @@ impl Console {
         let libraries = RLibraries::from_r_home_path(&r_home);
         libraries.initialize_pre_setup_r();
 
-        crate::sys::interface::setup_r(&r_args);
+        crate::sys::console::setup_r(&r_args);
 
         libraries.initialize_post_setup_r();
 
@@ -718,7 +718,7 @@ impl Console {
         }
 
         // Start the REPL. Does not return!
-        crate::sys::interface::run_r();
+        crate::sys::console::run_r();
     }
 
     /// Build the argument list from the command line arguments. The default
@@ -2322,7 +2322,7 @@ impl Console {
         // this.
         unsafe { R_ProcessEvents() };
 
-        crate::sys::interface::run_activity_handlers();
+        crate::sys::console::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.

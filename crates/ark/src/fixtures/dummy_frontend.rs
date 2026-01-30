@@ -69,7 +69,7 @@ impl DummyArkFrontend {
     pub fn wait_for_cleanup() {
         use std::time::Duration;
 
-        use crate::sys::interface::CLEANUP_SIGNAL;
+        use crate::sys::console::CLEANUP_SIGNAL;
 
         let (lock, cvar) = &CLEANUP_SIGNAL;
         let result = cvar
