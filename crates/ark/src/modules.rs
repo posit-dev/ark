@@ -125,12 +125,14 @@ pub fn initialize() -> anyhow::Result<RObject> {
                 &root.join("positron"),
                 RModuleSource::Positron,
                 namespace.sexp,
-            )?;
+            )
+            .unwrap();
             import_directory(
                 &root.join("rstudio"),
                 debug::RModuleSource::RStudio,
                 namespace.sexp,
-            )?;
+            )
+            .unwrap();
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
@@ -271,15 +273,8 @@ mod debug {
 
         // Collect and sort entries alphabetically to match RustEmbed iteration order.
         // https://github.com/posit-dev/positron/issues/11591#issuecomment-3816838107
-        let mut entries: Vec<_> = std::fs::read_dir(directory)?
-            .filter_map(|entry| match entry {
-                Ok(entry) => Some(entry),
-                Err(err) => {
-                    log::error!("Can't read directory entry: {err:?}");
-                    None
-                },
-            })
-            .collect();
+        let mut entries: Vec<_> =
+            std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
         entries.sort_by_key(|entry| entry.path());
 
         for entry in entries {
