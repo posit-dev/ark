@@ -8,7 +8,7 @@
 use std::io::Write;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark::fixtures::DummyArkFrontendDefaultRepos;
+use ark_test::DummyArkFrontendDefaultRepos;
 
 /// Using the automatic repos setting, the default CRAN repo should be set to the global RStudio
 /// CRAN mirror.

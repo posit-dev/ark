@@ -9,10 +9,6 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::Once;
 
-use amalthea::comm::comm_channel::CommMsg;
-use amalthea::socket;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use tree_sitter::Point;
 
 use crate::modules;
@@ -28,7 +24,7 @@ pub fn r_test_lock() -> MutexGuard<'static, ()> {
 
 static INIT: Once = Once::new();
 
-pub(crate) fn r_test_init() {
+pub fn r_test_init() {
     harp::fixtures::r_test_init();
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
@@ -69,40 +65,6 @@ pub fn point_and_offset_from_cursor(x: &str, cursor: u8) -> (String, Point, usiz
     }
 
     panic!("`x` must include a `@` character!");
-}
-
-pub fn socket_rpc_request<'de, RequestType, ReplyType>(
-    socket: &socket::comm::CommSocket,
-    req: RequestType,
-) -> ReplyType
-where
-    RequestType: Serialize,
-    ReplyType: DeserializeOwned,
-{
-    // Randomly generate a unique ID for this request.
-    let id = uuid::Uuid::new_v4().to_string();
-
-    // Serialize the message for the wire
-    let json = serde_json::to_value(req).unwrap();
-    println!("--> {:?}", json);
-
-    // Convert the request to a CommMsg and send it.
-    let msg = CommMsg::Rpc(id, json);
-    socket.incoming_tx.send(msg).unwrap();
-    let msg = socket
-        .outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .unwrap();
-
-    // Extract the reply from the CommMsg.
-    match msg {
-        CommMsg::Rpc(_id, value) => {
-            println!("<-- {:?}", value);
-            let reply = serde_json::from_value(value).unwrap();
-            reply
-        },
-        _ => panic!("Unexpected Comm Message"),
-    }
 }
 
 pub fn package_is_installed(package: &str) -> bool {

@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 
 #[test]
 fn test_source_local() {

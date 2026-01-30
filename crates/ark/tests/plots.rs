@@ -1,5 +1,5 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 
 #[test]
 fn test_basic_plot() {

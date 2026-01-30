@@ -9,10 +9,10 @@ use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::jupyter_message::Message;
+use ark::interface::SessionMode;
+use ark::repos::DefaultRepos;
 
-use crate::console::SessionMode;
-use crate::fixtures::DapClient;
-use crate::repos::DefaultRepos;
+use crate::DapClient;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
@@ -72,7 +72,7 @@ impl DummyArkFrontend {
     pub fn wait_for_cleanup() {
         use std::time::Duration;
 
-        use crate::sys::console::CLEANUP_SIGNAL;
+        use ark::sys::console::CLEANUP_SIGNAL;
 
         let (lock, cvar) = &CLEANUP_SIGNAL;
         let result = cvar
@@ -188,7 +188,7 @@ impl DummyArkFrontend {
         // Must run `start_kernel()` in a background thread because it blocks until it receives
         // a `HandshakeReply`, which we send from `from_connection()` below.
         stdext::spawn!("dummy_kernel", move || {
-            crate::start::start_kernel(
+            ark::start::start_kernel(
                 connection_file,
                 Some(registration_file),
                 r_args,
