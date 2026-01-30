@@ -16,7 +16,7 @@ use harp::object::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
 
-use crate::console::RMain;
+use crate::console::Console;
 use crate::console::SessionMode;
 
 /// Emit HTML output on IOPub for delivery to the client
@@ -67,9 +67,9 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
     match path {
         Ok(path) => {
             // Emit HTML output
-            let main = RMain::get();
-            let iopub_tx = main.get_iopub_tx().clone();
-            match main.session_mode() {
+            let console = Console::get();
+            let iopub_tx = console.get_iopub_tx().clone();
+            match console.session_mode() {
                 SessionMode::Notebook | SessionMode::Background => {
                     // In notebook mode, send the output as a Jupyter display_data message
                     if let Err(err) = emit_html_output_jupyter(iopub_tx, path, label) {
@@ -112,7 +112,7 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
 
                     // TODO: What's the right thing to do in `Console` mode when
                     // we aren't connected to Positron? Right now we error.
-                    let ui_comm_tx = main
+                    let ui_comm_tx = console
                         .get_ui_comm_tx()
                         .ok_or_else(|| anyhow::anyhow!("UI comm not connected."))?;
 

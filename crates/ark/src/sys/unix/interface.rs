@@ -37,7 +37,7 @@ use crate::console::r_read_console;
 use crate::console::r_show_message;
 use crate::console::r_suicide;
 use crate::console::r_write_console;
-use crate::console::RMain;
+use crate::console::Console;
 use crate::signals::initialize_signal_handlers;
 
 // For shutdown signal in integration tests
@@ -50,7 +50,7 @@ pub fn setup_r(args: &Vec<String>) {
 
         libr::set(R_SignalHandlers, 0);
 
-        let mut c_args = RMain::build_ark_c_args(args);
+        let mut c_args = Console::build_ark_c_args(args);
         Rf_initialize_R(c_args.len() as i32, c_args.as_mut_ptr() as *mut *mut c_char);
 
         // Initialize the signal blocks and handlers (like interrupts).

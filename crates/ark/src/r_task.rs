@@ -18,8 +18,8 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use uuid::Uuid;
 
+use crate::console::Console;
 use crate::fixtures::r_test_init;
-use crate::console::RMain;
 
 /// Task channels for interrupt-time tasks
 static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
@@ -33,7 +33,7 @@ pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
-/// Manages task channels for sending tasks to `R_MAIN`.
+/// Manages task channels for sending tasks to `CONSOLE`.
 struct TaskChannels {
     tx: Sender<RTask>,
     rx: Mutex<Option<Receiver<RTask>>>,
@@ -60,7 +60,7 @@ impl TaskChannels {
 
 /// Returns receivers for both interrupt and idle tasks.
 /// Initializes the task channels if they haven't been initialized yet.
-/// Can only be called once (intended for `RMain` during init).
+/// Can only be called once (intended for `Console` during init).
 pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>) {
     (INTERRUPT_TASKS.take_rx(), IDLE_TASKS.take_rx())
 }
@@ -186,9 +186,9 @@ where
     T: 'env + Send,
 {
     // Escape hatch for unit tests
-    // In integration tests with dummy frontends, we have a "real" RMain and want to
+    // In integration tests with dummy frontends, we have a "real" Console and want to
     // go through the standard r-task path
-    if stdext::IS_TESTING && !RMain::is_initialized() {
+    if stdext::IS_TESTING && !Console::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         r_test_init();
         return f();
@@ -197,7 +197,7 @@ where
     // Recursive case: If we're on ark-r-main already, just run the
     // task and return. This allows `r_task(|| { r_task(|| {}) })`
     // to run without deadlocking.
-    if RMain::on_main_thread() {
+    if Console::on_main_thread() {
         return f();
     }
 
@@ -296,7 +296,7 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     // Escape hatch for unit tests
-    if stdext::IS_TESTING && !RMain::is_initialized() {
+    if stdext::IS_TESTING && !Console::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fun());
         return;
@@ -319,4 +319,4 @@ where
 }
 
 // Tests are tricky because `harp::fixtures::r_test_init()` is very bare bones and
-// doesn't have an `R_MAIN` or `R_MAIN_TASKS_TX`.
+// doesn't have an `CONSOLE` or `CONSOLE_TASKS_TX`.

@@ -6,7 +6,7 @@ use harp::exec::RFunctionExt;
 use harp::utils::r_str_to_owned_utf8_unchecked;
 use harp::utils::r_typeof;
 
-use crate::console::RMain;
+use crate::console::Console;
 use crate::console::CAPTURE_CONSOLE_OUTPUT;
 
 // To ensure the compiler includes the C entry points in `debug.c` in the binary,
@@ -169,7 +169,7 @@ pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
 
     CAPTURE_CONSOLE_OUTPUT.store(old, Ordering::SeqCst);
-    let mut out = std::mem::take(&mut RMain::get_mut().captured_output);
+    let mut out = std::mem::take(&mut Console::get_mut().captured_output);
 
     // Unwrap catch-unwind's result and resume panic if needed
     let result = match result {

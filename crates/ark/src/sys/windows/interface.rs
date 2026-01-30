@@ -28,7 +28,7 @@ use crate::interface::r_read_console;
 use crate::interface::r_show_message;
 use crate::interface::r_suicide;
 use crate::interface::r_write_console;
-use crate::interface::RMain;
+use crate::interface::Console;
 use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(args: &Vec<String>) {
@@ -54,7 +54,7 @@ pub fn setup_r(args: &Vec<String>) {
         // wholesale replacement of the options they set via `R_SetParams()`
         // later on, so setting them here would have no effect anyways.
         // https://github.com/rstudio/rstudio/issues/10308
-        let mut c_args = RMain::build_ark_c_args(&vec![]);
+        let mut c_args = Console::build_ark_c_args(&vec![]);
         cmdlineoptions(c_args.len() as i32, c_args.as_mut_ptr() as *mut *mut c_char);
 
         let mut params_struct = MaybeUninit::uninit();
@@ -85,7 +85,7 @@ pub fn setup_r(args: &Vec<String>) {
         // - `(*params).SaveAction` via `--save`, `--no-save`, `--vanilla`, `--no-echo`
         // - `(*params).RestoreAction` via `--restore`, `--no-restore`, `--no-restore-data`, `--vanilla`
         // - `R_RestoreHistory` (a global) via `--restore`, `--no-restore`, `--no-restore-history`, `--vanilla`
-        let mut c_args = RMain::build_ark_c_args(args);
+        let mut c_args = Console::build_ark_c_args(args);
         let mut c_args_len = c_args.len() as std::ffi::c_int;
         R_common_command_line(
             &mut c_args_len,

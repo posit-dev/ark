@@ -27,10 +27,10 @@ use log::trace;
 use log::warn;
 use stdext::spawn;
 
+use crate::console::Console;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
-use crate::console::RMain;
 use crate::methods::ArkGenerics;
 use crate::r_task;
 
@@ -270,8 +270,8 @@ impl RHelp {
         unsafe {
             let env = (|| {
                 #[cfg(not(test))]
-                if RMain::is_initialized() {
-                    if let Ok(debug_env) = &RMain::get().read_console_frame.try_borrow() {
+                if Console::is_initialized() {
+                    if let Ok(debug_env) = &Console::get().read_console_frame.try_borrow() {
                         return (*debug_env).clone();
                     }
                 }
@@ -343,7 +343,7 @@ impl HelpTopic {
 pub unsafe extern "C-unwind" fn ps_help_browse_external_url(
     url: SEXP,
 ) -> Result<SEXP, anyhow::Error> {
-    RMain::get().send_help_event(HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
+    Console::get().send_help_event(HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
         url: RObject::view(url).to::<String>()?,
         kind: ShowHelpUrlKind::External,
     }))?;

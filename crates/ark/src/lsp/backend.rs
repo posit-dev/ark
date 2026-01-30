@@ -35,8 +35,8 @@ use tower_lsp::LspService;
 use tower_lsp::Server;
 
 use super::main_loop::LSP_HAS_CRASHED;
+use crate::console::Console;
 use crate::console::ConsoleNotification;
-use crate::console::RMain;
 use crate::lsp::handlers::VirtualDocumentParams;
 use crate::lsp::handlers::VirtualDocumentResponse;
 use crate::lsp::handlers::ARK_VDOC_REQUEST;
@@ -105,8 +105,7 @@ fn report_crash() {
             message: String::from(user_message),
         });
 
-        let main = RMain::get();
-        if let Some(ui_comm_tx) = main.get_ui_comm_tx() {
+        if let Some(ui_comm_tx) = Console::get().get_ui_comm_tx() {
             ui_comm_tx.send_event(event);
         }
     });
@@ -522,16 +521,16 @@ pub fn start_lsp(
             // Start main loop and hold onto the handle that keeps it alive
             let main_loop = state.start();
 
-            // Forward event channel along to `RMain`.
+            // Forward event channel along to `Console`.
             // This also updates an outdated channel after a reconnect.
-            // `RMain` should be initialized by now, since the caller of this
+            // `Console` should be initialized by now, since the caller of this
             // function waits to receive the init notification sent on
             // `kernel_init_rx`. Even if it isn't, this should be okay because
             // `r_task()` defensively blocks until its sender is initialized.
             r_task({
                 let events_tx = events_tx.clone();
                 move || {
-                    RMain::with_mut(|main| main.set_lsp_channel(events_tx));
+                    Console::with_mut(|con| con.set_lsp_channel(events_tx));
                 }
             });
 
@@ -575,10 +574,10 @@ pub fn start_lsp(
         }
 
         // Remove the LSP channel on the way out, we can no longer handle any LSP updates
-        // from `RMain`, at least until someone starts the LSP up again.
+        // from `Console`, at least until someone starts the LSP up again.
         r_task({
             move || {
-                RMain::with_mut(|main| main.remove_lsp_channel());
+                Console::with_mut(|con| con.remove_lsp_channel());
             }
         });
     })

@@ -19,7 +19,7 @@ use libr::Rf_initialize_R;
 
 use crate::command::r_command_from_path;
 use crate::library::RLibraries;
-use crate::R_MAIN_THREAD_ID;
+use crate::CONSOLE_THREAD_ID;
 
 // FIXME: Needs to be a reentrant lock for idle tasks. We can probably do better
 // though.
@@ -46,7 +46,7 @@ pub(crate) fn r_task<F: FnOnce()>(f: F) {
 pub fn r_test_init() {
     INIT.call_once(|| {
         unsafe {
-            R_MAIN_THREAD_ID = Some(std::thread::current().id());
+            CONSOLE_THREAD_ID = Some(std::thread::current().id());
         }
 
         // Set up R_HOME if necessary.

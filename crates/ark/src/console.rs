@@ -6,9 +6,9 @@
 //
 
 // All code in this file runs synchronously with R. We store the global
-// state inside of a global `R_MAIN` singleton that implements `RMain`.
+// state inside of a global `CONSOLE` singleton that implements `Console`.
 // The frontend methods called by R are forwarded to the corresponding
-// `RMain` methods via `R_MAIN`.
+// `Console` methods via `CONSOLE`.
 
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -80,7 +80,7 @@ use harp::srcref::srcref_list_get;
 use harp::srcref::SrcFile;
 use harp::utils::r_is_data_frame;
 use harp::utils::r_typeof;
-use harp::R_MAIN_THREAD_ID;
+use harp::CONSOLE_THREAD_ID;
 use libr::R_BaseNamespace;
 use libr::R_GlobalEnv;
 use libr::R_ProcessEvents;
@@ -184,25 +184,25 @@ pub enum ConsoleNotification {
 // These values must be global in order for them to be accessible from R
 // callbacks, which do not have a facility for passing or returning context.
 
-/// Used to wait for complete R startup in `RMain::wait_initialized()` or
-/// check for it in `RMain::is_initialized()`.
+/// Used to wait for complete R startup in `Console::wait_initialized()` or
+/// check for it in `Console::is_initialized()`.
 ///
 /// We use the `once_cell` crate for init synchronisation because the stdlib
 /// equivalent `std::sync::Once` does not have a `wait()` method.
 static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 thread_local! {
-    /// The `RMain` singleton.
+    /// The `Console` singleton.
     ///
     /// It is wrapped in an `UnsafeCell` because we currently need to bypass the
     /// borrow checker rules (see https://github.com/posit-dev/ark/issues/663).
     /// The `UnsafeCell` itself is wrapped in a `RefCell` because that's the
     /// only way to get a `set()` method on the thread-local storage key and
     /// bypass the lazy initializer (which panics for other threads).
-    pub static R_MAIN: RefCell<UnsafeCell<RMain>> = panic!("Must access `R_MAIN` from the R thread");
+    pub static CONSOLE: RefCell<UnsafeCell<Console>> = panic!("Must access `CONSOLE` from the R thread");
 }
 
-pub struct RMain {
+pub struct Console {
     kernel_request_rx: Receiver<KernelRequest>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
@@ -271,7 +271,7 @@ pub struct RMain {
     banner: Option<String>,
 
     /// Raw error buffer provided to `Rf_error()` when throwing `r_read_console()` errors.
-    /// Stored in `RMain` to avoid memory leakage when `Rf_error()` jumps.
+    /// Stored in `Console` to avoid memory leakage when `Rf_error()` jumps.
     r_error_buffer: Option<CString>,
 
     /// `WriteConsole` output diverted from IOPub is stored here. This is only used
@@ -527,8 +527,8 @@ pub(crate) enum ConsoleResult {
     Error(String),
 }
 
-impl RMain {
-    /// Sets up the main R thread, initializes the `R_MAIN` singleton,
+impl Console {
+    /// Sets up the main R thread, initializes the `CONSOLE` singleton,
     /// and starts R. Does not return!
     /// SAFETY: Must be called only once. Enforced with a panic.
     pub(crate) fn start(
@@ -548,10 +548,10 @@ impl RMain {
         console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
-        // Must happen before doing anything that checks `RMain::on_main_thread()`,
+        // Must happen before doing anything that checks `Console::on_main_thread()`,
         // like running an `r_task()` (posit-dev/positron#4973).
         unsafe {
-            R_MAIN_THREAD_ID = match R_MAIN_THREAD_ID {
+            CONSOLE_THREAD_ID = match CONSOLE_THREAD_ID {
                 None => Some(std::thread::current().id()),
                 Some(id) => panic!("`start()` must be called exactly 1 time. It has already been called from thread {id:?}."),
             };
@@ -559,7 +559,7 @@ impl RMain {
 
         let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
 
-        R_MAIN.set(UnsafeCell::new(RMain::new(
+        CONSOLE.set(UnsafeCell::new(Console::new(
             tasks_interrupt_rx,
             tasks_idle_rx,
             comm_manager_tx,
@@ -572,7 +572,7 @@ impl RMain {
             session_mode,
         )));
 
-        let main = RMain::get_mut();
+        let console = Console::get_mut();
 
         let mut r_args = r_args.clone();
 
@@ -654,7 +654,7 @@ impl RMain {
                     log::error!("Can't load R modules: {err:?}");
                 },
                 Ok(namespace) => {
-                    main.positron_ns = Some(namespace);
+                    console.positron_ns = Some(namespace);
                 },
             }
 
@@ -682,7 +682,7 @@ impl RMain {
         log::info!(
             "R has started and ark handlers have been registered, completing initialization."
         );
-        Self::complete_initialization(main.banner.take(), kernel_init_tx);
+        Self::complete_initialization(console.banner.take(), kernel_init_tx);
 
         // Spawn handler loop for async messages from other components (e.g., LSP).
         // Note that we do it after init is complete to avoid deadlocking
@@ -690,9 +690,9 @@ impl RMain {
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
         r_task::spawn_interrupt({
-            let dap_clone = main.debug_dap.clone();
+            let dap_clone = console.debug_dap.clone();
             || async move {
-                RMain::process_console_notifications(console_notification_rx, dap_clone).await
+                Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
         });
 
@@ -701,10 +701,10 @@ impl RMain {
         // integration tests by spawning an async task. The deadlock is caused
         // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
         // We should be able to remove this escape hatch in `r_task()` by
-        // instantiating an `RMain` in unit tests as well.
+        // instantiating an `Console` in unit tests as well.
         graphics_device::init_graphics_device(
-            main.get_comm_manager_tx().clone(),
-            main.get_iopub_tx().clone(),
+            console.get_comm_manager_tx().clone(),
+            console.get_iopub_tx().clone(),
             graphics_device_rx,
         );
 
@@ -856,7 +856,7 @@ impl RMain {
         R_INIT.wait();
     }
 
-    /// Has the `RMain` singleton completed initialization.
+    /// Has the `Console` singleton completed initialization.
     ///
     /// This can return true when R might still not have finished starting up.
     /// See `wait_initialized()`.
@@ -869,47 +869,45 @@ impl RMain {
 
     /// Access a reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `RMain::start()` initializes it.
+    /// SAFETY: Accesses must occur after `Console::start()` initializes it.
     pub fn get() -> &'static Self {
-        RMain::get_mut()
+        Console::get_mut()
     }
 
     /// Access a mutable reference to the singleton instance of this struct
     ///
-    /// SAFETY: Accesses must occur after `RMain::start()` initializes it.
+    /// SAFETY: Accesses must occur after `Console::start()` initializes it.
     /// Be aware that we're bypassing the borrow checker. The only guarantee we
-    /// have is that `R_MAIN` is only accessed from the R thread. If you're
+    /// have is that `CONSOLE` is only accessed from the R thread. If you're
     /// inspecting mutable state, or mutating state, you must reason the
     /// soundness by yourself.
     pub fn get_mut() -> &'static mut Self {
-        R_MAIN.with_borrow_mut(|cell| {
+        CONSOLE.with_borrow_mut(|cell| {
             let main_ref = cell.get_mut();
 
-            // We extend the lifetime to `'static` as `R_MAIN` is effectively static once initialized.
+            // We extend the lifetime to `'static` as `CONSOLE` is effectively static once initialized.
             // This allows us to return a `&mut` from the unsafe cell to the caller.
-            unsafe { std::mem::transmute::<&mut RMain, &'static mut RMain>(main_ref) }
+            unsafe { std::mem::transmute::<&mut Console, &'static mut Console>(main_ref) }
         })
     }
 
     pub fn with<F, T>(f: F) -> T
     where
-        F: FnOnce(&RMain) -> T,
+        F: FnOnce(&Console) -> T,
     {
-        let main = Self::get();
-        f(main)
+        f(Self::get())
     }
 
     pub fn with_mut<F, T>(f: F) -> T
     where
-        F: FnOnce(&mut RMain) -> T,
+        F: FnOnce(&mut Console) -> T,
     {
-        let main = Self::get_mut();
-        f(main)
+        f(Self::get_mut())
     }
 
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
-        thread.id() == unsafe { R_MAIN_THREAD_ID.unwrap() }
+        thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
     }
 
     /// Provides read-only access to `iopub_tx`
@@ -2161,7 +2159,7 @@ impl RMain {
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
         if CAPTURE_CONSOLE_OUTPUT.load(Ordering::SeqCst) {
-            RMain::get_mut()
+            Console::get_mut()
                 .captured_output
                 .push_str(&console_to_utf8(buf).unwrap());
             return;
@@ -2172,9 +2170,9 @@ impl RMain {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
-        let r_main = RMain::get_mut();
+        let r_main = Console::get_mut();
 
-        if !RMain::is_initialized() {
+        if !Console::is_initialized() {
             // During init, consider all output to be part of the startup banner
             match r_main.banner.as_mut() {
                 Some(banner) => banner.push_str(&content),
@@ -2559,7 +2557,7 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
 
 // --- Frontend methods ---
 // These functions are hooked up as R frontend methods. They call into our
-// global `RMain` singleton.
+// global `Console` singleton.
 
 #[no_mangle]
 pub extern "C-unwind" fn r_read_console(
@@ -2576,19 +2574,19 @@ pub extern "C-unwind" fn r_read_console(
     // evaluation. Ideally R would extend their frontend API so that this would
     // only be necessary for backward compatibility with old versions of R.
 
-    let main = RMain::get_mut();
+    let console = Console::get_mut();
 
     // Propagate an EOF event (e.g. from a Shutdown request). We need to exit
     // from all consoles on the stack to let R shut down with an `exit()`.
-    if main.read_console_shutdown.get() {
+    if console.read_console_shutdown.get() {
         return 0;
     }
 
     // We've finished evaluating a dummy value to reset state in R's REPL,
     // and are now ready to evaluate the actual input, which is typically
     // just `.ark_last_value`.
-    if let Some(next_input) = main.read_console_nested_return_next_input.take() {
-        RMain::on_console_input(buf, buflen, next_input).unwrap();
+    if let Some(next_input) = console.read_console_nested_return_next_input.take() {
+        Console::on_console_input(buf, buflen, next_input).unwrap();
         return 1;
     }
 
@@ -2601,11 +2599,11 @@ pub extern "C-unwind" fn r_read_console(
     // Technically this also resets time limits (see `base::setTimeLimit()`) but
     // these aren't supported in Ark because they cause errors when we poll R
     // events.
-    if main.last_error.is_some() && main.read_console_threw_error.get() {
-        main.read_console_threw_error.set(false);
+    if console.last_error.is_some() && console.read_console_threw_error.get() {
+        console.read_console_threw_error.set(false);
 
         // Evaluate last value so that `base::.Last.value` remains the same
-        RMain::on_console_input(
+        Console::on_console_input(
             buf,
             buflen,
             String::from("base::invisible(base::.Last.value)"),
@@ -2617,46 +2615,48 @@ pub extern "C-unwind" fn r_read_console(
     // Keep track of state that we care about
 
     // - Track nesting depth of ReadConsole REPLs
-    main.read_console_depth
-        .set(main.read_console_depth.get() + 1);
+    console
+        .read_console_depth
+        .set(console.read_console_depth.get() + 1);
 
     // - Set current frame environment
-    let old_current_frame = main.read_console_frame.replace(harp::r_current_frame());
+    let old_current_frame = console.read_console_frame.replace(harp::r_current_frame());
 
     // Keep track of state that we use for workarounds while interacting
     // with the R REPL and force it to reset state
 
     // - Reset flag that helps us figure out when a nested REPL returns
-    main.read_console_nested_return.set(false);
+    console.read_console_nested_return.set(false);
 
     // - Reset flag that helps us figure out when an error occurred and needs a
     //   reset of `R_EvalDepth` and friends
-    main.read_console_threw_error.set(true);
+    console.read_console_threw_error.set(true);
 
     exec_with_cleanup(
         || {
-            let main = RMain::get_mut();
-            let result = r_read_console_impl(main, prompt, buf, buflen, hist);
+            let console = Console::get_mut();
+            let result = r_read_console_impl(console, prompt, buf, buflen, hist);
 
             // If we get here, there was no error
-            main.read_console_threw_error.set(false);
+            console.read_console_threw_error.set(false);
 
             result
         },
         || {
-            let main = RMain::get_mut();
+            let console = Console::get_mut();
 
             // We're exiting, decrease depth of nested consoles
-            main.read_console_depth
-                .set(main.read_console_depth.get() - 1);
+            console
+                .read_console_depth
+                .set(console.read_console_depth.get() - 1);
 
             // Set flag so that parent read console, if any, can detect that a
             // nested console returned (if it indeed returns instead of looping
             // for another iteration)
-            main.read_console_nested_return.set(true);
+            console.read_console_nested_return.set(true);
 
             // Restore current frame
-            main.read_console_frame.replace(old_current_frame);
+            console.read_console_frame.replace(old_current_frame);
 
             // Always stop debug session when yielding back to R. This prevents
             // the debug toolbar from lingering in situations like:
@@ -2667,14 +2667,14 @@ pub extern "C-unwind" fn r_read_console(
             //
             // For a more practical example see Shiny app example in
             // https://github.com/rstudio/rstudio/pull/14848
-            main.debug_is_debugging = false;
-            main.debug_stop();
+            console.debug_is_debugging = false;
+            console.debug_stop();
         },
     )
 }
 
 fn r_read_console_impl(
-    main: &mut RMain,
+    main: &mut Console,
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
@@ -2694,19 +2694,19 @@ fn r_read_console_impl(
             let PendingInput { expr, srcref } = input;
 
             unsafe {
-                // The pointer protection stack is restored by `run_Rmainloop()`
+                // The pointer protection stack is restored by `run_Consoleloop()`
                 // after a longjump to top-level, so it's safe to protect here
                 // even if the evaluation throws
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
-                RMain::eval(expr, srcref, buf, buflen);
+                Console::eval(expr, srcref, buf, buflen);
 
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning
                 // a dummy value causing a `PARSE_NULL` event.
                 if main.read_console_nested_return.get() {
-                    let next_input = RMain::console_input(buf, buflen);
+                    let next_input = Console::console_input(buf, buflen);
                     main.read_console_nested_return_next_input
                         .set(Some(next_input));
 
@@ -2714,7 +2714,7 @@ fn r_read_console_impl(
                     // evaluate a newline, that would cause a parent debug REPL
                     // to interpret it as `n`, causing it to exit instead of
                     // being a no-op.
-                    RMain::on_console_input(buf, buflen, String::from(" ")).unwrap();
+                    Console::on_console_input(buf, buflen, String::from(" ")).unwrap();
                     main.read_console_nested_return.set(false);
                 }
 
@@ -2749,7 +2749,7 @@ fn r_read_console_impl(
         },
 
         ConsoleResult::Error(message) => {
-            // Save error message in `RMain` to avoid leaking memory when
+            // Save error message in `Console` to avoid leaking memory when
             // `Rf_error()` jumps. Some gymnastics are required to deal with the
             // possibility of `CString` conversion failure since the error
             // message comes from the frontend and might be corrupted.
@@ -2765,21 +2765,19 @@ fn new_cstring(x: String) -> CString {
 
 #[no_mangle]
 pub extern "C-unwind" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
-    if let Err(err) = r_sandbox(|| RMain::write_console(buf, buflen, otype)) {
+    if let Err(err) = r_sandbox(|| Console::write_console(buf, buflen, otype)) {
         panic!("Unexpected longjump while writing to console: {err:?}");
     };
 }
 
 #[no_mangle]
 pub extern "C-unwind" fn r_show_message(buf: *const c_char) {
-    let main = RMain::get();
-    main.show_message(buf);
+    Console::get().show_message(buf);
 }
 
 #[no_mangle]
 pub extern "C-unwind" fn r_busy(which: i32) {
-    let main = RMain::get_mut();
-    main.busy(which);
+    Console::get_mut().busy(which);
 }
 
 #[no_mangle]
@@ -2790,8 +2788,7 @@ pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
 
 #[no_mangle]
 pub unsafe extern "C-unwind" fn r_polled_events() {
-    let main = RMain::get_mut();
-    if let Err(err) = r_sandbox(|| main.polled_events()) {
+    if let Err(err) = r_sandbox(|| Console::get_mut().polled_events()) {
         panic!("Unexpected longjump while polling events: {err:?}");
     };
 }
@@ -2904,8 +2901,7 @@ unsafe extern "C-unwind" fn ps_insert_virtual_document(
     let uri: String = RObject::view(uri).try_into()?;
     let contents: String = RObject::view(contents).try_into()?;
 
-    let main = RMain::get_mut();
-    main.insert_virtual_document(uri, contents);
+    Console::get_mut().insert_virtual_document(uri, contents);
 
     Ok(RObject::null().sexp)
 }

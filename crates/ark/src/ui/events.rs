@@ -21,7 +21,7 @@ use harp::object::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
 
-use crate::console::RMain;
+use crate::console::Console;
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEXP> {
@@ -31,8 +31,7 @@ pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Res
 
     let event = UiFrontendEvent::ShowMessage(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
+    let ui_comm_tx = Console::get()
         .get_ui_comm_tx()
         .ok_or_else(|| ui_comm_not_connected("ui_show_message"))?;
     ui_comm_tx.send_event(event);
@@ -52,8 +51,7 @@ pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
 
     let event = UiFrontendEvent::OpenWorkspace(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
+    let ui_comm_tx = Console::get()
         .get_ui_comm_tx()
         .ok_or_else(|| ui_comm_not_connected("ui_open_workspace"))?;
     ui_comm_tx.send_event(event);
@@ -81,8 +79,7 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
 
     let event = UiFrontendEvent::OpenEditor(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
+    let ui_comm_tx = Console::get()
         .get_ui_comm_tx()
         .ok_or_else(|| ui_comm_not_connected("ui_navigate_to_file"))?;
     ui_comm_tx.send_event(event);
@@ -97,8 +94,7 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
 
     let event = UiFrontendEvent::SetEditorSelections(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
+    let ui_comm_tx = Console::get()
         .get_ui_comm_tx()
         .ok_or_else(|| ui_comm_not_connected("ui_set_selection_ranges"))?;
     ui_comm_tx.send_event(event);
@@ -113,8 +109,7 @@ pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
+    let ui_comm_tx = Console::get()
         .get_ui_comm_tx()
         .ok_or_else(|| ui_comm_not_connected("show_url"))?;
     ui_comm_tx.send_event(event);
@@ -135,8 +130,7 @@ pub fn send_open_with_system_event(path: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::OpenWithSystem(params);
 
-    let main = RMain::get();
-    let ui_comm_tx = main
+    let ui_comm_tx = Console::get()
         .get_ui_comm_tx()
         .ok_or_else(|| ui_comm_not_connected("open_with_system"))?;
     ui_comm_tx.send_event(event);

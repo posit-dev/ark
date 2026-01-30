@@ -22,7 +22,7 @@ use harp::object::RObject;
 use libr::SEXP;
 use url::Url;
 
-use crate::console::RMain;
+use crate::console::Console;
 use crate::dap::dap::Breakpoint;
 use crate::dap::dap::BreakpointState;
 use crate::dap::dap::InvalidReason;
@@ -894,8 +894,7 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(code: SEXP, uri: SEXP) -> any
 
     let uri = Url::parse(&uri)?;
 
-    let main = RMain::get();
-    let mut dap_guard = main.debug_dap.lock().unwrap();
+    let mut dap_guard = Console::get().debug_dap.lock().unwrap();
 
     // If there are no breakpoints for this file, return NULL to signal no
     // annotation needed. Scope the mutable borrow so we can re-borrow after.

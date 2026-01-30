@@ -17,7 +17,7 @@ use harp::exec::RFunctionExt;
 use libr::Rf_eval;
 use stdext::result::ResultExt;
 
-use crate::console::RMain;
+use crate::console::Console;
 use crate::sys;
 
 pub(crate) fn should_ignore_site_r_profile(args: &Vec<String>) -> bool {
@@ -105,7 +105,7 @@ fn source_r_profile(path: &PathBuf) {
         text: message,
     });
 
-    RMain::with(|main| main.get_iopub_tx().send(message).unwrap())
+    Console::with(|con| con.get_iopub_tx().send(message).unwrap())
 }
 
 fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {

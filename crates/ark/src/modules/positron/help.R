@@ -53,7 +53,7 @@ help <- function(topic, package = NULL) {
 
     # If we found results of any kind, show them.
     # If we are running ark tests, don't show the results as this requires
-    # `ps_browse_url()` which needs a full `RMain` instance.
+    # `ps_browse_url()` which needs a full `Console` instance.
     if (length(results) > 0 && !in_ark_tests()) {
         print(results)
     }
