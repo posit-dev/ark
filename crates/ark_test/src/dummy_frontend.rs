@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::status::ExecutionState;
 use ark::interface::SessionMode;
 use ark::repos::DefaultRepos;
+use tempfile::NamedTempFile;
 
 use crate::DapClient;
 
@@ -174,6 +176,62 @@ impl DummyArkFrontend {
         messages.assert_all_consumed();
     }
 
+    /// Source a file containing the given code and receive all expected messages.
+    ///
+    /// Returns a `SourcedFile` containing the temp file (which must be kept alive)
+    /// and the filename for use in assertions.
+    ///
+    /// The caller must still receive the DAP `Stopped` event.
+    #[track_caller]
+    pub fn send_source(&self, code: &str) -> SourcedFile {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{code}").unwrap();
+
+        let path = file.path().to_str().unwrap().replace("\\", "/");
+        let filename = file
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        self.send_execute_request(
+            &format!("source('{path}')"),
+            ExecuteRequestOptions::default(),
+        );
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| {
+                matches!(
+                    msg,
+                    Message::CommMsg(comm) if comm.content.data["method"] == "start_debug"
+                )
+            }),
+            Box::new(|msg| {
+                let Message::Stream(stream) = msg else {
+                    return false;
+                };
+                stream.content.text.contains("Called from:")
+            }),
+            Box::new(|msg| {
+                matches!(
+                    msg,
+                    Message::Status(s) if s.content.execution_state == ExecutionState::Idle
+                )
+            }),
+        ]);
+
+        self.recv_shell_execute_reply();
+
+        SourcedFile {
+            _file: file,
+            filename,
+        }
+    }
+
     /// Execute `browser()` and receive all expected messages.
     #[track_caller]
     pub fn debug_send_browser(&self) -> u32 {
@@ -302,6 +360,14 @@ impl DummyArkFrontend {
 
         self.recv_shell_execute_reply()
     }
+}
+
+/// Result of sourcing a file via `send_source()`.
+///
+/// The temp file is kept alive as long as this struct exists.
+pub struct SourcedFile {
+    _file: NamedTempFile,
+    pub filename: String,
 }
 
 /// Wrapper for messages that may arrive in non-deterministic order.
