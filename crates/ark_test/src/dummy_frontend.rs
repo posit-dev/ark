@@ -139,8 +139,7 @@ impl DummyArkFrontend {
 
         let port = port.unwrap();
 
-        let mut client =
-            DapClient::connect("127.0.0.1", port).expect("Failed to connect to DAP server");
+        let mut client = DapClient::connect("127.0.0.1", port).unwrap();
         client.initialize();
         client.attach();
         client

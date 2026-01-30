@@ -77,7 +77,7 @@ impl DapClient {
                 columns_start_at1: Some(true),
                 ..Default::default()
             }))
-            .expect("Failed to send Initialize request");
+            .unwrap();
 
         let response = self.recv_response(seq);
         assert!(response.success, "Initialize request failed");
@@ -107,7 +107,7 @@ impl DapClient {
             .send(Command::Attach(AttachRequestArguments {
                 ..Default::default()
             }))
-            .expect("Failed to send Attach request");
+            .unwrap();
 
         let response = self.recv_response(seq);
         assert!(response.success, "Attach request failed");
@@ -132,7 +132,7 @@ impl DapClient {
                 thread_id: -1,
                 single_thread: None,
             }))
-            .expect("Failed to send Continue request");
+            .unwrap();
 
         let response = self.recv_response(seq);
         assert!(response.success, "Continue request failed");
@@ -153,7 +153,7 @@ impl DapClient {
                 levels: None,
                 format: None,
             }))
-            .expect("Failed to send StackTrace request");
+            .unwrap();
 
         let response = self.recv_response(seq);
         assert!(response.success, "StackTrace request failed");
