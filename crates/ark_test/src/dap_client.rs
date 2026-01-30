@@ -17,6 +17,7 @@ use anyhow::anyhow;
 use dap::base_message::BaseMessage;
 use dap::base_message::Sendable;
 use dap::events::Event;
+use dap::events::StoppedEventBody;
 use dap::requests::AttachRequestArguments;
 use dap::requests::Command;
 use dap::requests::ContinueArguments;
@@ -28,6 +29,7 @@ use dap::responses::Response;
 use dap::responses::ResponseBody;
 use dap::types::Capabilities;
 use dap::types::StackFrame;
+use dap::types::StoppedEventReason;
 use dap::types::Thread;
 
 /// Default timeout for receiving DAP messages
@@ -348,13 +350,24 @@ impl DapClient {
         );
     }
 
-    /// Receive and assert the next message is a Stopped event.
+    /// Receive and assert the next message is a Stopped event with default fields.
     #[track_caller]
     pub fn recv_stopped(&mut self) {
         let event = self.recv_event();
         assert!(
-            matches!(event, Event::Stopped(_)),
-            "Expected Stopped event, got {:?}",
+            matches!(
+                event,
+                Event::Stopped(StoppedEventBody {
+                    reason: StoppedEventReason::Step,
+                    description: None,
+                    thread_id: Some(-1),
+                    preserve_focus_hint: Some(false),
+                    text: None,
+                    all_threads_stopped: Some(true),
+                    hit_breakpoint_ids: None,
+                })
+            ),
+            "Expected Stopped event with default fields, got {:?}",
             event
         );
     }
