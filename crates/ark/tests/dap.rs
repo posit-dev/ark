@@ -5,6 +5,9 @@
 //
 //
 
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::status::ExecutionState;
 use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
 use ark_test::DummyArkFrontend;
@@ -51,39 +54,210 @@ fn test_dap_stopped_at_browser() {
 }
 
 #[test]
-fn test_dap_source_and_step() {
+fn test_dap_nested_stack_frames() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    // Use a braced block so `n` can step within the sourced expression.
     let file = frontend.send_source(
         "
-1
-2
+a <- function() { b() }
+b <- function() { c() }
+c <- function() { browser() }
+a()
+",
+    );
+    dap.recv_stopped();
+
+    // Check stack at browser() in c - should have 3 frames: c, b, a
+    let stack = dap.stack_trace();
+    assert!(
+        stack.len() >= 3,
+        "Expected at least 3 frames, got {}",
+        stack.len()
+    );
+
+    // Verify frame names (innermost to outermost)
+    assert_file_frame(&stack[0], &file.filename, 4, 28);
+    assert_eq!(stack[0].name, "c()");
+
+    assert_file_frame(&stack[1], &file.filename, 3, 22);
+    assert_eq!(stack[1].name, "b()");
+
+    assert_file_frame(&stack[2], &file.filename, 2, 22);
+    assert_eq!(stack[2].name, "a()");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_recursive_function() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Recursive function that hits browser() at the base case
+    let _file = frontend.send_source(
+        "
+factorial <- function(n) {
+  if (n <= 1) {
+    browser()
+    return(1)
+  }
+  n * factorial(n - 1)
+}
+factorial(3)
+",
+    );
+    dap.recv_stopped();
+
+    // Should be at browser() when n=1, with multiple factorial() frames
+    let stack = dap.stack_trace();
+
+    // Count how many factorial() frames we have
+    let factorial_frames: Vec<_> = stack.iter().filter(|f| f.name == "factorial()").collect();
+    assert!(
+        factorial_frames.len() >= 3,
+        "Should have at least 3 factorial() frames for factorial(3), got {}",
+        factorial_frames.len()
+    );
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_error_during_debug() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Code that will error after browser()
+    let _file = frontend.send_source(
+        "
 {
   browser()
-  3
-  4
+  stop('intentional error')
 }
 ",
     );
     dap.recv_stopped();
 
-    // Check stack at browser() - line 4, end_column 10 for `browser()`
+    // We're at browser(), stack should have 1 frame
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame");
-    assert_file_frame(&stack[0], &file.filename, 5, 12);
+    assert!(stack.len() >= 1, "Should have at least 1 frame");
 
+    // Step to the error - this should trigger an error and exit debug mode
     frontend.debug_send_step_command("n");
+    dap.recv_continued();
+
+    // After error in sourced code, R exits the debug session.
+    // We received Continued but no subsequent Stopped event - the debug session ended.
+    // The DapClient::drop() will verify no unexpected messages remain.
+}
+
+#[test]
+fn test_dap_error_in_eval() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Enter debug mode via browser() in virtual doc context
+    frontend.debug_send_browser();
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    assert_eq!(stack.len(), 1, "Should have 1 frame");
+
+    // Evaluate an expression that causes an error.
+    // Unlike stepping to an error (which exits debug), evaluating an error
+    // from the console should keep us in debug mode.
+    frontend.debug_send_error_expr("stop('eval error')");
     dap.recv_continued();
     dap.recv_stopped();
 
-    // After stepping, we should be at line 5 (the `3` expression after browser())
+    // We should still be in debug mode with the same stack
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame after step");
-    assert_file_frame(&stack[0], &file.filename, 6, 4);
+    assert_eq!(stack.len(), 1, "Should still have 1 frame after eval error");
 
-    // Exit with Q via Jupyter
+    // Clean exit
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_nested_browser() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Enter debug mode via browser() in virtual doc context
+    frontend.debug_send_browser();
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    assert_eq!(stack.len(), 1, "Should have 1 frame at Browse[1]>");
+
+    // Enter nested debug by calling a function with debugonce
+    frontend.send_execute_request(
+        "debugonce(identity); identity(1)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Entering nested debug via debugonce produces:
+    // - stop_debug (leaving Browse[1]>)
+    // - start_debug (twice due to auto-stepping behavior)
+    // - Stream with "debugging in:"
+    // - Idle
+    frontend.recv_iopub_all(vec![
+        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+        Box::new(|msg| {
+            let Message::Stream(stream) = msg else {
+                return false;
+            };
+            stream.content.text.contains("debugging in:")
+        }),
+        Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+    ]);
+    frontend.recv_shell_execute_reply();
+
+    // DAP: Continued, then two Stopped events (due to auto-stepping)
+    dap.recv_continued();
+    dap.recv_stopped();
+    dap.recv_stopped();
+
+    // Stack now shows 2 frames: identity() and the original browser frame
+    let stack = dap.stack_trace();
+    assert_eq!(stack.len(), 2, "Should have 2 frames at Browse[2]>");
+    assert_eq!(stack[0].name, "identity()");
+
+    // Step with `n` to return to parent browser (Browse[1]>)
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Stepping back to parent browser produces:
+    // - stop_debug (leaving identity)
+    // - ExecuteResult with "exiting from:" message
+    // - start_debug (back at parent browser)
+    // - Idle
+    frontend.recv_iopub_all(vec![
+        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+        Box::new(|msg| matches!(msg, Message::ExecuteResult(_))),
+        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+        Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+    ]);
+    frontend.recv_shell_execute_reply();
+
+    // DAP: Continued (left identity) then Stopped (back at parent browser)
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Back to 1 frame at Browse[1]>
+    let stack = dap.stack_trace();
+    assert_eq!(stack.len(), 1, "Should have 1 frame back at Browse[1]>");
+
+    // Now quit entirely
     frontend.debug_send_quit();
     dap.recv_continued();
 }
