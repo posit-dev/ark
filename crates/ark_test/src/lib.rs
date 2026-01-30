@@ -6,6 +6,7 @@
 //
 
 pub mod comm;
+pub mod dap_assert;
 pub mod dap_client;
 pub mod dummy_frontend;
 
@@ -16,5 +17,6 @@ pub use ark::fixtures::point_from_cursor;
 pub use ark::fixtures::r_test_init;
 pub use ark::fixtures::r_test_lock;
 pub use comm::*;
+pub use dap_assert::*;
 pub use dap_client::*;
 pub use dummy_frontend::*;
