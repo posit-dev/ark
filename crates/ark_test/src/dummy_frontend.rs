@@ -297,6 +297,31 @@ impl DummyArkFrontend {
         self.debug_send_step("c")
     }
 
+    /// Execute `c` (continue) to next browser() breakpoint in a sourced file.
+    ///
+    /// When continuing from one browser() to another, R outputs "Called from:"
+    /// instead of "debug at", so this needs a different message pattern.
+    #[track_caller]
+    pub fn debug_send_continue_to_breakpoint(&self) -> u32 {
+        self.send_execute_request("c", ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+            Box::new(|msg| {
+                let Message::Stream(stream) = msg else {
+                    return false;
+                };
+                stream.content.text.contains("Called from:")
+            }),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
+
     /// Execute an expression while in debug mode and receive all expected messages.
     ///
     /// This is for evaluating expressions that don't advance the debugger (e.g., `1`, `x`).
@@ -311,6 +336,30 @@ impl DummyArkFrontend {
             Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
             Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
             Box::new(|msg| matches!(msg, Message::ExecuteResult(_))),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
+
+    /// Execute an expression that causes an error while in debug mode.
+    ///
+    /// Unlike stepping to an error (which exits debug), evaluating an error
+    /// from the console should keep us in debug mode.
+    /// The caller must still receive the DAP `Stopped` event with `preserve_focus_hint=true`.
+    ///
+    /// Note: In debug mode, errors are streamed on stderr (not as `ExecuteError`)
+    /// and a regular execution reply is sent. That's a limitation of the R kernel.
+    #[track_caller]
+    pub fn debug_send_error_expr(&self, expr: &str) -> u32 {
+        self.send_execute_request(expr, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+            Box::new(|msg| matches!(msg, Message::Stream(_))),
             Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
         ]);
 

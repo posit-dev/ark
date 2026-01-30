@@ -25,14 +25,18 @@ use dap::requests::DisconnectArguments;
 use dap::requests::InitializeArguments;
 use dap::requests::NextArguments;
 use dap::requests::Request;
+use dap::requests::ScopesArguments;
 use dap::requests::StackTraceArguments;
 use dap::requests::StepInArguments;
+use dap::requests::VariablesArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
 use dap::types::Capabilities;
+use dap::types::Scope;
 use dap::types::StackFrame;
 use dap::types::StoppedEventReason;
 use dap::types::Thread;
+use dap::types::Variable;
 
 /// Default timeout for receiving DAP messages
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -206,6 +210,44 @@ impl DapClient {
         match response.body {
             Some(ResponseBody::StackTrace(st)) => st.stack_frames,
             other => panic!("Expected StackTrace response body, got {:?}", other),
+        }
+    }
+
+    /// Request scopes for a stack frame.
+    #[track_caller]
+    pub fn scopes(&mut self, frame_id: i64) -> Vec<Scope> {
+        let seq = self
+            .send(Command::Scopes(ScopesArguments { frame_id }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Scopes request failed");
+
+        match response.body {
+            Some(ResponseBody::Scopes(s)) => s.scopes,
+            other => panic!("Expected Scopes response body, got {:?}", other),
+        }
+    }
+
+    /// Request variables for a given variables reference.
+    #[track_caller]
+    pub fn variables(&mut self, variables_reference: i64) -> Vec<Variable> {
+        let seq = self
+            .send(Command::Variables(VariablesArguments {
+                variables_reference,
+                filter: None,
+                start: None,
+                count: None,
+                format: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Variables request failed");
+
+        match response.body {
+            Some(ResponseBody::Variables(v)) => v.variables,
+            other => panic!("Expected Variables response body, got {:?}", other),
         }
     }
 
