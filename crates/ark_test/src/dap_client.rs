@@ -396,21 +396,36 @@ impl DapClient {
     /// Receive and assert the next message is a Stopped event with default fields.
     #[track_caller]
     pub fn recv_stopped(&mut self) {
+        self.recv_stopped_impl(false);
+    }
+
+    /// Receive and assert the next message is a Stopped event with preserve_focus_hint set to true.
+    ///
+    /// This is expected when evaluating an expression in the debug console that
+    /// doesn't change the debug position (e.g., inspecting a variable).
+    #[track_caller]
+    pub fn recv_stopped_preserve_focus(&mut self) {
+        self.recv_stopped_impl(true);
+    }
+
+    #[track_caller]
+    fn recv_stopped_impl(&mut self, preserve_focus: bool) {
         let event = self.recv_event();
         assert!(
             matches!(
-                event,
+                &event,
                 Event::Stopped(StoppedEventBody {
                     reason: StoppedEventReason::Step,
                     description: None,
                     thread_id: Some(-1),
-                    preserve_focus_hint: Some(false),
+                    preserve_focus_hint: Some(pf),
                     text: None,
                     all_threads_stopped: Some(true),
                     hit_breakpoint_ids: None,
-                })
+                }) if *pf == preserve_focus
             ),
-            "Expected Stopped event with default fields, got {:?}",
+            "Expected Stopped event with preserve_focus_hint={}, got {:?}",
+            preserve_focus,
             event
         );
     }
