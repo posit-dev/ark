@@ -23,9 +23,12 @@ use dap::requests::ContinueArguments;
 use dap::requests::DisconnectArguments;
 use dap::requests::InitializeArguments;
 use dap::requests::Request;
+use dap::requests::StackTraceArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
 use dap::types::Capabilities;
+use dap::types::StackFrame;
+use dap::types::Thread;
 
 /// Default timeout for receiving DAP messages
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -69,6 +72,7 @@ impl DapClient {
                 adapter_id: String::from("ark-test"),
                 client_id: Some(String::from("test-client")),
                 client_name: Some(String::from("Test Client")),
+                // 1-based offsets as in Positron
                 lines_start_at1: Some(true),
                 columns_start_at1: Some(true),
                 ..Default::default()
@@ -137,6 +141,41 @@ impl DapClient {
             "Expected Continue response body, got {:?}",
             response.body
         );
+    }
+
+    /// Request the current stack trace.
+    #[track_caller]
+    pub fn stack_trace(&mut self) -> Vec<StackFrame> {
+        let seq = self
+            .send(Command::StackTrace(StackTraceArguments {
+                thread_id: -1,
+                start_frame: None,
+                levels: None,
+                format: None,
+            }))
+            .expect("Failed to send StackTrace request");
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "StackTrace request failed");
+
+        match response.body {
+            Some(ResponseBody::StackTrace(st)) => st.stack_frames,
+            other => panic!("Expected StackTrace response body, got {:?}", other),
+        }
+    }
+
+    /// Request the list of threads.
+    #[track_caller]
+    pub fn threads(&mut self) -> Vec<Thread> {
+        let seq = self.send(Command::Threads).unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Threads request failed");
+
+        match response.body {
+            Some(ResponseBody::Threads(t)) => t.threads,
+            other => panic!("Expected Threads response body, got {:?}", other),
+        }
     }
 
     /// Disconnect from the DAP server.
