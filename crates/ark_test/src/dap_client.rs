@@ -538,6 +538,33 @@ impl DapClient {
         );
         breakpoint
     }
+
+    /// Receive a Breakpoint event and return the breakpoint.
+    ///
+    /// Does not assert on verified status.
+    #[track_caller]
+    pub fn recv_breakpoint_event(&mut self) -> Breakpoint {
+        let event = self.recv_event();
+        let Event::Breakpoint(BreakpointEventBody { breakpoint, .. }) = event else {
+            panic!("Expected Breakpoint event, got {:?}", event);
+        };
+        breakpoint
+    }
+
+    /// Receive a Breakpoint event for an invalid breakpoint.
+    ///
+    /// Asserts that verified=false and message is present.
+    #[track_caller]
+    pub fn recv_breakpoint_invalid(&mut self) -> Breakpoint {
+        let bp = self.recv_breakpoint_event();
+        assert!(!bp.verified, "Expected unverified breakpoint, got {:?}", bp);
+        assert!(
+            bp.message.is_some(),
+            "Expected message for invalid breakpoint, got {:?}",
+            bp
+        );
+        bp
+    }
 }
 
 impl Drop for DapClient {
