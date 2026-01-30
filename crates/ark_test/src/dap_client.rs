@@ -23,8 +23,10 @@ use dap::requests::Command;
 use dap::requests::ContinueArguments;
 use dap::requests::DisconnectArguments;
 use dap::requests::InitializeArguments;
+use dap::requests::NextArguments;
 use dap::requests::Request;
 use dap::requests::StackTraceArguments;
+use dap::requests::StepInArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
 use dap::types::Capabilities;
@@ -141,6 +143,47 @@ impl DapClient {
         assert!(
             matches!(response.body, Some(ResponseBody::Continue(_))),
             "Expected Continue response body, got {:?}",
+            response.body
+        );
+    }
+
+    /// Send next (step over) command to server.
+    #[track_caller]
+    pub fn step_next(&mut self) {
+        let seq = self
+            .send(Command::Next(NextArguments {
+                thread_id: -1,
+                single_thread: None,
+                granularity: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Next request failed");
+        assert!(
+            matches!(response.body, Some(ResponseBody::Next)),
+            "Expected Next response body, got {:?}",
+            response.body
+        );
+    }
+
+    /// Send step in command to server.
+    #[track_caller]
+    pub fn step_in(&mut self) {
+        let seq = self
+            .send(Command::StepIn(StepInArguments {
+                thread_id: -1,
+                single_thread: None,
+                target_id: None,
+                granularity: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "StepIn request failed");
+        assert!(
+            matches!(response.body, Some(ResponseBody::StepIn)),
+            "Expected StepIn response body, got {:?}",
             response.body
         );
     }

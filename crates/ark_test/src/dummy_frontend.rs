@@ -214,12 +214,81 @@ impl DummyArkFrontend {
 
         self.recv_shell_execute_reply()
     }
+
+    /// Execute `n` (next/step over) and receive all expected messages.
+    #[track_caller]
+    pub fn debug_send_next(&self) -> u32 {
+        self.debug_send_step("n")
+    }
+
+    /// Execute `s` (step in) and receive all expected messages.
+    #[track_caller]
+    pub fn debug_send_step_in(&self) -> u32 {
+        self.debug_send_step("s")
+    }
+
+    /// Execute `f` (finish/step out) and receive all expected messages.
+    #[track_caller]
+    pub fn debug_send_finish(&self) -> u32 {
+        self.debug_send_step("f")
+    }
+
+    /// Execute `c` (continue) and receive all expected messages.
+    #[track_caller]
+    pub fn debug_send_continue(&self) -> u32 {
+        self.debug_send_step("c")
+    }
+
+    /// Helper for debug step commands that continue execution.
+    #[track_caller]
+    fn debug_send_step(&self, cmd: &str) -> u32 {
+        self.send_execute_request(cmd, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
+
+    /// Execute a step command in a sourced file context.
+    ///
+    /// In sourced files with srcrefs, stepping produces additional messages compared
+    /// to virtual document context: a `stop_debug` comm (debug session ends briefly),
+    /// and a `Stream` with "debug at" output from R.
+    ///
+    /// This helper only consumes IOPub and shell messages. The caller must still
+    /// consume DAP events separately.
+    #[track_caller]
+    pub fn debug_send_step_command(&self, cmd: &str) -> u32 {
+        self.send_execute_request(cmd, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
+            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
+            Box::new(|msg| {
+                let Message::Stream(stream) = msg else {
+                    return false;
+                };
+                stream.content.text.contains("debug at")
+            }),
+            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        ]);
+
+        self.recv_shell_execute_reply()
+    }
 }
 
 /// Wrapper for messages that may arrive in non-deterministic order.
 ///
 /// Use `pop()` to extract expected messages and `assert_all_consumed()` to
 /// verify no unexpected messages remain.
+#[derive(Debug)]
 pub struct UnorderedMessages {
     messages: Vec<Message>,
 }
