@@ -10,10 +10,15 @@ use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::comm_open::CommOpen;
+use amalthea::wire::execute_request::ExecuteRequestPositron;
+use amalthea::wire::execute_request::JupyterPositronLocation;
+use amalthea::wire::execute_request::JupyterPositronPosition;
+use amalthea::wire::execute_request::JupyterPositronRange;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::status::ExecutionState;
 use ark::interface::SessionMode;
 use ark::repos::DefaultRepos;
+use ark::url::ExtUrl;
 use tempfile::NamedTempFile;
 
 use crate::DapClient;
@@ -176,6 +181,77 @@ impl DummyArkFrontend {
         messages.assert_all_consumed();
     }
 
+    /// Source a file that was created with `SourceFile::new()`.
+    #[track_caller]
+    pub fn source_file(&self, file: &SourceFile) {
+        self.send_execute_request(
+            &format!("source('{}')", file.path),
+            ExecuteRequestOptions::default(),
+        );
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_execute_result();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply();
+    }
+
+    /// Execute code from a file with location information.
+    ///
+    /// This simulates running code from an editor where the frontend sends
+    /// the file URI and position. Breakpoints in the code will be verified
+    /// during execution.
+    #[track_caller]
+    pub fn execute_file(&self, file: &SourceFile) {
+        let code = std::fs::read_to_string(&file.path).unwrap();
+        self.send_execute_request(&code, ExecuteRequestOptions {
+            positron: Some(ExecuteRequestPositron {
+                code_location: Some(file.location()),
+            }),
+            ..Default::default()
+        });
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply();
+    }
+
+    /// Source a file that was created with `SourceFile::new()`.
+    ///
+    /// The code must contain `browser()` or a breakpoint to enter debug mode.
+    /// The caller must still receive the DAP `Stopped` event.
+    #[track_caller]
+    pub fn source_debug_file(&self, file: &SourceFile) {
+        self.send_execute_request(
+            &format!("source('{}')", file.path),
+            ExecuteRequestOptions::default(),
+        );
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        self.recv_iopub_all(vec![
+            Box::new(|msg| {
+                matches!(
+                    msg,
+                    Message::CommMsg(comm) if comm.content.data["method"] == "start_debug"
+                )
+            }),
+            Box::new(|msg| {
+                let Message::Stream(stream) = msg else {
+                    return false;
+                };
+                stream.content.text.contains("Called from:")
+            }),
+            Box::new(|msg| {
+                matches!(
+                    msg,
+                    Message::Status(s) if s.content.execution_state == ExecutionState::Idle
+                )
+            }),
+        ]);
+
+        self.recv_shell_execute_reply();
+    }
+
     /// Source a file containing the given code and receive all expected messages.
     ///
     /// Returns a `SourcedFile` containing the temp file (which must be kept alive)
@@ -183,11 +259,14 @@ impl DummyArkFrontend {
     ///
     /// The caller must still receive the DAP `Stopped` event.
     #[track_caller]
-    pub fn send_source(&self, code: &str) -> SourcedFile {
+    pub fn send_source(&self, code: &str) -> SourceFile {
+        let line_count = code.lines().count() as u32;
         let mut file = NamedTempFile::new().unwrap();
         write!(file, "{code}").unwrap();
 
-        let path = file.path().to_str().unwrap().replace("\\", "/");
+        let url = ExtUrl::from_file_path(file.path()).unwrap();
+        let path = url.path().to_string();
+        let uri = url.to_string();
         let filename = file
             .path()
             .file_name()
@@ -226,9 +305,12 @@ impl DummyArkFrontend {
 
         self.recv_shell_execute_reply();
 
-        SourcedFile {
+        SourceFile {
             _file: file,
+            path,
             filename,
+            uri,
+            line_count,
         }
     }
 
@@ -414,9 +496,63 @@ impl DummyArkFrontend {
 /// Result of sourcing a file via `send_source()`.
 ///
 /// The temp file is kept alive as long as this struct exists.
-pub struct SourcedFile {
+pub struct SourceFile {
     _file: NamedTempFile,
+    pub path: String,
     pub filename: String,
+    uri: String,
+    line_count: u32,
+}
+
+impl SourceFile {
+    /// Create a temp file with the given code without sourcing it.
+    ///
+    /// Use this when you need to set breakpoints before sourcing.
+    /// After setting breakpoints, call `frontend.source_file()` to run the file.
+    pub fn new(code: &str) -> Self {
+        // Count lines for the location range
+        let line_count = code.lines().count() as u32;
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{code}").unwrap();
+
+        let url = ExtUrl::from_file_path(file.path()).unwrap();
+        let path = url.path().to_string();
+        let uri = url.to_string();
+
+        // Extract file name
+        let filename = file
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        Self {
+            _file: file,
+            path,
+            filename,
+            uri,
+            line_count,
+        }
+    }
+
+    /// Get a `JupyterPositronLocation` pointing to this file.
+    pub fn location(&self) -> JupyterPositronLocation {
+        JupyterPositronLocation {
+            uri: self.uri.clone(),
+            range: JupyterPositronRange {
+                start: JupyterPositronPosition {
+                    line: 0,
+                    character: 0,
+                },
+                end: JupyterPositronPosition {
+                    line: self.line_count,
+                    character: 0,
+                },
+            },
+        }
+    }
 }
 
 /// Wrapper for messages that may arrive in non-deterministic order.
