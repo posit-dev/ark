@@ -7,8 +7,11 @@ use std::sync::OnceLock;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
+use amalthea::wire::comm_open::CommOpen;
+use amalthea::wire::jupyter_message::Message;
 
 use crate::console::SessionMode;
+use crate::fixtures::DapClient;
 use crate::repos::DefaultRepos;
 
 // There can be only one frontend per process. Needs to be in a mutex because
@@ -81,6 +84,63 @@ impl DummyArkFrontend {
         if !*result.0 {
             panic!("Cleanup did not start within timeout");
         }
+    }
+
+    /// Start DAP server via comm protocol and return a connected client.
+    ///
+    /// This sends a `comm_open` message to start the DAP server, waits for
+    /// the `server_started` response with the port, and connects a `DapClient`.
+    #[track_caller]
+    pub fn start_dap(&self) -> DapClient {
+        let comm_id = uuid::Uuid::new_v4().to_string();
+
+        // Send comm_open to start the DAP server
+        self.send_shell(CommOpen {
+            comm_id: comm_id.clone(),
+            target_name: String::from("ark_dap"),
+            data: serde_json::json!({ "ip_address": "127.0.0.1" }),
+        });
+
+        // Message order: Busy, then CommMsg and Idle in either order.
+        // The CommMsg travels through an async path (comm_socket -> comm manager -> iopub)
+        // while Idle is sent directly to iopub_tx, so they may arrive out of order.
+        // See FIXME notes at https://github.com/posit-dev/ark/issues/689
+        self.recv_iopub_busy();
+
+        let mut port: Option<u16> = None;
+        let mut got_idle = false;
+
+        while port.is_none() || !got_idle {
+            let msg = self.recv_iopub();
+            match msg {
+                Message::CommMsg(data) => {
+                    assert_eq!(data.content.comm_id, comm_id);
+                    let method = data.content.data["method"]
+                        .as_str()
+                        .expect("Expected method field");
+                    assert_eq!(method, "server_started");
+                    port = Some(
+                        data.content.data["params"]["port"]
+                            .as_u64()
+                            .expect("Expected port field") as u16,
+                    );
+                },
+                Message::Status(status) => {
+                    use amalthea::wire::status::ExecutionState;
+                    if status.content.execution_state == ExecutionState::Idle {
+                        got_idle = true;
+                    }
+                },
+                other => panic!("Expected CommMsg or Status(Idle), got {:?}", other),
+            }
+        }
+
+        let port = port.unwrap();
+
+        let mut client =
+            DapClient::connect("127.0.0.1", port).expect("Failed to connect to DAP server");
+        client.initialize();
+        client
     }
 
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
