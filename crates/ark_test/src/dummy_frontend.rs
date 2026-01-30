@@ -9,7 +9,6 @@ use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::comm_open::CommOpen;
-
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::status::ExecutionState;
 use ark::interface::SessionMode;
@@ -209,10 +208,7 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        // Receive 3 messages in non-deterministic order: stop_debug (x2), idle.
-        // FIXME: Fix duplicate stop_debug messages, then this can be 2.
         self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
             Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
             Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
         ]);
