@@ -16,6 +16,7 @@ use std::time::Duration;
 use anyhow::anyhow;
 use dap::base_message::BaseMessage;
 use dap::base_message::Sendable;
+use dap::events::BreakpointEventBody;
 use dap::events::Event;
 use dap::events::StoppedEventBody;
 use dap::requests::AttachRequestArguments;
@@ -26,13 +27,17 @@ use dap::requests::InitializeArguments;
 use dap::requests::NextArguments;
 use dap::requests::Request;
 use dap::requests::ScopesArguments;
+use dap::requests::SetBreakpointsArguments;
 use dap::requests::StackTraceArguments;
 use dap::requests::StepInArguments;
 use dap::requests::VariablesArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
+use dap::types::Breakpoint;
 use dap::types::Capabilities;
 use dap::types::Scope;
+use dap::types::Source;
+use dap::types::SourceBreakpoint;
 use dap::types::StackFrame;
 use dap::types::StoppedEventReason;
 use dap::types::Thread;
@@ -190,6 +195,51 @@ impl DapClient {
             "Expected StepIn response body, got {:?}",
             response.body
         );
+    }
+
+    /// Set breakpoints for a source file.
+    ///
+    /// Takes a file path and a list of line numbers (1-based).
+    /// Returns the breakpoints as reported by the server.
+    #[track_caller]
+    pub fn set_breakpoints(&mut self, path: &str, lines: &[i64]) -> Vec<Breakpoint> {
+        let breakpoints: Vec<SourceBreakpoint> = lines
+            .iter()
+            .map(|&line| SourceBreakpoint {
+                line,
+                column: None,
+                condition: None,
+                hit_condition: None,
+                log_message: None,
+            })
+            .collect();
+
+        #[allow(deprecated)]
+        let seq = self
+            .send(Command::SetBreakpoints(SetBreakpointsArguments {
+                source: Source {
+                    path: Some(path.to_string()),
+                    name: None,
+                    source_reference: None,
+                    presentation_hint: None,
+                    origin: None,
+                    sources: None,
+                    adapter_data: None,
+                    checksums: None,
+                },
+                breakpoints: Some(breakpoints),
+                lines: None,
+                source_modified: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "SetBreakpoints request failed");
+
+        match response.body {
+            Some(ResponseBody::SetBreakpoints(sb)) => sb.breakpoints,
+            other => panic!("Expected SetBreakpoints response body, got {:?}", other),
+        }
     }
 
     /// Request the current stack trace.
@@ -470,6 +520,23 @@ impl DapClient {
             preserve_focus,
             event
         );
+    }
+
+    /// Receive and assert the next message is a Breakpoint event with verified=true.
+    ///
+    /// Returns the breakpoint from the event.
+    #[track_caller]
+    pub fn recv_breakpoint_verified(&mut self) -> Breakpoint {
+        let event = self.recv_event();
+        let Event::Breakpoint(BreakpointEventBody { breakpoint, .. }) = event else {
+            panic!("Expected Breakpoint event, got {:?}", event);
+        };
+        assert!(
+            breakpoint.verified,
+            "Expected verified breakpoint, got {:?}",
+            breakpoint
+        );
+        breakpoint
     }
 }
 
