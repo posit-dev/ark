@@ -9,10 +9,13 @@ use url::Url;
 
 /// Extended URL utilities for ark.
 ///
-/// On Windows, file URIs can have different representations of the same file.
-/// Positron sends `file:///c%3A/...` (URL-encoded colon, lowercase drive) in
-/// execute requests and LSP notifications. These variants can be problematic
-/// when URI paths are used as HashMap keys.
+/// File URIs can have different representations of the same file:
+/// - On Windows, Positron sends `file:///c%3A/...` (URL-encoded colon,
+///   lowercase drive) in execute requests and LSP notifications.
+/// - On macOS, `/var/folders` is a symlink to `/private/var/folders`, and R's
+///   `normalizePath()` resolves symlinks.
+///
+/// These variants can be problematic when URI paths are used as HashMap keys.
 ///
 /// This module provides normalized URI construction and parsing to ensure
 /// consistent identity across subsystems (DAP breakpoints, LSP documents,
@@ -30,7 +33,21 @@ impl ExtUrl {
     }
 
     /// Convert a file path to a normalized file URI.
+    ///
+    /// Canonicalizes the path to resolve symlinks (e.g., `/var/folders` ->
+    /// `/private/var/folders` on macOS) so the URI matches what R's
+    /// `normalizePath()` produces. Falls back to the original path if
+    /// canonicalization fails.
     pub fn from_file_path(path: impl AsRef<std::path::Path>) -> Result<Url, ()> {
+        let path = path.as_ref();
+
+        // Canonicalize to resolve symlinks. This is necessary because R's
+        // `normalizePath()` resolves symlinks, and the URI must match.
+        let path = std::fs::canonicalize(path).unwrap_or_else(|err| {
+            log::trace!("Failed to canonicalize path {path:?}: {err:?}");
+            path.to_path_buf()
+        });
+
         let url = Url::from_file_path(path)?;
         Ok(Self::normalize(url))
     }

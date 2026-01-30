@@ -31,7 +31,6 @@ use dap::server::ServerOutput;
 use dap::types::*;
 use stdext::result::ResultExt;
 use stdext::spawn;
-use url::Url;
 
 use super::dap::Breakpoint;
 use super::dap::BreakpointState;
@@ -46,6 +45,7 @@ use crate::r_task;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
+use crate::url::ExtUrl;
 
 const THREAD_ID: i64 = -1;
 
@@ -350,7 +350,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        let uri = match Url::from_file_path(path) {
+        // `ExtUrl::from_file_path` canonicalizes the path to resolve symlinks.
+        let uri = match ExtUrl::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}'");
