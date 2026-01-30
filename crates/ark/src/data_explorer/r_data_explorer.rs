@@ -91,6 +91,7 @@ use stdext::unwrap;
 use tracing::Instrument;
 use uuid::Uuid;
 
+use crate::console::RMain;
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
 use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
 use crate::data_explorer::convert_to_code;
@@ -100,7 +101,6 @@ use crate::data_explorer::format::format_string;
 use crate::data_explorer::table::Table;
 use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
-use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
 use crate::r_task;

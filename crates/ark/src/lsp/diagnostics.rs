@@ -1136,7 +1136,7 @@ mod tests {
     use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
 
-    use crate::interface::console_inputs;
+    use crate::console::console_inputs;
     use crate::lsp::document::Document;
     use crate::lsp::inputs::library::Library;
     use crate::lsp::inputs::package::Package;

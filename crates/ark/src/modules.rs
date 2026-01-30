@@ -169,7 +169,7 @@ mod debug {
     use libr::SEXP;
     use stdext::spawn;
 
-    use crate::interface::RMain;
+    use crate::console::RMain;
     use crate::r_task;
 
     pub fn spawn_watcher_thread(root: PathBuf) {

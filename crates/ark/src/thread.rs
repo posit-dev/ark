@@ -5,7 +5,7 @@
 //
 //
 
-use crate::interface::RMain;
+use crate::console::RMain;
 use crate::r_task;
 
 /// Private "shelter" around a Rust object (typically wrapping a `SEXP`, like

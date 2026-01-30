@@ -19,7 +19,7 @@ use crossbeam::channel::Sender;
 use uuid::Uuid;
 
 use crate::fixtures::r_test_init;
-use crate::interface::RMain;
+use crate::console::RMain;
 
 /// Task channels for interrupt-time tasks
 static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());

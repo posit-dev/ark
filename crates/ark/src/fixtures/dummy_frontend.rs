@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 
-use crate::interface::SessionMode;
+use crate::console::SessionMode;
 use crate::repos::DefaultRepos;
 
 // There can be only one frontend per process. Needs to be in a mutex because

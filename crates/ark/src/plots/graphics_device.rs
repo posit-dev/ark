@@ -50,8 +50,8 @@ use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
-use crate::interface::RMain;
-use crate::interface::SessionMode;
+use crate::console::RMain;
+use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
 

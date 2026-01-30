@@ -17,7 +17,7 @@ use harp::exec::RFunctionExt;
 use libr::Rf_eval;
 use stdext::result::ResultExt;
 
-use crate::interface::RMain;
+use crate::console::RMain;
 use crate::sys;
 
 pub(crate) fn should_ignore_site_r_profile(args: &Vec<String>) -> bool {

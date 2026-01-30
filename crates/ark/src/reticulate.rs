@@ -19,7 +19,7 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::interface::RMain;
+use crate::console::RMain;
 
 static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
     LazyLock::new(|| Mutex::new(None));

@@ -20,7 +20,7 @@ use harp::object::RObject;
 use harp::utils::r_is_null;
 use libr::SEXP;
 
-use crate::interface::RMain;
+use crate::console::RMain;
 use crate::ui::events::ps_ui_robj_as_ranges;
 
 #[harp::register]

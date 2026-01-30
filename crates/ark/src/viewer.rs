@@ -16,8 +16,8 @@ use harp::object::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
 
-use crate::interface::RMain;
-use crate::interface::SessionMode;
+use crate::console::RMain;
+use crate::console::SessionMode;
 
 /// Emit HTML output on IOPub for delivery to the client
 ///

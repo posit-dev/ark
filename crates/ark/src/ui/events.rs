@@ -21,7 +21,7 @@ use harp::object::RObject;
 use libr::R_NilValue;
 use libr::SEXP;
 
-use crate::interface::RMain;
+use crate::console::RMain;
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEXP> {

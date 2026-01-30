@@ -13,7 +13,7 @@ use std::env;
 use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
 use anyhow::Context;
-use ark::interface::SessionMode;
+use ark::console::SessionMode;
 use ark::logger;
 use ark::repos::DefaultRepos;
 use ark::signals::initialize_signal_block;

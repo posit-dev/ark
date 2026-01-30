@@ -10,10 +10,10 @@ use harp::utils::r_normalize_path;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
 
+use crate::console::RMain;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
-use crate::interface::RMain;
 use crate::ui::events::send_open_with_system_event;
 use crate::ui::events::send_show_url_event;
 

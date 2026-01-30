@@ -15,7 +15,7 @@ use libr::SEXP;
 use log::warn;
 use stdext::unwrap;
 
-use crate::interface::RMain;
+use crate::console::RMain;
 
 #[harp::register]
 unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::Result<SEXP> {

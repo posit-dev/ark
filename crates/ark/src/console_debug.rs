@@ -21,10 +21,10 @@ use regex::Regex;
 use stdext::result::ResultExt;
 use url::Url;
 
+use crate::console::DebugCallText;
+use crate::console::DebugCallTextKind;
+use crate::console::RMain;
 use crate::dap::dap::DapBackendEvent;
-use crate::interface::DebugCallText;
-use crate::interface::DebugCallTextKind;
-use crate::interface::RMain;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;

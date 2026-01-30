@@ -19,8 +19,8 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use super::backend;
-use crate::interface::ConsoleNotification;
-use crate::interface::KernelInfo;
+use crate::console::ConsoleNotification;
+use crate::console::KernelInfo;
 
 pub struct Lsp {
     runtime: Arc<Runtime>,

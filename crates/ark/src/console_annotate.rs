@@ -22,10 +22,10 @@ use harp::object::RObject;
 use libr::SEXP;
 use url::Url;
 
+use crate::console::RMain;
 use crate::dap::dap::Breakpoint;
 use crate::dap::dap::BreakpointState;
 use crate::dap::dap::InvalidReason;
-use crate::interface::RMain;
 
 /// Function name used for auto-stepping over injected calls such as breakpoints
 const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";

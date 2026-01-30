@@ -1,7 +1,7 @@
 //
 // lib.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -9,6 +9,7 @@ pub mod analysis;
 pub mod ark_comm;
 pub mod browser;
 pub mod connections;
+pub mod console;
 pub mod console_annotate;
 pub mod console_debug;
 pub mod control;
@@ -20,7 +21,6 @@ pub mod errors;
 pub mod fixtures;
 pub mod help;
 pub mod help_proxy;
-pub mod interface;
 pub mod json;
 pub mod logger;
 pub mod logger_hprof;

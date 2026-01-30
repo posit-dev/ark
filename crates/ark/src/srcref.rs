@@ -9,7 +9,7 @@ use harp::r_symbol;
 use harp::utils::r_typeof;
 use libr::*;
 
-use crate::interface::RMain;
+use crate::console::RMain;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::variables::variable::is_binding_fancy;

@@ -35,8 +35,8 @@ use tower_lsp::LspService;
 use tower_lsp::Server;
 
 use super::main_loop::LSP_HAS_CRASHED;
-use crate::interface::ConsoleNotification;
-use crate::interface::RMain;
+use crate::console::ConsoleNotification;
+use crate::console::RMain;
 use crate::lsp::handlers::VirtualDocumentParams;
 use crate::lsp::handlers::VirtualDocumentResponse;
 use crate::lsp::handlers::ARK_VDOC_REQUEST;

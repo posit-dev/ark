@@ -22,8 +22,8 @@ use crossbeam::channel::unbounded;
 
 use crate::control::Control;
 use crate::dap;
-use crate::interface::ConsoleNotification;
-use crate::interface::SessionMode;
+use crate::console::ConsoleNotification;
+use crate::console::SessionMode;
 use crate::lsp;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::repos::DefaultRepos;
@@ -141,7 +141,7 @@ pub fn start_kernel(
     }
 
     // Start R
-    crate::interface::RMain::start(
+    crate::console::RMain::start(
         r_args,
         startup_file,
         comm_manager_tx,

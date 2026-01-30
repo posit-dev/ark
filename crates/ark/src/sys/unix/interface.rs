@@ -31,13 +31,13 @@ use libr::R_running_as_main_program;
 use libr::R_wait_usec;
 use libr::Rf_initialize_R;
 
-use crate::interface::r_busy;
-use crate::interface::r_polled_events;
-use crate::interface::r_read_console;
-use crate::interface::r_show_message;
-use crate::interface::r_suicide;
-use crate::interface::r_write_console;
-use crate::interface::RMain;
+use crate::console::r_busy;
+use crate::console::r_polled_events;
+use crate::console::r_read_console;
+use crate::console::r_show_message;
+use crate::console::r_suicide;
+use crate::console::r_write_console;
+use crate::console::RMain;
 use crate::signals::initialize_signal_handlers;
 
 // For shutdown signal in integration tests

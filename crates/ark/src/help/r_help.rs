@@ -30,7 +30,7 @@ use stdext::spawn;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
-use crate::interface::RMain;
+use crate::console::RMain;
 use crate::methods::ArkGenerics;
 use crate::r_task;
 
@@ -283,9 +283,13 @@ impl RHelp {
                 Ok(obj) => obj,
                 Err(err) => {
                     // Could not parse/eval the topic; no custom handler.
-                    log::warn!("Could not parse/eval help topic expression '{}': {:?}", topic, err);
+                    log::warn!(
+                        "Could not parse/eval help topic expression '{}': {:?}",
+                        topic,
+                        err
+                    );
                     return Ok(None);
-                }
+                },
             };
 
             let handler: Option<RObject> =

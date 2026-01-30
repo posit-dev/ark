@@ -6,8 +6,8 @@ use harp::exec::RFunctionExt;
 use harp::utils::r_str_to_owned_utf8_unchecked;
 use harp::utils::r_typeof;
 
-use crate::interface::RMain;
-use crate::interface::CAPTURE_CONSOLE_OUTPUT;
+use crate::console::RMain;
+use crate::console::CAPTURE_CONSOLE_OUTPUT;
 
 // To ensure the compiler includes the C entry points in `debug.c` in the binary,
 // we store function pointers in global variables that are declared "used" (even
