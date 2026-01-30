@@ -5,8 +5,6 @@
 //
 //
 
-use std::io::Write;
-
 use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
 use ark_test::DummyArkFrontend;
@@ -54,55 +52,27 @@ fn test_dap_stopped_at_browser() {
 
 #[test]
 fn test_dap_source_and_step() {
-    use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-    use amalthea::wire::jupyter_message::Message;
-    use amalthea::wire::status::ExecutionState;
-
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    let mut file = tempfile::NamedTempFile::new().unwrap();
     // Use a braced block so `n` can step within the sourced expression.
-    write!(file, "1\n2\n{{\nbrowser()\n3\n4\n}}\n").unwrap();
-    let path = file.path().to_str().unwrap().replace("\\", "/");
-    let filename = file.path().file_name().unwrap().to_str().unwrap();
-
-    // Source the file - it will stop at browser()
-    frontend.send_execute_request(
-        &format!("source('{path}')"),
-        ExecuteRequestOptions::default(),
+    let file = frontend.send_source(
+        "
+1
+2
+{
+  browser()
+  3
+  4
+}
+",
     );
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
-
-    frontend.recv_iopub_all(vec![
-        Box::new(|msg| {
-            matches!(
-                msg,
-                Message::CommMsg(comm) if comm.content.data["method"] == "start_debug"
-            )
-        }),
-        Box::new(|msg| {
-            let Message::Stream(stream) = msg else {
-                return false;
-            };
-            stream.content.text.contains("Called from:")
-        }),
-        Box::new(|msg| {
-            matches!(
-                msg,
-                Message::Status(s) if s.content.execution_state == ExecutionState::Idle
-            )
-        }),
-    ]);
-
-    frontend.recv_shell_execute_reply();
     dap.recv_stopped();
 
     // Check stack at browser() - line 4, end_column 10 for `browser()`
     let stack = dap.stack_trace();
     assert!(stack.len() >= 1, "Expected at least 1 frame");
-    assert_file_frame(&stack[0], filename, 4, 10);
+    assert_file_frame(&stack[0], &file.filename, 5, 12);
 
     frontend.debug_send_step_command("n");
     dap.recv_continued();
@@ -111,7 +81,7 @@ fn test_dap_source_and_step() {
     // After stepping, we should be at line 5 (the `3` expression after browser())
     let stack = dap.stack_trace();
     assert!(stack.len() >= 1, "Expected at least 1 frame after step");
-    assert_file_frame(&stack[0], filename, 5, 2);
+    assert_file_frame(&stack[0], &file.filename, 6, 4);
 
     // Exit with Q via Jupyter
     frontend.debug_send_quit();

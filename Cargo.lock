@@ -425,6 +425,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stdext",
+ "tempfile",
  "tree-sitter",
  "uuid",
 ]
