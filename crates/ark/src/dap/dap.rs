@@ -509,3 +509,158 @@ impl ServerHandler for Dap {
         return Ok(());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crossbeam::channel::unbounded;
+
+    use super::*;
+
+    fn create_test_dap() -> (Dap, crossbeam::channel::Receiver<DapBackendEvent>) {
+        let (backend_events_tx, backend_events_rx) = unbounded();
+        let (r_request_tx, _r_request_rx) = unbounded();
+
+        let dap = Dap {
+            is_debugging: false,
+            is_connected: true,
+            backend_events_tx: Some(backend_events_tx),
+            stack: None,
+            breakpoints: HashMap::new(),
+            fallback_sources: HashMap::new(),
+            frame_id_to_variables_reference: HashMap::new(),
+            variables_reference_to_r_object: HashMap::new(),
+            current_variables_reference: 1,
+            current_breakpoint_id: 1,
+            comm_tx: None,
+            r_request_tx,
+            shared_self: None,
+        };
+
+        (dap, backend_events_rx)
+    }
+
+    #[test]
+    fn test_did_change_document_removes_breakpoints() {
+        let (mut dap, rx) = create_test_dap();
+
+        let uri = Url::parse("file:///test.R").unwrap();
+        let hash = blake3::hash(b"test content");
+
+        dap.breakpoints.insert(
+            uri.clone(),
+            (hash, vec![
+                Breakpoint::new(1, 10, BreakpointState::Verified),
+                Breakpoint::new(2, 20, BreakpointState::Verified),
+            ]),
+        );
+
+        dap.did_change_document(&uri);
+
+        assert!(dap.breakpoints.get(&uri).is_none());
+
+        let event1 = rx.try_recv().unwrap();
+        let event2 = rx.try_recv().unwrap();
+
+        assert!(matches!(event1, DapBackendEvent::BreakpointState {
+            id: 1,
+            verified: false,
+            ..
+        }));
+        assert!(matches!(event2, DapBackendEvent::BreakpointState {
+            id: 2,
+            verified: false,
+            ..
+        }));
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_did_change_document_no_breakpoints_is_noop() {
+        let (mut dap, rx) = create_test_dap();
+
+        let uri = Url::parse("file:///test.R").unwrap();
+
+        dap.did_change_document(&uri);
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_did_change_document_only_affects_target_uri() {
+        let (mut dap, rx) = create_test_dap();
+
+        let uri1 = Url::parse("file:///test1.R").unwrap();
+        let uri2 = Url::parse("file:///test2.R").unwrap();
+        let hash1 = blake3::hash(b"content 1");
+        let hash2 = blake3::hash(b"content 2");
+
+        dap.breakpoints.insert(
+            uri1.clone(),
+            (hash1, vec![Breakpoint::new(
+                1,
+                10,
+                BreakpointState::Verified,
+            )]),
+        );
+        dap.breakpoints.insert(
+            uri2.clone(),
+            (hash2, vec![Breakpoint::new(
+                2,
+                20,
+                BreakpointState::Verified,
+            )]),
+        );
+
+        dap.did_change_document(&uri1);
+
+        assert!(dap.breakpoints.get(&uri1).is_none());
+        assert!(dap.breakpoints.get(&uri2).is_some());
+
+        let event = rx.try_recv().unwrap();
+        assert!(matches!(event, DapBackendEvent::BreakpointState {
+            id: 1,
+            ..
+        }));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn test_did_change_document_without_backend_tx_is_noop() {
+        let (r_request_tx, _r_request_rx) = unbounded();
+
+        let mut dap = Dap {
+            is_debugging: false,
+            is_connected: false,
+            backend_events_tx: None,
+            stack: None,
+            breakpoints: HashMap::new(),
+            fallback_sources: HashMap::new(),
+            frame_id_to_variables_reference: HashMap::new(),
+            variables_reference_to_r_object: HashMap::new(),
+            current_variables_reference: 1,
+            current_breakpoint_id: 1,
+            comm_tx: None,
+            r_request_tx,
+            shared_self: None,
+        };
+
+        let uri = Url::parse("file:///test.R").unwrap();
+        let hash = blake3::hash(b"test content");
+
+        dap.breakpoints.insert(
+            uri.clone(),
+            (hash, vec![Breakpoint::new(
+                1,
+                10,
+                BreakpointState::Verified,
+            )]),
+        );
+
+        // Should not panic even without `backend_events_tx`
+        dap.did_change_document(&uri);
+
+        // Breakpoints should still be removed
+        assert!(dap.breakpoints.get(&uri).is_none());
+    }
+}
