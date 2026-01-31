@@ -6,10 +6,13 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use amalthea::wire::jupyter_message::Message;
-use amalthea::wire::status::ExecutionState;
 use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
+use ark_test::is_execute_result;
+use ark_test::is_idle;
+use ark_test::is_start_debug;
+use ark_test::is_stop_debug;
+use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use dap::types::Thread;
 
@@ -207,17 +210,12 @@ fn test_dap_nested_browser() {
     // - start_debug (twice due to auto-stepping behavior)
     // - Stream with "debugging in:"
     // - Idle
-    frontend.recv_iopub_all(vec![
-        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-        Box::new(|msg| {
-            let Message::Stream(stream) = msg else {
-                return false;
-            };
-            stream.content.text.contains("debugging in:")
-        }),
-        Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+    frontend.recv_iopub_async(vec![
+        is_stop_debug(),
+        is_start_debug(),
+        is_start_debug(),
+        stream_contains("debugging in:"),
+        is_idle(),
     ]);
     frontend.recv_shell_execute_reply();
 
@@ -241,11 +239,11 @@ fn test_dap_nested_browser() {
     // - ExecuteResult with "exiting from:" message
     // - start_debug (back at parent browser)
     // - Idle
-    frontend.recv_iopub_all(vec![
-        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-        Box::new(|msg| matches!(msg, Message::ExecuteResult(_))),
-        Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-        Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+    frontend.recv_iopub_async(vec![
+        is_stop_debug(),
+        is_execute_result(),
+        is_start_debug(),
+        is_idle(),
     ]);
     frontend.recv_shell_execute_reply();
 
