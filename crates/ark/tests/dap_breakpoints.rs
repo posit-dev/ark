@@ -7,6 +7,8 @@
 
 use std::io::Seek;
 use std::io::Write;
+use std::thread;
+use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::is_idle;
@@ -14,6 +16,7 @@ use ark_test::is_start_debug;
 use ark_test::is_stop_debug;
 use ark_test::stream_contains;
 use ark_test::stream_contains_all;
+use ark_test::DapClient;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 use tempfile::NamedTempFile;
@@ -871,4 +874,127 @@ foo <- function() {
 
     // Shell reply for the original debug(foo); foo() command
     frontend.recv_shell_execute_reply();
+}
+
+#[test]
+fn test_dap_reconnect_basic() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Get the port before disconnecting
+    let port = dap.port();
+
+    // Basic sanity check - threads request works
+    let threads = dap.threads();
+    assert_eq!(threads.len(), 1);
+
+    // Disconnect the client and drop to close TCP connection
+    dap.disconnect();
+    drop(dap);
+
+    // Give the server time to process disconnect and loop back to accept()
+    thread::sleep(Duration::from_millis(100));
+
+    // Reconnect to the same DAP server
+    let mut dap = DapClient::connect("127.0.0.1", port).unwrap();
+    dap.initialize();
+    dap.attach();
+
+    // Basic sanity check - threads request works after reconnection
+    let threads = dap.threads();
+    assert_eq!(threads.len(), 1);
+}
+
+#[test]
+fn test_dap_breakpoint_state_preserved_on_reconnect() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  y <- 2
+}
+",
+    );
+
+    // Set breakpoint and source to verify it
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    frontend.source_file(&file);
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    // Get the port before disconnecting
+    let port = dap.port();
+
+    // Disconnect the client and drop to close TCP connection
+    dap.disconnect();
+    drop(dap);
+
+    // Give the server time to process disconnect and loop back to accept()
+    thread::sleep(Duration::from_millis(100));
+
+    // Reconnect to the same DAP server (with retry since server needs time to accept)
+    let mut dap = DapClient::connect("127.0.0.1", port).unwrap();
+    dap.initialize();
+    dap.attach();
+
+    // Re-query breakpoints - state should be preserved (same ID, still verified)
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+    assert_eq!(breakpoints[0].id, bp_id);
+    assert!(breakpoints[0].verified);
+}
+
+#[test]
+fn test_dap_breakpoint_state_reset_on_reconnect_after_file_change() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let (mut file, path) = create_temp_file(
+        "foo <- function() {
+  x <- 1
+  y <- 2
+}
+",
+    );
+
+    // Set breakpoint and record ID (unverified since we're using temp file)
+    let breakpoints = dap.set_breakpoints(&path, &[2]);
+    assert_eq!(breakpoints.len(), 1);
+    let original_id = breakpoints[0].id;
+
+    // Get the port before disconnecting
+    let port = dap.port();
+
+    // Disconnect the client and drop to close TCP connection
+    dap.disconnect();
+    drop(dap);
+
+    // Give the server time to process disconnect and loop back to accept()
+    thread::sleep(Duration::from_millis(100));
+
+    // Modify the file content while disconnected (simulates background session scenario)
+    file.rewind().unwrap();
+    write!(file, "bar <- function() {{\n  a <- 10\n  b <- 20\n}}\n").unwrap();
+    file.flush().unwrap();
+
+    // Reconnect to the same DAP server (with retry since server needs time to accept)
+    let mut dap = DapClient::connect("127.0.0.1", port).unwrap();
+    dap.initialize();
+    dap.attach();
+
+    // Re-query breakpoints - state should be reset due to hash change
+    let breakpoints = dap.set_breakpoints(&path, &[2]);
+    assert_eq!(breakpoints.len(), 1);
+
+    // ID should be different (state was discarded due to hash change)
+    assert_ne!(breakpoints[0].id, original_id);
+
+    // Breakpoint should be unverified
+    assert!(!breakpoints[0].verified);
 }

@@ -49,6 +49,15 @@ use crate::url::ExtUrl;
 
 const THREAD_ID: i64 = -1;
 
+// TODO: Handle comm close to shut down the DAP server thread.
+//
+// The DAP comm is allowed to persist across TCP sessions. This supports session
+// switching on the frontend. Ideally the frontend would be allowed to close the
+// DAP comm in addition to the DAP TCP connection, which would shut down the DAP
+// server. To achive this, the DAP server, once disconnected should wait for both
+// the connection becoming ready and a channel event signalling comm close. If
+// the latter fires, shut the server down.
+
 pub fn start_dap(
     state: Arc<Mutex<Dap>>,
     server_start: ServerStartMessage,
