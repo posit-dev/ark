@@ -53,6 +53,7 @@ pub struct DapClient {
     reader: BufReader<TcpStream>,
     writer: BufWriter<TcpStream>,
     seq: i64,
+    port: u16,
     connected: bool,
 }
 
@@ -60,6 +61,7 @@ impl DapClient {
     /// Connect to a DAP server at the given address and port.
     pub fn connect(addr: &str, port: u16) -> anyhow::Result<Self> {
         let stream = TcpStream::connect(format!("{addr}:{port}"))?;
+
         stream.set_read_timeout(Some(DEFAULT_TIMEOUT))?;
         stream.set_write_timeout(Some(DEFAULT_TIMEOUT))?;
 
@@ -70,6 +72,7 @@ impl DapClient {
             reader,
             writer,
             seq: 0,
+            port,
             connected: false,
         })
     }
@@ -313,6 +316,13 @@ impl DapClient {
             Some(ResponseBody::Threads(t)) => t.threads,
             other => panic!("Expected Threads response body, got {:?}", other),
         }
+    }
+
+    /// Returns the port this client is connected to.
+    ///
+    /// Useful for reconnecting to the same DAP server after disconnecting.
+    pub fn port(&self) -> u16 {
+        self.port
     }
 
     /// Disconnect from the DAP server.
