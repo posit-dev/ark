@@ -9,6 +9,7 @@ pub mod comm;
 pub mod dap_assert;
 pub mod dap_client;
 pub mod dummy_frontend;
+pub mod iopub;
 
 // Re-export utilities from ark::fixtures for convenience
 pub use ark::fixtures::package_is_installed;
@@ -20,3 +21,4 @@ pub use comm::*;
 pub use dap_assert::*;
 pub use dap_client::*;
 pub use dummy_frontend::*;
+pub use iopub::*;

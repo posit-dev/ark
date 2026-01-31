@@ -522,6 +522,25 @@ impl DapClient {
         );
     }
 
+    /// Receive and assert the next message is a Stopped event with reason "breakpoint".
+    ///
+    /// Returns the breakpoint IDs that were hit.
+    #[track_caller]
+    pub fn recv_stopped_breakpoint(&mut self) -> Vec<i64> {
+        let event = self.recv_event();
+        let Event::Stopped(body) = &event else {
+            panic!("Expected Stopped event, got {:?}", event);
+        };
+        assert!(
+            matches!(body.reason, StoppedEventReason::Breakpoint),
+            "Expected Stopped reason 'breakpoint', got {:?}",
+            body.reason
+        );
+        assert_eq!(body.thread_id, Some(-1));
+        assert_eq!(body.all_threads_stopped, Some(true));
+        body.hit_breakpoint_ids.clone().unwrap_or_default()
+    }
+
     /// Receive and assert the next message is a Breakpoint event with verified=true.
     ///
     /// Returns the breakpoint from the event.

@@ -8,6 +8,12 @@
 use std::io::Seek;
 use std::io::Write;
 
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use ark_test::is_idle;
+use ark_test::is_start_debug;
+use ark_test::is_stop_debug;
+use ark_test::stream_contains;
+use ark_test::stream_contains_all;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 use tempfile::NamedTempFile;
@@ -599,4 +605,270 @@ bar <- function() {
     // Second breakpoint should remain unverified (code after error wasn't reached)
     assert_eq!(breakpoints[1].id, id_after_error);
     assert!(!breakpoints[1].verified);
+}
+
+/// Test that a breakpoint becomes verified immediately when execution hits it.
+///
+/// This tests the full breakpoint hit flow including auto-stepping.
+/// When R stops inside `.ark_breakpoint()`, ark auto-steps to the actual
+/// user expression, producing this message sequence:
+/// - start_debug (entering .ark_breakpoint)
+/// - start_debug (at actual user expression after auto-step)
+/// - "Called from:" stream
+/// - idle
+#[test]
+fn test_dap_breakpoint_verified_on_hit() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create file with a function and a call to it
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x + 1
+}
+foo()
+",
+    );
+
+    // Set breakpoint BEFORE sourcing (on line 3: x <- 1)
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+    assert!(!breakpoints[0].verified);
+    let bp_id = breakpoints[0].id;
+
+    // Source the file and hit the breakpoint
+    frontend.source_file_and_hit_breakpoint(&file);
+
+    // Breakpoint becomes verified when the function definition is parsed
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+    assert_eq!(bp.line, Some(3));
+
+    // DAP side: The auto-stepping mechanism produces:
+    // 1. Stopped (entering .ark_breakpoint)
+    // 2. Continued (auto-step triggered)
+    // 3. Continued (from stop_debug)
+    // 4. Stopped (at actual user expression after auto-step)
+    dap.recv_stopped();
+    dap.recv_continued();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Verify we're stopped at the right place
+    let stack = dap.stack_trace();
+    assert!(!stack.is_empty());
+    assert_eq!(stack[0].name, "foo()");
+
+    // Quit the debugger to clean up
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    // Receive the shell reply for the original source() request
+    frontend.recv_shell_execute_reply();
+
+    // Call foo() again to verify breakpoint is still enabled
+    frontend.send_execute_request("foo()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Direct function call has a slightly different flow than source():
+    // No "debug at" stream message since we're not stepping through source
+    frontend.recv_iopub_async(vec![
+        is_start_debug(),
+        is_stop_debug(),
+        stream_contains_all(&["Called from:", ".ark_breakpoint"]),
+        is_idle(),
+        is_start_debug(),
+    ]);
+
+    // DAP events for auto-stepping
+    dap.recv_stopped();
+    dap.recv_continued();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Quit and finish
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a breakpoint added after parsing is NOT verified when hitting another breakpoint.
+///
+/// This ensures that breakpoints that were never injected into the code don't get
+/// incorrectly verified just because execution stopped at their location.
+#[test]
+fn test_dap_breakpoint_added_after_parse_not_verified() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create file with a function and a call to it
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  y <- 2
+  x + y
+}
+foo()
+",
+    );
+
+    // Set BP1 BEFORE sourcing (on line 3: x <- 1)
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp1_id = breakpoints[0].id;
+
+    // Source the file - BP1 becomes verified during parsing
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // BP1 becomes verified when the function definition is parsed
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp1_id);
+
+    // Now add BP2 AFTER parsing (on line 4: y <- 2)
+    // This breakpoint was NOT injected into the code
+    let breakpoints = dap.set_breakpoints(&file.path, &[3, 4]);
+    assert_eq!(breakpoints.len(), 2);
+    assert!(breakpoints[0].verified); // BP1 is still verified
+    assert!(!breakpoints[1].verified); // BP2 is unverified (not injected)
+    let bp2_id = breakpoints[1].id;
+
+    // Receive the breakpoint hit messages (auto-stepping flow)
+    frontend.recv_iopub_async(vec![
+        stream_contains_all(&["Called from:", ".ark_breakpoint"]),
+        is_start_debug(),
+        is_idle(),
+        is_stop_debug(),
+        is_start_debug(),
+        stream_contains("debug at"),
+    ]);
+
+    // DAP events for auto-stepping
+    dap.recv_stopped();
+    dap.recv_continued();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // We're now stopped at BP1 (line 3: x <- 1)
+    let stack = dap.stack_trace();
+    assert_eq!(stack[0].name, "foo()");
+
+    // Check breakpoint state - BP2 should STILL be unverified
+    // because it was never injected into the code
+    let breakpoints = dap.set_breakpoints(&file.path, &[3, 4]);
+    assert_eq!(breakpoints.len(), 2);
+    assert_eq!(breakpoints[0].id, bp1_id);
+    assert!(breakpoints[0].verified); // BP1 is verified
+    assert_eq!(breakpoints[1].id, bp2_id);
+    assert!(!breakpoints[1].verified); // BP2 is STILL unverified
+
+    // Quit the debugger
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a disabled breakpoint does NOT get re-verified when stepping to its location.
+///
+/// When a breakpoint is disabled (removed from the active set), stepping to that line
+/// via `debug()` should NOT trigger a Breakpoint event to re-verify it.
+///
+/// The verification here is implicit: we step to the disabled breakpoint line and
+/// only expect the normal stepping DAP events (Continued/Stopped). If a Breakpoint
+/// event were incorrectly sent, the test framework's cleanup would detect unexpected
+/// messages.
+#[test]
+fn test_dap_breakpoint_disabled_inert_on_debug_stop() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create file with a function we can set breakpoints on
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  y <- 2
+  x + y
+}
+",
+    );
+
+    // Set breakpoint BEFORE sourcing (on line 4: y <- 2)
+    let breakpoints = dap.set_breakpoints(&file.path, &[4]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    // Source the file - breakpoint becomes verified during parsing
+    frontend.source_file(&file);
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    // Disable the breakpoint by clearing all breakpoints for this file.
+    // Internally, verified breakpoints become "Disabled" and are preserved.
+    let breakpoints = dap.set_breakpoints(&file.path, &[]);
+    assert!(breakpoints.is_empty());
+
+    // Now enter debug mode via debug(foo); foo()
+    // This will stop at the first line of foo (line 3: x <- 1)
+    // Note: Shell reply is delayed until debug mode exits.
+    frontend.send_execute_request("debug(foo); foo()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // debug(foo); foo() produces:
+    // - start_debug (entering foo at first line)
+    // - Stream with "debugging in:"
+    // - Idle
+    frontend.recv_iopub_async(vec![
+        is_start_debug(),
+        stream_contains("debugging in:"),
+        is_idle(),
+    ]);
+
+    // DAP: Stopped at first line of foo
+    dap.recv_stopped();
+
+    // Verify we're at line 3 (x <- 1)
+    let stack = dap.stack_trace();
+    assert!(!stack.is_empty());
+    assert_eq!(stack[0].name, "foo()");
+
+    // Step to the next line (line 4: y <- 2) - where the disabled breakpoint was.
+    // If the disabled breakpoint were incorrectly re-verified, we'd receive an
+    // unexpected Breakpoint event here.
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Stepping produces: stop_debug, start_debug, Stream with "debug at", Idle
+    frontend.recv_iopub_async(vec![
+        is_stop_debug(),
+        is_start_debug(),
+        stream_contains("debug at"),
+        is_idle(),
+    ]);
+    frontend.recv_shell_execute_reply();
+
+    // DAP: Only Continued then Stopped - no Breakpoint event
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Verify we're now at line 4 (y <- 2)
+    let stack = dap.stack_trace();
+    assert!(!stack.is_empty());
+
+    // Quit the debugger
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    // Shell reply for the original debug(foo); foo() command
+    frontend.recv_shell_execute_reply();
 }

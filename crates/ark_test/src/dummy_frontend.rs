@@ -15,12 +15,18 @@ use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
 use amalthea::wire::jupyter_message::Message;
-use amalthea::wire::status::ExecutionState;
-use ark::interface::SessionMode;
+use ark::console::SessionMode;
 use ark::repos::DefaultRepos;
 use ark::url::ExtUrl;
 use tempfile::NamedTempFile;
 
+use crate::execute_result_contains;
+use crate::is_idle;
+use crate::is_start_debug;
+use crate::is_stop_debug;
+use crate::is_stream;
+use crate::stream_contains;
+use crate::stream_contains_all;
 use crate::DapClient;
 
 // There can be only one frontend per process. Needs to be in a mutex because
@@ -173,7 +179,7 @@ impl DummyArkFrontend {
     /// Receives exactly as many messages as there are predicates, matches each
     /// one (in any order), and asserts no extra messages remain.
     #[track_caller]
-    pub fn recv_iopub_all(&self, predicates: Vec<Box<dyn FnMut(&Message) -> bool>>) {
+    pub fn recv_iopub_async(&self, predicates: Vec<Box<dyn FnMut(&Message) -> bool>>) {
         let mut messages = self.recv_iopub_n(predicates.len());
         for p in predicates {
             messages.pop(p);
@@ -215,6 +221,49 @@ impl DummyArkFrontend {
         self.recv_shell_execute_reply();
     }
 
+    /// Source a file and stop at a breakpoint (set via DAP, not browser() in code).
+    ///
+    /// Source a file and wait until execution stops at an injected breakpoint.
+    ///
+    /// Use this when you've set breakpoints via `dap.set_breakpoints()` before sourcing.
+    /// The caller must still receive the DAP events (see below) and should call
+    /// `recv_shell_execute_reply()` after quitting the debugger.
+    ///
+    /// Due to the auto-stepping mechanism, hitting an injected breakpoint produces:
+    ///
+    /// **IOPub messages:**
+    /// 1. Stream: "Called from: base::.ark_breakpoint(...)"
+    /// 2. start_debug (entering .ark_breakpoint wrapper)
+    /// 3. idle
+    /// 4. stop_debug (auto-stepping out of .ark_breakpoint)
+    /// 5. start_debug (at actual user expression)
+    /// 6. Stream: "debug at file://...#N: <expression>"
+    ///
+    /// **DAP events (caller must receive):**
+    /// 1. Stopped (entering .ark_breakpoint)
+    /// 2. Continued (auto-step triggered)
+    /// 3. Continued (from stop_debug)
+    /// 4. Stopped (at actual user expression)
+    #[track_caller]
+    pub fn source_file_and_hit_breakpoint(&self, file: &SourceFile) {
+        self.send_execute_request(
+            &format!("source('{}')", file.path),
+            ExecuteRequestOptions::default(),
+        );
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        // Auto-stepping message flow when hitting an injected breakpoint
+        self.recv_iopub_async(vec![
+            stream_contains_all(&["Called from:", ".ark_breakpoint"]),
+            is_start_debug(),
+            is_idle(),
+            is_stop_debug(),
+            is_start_debug(),
+            stream_contains("debug at"),
+        ]);
+    }
+
     /// Source a file that was created with `SourceFile::new()`.
     ///
     /// The code must contain `browser()` or a breakpoint to enter debug mode.
@@ -228,25 +277,10 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| {
-                matches!(
-                    msg,
-                    Message::CommMsg(comm) if comm.content.data["method"] == "start_debug"
-                )
-            }),
-            Box::new(|msg| {
-                let Message::Stream(stream) = msg else {
-                    return false;
-                };
-                stream.content.text.contains("Called from:")
-            }),
-            Box::new(|msg| {
-                matches!(
-                    msg,
-                    Message::Status(s) if s.content.execution_state == ExecutionState::Idle
-                )
-            }),
+        self.recv_iopub_async(vec![
+            is_start_debug(),
+            stream_contains("Called from:"),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply();
@@ -282,25 +316,10 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| {
-                matches!(
-                    msg,
-                    Message::CommMsg(comm) if comm.content.data["method"] == "start_debug"
-                )
-            }),
-            Box::new(|msg| {
-                let Message::Stream(stream) = msg else {
-                    return false;
-                };
-                stream.content.text.contains("Called from:")
-            }),
-            Box::new(|msg| {
-                matches!(
-                    msg,
-                    Message::Status(s) if s.content.execution_state == ExecutionState::Idle
-                )
-            }),
+        self.recv_iopub_async(vec![
+            is_start_debug(),
+            stream_contains("Called from:"),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply();
@@ -324,17 +343,10 @@ impl DummyArkFrontend {
         // Receive 3 messages in non-deterministic order: start_debug, execute_result, idle.
         // Message ordering is non-deterministic because they originate from different
         // threads (comm manager vs shell handler) that both send to the iopub socket.
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-            Box::new(|msg| {
-                let Message::ExecuteResult(result) = msg else {
-                    return false;
-                };
-                let text = result.content.data["text/plain"].as_str().unwrap_or("");
-                assert!(text.contains("Called from: top level"));
-                true
-            }),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        self.recv_iopub_async(vec![
+            is_start_debug(),
+            execute_result_contains("Called from: top level"),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply()
@@ -347,10 +359,7 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
-        ]);
+        self.recv_iopub_async(vec![is_stop_debug(), is_idle()]);
 
         self.recv_shell_execute_reply()
     }
@@ -389,16 +398,11 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-            Box::new(|msg| {
-                let Message::Stream(stream) = msg else {
-                    return false;
-                };
-                stream.content.text.contains("Called from:")
-            }),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        self.recv_iopub_async(vec![
+            is_stop_debug(),
+            is_start_debug(),
+            stream_contains("Called from:"),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply()
@@ -414,11 +418,11 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-            Box::new(|msg| matches!(msg, Message::ExecuteResult(_))),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        self.recv_iopub_async(vec![
+            is_stop_debug(),
+            is_start_debug(),
+            crate::is_execute_result(),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply()
@@ -438,11 +442,11 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-            Box::new(|msg| matches!(msg, Message::Stream(_))),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        self.recv_iopub_async(vec![
+            is_stop_debug(),
+            is_start_debug(),
+            is_stream(),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply()
@@ -455,10 +459,7 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
-        ]);
+        self.recv_iopub_async(vec![is_start_debug(), is_idle()]);
 
         self.recv_shell_execute_reply()
     }
@@ -477,16 +478,11 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        self.recv_iopub_all(vec![
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug")),
-            Box::new(|msg| matches!(msg, Message::CommMsg(comm) if comm.content.data["method"] == "start_debug")),
-            Box::new(|msg| {
-                let Message::Stream(stream) = msg else {
-                    return false;
-                };
-                stream.content.text.contains("debug at")
-            }),
-            Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
+        self.recv_iopub_async(vec![
+            is_stop_debug(),
+            is_start_debug(),
+            stream_contains("debug at"),
+            is_idle(),
         ]);
 
         self.recv_shell_execute_reply()
@@ -561,7 +557,7 @@ impl SourceFile {
 /// verify no unexpected messages remain.
 #[derive(Debug)]
 pub struct UnorderedMessages {
-    messages: Vec<Message>,
+    pub messages: Vec<Message>,
 }
 
 impl UnorderedMessages {
