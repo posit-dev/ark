@@ -11,6 +11,7 @@ pub mod dap_assert;
 pub mod dap_client;
 pub mod dummy_frontend;
 pub mod iopub;
+pub mod tracing;
 
 // Re-export utilities from ark::fixtures for convenience
 pub use accumulator::*;
@@ -24,3 +25,4 @@ pub use dap_assert::*;
 pub use dap_client::*;
 pub use dummy_frontend::*;
 pub use iopub::*;
+pub use tracing::*;

@@ -648,14 +648,7 @@ foo()
     assert_eq!(bp.id, bp_id);
     assert_eq!(bp.line, Some(3));
 
-    // DAP side: The auto-stepping mechanism produces:
-    // 1. Stopped (entering .ark_breakpoint)
-    // 2. Continued (auto-step triggered)
-    // 3. Continued (from stop_debug)
-    // 4. Stopped (at actual user expression after auto-step)
-    dap.recv_stopped();
-    dap.recv_continued();
-    dap.recv_continued();
+    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
@@ -679,10 +672,7 @@ foo()
     // No "debug at" stream message since we're not stepping through source
     frontend.recv_iopub_breakpoint_hit_direct();
 
-    // DAP events for auto-stepping
-    dap.recv_stopped();
-    dap.recv_continued();
-    dap.recv_continued();
+    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Quit and finish
@@ -740,10 +730,7 @@ foo()
     // Receive the breakpoint hit messages (auto-stepping flow)
     frontend.recv_iopub_breakpoint_hit();
 
-    // DAP events for auto-stepping
-    dap.recv_stopped();
-    dap.recv_continued();
-    dap.recv_continued();
+    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // We're now stopped at BP1 (line 3: x <- 1)
@@ -1016,10 +1003,7 @@ fn test_dap_toplevel_braces_no_global_debug() {
     // Breakpoint becomes verified when the block is parsed
     dap.recv_breakpoint_verified();
 
-    // DAP events for auto-stepping
-    dap.recv_stopped();
-    dap.recv_continued();
-    dap.recv_continued();
+    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Quit the debugger to exit cleanly
@@ -1101,10 +1085,7 @@ foo <- function() {
     // No "debug at" stream message since we're not stepping through source
     frontend.recv_iopub_breakpoint_hit_direct();
 
-    // DAP events for auto-stepping
-    dap.recv_stopped();
-    dap.recv_continued();
-    dap.recv_continued();
+    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
@@ -1203,4 +1184,125 @@ foo()
     // Quit the debugger
     frontend.debug_send_quit();
     dap.recv_continued();
+}
+
+/// Test stepping from one breakpoint onto an adjacent breakpoint.
+///
+/// When stopped at BP1 and stepping with `n` to a line with BP2, the auto-stepping
+/// mechanism handles the injected breakpoint code transparently. The DAP event
+/// sequence is more complex than a regular step because R steps through:
+/// 1. `.ark_auto_step(...)` wrapper (detected via "debug at" message)
+/// 2. `.ark_breakpoint(...)` function (detected via function class)
+/// 3. Finally the actual user expression at BP2
+///
+/// Expected DAP events when stepping onto an adjacent breakpoint:
+/// - Continued (from stop_debug after user's `n`)
+/// - Stopped (at .ark_auto_step)
+/// - Continued (auto-step over .ark_auto_step)
+/// - Continued (from stop_debug)
+/// - Stopped (in .ark_breakpoint)
+/// - Continued (auto-step out of .ark_breakpoint)
+/// - Continued (from stop_debug)
+/// - Stopped (at BP2 user expression)
+#[test]
+fn test_dap_step_to_adjacent_breakpoint() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create file with a function containing two adjacent breakpoints.
+    // Line numbers (1-indexed):
+    // Line 1: (empty)
+    // Line 2: foo <- function() {
+    // Line 3:   x <- 1  # BP1
+    // Line 4:   y <- 2  # BP2
+    // Line 5:   x + y
+    // Line 6: }
+    // Line 7: foo()
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  y <- 2
+  x + y
+}
+foo()
+",
+    );
+
+    // Set breakpoints on lines 3 and 4 BEFORE sourcing
+    let breakpoints = dap.set_breakpoints(&file.path, &[3, 4]);
+    assert_eq!(breakpoints.len(), 2);
+    assert!(!breakpoints[0].verified);
+    assert!(!breakpoints[1].verified);
+    let bp1_id = breakpoints[0].id;
+    let bp2_id = breakpoints[1].id;
+
+    // Source the file - breakpoints get verified when function definition is parsed
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Both breakpoints become verified when the function definition is evaluated
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp1_id);
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp2_id);
+
+    // Hit BP1: auto-stepping flow
+    frontend.recv_iopub_breakpoint_hit();
+
+    // DAP events for hitting BP1: auto-step through .ark_breakpoint wrapper,
+    // then stop at user expression.
+    dap.recv_auto_step_through();
+    dap.recv_stopped();
+
+    // Verify we're stopped at BP1 (line 3: x <- 1)
+    let stack = dap.stack_trace();
+    assert_eq!(stack[0].name, "foo()");
+    assert_eq!(stack[0].line, 3);
+
+    // Step with `n` to BP2 - this is the key part of the test.
+    // When stepping onto an injected breakpoint, we go through:
+    // 1. .ark_auto_step wrapper
+    // 2. .ark_breakpoint function
+    // 3. Actual user expression
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // IOPub messages: stepping onto an adjacent breakpoint produces multiple
+    // start_debug/stop_debug cycles due to auto-stepping through the injected code.
+    // Just wait for idle to ensure all messages are received.
+    frontend.recv_iopub_until(|acc| acc.saw_idle());
+
+    frontend.recv_shell_execute_reply();
+
+    // DAP events when stepping onto an adjacent breakpoint.
+    // When stepping with `n` from BP1 onto BP2's injected code, R steps through
+    // the .ark_auto_step and .ark_breakpoint wrappers with auto-stepping.
+    //
+    // Enable ARK_TEST_TRACE=all to see the actual message sequence:
+    //   ARK_TEST_TRACE=all cargo nextest run test_dap_step_to_adjacent_breakpoint --success-output=immediate
+    //
+    // The sequence is: Continued (step starts), then auto-step through 3 wrappers
+    // (.ark_auto_step, .ark_breakpoint, nested), then stop at BP2 user expression.
+    dap.recv_continued();
+    dap.recv_auto_step_through(); // .ark_auto_step wrapper
+    dap.recv_auto_step_through(); // .ark_breakpoint wrapper
+    dap.recv_auto_step_through(); // Nested wrapper
+    dap.recv_stopped(); // At BP2 user expression (y <- 2)
+
+    // Verify we're stopped at BP2 (line 4: y <- 2)
+    let stack = dap.stack_trace();
+    assert_eq!(stack[0].name, "foo()");
+    assert_eq!(stack[0].line, 4);
+
+    // Quit the debugger. This triggers the cleanup in r_read_console which
+    // sends a Continued event via stop_debug().
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
 }

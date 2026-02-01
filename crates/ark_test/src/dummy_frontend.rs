@@ -27,6 +27,9 @@ use crate::is_start_debug;
 use crate::is_stop_debug;
 use crate::is_stream;
 use crate::stream_contains;
+use crate::tracing::trace_separator;
+use crate::tracing::trace_shell_reply;
+use crate::tracing::trace_shell_request;
 use crate::DapClient;
 use crate::MessageAccumulator;
 
@@ -270,9 +273,25 @@ impl DummyArkFrontend {
         acc.drain(&self.iopub_socket, 100);
     }
 
+    /// Send an execute request with tracing
+    #[track_caller]
+    pub fn send_execute_request_traced(&self, code: &str, options: ExecuteRequestOptions) {
+        trace_shell_request("execute_request", Some(code));
+        self.send_execute_request(code, options);
+    }
+
+    /// Receive shell execute reply with tracing
+    #[track_caller]
+    pub fn recv_shell_execute_reply_traced(&self) -> u32 {
+        let result = self.recv_shell_execute_reply();
+        trace_shell_reply("execute_reply", "ok");
+        result
+    }
+
     /// Source a file that was created with `SourceFile::new()`.
     #[track_caller]
     pub fn source_file(&self, file: &SourceFile) {
+        trace_separator(&format!("source({})", file.filename));
         self.send_execute_request(
             &format!("source('{}')", file.path),
             ExecuteRequestOptions::default(),
@@ -325,6 +344,7 @@ impl DummyArkFrontend {
     /// 4. Stopped (at actual user expression)
     #[track_caller]
     pub fn source_file_and_hit_breakpoint(&self, file: &SourceFile) {
+        trace_separator(&format!("source_and_hit_bp({})", file.filename));
         self.send_execute_request(
             &format!("source('{}')", file.path),
             ExecuteRequestOptions::default(),
@@ -374,6 +394,7 @@ impl DummyArkFrontend {
     /// The caller must still receive the DAP `Stopped` event.
     #[track_caller]
     pub fn source_debug_file(&self, file: &SourceFile) {
+        trace_separator(&format!("source_debug({})", file.filename));
         self.send_execute_request(
             &format!("source('{}')", file.path),
             ExecuteRequestOptions::default(),
@@ -578,6 +599,7 @@ impl DummyArkFrontend {
     /// consume DAP events separately.
     #[track_caller]
     pub fn debug_send_step_command(&self, cmd: &str) -> u32 {
+        trace_separator(&format!("debug_step({})", cmd));
         self.send_execute_request(cmd, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
