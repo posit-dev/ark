@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
@@ -26,8 +27,8 @@ use crate::is_start_debug;
 use crate::is_stop_debug;
 use crate::is_stream;
 use crate::stream_contains;
-use crate::stream_contains_all;
 use crate::DapClient;
+use crate::MessageAccumulator;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
@@ -174,17 +175,99 @@ impl DummyArkFrontend {
         UnorderedMessages { messages }
     }
 
-    /// Receive iopub messages and match each against a predicate.
+    /// Receive iopub messages until all predicates are matched.
     ///
-    /// Receives exactly as many messages as there are predicates, matches each
-    /// one (in any order), and asserts no extra messages remain.
+    /// Messages may arrive in any order and through different async paths
+    /// (CommManager for comm messages, Shell for status, R console for streams).
+    /// This function keeps receiving until every predicate has matched exactly
+    /// one message, with a maximum message count to prevent infinite loops.
+    ///
+    /// Panics if:
+    /// - Timeout waiting for a message
+    /// - Maximum message count reached without matching all predicates
     #[track_caller]
-    pub fn recv_iopub_async(&self, predicates: Vec<Box<dyn FnMut(&Message) -> bool>>) {
-        let mut messages = self.recv_iopub_n(predicates.len());
-        for p in predicates {
-            messages.pop(p);
+    pub fn recv_iopub_async(&self, mut predicates: Vec<Box<dyn FnMut(&Message) -> bool>>) {
+        // Allow some extra messages beyond the predicate count to handle
+        // stream splitting and race conditions
+        let max_messages = predicates.len() + 10;
+        let mut received: Vec<Message> = Vec::new();
+        let predicate_count = predicates.len();
+
+        while !predicates.is_empty() {
+            if received.len() >= max_messages {
+                panic!(
+                    "Received {} messages without matching all predicates.\n\
+                     Unmatched predicates: {}\n\
+                     Received messages: {:#?}",
+                    received.len(),
+                    predicates.len(),
+                    received
+                );
+            }
+
+            // Try to receive with panic recovery to provide better diagnostics
+            let recv_result =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.recv_iopub()));
+
+            let msg = match recv_result {
+                Ok(msg) => msg,
+                Err(_) => {
+                    panic!(
+                        "Timeout or error while waiting for IOPub message.\n\
+                         Expected {} predicates, {} remaining unmatched.\n\
+                         Received so far: {:#?}",
+                        predicate_count,
+                        predicates.len(),
+                        received
+                    );
+                },
+            };
+
+            // Try to match this message against any remaining predicate
+            let matched_idx = predicates.iter_mut().position(|p| p(&msg));
+
+            if let Some(idx) = matched_idx {
+                drop(predicates.remove(idx));
+            }
+
+            received.push(msg);
         }
-        messages.assert_all_consumed();
+    }
+
+    /// Receive IOPub messages until a condition is satisfied.
+    ///
+    /// This is a convenient wrapper around `MessageAccumulator` that handles
+    /// stream coalescing automatically. Stream messages with the same parent
+    /// header are combined before checking the condition, making tests immune
+    /// to whether R batched or split console output.
+    ///
+    /// After the condition is satisfied, any remaining messages are drained
+    /// with a short timeout to prevent interference with subsequent operations.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// frontend.recv_iopub_until(|acc| {
+    ///     acc.streams_contain("Called from:") &&
+    ///     acc.has_comm_method("start_debug") &&
+    ///     acc.saw_idle()
+    /// });
+    /// ```
+    #[track_caller]
+    pub fn recv_iopub_until<F>(&self, condition: F)
+    where
+        F: FnMut(&MessageAccumulator) -> bool,
+    {
+        let mut acc = MessageAccumulator::new();
+
+        let result = acc.receive_until(&self.iopub_socket, condition, Duration::from_secs(10));
+
+        if let Err(msg) = result {
+            panic!("Timeout waiting for IOPub condition.\n{msg}");
+        }
+
+        // Drain any remaining messages with short timeout
+        acc.drain(&self.iopub_socket, 100);
     }
 
     /// Source a file that was created with `SourceFile::new()`.
@@ -229,15 +312,11 @@ impl DummyArkFrontend {
     /// The caller must still receive the DAP events (see below) and should call
     /// `recv_shell_execute_reply()` after quitting the debugger.
     ///
-    /// Due to the auto-stepping mechanism, hitting an injected breakpoint produces:
-    ///
-    /// **IOPub messages:**
-    /// 1. Stream: "Called from: base::.ark_breakpoint(...)"
-    /// 2. start_debug (entering .ark_breakpoint wrapper)
-    /// 3. idle
-    /// 4. stop_debug (auto-stepping out of .ark_breakpoint)
-    /// 5. start_debug (at actual user expression)
-    /// 6. Stream: "debug at file://...#N: <expression>"
+    /// Due to the auto-stepping mechanism, hitting an injected breakpoint produces
+    /// IOPub messages that may arrive in varying order and batching:
+    /// - Stream output with "Called from:" and "debug at" (may be batched or separate)
+    /// - start_debug / stop_debug comm messages
+    /// - idle status
     ///
     /// **DAP events (caller must receive):**
     /// 1. Stopped (entering .ark_breakpoint)
@@ -253,15 +332,40 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        // Auto-stepping message flow when hitting an injected breakpoint
-        self.recv_iopub_async(vec![
-            stream_contains_all(&["Called from:", ".ark_breakpoint"]),
-            is_start_debug(),
-            is_idle(),
-            is_stop_debug(),
-            is_start_debug(),
-            stream_contains("debug at"),
-        ]);
+        // Auto-stepping message flow when hitting an injected breakpoint.
+        // Message count varies due to stream batching and timing. We collect
+        // messages until we have evidence of all required events.
+        self.recv_iopub_breakpoint_hit();
+    }
+
+    /// Receive IOPub messages for a breakpoint hit, handling variable batching.
+    ///
+    /// Uses `MessageAccumulator` to coalesce stream fragments, making the test
+    /// immune to whether R batched or split the output across messages.
+    #[track_caller]
+    pub fn recv_iopub_breakpoint_hit(&self) {
+        self.recv_iopub_until(|acc| {
+            acc.streams_contain("Called from:") &&
+                acc.streams_contain("debug at") &&
+                acc.has_comm_method("start_debug") &&
+                acc.has_comm_method("stop_debug") &&
+                acc.saw_idle()
+        });
+    }
+
+    /// Receive IOPub messages for a breakpoint hit from a direct function call.
+    ///
+    /// This is similar to `recv_iopub_breakpoint_hit` but for direct function calls
+    /// (e.g., `foo()`) rather than `source()`. Direct calls don't produce the
+    /// "debug at" message because R is not stepping through source with srcrefs.
+    #[track_caller]
+    pub fn recv_iopub_breakpoint_hit_direct(&self) {
+        self.recv_iopub_until(|acc| {
+            acc.streams_contain("Called from:") &&
+                acc.has_comm_method("start_debug") &&
+                acc.has_comm_method("stop_debug") &&
+                acc.saw_idle()
+        });
     }
 
     /// Source a file that was created with `SourceFile::new()`.

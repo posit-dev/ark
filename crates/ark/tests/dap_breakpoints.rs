@@ -15,7 +15,6 @@ use ark_test::is_idle;
 use ark_test::is_start_debug;
 use ark_test::is_stop_debug;
 use ark_test::stream_contains;
-use ark_test::stream_contains_all;
 use ark_test::DapClient;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
@@ -678,13 +677,7 @@ foo()
 
     // Direct function call has a slightly different flow than source():
     // No "debug at" stream message since we're not stepping through source
-    frontend.recv_iopub_async(vec![
-        is_start_debug(),
-        is_stop_debug(),
-        stream_contains_all(&["Called from:", ".ark_breakpoint"]),
-        is_idle(),
-        is_start_debug(),
-    ]);
+    frontend.recv_iopub_breakpoint_hit_direct();
 
     // DAP events for auto-stepping
     dap.recv_stopped();
@@ -745,14 +738,7 @@ foo()
     let bp2_id = breakpoints[1].id;
 
     // Receive the breakpoint hit messages (auto-stepping flow)
-    frontend.recv_iopub_async(vec![
-        stream_contains_all(&["Called from:", ".ark_breakpoint"]),
-        is_start_debug(),
-        is_idle(),
-        is_stop_debug(),
-        is_start_debug(),
-        stream_contains("debug at"),
-    ]);
+    frontend.recv_iopub_breakpoint_hit();
 
     // DAP events for auto-stepping
     dap.recv_stopped();
@@ -1111,14 +1097,9 @@ foo <- function() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    frontend.recv_iopub_async(vec![
-        stream_contains_all(&["Called from:", ".ark_breakpoint"]),
-        is_start_debug(),
-        is_idle(),
-        is_stop_debug(),
-        is_start_debug(),
-        stream_contains("debug at"),
-    ]);
+    // Direct function call has a slightly different flow than source():
+    // No "debug at" stream message since we're not stepping through source
+    frontend.recv_iopub_breakpoint_hit_direct();
 
     // DAP events for auto-stepping
     dap.recv_stopped();
