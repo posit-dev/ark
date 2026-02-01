@@ -43,6 +43,10 @@ use dap::types::StoppedEventReason;
 use dap::types::Thread;
 use dap::types::Variable;
 
+use crate::tracing::trace_dap_event;
+use crate::tracing::trace_dap_request;
+use crate::tracing::trace_dap_response;
+
 /// Default timeout for receiving DAP messages
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -398,6 +402,8 @@ impl DapClient {
         )?;
         self.writer.flush()?;
 
+        trace_dap_request(&format!("{:?}", request.command));
+
         Ok(self.seq)
     }
 
@@ -458,6 +464,7 @@ impl DapClient {
                     response.request_seq, request_seq,
                     "Response request_seq mismatch"
                 );
+                trace_dap_response("response", response.success);
                 response
             },
             Sendable::Event(event) => {
@@ -474,7 +481,10 @@ impl DapClient {
     pub fn recv_event(&mut self) -> Event {
         let msg = self.recv().expect("Failed to receive DAP message");
         match msg {
-            Sendable::Event(event) => event,
+            Sendable::Event(event) => {
+                trace_dap_event(&event);
+                event
+            },
             Sendable::Response(response) => {
                 panic!("Expected Event, got Response: {:?}", response);
             },
@@ -482,6 +492,66 @@ impl DapClient {
                 panic!("Expected Event, got ReverseRequest: {:?}", req);
             },
         }
+    }
+
+    /// Drain all pending events from the DAP connection.
+    ///
+    /// Uses a short timeout to collect any events that are ready without
+    /// blocking indefinitely. Returns the collected events.
+    ///
+    /// This is useful when the exact number of events is unpredictable
+    /// but you need to clear the event queue before making requests.
+    pub fn drain_pending_events(&mut self) -> Vec<Event> {
+        self.drain_pending_events_with_timeout(Duration::from_millis(100))
+    }
+
+    /// Drain all pending events from the DAP connection with a custom timeout.
+    ///
+    /// Uses the specified timeout to collect any events that are ready without
+    /// blocking indefinitely. Returns the collected events.
+    pub fn drain_pending_events_with_timeout(&mut self, timeout: Duration) -> Vec<Event> {
+        let mut events = Vec::new();
+
+        // Save original timeout and set the custom one for draining
+        // Use a separate scope to avoid borrow conflict with self.recv()
+        let original_timeout = {
+            let stream = self.reader.get_ref();
+            let timeout_val = stream.read_timeout().ok().flatten();
+            let _ = stream.set_read_timeout(Some(timeout));
+            timeout_val
+        };
+
+        loop {
+            match self.recv() {
+                Ok(Sendable::Event(event)) => {
+                    trace_dap_event(&event);
+                    events.push(event);
+                },
+                Ok(Sendable::Response(resp)) => {
+                    // Unexpected response - log it and stop
+                    eprintln!(
+                        "Warning: drain_pending_events received unexpected Response: {:?}",
+                        resp
+                    );
+                    break;
+                },
+                Ok(Sendable::ReverseRequest(_)) => {
+                    break;
+                },
+                Err(_) => {
+                    // Timeout or error - we're done draining
+                    break;
+                },
+            }
+        }
+
+        // Restore original timeout
+        {
+            let stream = self.reader.get_ref();
+            let _ = stream.set_read_timeout(original_timeout);
+        }
+
+        events
     }
 
     /// Receive and assert the next message is a Continued event.
@@ -493,6 +563,20 @@ impl DapClient {
             "Expected Continued event, got {:?}",
             event
         );
+    }
+
+    /// Receive the DAP event sequence for auto-stepping through injected code.
+    ///
+    /// When R steps through injected breakpoint wrappers (`.ark_auto_step`,
+    /// `.ark_breakpoint`), it produces this sequence:
+    /// - Stopped (entering the wrapper)
+    /// - Continued (auto-step triggers next step)
+    /// - Continued (from stop_debug)
+    #[track_caller]
+    pub fn recv_auto_step_through(&mut self) {
+        self.recv_stopped();
+        self.recv_continued();
+        self.recv_continued();
     }
 
     /// Receive and assert the next message is a Stopped event with default fields.
