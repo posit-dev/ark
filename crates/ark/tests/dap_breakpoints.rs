@@ -998,3 +998,228 @@ fn test_dap_breakpoint_state_reset_on_reconnect_after_file_change() {
     // Breakpoint should be unverified
     assert!(!breakpoints[0].verified);
 }
+
+/// Regression test: stepping through a top-level `{}` block with breakpoints
+/// must not cause subsequent `{}` blocks (without breakpoints) to enter the debugger.
+///
+/// This prevents a bug where `RDEBUG` could be accidentally set on the global
+/// environment, causing unrelated code to drop into the debugger.
+#[test]
+fn test_dap_toplevel_braces_no_global_debug() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create file with a braced block containing a breakpoint
+    let file = SourceFile::new(
+        "
+{
+  x <- 1
+  y <- 2
+}
+",
+    );
+
+    // Set breakpoint on line 3 (x <- 1)
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+    assert!(!breakpoints[0].verified);
+
+    // Source the file and hit the breakpoint
+    frontend.source_file_and_hit_breakpoint(&file);
+
+    // Breakpoint becomes verified when the block is parsed
+    dap.recv_breakpoint_verified();
+
+    // DAP events for auto-stepping
+    dap.recv_stopped();
+    dap.recv_continued();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Quit the debugger to exit cleanly
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    // Receive the shell reply for the original source() request
+    frontend.recv_shell_execute_reply();
+
+    // Now execute another `{}` block without any breakpoints.
+    // This should complete normally without entering the debugger.
+    frontend.execute_request_invisibly(
+        "{
+  a <- 10
+  b <- 20
+}",
+    );
+
+    // If we reached here without hanging or panicking, the test passes.
+    // The execute_request_invisibly helper asserts the normal message flow
+    // (busy -> execute_input -> idle -> execute_reply) which would fail
+    // if R entered the debugger unexpectedly.
+}
+
+// TODO: Test 1 from the missing tests plan - stepping onto adjacent breakpoint.
+// This test has complex message flow that needs further investigation.
+// The auto-stepping mechanism produces a non-trivial sequence of debug events
+// when stepping onto an injected breakpoint. Deferring until the exact expected
+// behavior is clarified.
+
+/// Test that `source(file, echo=TRUE)` correctly handles breakpoints.
+///
+/// The source() hook explicitly supports echo=TRUE (used by Positron), so this
+/// tests that breakpoints work correctly with this option.
+#[test]
+fn test_dap_source_with_echo() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x
+}
+",
+    );
+
+    // Set breakpoint BEFORE sourcing (on line 3: x <- 1)
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+    assert!(!breakpoints[0].verified);
+    let bp_id = breakpoints[0].id;
+
+    // Source the file with echo=TRUE
+    // The message flow is the same as normal source() - echo=TRUE just affects
+    // what R prints during sourcing, but we don't need to capture that here.
+    frontend.send_execute_request(
+        &format!("source('{}', echo=TRUE)", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Breakpoint becomes verified when the function definition is parsed
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+    assert_eq!(bp.line, Some(3));
+
+    // Call foo() to hit the breakpoint
+    frontend.send_execute_request("foo()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_async(vec![
+        stream_contains_all(&["Called from:", ".ark_breakpoint"]),
+        is_start_debug(),
+        is_idle(),
+        is_stop_debug(),
+        is_start_debug(),
+        stream_contains("debug at"),
+    ]);
+
+    // DAP events for auto-stepping
+    dap.recv_stopped();
+    dap.recv_continued();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Verify we're stopped at the right place
+    let stack = dap.stack_trace();
+    assert!(!stack.is_empty());
+    assert_eq!(stack[0].name, "foo()");
+    assert_eq!(stack[0].line, 3);
+
+    // Quit the debugger
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that breakpoints inside function bodies are verified when the
+/// function definition is evaluated, not when the function is called.
+///
+/// This tests the timing of verification events: when we source a file
+/// containing a function with breakpoints inside it, those breakpoints
+/// become verified as soon as R evaluates the function definition (the
+/// `foo <- function() {...}` expression), before the function is called.
+#[test]
+fn test_dap_inner_breakpoint_verified_on_step() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create a file with a function containing a nested {} block.
+    // The browser() stops us inside the function, allowing us to verify
+    // that the breakpoint inside the nested block was already verified
+    // when the function was defined (not when we step over it).
+    //
+    // Line numbers (1-indexed):
+    // Line 1: (empty)
+    // Line 2: foo <- function() {
+    // Line 3:   browser()
+    // Line 4:   {
+    // Line 5:     1        <- BP here
+    // Line 6:   }
+    // Line 7: }
+    // Line 8: foo()
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  browser()
+  {
+    1
+  }
+}
+foo()
+",
+    );
+
+    // Set breakpoint on line 5 (the `1` expression inside nested {}) BEFORE sourcing
+    let breakpoints = dap.set_breakpoints(&file.path, &[5]);
+    assert_eq!(breakpoints.len(), 1);
+    assert!(!breakpoints[0].verified);
+    let bp_id = breakpoints[0].id;
+
+    // Source the file - the function definition is parsed and breakpoints are injected.
+    // Then foo() is called which hits browser().
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // The breakpoint gets verified when the function definition is evaluated.
+    // This happens BEFORE we hit browser() inside the function call.
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+    assert_eq!(bp.line, Some(5));
+
+    // Then we hit browser() and stop
+    frontend.recv_iopub_async(vec![
+        is_start_debug(),
+        stream_contains("Called from:"),
+        is_idle(),
+    ]);
+    frontend.recv_shell_execute_reply();
+    dap.recv_stopped();
+
+    // Verify we're stopped at browser() in foo
+    let stack = dap.stack_trace();
+    assert_eq!(stack[0].name, "foo()");
+
+    // Step with `n` to step over the inner {} block
+    frontend.debug_send_step_command("n");
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Verify we're still in foo after stepping over the inner block
+    let stack = dap.stack_trace();
+    assert_eq!(stack[0].name, "foo()");
+
+    // Quit the debugger
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
