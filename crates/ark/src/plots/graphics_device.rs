@@ -244,9 +244,8 @@ impl DeviceContext {
     /// comm is connected (i.e. we are connected to Positron) and if we are in
     /// [SessionMode::Console] mode.
     fn should_use_dynamic_plots(&self) -> bool {
-        Console::with(|con| {
-            con.is_ui_comm_connected() && con.session_mode() == SessionMode::Console
-        })
+        let console = Console::get();
+        console.is_ui_comm_connected() && console.session_mode() == SessionMode::Console
     }
 
     /// Deactivation hook
@@ -325,11 +324,9 @@ impl DeviceContext {
         }
 
         // Fall back to getting context from Console (for edge cases)
-        Console::with(|con| {
-            con.get_execution_context().unwrap_or_else(|| {
-                // No active request - might be during startup or from R code
-                (String::new(), String::new())
-            })
+        Console::get().get_execution_context().unwrap_or_else(|| {
+            // No active request - might be during startup or from R code
+            (String::new(), String::new())
         })
     }
 

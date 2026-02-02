@@ -38,7 +38,7 @@ pub(crate) fn resource_loaded_namespaces() -> anyhow::Result<()> {
 pub(crate) async fn ns_populate_srcref(ns_name: String) -> anyhow::Result<()> {
     if let Some((uri, contents)) = ns_populate_srcref_without_vdoc_insertion(ns_name).await? {
         // Register the virtual document for the namespace
-        Console::with_mut(|con| con.insert_virtual_document(uri, contents));
+        Console::get_mut().insert_virtual_document(uri, contents);
     };
 
     Ok(())
@@ -53,7 +53,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
 
     // Don't redo the work if we already did it. We don't expect a namespace to change.
     #[cfg(not(test))]
-    if Console::with(|con| con.has_virtual_document(&ark_ns_uri(&ns_name))) {
+    if Console::get().has_virtual_document(&ark_ns_uri(&ns_name)) {
         return Ok(None);
     }
 

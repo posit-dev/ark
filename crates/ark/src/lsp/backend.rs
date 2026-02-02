@@ -530,7 +530,7 @@ pub fn start_lsp(
             r_task({
                 let events_tx = events_tx.clone();
                 move || {
-                    Console::with_mut(|con| con.set_lsp_channel(events_tx));
+                    Console::get_mut().set_lsp_channel(events_tx);
                 }
             });
 
@@ -577,7 +577,7 @@ pub fn start_lsp(
         // from `Console`, at least until someone starts the LSP up again.
         r_task({
             move || {
-                Console::with_mut(|con| con.remove_lsp_channel());
+                Console::get_mut().remove_lsp_channel();
             }
         });
     })

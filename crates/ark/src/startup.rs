@@ -105,7 +105,7 @@ fn source_r_profile(path: &PathBuf) {
         text: message,
     });
 
-    Console::with(|con| con.get_iopub_tx().send(message).unwrap())
+    Console::get().get_iopub_tx().send(message).unwrap()
 }
 
 fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {

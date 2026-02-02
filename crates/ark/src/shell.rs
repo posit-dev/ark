@@ -300,7 +300,7 @@ fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
 
         // Send the help event channel to the main R thread so it can
         // emit help events, to be delivered over the help comm.
-        Console::with_mut(|con| con.set_help_fields(help_event_tx, r_port));
+        Console::get_mut().set_help_fields(help_event_tx, r_port);
 
         Ok(true)
     })

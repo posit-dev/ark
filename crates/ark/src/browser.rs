@@ -26,17 +26,15 @@ pub unsafe extern "C-unwind" fn ps_browse_url(url: SEXP) -> anyhow::Result<SEXP>
 }
 
 fn is_help_url(url: &str) -> bool {
-    Console::with(|con| con.is_help_url(url))
+    Console::get().is_help_url(url)
 }
 
 fn handle_help_url(url: String) -> anyhow::Result<()> {
-    Console::with(|con| {
-        let event = HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
-            url,
-            kind: ShowHelpUrlKind::HelpProxy,
-        });
-        con.send_help_event(event)
-    })
+    let event = HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
+        url,
+        kind: ShowHelpUrlKind::HelpProxy,
+    });
+    Console::get().send_help_event(event)
 }
 
 unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {

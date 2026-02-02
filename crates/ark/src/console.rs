@@ -891,20 +891,6 @@ impl Console {
         })
     }
 
-    pub fn with<F, T>(f: F) -> T
-    where
-        F: FnOnce(&Console) -> T,
-    {
-        f(Self::get())
-    }
-
-    pub fn with_mut<F, T>(f: F) -> T
-    where
-        F: FnOnce(&mut Console) -> T,
-    {
-        f(Self::get_mut())
-    }
-
     pub fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
