@@ -29,7 +29,7 @@ use tower_lsp::Client;
 use url::Url;
 
 use super::backend::RequestResponse;
-use crate::interface::ConsoleNotification;
+use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;

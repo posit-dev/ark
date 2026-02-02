@@ -50,8 +50,8 @@ use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
-use crate::interface::RMain;
-use crate::interface::SessionMode;
+use crate::console::Console;
+use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
 
@@ -61,7 +61,7 @@ pub(crate) enum GraphicsDeviceNotification {
 }
 
 thread_local! {
-  // Safety: Set once by `RMain` on initialization
+  // Safety: Set once by `Console` on initialization
   static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
 }
 
@@ -244,9 +244,8 @@ impl DeviceContext {
     /// comm is connected (i.e. we are connected to Positron) and if we are in
     /// [SessionMode::Console] mode.
     fn should_use_dynamic_plots(&self) -> bool {
-        RMain::with(|main| {
-            main.is_ui_comm_connected() && main.session_mode() == SessionMode::Console
-        })
+        let console = Console::get();
+        console.is_ui_comm_connected() && console.session_mode() == SessionMode::Console
     }
 
     /// Deactivation hook
@@ -316,7 +315,7 @@ impl DeviceContext {
     /// Capture the current execution context for a new plot.
     ///
     /// First checks for context pushed via `on_execute_request()`, then falls back
-    /// to getting context from RMain's active request (for backwards compatibility
+    /// to getting context from Console's active request (for backwards compatibility
     /// and edge cases).
     fn capture_execution_context(&self) -> (String, String) {
         // First, check if we have a stored execution context from on_execute_request()
@@ -324,12 +323,10 @@ impl DeviceContext {
             return ctx;
         }
 
-        // Fall back to getting context from RMain (for edge cases)
-        RMain::with(|main| {
-            main.get_execution_context().unwrap_or_else(|| {
-                // No active request - might be during startup or from R code
-                (String::new(), String::new())
-            })
+        // Fall back to getting context from Console (for edge cases)
+        Console::get().get_execution_context().unwrap_or_else(|| {
+            // No active request - might be during startup or from R code
+            (String::new(), String::new())
         })
     }
 
@@ -574,7 +571,7 @@ impl DeviceContext {
     /// Process outstanding plot changes
     ///
     /// Uses execution context stored via `on_execute_request()` or falls back to
-    /// getting context from RMain's active request.
+    /// getting context from Console's active request.
     #[tracing::instrument(level = "trace", skip_all)]
     fn process_changes(&self) {
         let id = self.id();

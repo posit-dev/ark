@@ -91,6 +91,7 @@ use stdext::unwrap;
 use tracing::Instrument;
 use uuid::Uuid;
 
+use crate::console::Console;
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
 use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
 use crate::data_explorer::convert_to_code;
@@ -100,7 +101,6 @@ use crate::data_explorer::format::format_string;
 use crate::data_explorer::table::Table;
 use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
-use crate::interface::RMain;
 use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
@@ -1323,8 +1323,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     let title = RObject::new(title);
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
-    let main = RMain::get();
-    let comm_manager_tx = main.get_comm_manager_tx().clone();
+    let comm_manager_tx = Console::get().get_comm_manager_tx().clone();
 
     // If an environment is provided, watch the variable in the environment
     let env_info = if env != R_NilValue {

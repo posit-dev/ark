@@ -43,7 +43,7 @@ use tracing::Instrument;
 use tree_sitter::Parser;
 use url::Url;
 
-use crate::interface::ConsoleNotification;
+use crate::console::ConsoleNotification;
 use crate::lsp;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;

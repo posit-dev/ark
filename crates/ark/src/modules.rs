@@ -169,7 +169,7 @@ mod debug {
     use libr::SEXP;
     use stdext::spawn;
 
-    use crate::interface::RMain;
+    use crate::console::Console;
     use crate::r_task;
 
     pub fn spawn_watcher_thread(root: PathBuf) {
@@ -252,7 +252,7 @@ mod debug {
                 }
 
                 r_task(|| {
-                    let r_main = RMain::get();
+                    let r_main = Console::get();
                     if let Err(err) =
                         import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
                     {

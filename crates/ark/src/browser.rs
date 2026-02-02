@@ -10,10 +10,10 @@ use harp::utils::r_normalize_path;
 use libr::Rf_ScalarLogical;
 use libr::SEXP;
 
+use crate::console::Console;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
 use crate::help::message::ShowHelpUrlParams;
-use crate::interface::RMain;
 use crate::ui::events::send_open_with_system_event;
 use crate::ui::events::send_show_url_event;
 
@@ -26,17 +26,15 @@ pub unsafe extern "C-unwind" fn ps_browse_url(url: SEXP) -> anyhow::Result<SEXP>
 }
 
 fn is_help_url(url: &str) -> bool {
-    RMain::with(|main| main.is_help_url(url))
+    Console::get().is_help_url(url)
 }
 
 fn handle_help_url(url: String) -> anyhow::Result<()> {
-    RMain::with(|main| {
-        let event = HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
-            url,
-            kind: ShowHelpUrlKind::HelpProxy,
-        });
-        main.send_help_event(event)
-    })
+    let event = HelpEvent::ShowHelpUrl(ShowHelpUrlParams {
+        url,
+        kind: ShowHelpUrlKind::HelpProxy,
+    });
+    Console::get().send_help_event(event)
 }
 
 unsafe fn ps_browse_url_impl(url: SEXP) -> anyhow::Result<SEXP> {

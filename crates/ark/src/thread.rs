@@ -5,7 +5,7 @@
 //
 //
 
-use crate::interface::RMain;
+use crate::console::Console;
 use crate::r_task;
 
 /// Private "shelter" around a Rust object (typically wrapping a `SEXP`, like
@@ -95,7 +95,7 @@ impl<T> Drop for RThreadSafe<T> {
 }
 
 fn check_on_main_r_thread(f: &str) {
-    if !RMain::on_main_thread() && !stdext::IS_TESTING {
+    if !Console::on_main_thread() && !stdext::IS_TESTING {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
         let message =

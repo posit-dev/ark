@@ -19,7 +19,7 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::interface::RMain;
+use crate::console::Console;
 
 static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
     LazyLock::new(|| Mutex::new(None));
@@ -110,7 +110,7 @@ impl ReticulateService {
 // the comm_id that is returned by this function.
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
+    let console = Console::get();
 
     let input: RObject = input.try_into()?;
     // Reticulate sends `NULL` or a string with the code to be executed in the Python console.
@@ -131,7 +131,7 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     }
 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
-    ReticulateService::start(id, main.get_comm_manager_tx().clone(), input_code)?;
+    ReticulateService::start(id, console.get_comm_manager_tx().clone(), input_code)?;
 
     Ok(R_NilValue)
 }

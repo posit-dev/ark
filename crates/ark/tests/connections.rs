@@ -33,7 +33,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
     .unwrap();
 
     // R returns the comm socket id that's used as key to communicate with the comm.
-    // but it didn't actually open the comm because RMain is not initialized in tests
+    // but it didn't actually open the comm because Console is not initialized in tests
     // thus we need to manually open the comm here, using our own CommManager.
     // we run this in a spare thread because it will block until we read the messsage
     stdext::spawn!("start-connection-thread", {

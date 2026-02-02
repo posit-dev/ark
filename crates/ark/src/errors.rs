@@ -15,11 +15,11 @@ use libr::SEXP;
 use log::warn;
 use stdext::unwrap;
 
-use crate::interface::RMain;
+use crate::console::Console;
 
 #[harp::register]
 unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::Result<SEXP> {
-    let main = RMain::get_mut();
+    let console = Console::get_mut();
 
     // Convert to `RObject` for access to `try_from()` / `try_into()` methods.
     let evalue = RObject::new(evalue);
@@ -35,7 +35,7 @@ unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> an
         Vec::<String>::new()
     });
 
-    main.last_error = Some(
+    console.last_error = Some(
         // We don't fill out `ename` with anything meaningful because typically
         // R errors don't have names. We could consider using the condition class
         // here, which r-lib/tidyverse packages have been using more heavily.

@@ -36,7 +36,7 @@ use stdext::spawn;
 use stdext::unwrap;
 use uuid::Uuid;
 
-use crate::interface::RMain;
+use crate::console::Console;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
 
@@ -307,15 +307,15 @@ pub unsafe extern "C-unwind" fn ps_connection_opened(
     let id = Uuid::new_v4().to_string();
     let id_r: RObject = id.clone().into();
 
-    if !RMain::is_initialized() {
-        // If RMain is not initialized, we are probably in unit tests, so we
+    if !Console::is_initialized() {
+        // If Console is not initialized, we are probably in unit tests, so we
         // just don't start the connection and let the testing code manually do
-        // it. Note that RMain could be initialized in integration tests.
-        log::warn!("Connection Pane: RMain is not initialized. Connection will not be started.");
+        // it. Note that Console could be initialized in integration tests.
+        log::warn!("Connection Pane: Console is not initialized. Connection will not be started.");
         return Ok(id_r.sexp);
     }
 
-    let main = RMain::get();
+    let console = Console::get();
 
     let metadata = Metadata {
         name: RObject::view(name).to::<String>()?,
@@ -325,7 +325,7 @@ pub unsafe extern "C-unwind" fn ps_connection_opened(
         code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
     };
 
-    if let Err(err) = RConnection::start(metadata, main.get_comm_manager_tx().clone(), id) {
+    if let Err(err) = RConnection::start(metadata, console.get_comm_manager_tx().clone(), id) {
         log::error!("Connection Pane: Failed to start connection: {err:?}");
         return Err(err);
     }
@@ -335,45 +335,45 @@ pub unsafe extern "C-unwind" fn ps_connection_opened(
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_connection_closed(id: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
-    let id_ = RObject::view(id).to::<String>()?;
+    let id = RObject::view(id).to::<String>()?;
 
-    main.get_comm_manager_tx()
-        .send(CommManagerEvent::Message(id_, CommMsg::Close))?;
+    Console::get()
+        .get_comm_manager_tx()
+        .send(CommManagerEvent::Message(id, CommMsg::Close))?;
 
     Ok(R_NilValue)
 }
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_connection_updated(id: SEXP) -> Result<SEXP, anyhow::Error> {
-    let main = RMain::get();
     let comm_id: String = RObject::view(id).to::<String>()?;
-
     let event = ConnectionsFrontendEvent::Update;
 
-    main.get_comm_manager_tx().send(CommManagerEvent::Message(
-        comm_id,
-        CommMsg::Data(serde_json::to_value(event)?),
-    ))?;
+    Console::get()
+        .get_comm_manager_tx()
+        .send(CommManagerEvent::Message(
+            comm_id,
+            CommMsg::Data(serde_json::to_value(event)?),
+        ))?;
 
     Ok(R_NilValue)
 }
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_connection_focus(id: SEXP) -> Result<SEXP, anyhow::Error> {
-    if !RMain::is_initialized() {
+    if !Console::is_initialized() {
         return Ok(R_NilValue);
     }
 
-    let main = RMain::get();
     let comm_id: String = RObject::view(id).to::<String>()?;
-
     let event = ConnectionsFrontendEvent::Focus;
 
-    main.get_comm_manager_tx().send(CommManagerEvent::Message(
-        comm_id,
-        CommMsg::Data(serde_json::to_value(event)?),
-    ))?;
+    Console::get()
+        .get_comm_manager_tx()
+        .send(CommManagerEvent::Message(
+            comm_id,
+            CommMsg::Data(serde_json::to_value(event)?),
+        ))?;
 
     Ok(R_NilValue)
 }

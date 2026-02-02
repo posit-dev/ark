@@ -21,10 +21,10 @@ use regex::Regex;
 use stdext::result::ResultExt;
 use url::Url;
 
+use crate::console::Console;
+use crate::console::DebugCallText;
+use crate::console::DebugCallTextKind;
 use crate::dap::dap::DapBackendEvent;
-use crate::interface::DebugCallText;
-use crate::interface::DebugCallTextKind;
-use crate::interface::RMain;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -73,7 +73,7 @@ impl From<&FrameInfo> for FrameInfoId {
     }
 }
 
-impl RMain {
+impl Console {
     pub(crate) fn debug_start(&mut self, debug_preserve_focus: bool) {
         match self.debug_stack_info() {
             Ok(stack) => {
@@ -413,7 +413,7 @@ pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
 
     let id: String = RObject::view(id).try_into()?;
 
-    let console = RMain::get_mut();
+    let console = Console::get_mut();
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
@@ -431,8 +431,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
         return Ok(libr::R_NilValue);
     };
 
-    let main = RMain::get();
-    let mut dap = main.debug_dap.lock().unwrap();
+    let mut dap = Console::get().debug_dap.lock().unwrap();
     dap.verify_breakpoint(&uri, &id);
 
     Ok(libr::R_NilValue)
@@ -442,7 +441,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
 /// Called after each expression is successfully evaluated in source().
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_verify_breakpoints(srcref: SEXP) -> anyhow::Result<SEXP> {
-    RMain::get().verify_breakpoints(RObject::view(srcref));
+    Console::get().verify_breakpoints(RObject::view(srcref));
     Ok(libr::R_NilValue)
 }
 
@@ -462,8 +461,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
         return Ok(libr::R_NilValue);
     };
 
-    let main = RMain::get();
-    let mut dap = main.debug_dap.lock().unwrap();
+    let mut dap = Console::get().debug_dap.lock().unwrap();
     dap.verify_breakpoints(&uri, start_line as u32, end_line as u32);
 
     Ok(libr::R_NilValue)
