@@ -1,3 +1,4 @@
+use std::io::Seek;
 use std::io::Write;
 use std::ops::Deref;
 use std::ops::DerefMut;
@@ -476,7 +477,7 @@ impl DummyArkFrontend {
         self.recv_shell_execute_reply();
 
         SourceFile {
-            _file: file,
+            file,
             path,
             filename,
             uri,
@@ -647,7 +648,7 @@ impl DummyArkFrontend {
 ///
 /// The temp file is kept alive as long as this struct exists.
 pub struct SourceFile {
-    _file: NamedTempFile,
+    file: NamedTempFile,
     pub path: String,
     pub filename: String,
     uri: String,
@@ -679,7 +680,7 @@ impl SourceFile {
             .to_string();
 
         Self {
-            _file: file,
+            file,
             path,
             filename,
             uri,
@@ -702,6 +703,20 @@ impl SourceFile {
                 },
             },
         }
+    }
+
+    /// Rewrite the file with new content.
+    ///
+    /// Use this for tests that need to modify the file after creation
+    /// (e.g., testing hash change detection).
+    pub fn rewrite(&mut self, code: &str) {
+        self.file.rewind().unwrap();
+        self.file.as_file_mut().set_len(0).unwrap();
+
+        write!(self.file, "{code}").unwrap();
+
+        self.file.flush().unwrap();
+        self.line_count = code.lines().count() as u32;
     }
 }
 
