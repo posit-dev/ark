@@ -648,10 +648,12 @@ impl Console {
                     .log_err();
             }
 
-            // Initialize support functions (after routine registration, after r_task initialization)
+            // Initialize support functions (after routine registration, after
+            // r_task initialization). Intentionally panic if module loading
+            // fails. Modules are critical for ark to function.
             match modules::initialize() {
                 Err(err) => {
-                    log::error!("Can't load R modules: {err:?}");
+                    panic!("Failed to load R modules: {err:?}");
                 },
                 Ok(namespace) => {
                     console.positron_ns = Some(namespace);

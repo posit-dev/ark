@@ -151,9 +151,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
     }
 
     // Finish initialization of modules
-    RFunction::from("initialize")
-        .call_in(namespace.sexp)
-        .log_err();
+    RFunction::from("initialize").call_in(namespace.sexp)?;
 
     // Do this separately with a bare eval because `errors_initialize()` should
     // be called without any condition handlers on the stack
