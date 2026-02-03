@@ -823,8 +823,14 @@ impl DummyArkFrontend {
 }
 
 // Check that we haven't left crumbs behind.
-// Stream messages are allowed to remain because they can arrive asynchronously
-// and interleave with other operations under timing pressure.
+//
+// Certain messages are allowed to remain because they can arrive asynchronously:
+// - Stream messages: can interleave with other operations due to batching.
+// - CommMsg with method "execute": `DapClient::drop()` calls `disconnect()` which
+//   sends a Disconnect request. If ark is still debugging, `handle_disconnect()`
+//   sends an `execute Q` comm message to quit the browser. Since `DapClient` is
+//   dropped before `DummyArkFrontend` (reverse declaration order), this message
+//   can arrive here after the test has otherwise completed cleanly.
 impl Drop for DummyArkFrontend {
     fn drop(&mut self) {
         if std::thread::panicking() {
@@ -832,20 +838,35 @@ impl Drop for DummyArkFrontend {
         }
 
         // Drain any pending IOPub messages
-        let mut non_stream_messages: Vec<Message> = Vec::new();
+        let mut unexpected_messages: Vec<Message> = Vec::new();
         while self.iopub_socket.has_incoming_data().unwrap() {
             let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
-            if !matches!(msg, Message::Stream(_)) {
-                non_stream_messages.push(msg);
+
+            let exempt = match &msg {
+                Message::Stream(_) => true,
+                Message::CommMsg(comm) => {
+                    comm.content.data.get("method").and_then(|v| v.as_str()) == Some("execute") &&
+                        comm.content
+                            .data
+                            .get("params")
+                            .and_then(|p| p.get("command"))
+                            .and_then(|c| c.as_str()) ==
+                            Some("Q")
+                },
+                _ => false,
+            };
+
+            if !exempt {
+                unexpected_messages.push(msg);
             }
         }
 
-        // Fail if any non-Stream IOPub messages were left behind
-        if !non_stream_messages.is_empty() {
+        // Fail if any unexpected IOPub messages were left behind
+        if !unexpected_messages.is_empty() {
             panic!(
-                "IOPub socket has {} unexpected non-Stream message(s) on exit:\n{:#?}",
-                non_stream_messages.len(),
-                non_stream_messages
+                "IOPub socket has {} unexpected message(s) on exit:\n{:#?}",
+                unexpected_messages.len(),
+                unexpected_messages
             );
         }
 
