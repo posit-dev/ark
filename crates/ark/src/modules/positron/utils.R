@@ -62,10 +62,6 @@
     .ps.Call("ps_deep_sleep", secs)
 }
 
-# Extracts a character label from a syntactically valid quoted R expression
-as_label <- function(expr) {
-    paste(deparse(expr, backtick = TRUE), collapse = "")
-}
 
 # Converts an R object to JSON (returned as a string)
 #' @export

@@ -17,7 +17,6 @@ use libr::Rf_ScalarLogical;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
-use stdext::result::ResultExt;
 
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
@@ -121,16 +120,24 @@ pub fn initialize() -> anyhow::Result<RObject> {
             // First reload all modules from source to reflect new changes that have
             // not been built into the binary yet.
             log::trace!("Loading R modules from sources via cargo manifest");
-            import_directory(
+
+            // Intentionally panic if module loading fails in debug builds.
+            // Modules are critical for ark to function, and failing fast helps
+            // catch issues during development or extremely broken installs.
+            if let Err(err) = import_directory(
                 &root.join("positron"),
                 RModuleSource::Positron,
                 namespace.sexp,
-            )?;
-            import_directory(
+            ) {
+                panic!("Failed to load positron modules: {err:?}");
+            }
+            if let Err(err) = import_directory(
                 &root.join("rstudio"),
                 debug::RModuleSource::RStudio,
                 namespace.sexp,
-            )?;
+            ) {
+                panic!("Failed to load rstudio modules: {err:?}");
+            }
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
@@ -144,9 +151,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
     }
 
     // Finish initialization of modules
-    RFunction::from("initialize")
-        .call_in(namespace.sexp)
-        .log_err();
+    RFunction::from("initialize").call_in(namespace.sexp)?;
 
     // Do this separately with a bare eval because `errors_initialize()` should
     // be called without any condition handlers on the stack
@@ -268,13 +273,15 @@ mod debug {
 
     pub fn import_directory(directory: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
         log::info!("Loading modules from directory: {}", directory.display());
-        let entries = std::fs::read_dir(directory)?;
+
+        // Collect and sort entries alphabetically to match RustEmbed iteration order.
+        // https://github.com/posit-dev/positron/issues/11591#issuecomment-3816838107
+        let mut entries: Vec<_> =
+            std::fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        entries.sort_by_key(|entry| entry.path());
 
         for entry in entries {
-            match entry {
-                Ok(entry) => import_file(&entry.path(), src, env)?,
-                Err(err) => log::error!("Can't load modules from file: {err:?}"),
-            };
+            import_file(&entry.path(), src, env)?;
         }
 
         Ok(())
