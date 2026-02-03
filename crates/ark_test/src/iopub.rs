@@ -92,3 +92,33 @@ pub fn execute_result_contains(text: &'static str) -> Predicate {
 pub fn is_stream() -> Predicate {
     Box::new(|msg| matches!(msg, Message::Stream(_)))
 }
+
+// Predicate functions for use with `in_order`.
+// These return boxed closures for a clean call-site syntax.
+
+type OrderPredicate = Box<dyn Fn(&Message) -> bool>;
+
+/// Matches a `stop_debug` comm message.
+pub fn is_stop_debug_msg() -> OrderPredicate {
+    Box::new(|msg| {
+        matches!(
+            msg,
+            Message::CommMsg(comm) if comm.content.data.get("method").and_then(|v| v.as_str()) == Some("stop_debug")
+        )
+    })
+}
+
+/// Matches an `Idle` status message.
+pub fn is_idle_msg() -> OrderPredicate {
+    Box::new(|msg| {
+        matches!(
+            msg,
+            Message::Status(s) if s.content.execution_state == ExecutionState::Idle
+        )
+    })
+}
+
+/// Matches an ExecuteResult message.
+pub fn is_execute_result_msg() -> OrderPredicate {
+    Box::new(|msg| matches!(msg, Message::ExecuteResult(_)))
+}

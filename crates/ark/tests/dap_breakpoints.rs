@@ -11,7 +11,9 @@ use std::thread;
 use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use ark_test::is_execute_result_msg;
 use ark_test::is_idle;
+use ark_test::is_idle_msg;
 use ark_test::is_start_debug;
 use ark_test::is_stop_debug;
 use ark_test::stream_contains;
@@ -1083,16 +1085,16 @@ foo <- function() {
     let bp_id = breakpoints[0].id;
 
     // Source the file with echo=TRUE
-    // The message flow is the same as normal source() - echo=TRUE just affects
-    // what R prints during sourcing, but we don't need to capture that here.
+    // echo=TRUE causes R to print each expression as it's evaluated. These stream
+    // messages can arrive asynchronously, so we use recv_iopub_until to handle them.
     frontend.send_execute_request(
         &format!("source('{}', echo=TRUE)", file.path),
         ExecuteRequestOptions::default(),
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_execute_result();
-    frontend.recv_iopub_idle();
+    // Use recv_iopub_until to handle async stream messages from echo=TRUE
+    frontend.recv_iopub_until(|acc| acc.has_execute_result() && acc.saw_idle());
     frontend.recv_shell_execute_reply();
 
     // Breakpoint becomes verified when the function definition is evaluated
@@ -1100,14 +1102,19 @@ foo <- function() {
     assert_eq!(bp.id, bp_id);
     assert_eq!(bp.line, Some(3));
 
-    // Call foo() to hit the breakpoint
+    // Call foo() to hit the breakpoint.
+    // Use recv_iopub_until to handle message interleaving - the "debug at" stream
+    // can arrive before execute_input under timing pressure.
     frontend.send_execute_request("foo()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
-
-    // Direct function call has a slightly different flow than source():
-    // No "debug at" stream message since we're not stepping through source
-    frontend.recv_iopub_breakpoint_hit_direct();
+    frontend.recv_iopub_until(|acc| {
+        acc.consume_execute_input();
+        acc.streams_contain("Called from:") &&
+            acc.streams_contain("debug at") &&
+            acc.has_comm_method_count("start_debug", 2) &&
+            acc.has_comm_method("stop_debug") &&
+            acc.saw_idle()
+    });
 
     dap.recv_auto_step_through();
     dap.recv_stopped();
@@ -1299,8 +1306,12 @@ foo()
 
     // IOPub messages: stepping onto an adjacent breakpoint produces multiple
     // start_debug/stop_debug cycles due to auto-stepping through the injected code.
-    // Just wait for idle to ensure all messages are received.
-    frontend.recv_iopub_until(|acc| acc.saw_idle());
+    // We expect 4 start_debug, 4 stop_debug, and idle (ordering not guaranteed).
+    frontend.recv_iopub_until(|acc| {
+        acc.has_comm_method_count("start_debug", 4) &&
+            acc.has_comm_method_count("stop_debug", 4) &&
+            acc.saw_idle()
+    });
 
     frontend.recv_shell_execute_reply();
 
@@ -1394,8 +1405,11 @@ lapply(1:3, function(x) {
 
     // When continuing from inside lapply, the breakpoint is hit again.
     // The flow includes stop_debug (exiting current debug) and start_debug (new hit).
+    // Note: idle timing relative to stop_debug is not guaranteed.
     frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("start_debug") && acc.has_comm_method("stop_debug") && acc.saw_idle()
+        acc.has_comm_method_count("start_debug", 2) &&
+            acc.has_comm_method_count("stop_debug", 2) &&
+            acc.saw_idle()
     });
     frontend.recv_shell_execute_reply();
 
@@ -1412,7 +1426,9 @@ lapply(1:3, function(x) {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("start_debug") && acc.has_comm_method("stop_debug") && acc.saw_idle()
+        acc.has_comm_method_count("start_debug", 2) &&
+            acc.has_comm_method_count("stop_debug", 2) &&
+            acc.saw_idle()
     });
     frontend.recv_shell_execute_reply();
 
@@ -1428,8 +1444,11 @@ lapply(1:3, function(x) {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // R exits the debugger and completes lapply
-    frontend.recv_iopub_until(|acc| acc.has_comm_method("stop_debug") && acc.saw_idle());
+    // R exits the debugger and completes lapply (returns list result).
+    // stop_debug is async, but execute_result must come before idle.
+    frontend.recv_iopub_until(|acc| {
+        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result_msg(), is_idle_msg()])
+    });
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -1802,8 +1821,13 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    // Note: idle timing relative to stop_debug is not guaranteed.
+    // We must wait for "debug at" stream since hitting the breakpoint produces that output.
     frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("start_debug") && acc.has_comm_method("stop_debug") && acc.saw_idle()
+        acc.streams_contain("debug at") &&
+            acc.has_comm_method_count("start_debug", 2) &&
+            acc.has_comm_method_count("stop_debug", 2) &&
+            acc.saw_idle()
     });
     frontend.recv_shell_execute_reply();
 
@@ -1818,8 +1842,12 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    // We must wait for "debug at" stream since hitting the breakpoint produces that output.
     frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("start_debug") && acc.has_comm_method("stop_debug") && acc.saw_idle()
+        acc.streams_contain("debug at") &&
+            acc.has_comm_method_count("start_debug", 2) &&
+            acc.has_comm_method_count("stop_debug", 2) &&
+            acc.saw_idle()
     });
     frontend.recv_shell_execute_reply();
 
@@ -1834,7 +1862,10 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_until(|acc| acc.has_comm_method("stop_debug") && acc.saw_idle());
+    // stop_debug is async, but execute_result must come before idle.
+    frontend.recv_iopub_until(|acc| {
+        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result_msg(), is_idle_msg()])
+    });
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();

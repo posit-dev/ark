@@ -13,8 +13,13 @@
 //! parent header, making tests immune to batching variations.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::Duration;
 use std::time::Instant;
+
+/// Time to wait for trailing stream messages after condition is met.
+/// Stream messages can arrive slightly out of order due to batching nondeterminism.
+const SETTLE_TIMEOUT_MS: i64 = 50;
 
 use amalthea::socket::socket::Socket;
 use amalthea::wire::jupyter_message::Message;
@@ -29,26 +34,29 @@ use crate::tracing::IoPubTrace;
 /// Stream messages with the same parent header are automatically combined,
 /// eliminating sensitivity to whether R batched or split the output.
 pub struct MessageAccumulator {
-    /// All received messages (for diagnostics)
-    messages: Vec<Message>,
+    /// All received messages
+    pub messages: Vec<Message>,
     /// Coalesced stdout streams keyed by parent message ID
-    stdout_streams: HashMap<String, String>,
+    pub stdout_streams: HashMap<String, String>,
     /// Coalesced stderr streams keyed by parent message ID
-    stderr_streams: HashMap<String, String>,
+    pub stderr_streams: HashMap<String, String>,
+    /// Indices of messages that have been explicitly checked/consumed
+    consumed: HashSet<usize>,
     /// Whether we've seen an idle status
     saw_idle: bool,
-    /// Comm methods we've seen (e.g., "start_debug", "stop_debug")
-    comm_methods: Vec<String>,
+    /// Whether receive_until completed successfully (enables Drop check)
+    verified: bool,
 }
 
 impl MessageAccumulator {
     pub fn new() -> Self {
         Self {
             messages: Vec::new(),
+            consumed: HashSet::new(),
             stdout_streams: HashMap::new(),
             stderr_streams: HashMap::new(),
             saw_idle: false,
-            comm_methods: Vec::new(),
+            verified: false,
         }
     }
 
@@ -66,30 +74,31 @@ impl MessageAccumulator {
         timeout: Duration,
     ) -> Result<(), String>
     where
-        F: FnMut(&Self) -> bool,
+        F: FnMut(&mut Self) -> bool,
     {
         let start = Instant::now();
         let poll_timeout_ms = 100;
 
         loop {
             if condition(self) {
+                // Condition met. Allow a short settling period for any trailing
+                // stream messages that may arrive due to batching nondeterminism.
+                self.settle(socket, SETTLE_TIMEOUT_MS);
+                self.verified = true;
                 return Ok(());
             }
 
             if start.elapsed() >= timeout {
                 return Err(format!(
-                    "Timeout after {:?} waiting for condition.\n\
+                    "Timeout after {timeout:?} waiting for condition.\n\
                      Accumulated {} messages.\n\
                      Coalesced stdout streams: {:?}\n\
                      Coalesced stderr streams: {:?}\n\
-                     Comm methods seen: {:?}\n\
                      Saw idle: {}\n\
                      Raw messages: {:#?}",
-                    timeout,
                     self.messages.len(),
                     self.stdout_streams,
                     self.stderr_streams,
-                    self.comm_methods,
                     self.saw_idle,
                     self.messages
                 ));
@@ -123,15 +132,28 @@ impl MessageAccumulator {
         }
     }
 
-    /// Accumulate a single message, updating internal state.
+    /// Wait briefly for any trailing messages (primarily streams) that may
+    /// arrive after the condition is met due to batching nondeterminism.
+    fn settle(&mut self, socket: &Socket, timeout_ms: i64) {
+        loop {
+            match socket.poll_incoming(timeout_ms) {
+                Ok(true) => {
+                    if let Ok(msg) = Message::read_from_socket(socket) {
+                        self.accumulate(msg);
+                    }
+                },
+                Ok(false) | Err(_) => break,
+            }
+        }
+    }
+
     fn accumulate(&mut self, msg: Message) {
-        // Trace the message
         self.trace_message(&msg);
 
         match &msg {
             Message::Stream(stream) => {
-                // Key by parent_header.msg_id if present, otherwise use the
-                // stream message's own header.msg_id to avoid collapsing
+                // Key by `parent_header.msg_id` if present, otherwise use the
+                // stream message's own `header.msg_id` to avoid collapsing
                 // unrelated orphan streams into the same bucket.
                 let key = stream
                     .parent_header
@@ -149,12 +171,6 @@ impl MessageAccumulator {
                 streams.entry(key).or_default().push_str(text);
             },
 
-            Message::CommMsg(comm) => {
-                if let Some(method) = comm.content.data.get("method").and_then(|m| m.as_str()) {
-                    self.comm_methods.push(method.to_string());
-                }
-            },
-
             Message::Status(status) => {
                 if status.content.execution_state == ExecutionState::Idle {
                     self.saw_idle = true;
@@ -167,7 +183,7 @@ impl MessageAccumulator {
         self.messages.push(msg);
     }
 
-    /// Trace a message for debugging
+    /// Trace a message for debugging (enable with `ARK_TEST_TRACE=1`)
     fn trace_message(&self, msg: &Message) {
         let trace = match msg {
             Message::Status(status) => match status.content.execution_state {
@@ -233,57 +249,109 @@ impl MessageAccumulator {
         self.stdout_contains(text) || self.stderr_contains(text)
     }
 
+    /// Find all messages matching a predicate (without marking as consumed).
+    pub fn find<'a, F>(&'a self, predicate: F) -> impl Iterator<Item = &'a Message>
+    where
+        F: Fn(&Message) -> bool + 'a,
+    {
+        self.messages.iter().filter(move |m| predicate(m))
+    }
+
+    /// Check if any message matches a predicate (without marking as consumed).
+    pub fn any<F>(&self, predicate: F) -> bool
+    where
+        F: Fn(&Message) -> bool,
+    {
+        self.messages.iter().any(predicate)
+    }
+
+    /// Mark messages matching a predicate as consumed and return matching count.
+    pub fn consume<F>(&mut self, predicate: F) -> usize
+    where
+        F: Fn(&Message) -> bool,
+    {
+        let mut count = 0;
+        for (i, msg) in self.messages.iter().enumerate() {
+            if predicate(msg) {
+                self.consumed.insert(i);
+                count += 1;
+            }
+        }
+        count
+    }
+
     /// Check if we've seen a comm message with the given method.
-    pub fn has_comm_method(&self, method: &str) -> bool {
-        self.comm_methods.iter().any(|m| m == method)
+    /// Marks matching messages as consumed.
+    pub fn has_comm_method(&mut self, method: &str) -> bool {
+        self.consume(|m| match m {
+            Message::CommMsg(comm) => {
+                comm.content.data.get("method").and_then(|v| v.as_str()) == Some(method)
+            },
+            _ => false,
+        }) > 0
     }
 
     /// Check if we've seen at least N comm messages with the given method.
-    pub fn has_comm_method_count(&self, method: &str, count: usize) -> bool {
-        self.comm_methods.iter().filter(|m| *m == method).count() >= count
+    /// Marks matching messages as consumed.
+    pub fn has_comm_method_count(&mut self, method: &str, count: usize) -> bool {
+        self.consume(|m| match m {
+            Message::CommMsg(comm) => {
+                comm.content.data.get("method").and_then(|v| v.as_str()) == Some(method)
+            },
+            _ => false,
+        }) >= count
+    }
+
+    /// Check that predicates match messages in the given order.
+    ///
+    /// Each predicate must match a message at a strictly higher index than the
+    /// previous predicate's match. This verifies synchronous message ordering
+    /// (e.g., `ExecuteResult` before `Idle`).
+    ///
+    /// Marks matching messages as consumed.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// acc.in_order(&[
+    ///     is_execute_result_msg(),
+    ///     is_idle_msg(),
+    /// ])
+    /// ```
+    pub fn in_order(&mut self, predicates: &[Box<dyn Fn(&Message) -> bool>]) -> bool {
+        let mut last_idx: Option<usize> = None;
+
+        for predicate in predicates {
+            // Find the first matching message that comes after last_idx
+            let found = self
+                .messages
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| last_idx.map_or(true, |last| *i > last))
+                .find(|(_, msg)| predicate(msg));
+
+            match found {
+                Some((idx, _)) => {
+                    self.consumed.insert(idx);
+                    last_idx = Some(idx);
+                },
+                None => return false,
+            }
+        }
+
+        true
     }
 
     /// Check if we've seen an idle status message.
-    pub fn saw_idle(&self) -> bool {
+    /// Marks the idle status message as consumed.
+    pub fn saw_idle(&mut self) -> bool {
+        self.consume(|m| {
+            matches!(
+                m,
+                Message::Status(s) if s.content.execution_state == ExecutionState::Idle
+            )
+        });
         self.saw_idle
-    }
-
-    /// Get all accumulated messages (for diagnostics).
-    pub fn messages(&self) -> &[Message] {
-        &self.messages
-    }
-
-    /// Get the coalesced stdout for all parent headers combined.
-    pub fn all_stdout(&self) -> String {
-        self.stdout_streams.values().cloned().collect()
-    }
-
-    /// Get the coalesced stderr for all parent headers combined.
-    pub fn all_stderr(&self) -> String {
-        self.stderr_streams.values().cloned().collect()
-    }
-
-    /// Get the number of messages accumulated.
-    pub fn message_count(&self) -> usize {
-        self.messages.len()
-    }
-
-    /// Drain any remaining messages with a short timeout.
-    ///
-    /// This is useful after the condition is satisfied to clean up
-    /// any messages that might interfere with subsequent operations.
-    pub fn drain(&mut self, socket: &Socket, timeout_ms: i64) {
-        loop {
-            match socket.poll_incoming(timeout_ms) {
-                Ok(true) => {
-                    if let Ok(msg) = Message::read_from_socket(socket) {
-                        self.accumulate(msg);
-                    }
-                },
-                // No more messages or error - stop draining
-                Ok(false) | Err(_) => break,
-            }
-        }
     }
 }
 
@@ -293,16 +361,38 @@ impl Default for MessageAccumulator {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+impl Drop for MessageAccumulator {
+    fn drop(&mut self) {
+        if !self.verified {
+            return;
+        }
+        if std::thread::panicking() {
+            return;
+        }
 
-    #[test]
-    fn test_accumulator_initial_state() {
-        let acc = MessageAccumulator::new();
-        assert!(!acc.saw_idle());
-        assert!(!acc.streams_contain("anything"));
-        assert!(!acc.has_comm_method("start_debug"));
-        assert_eq!(acc.message_count(), 0);
+        let unconsumed: Vec<_> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(i, msg)| {
+                // Stream messages are exempt due to batching nondeterminism
+                !matches!(msg, Message::Stream(_)) && !self.consumed.contains(i)
+            })
+            .collect();
+
+        if !unconsumed.is_empty() {
+            let descriptions: Vec<_> = unconsumed
+                .iter()
+                .map(|(i, msg)| format!("  [{i}] {msg:?}"))
+                .collect();
+
+            panic!(
+                "MessageAccumulator dropped with {} unconsumed non-Stream message(s):\n{}\n\n\
+                 This usually means the test condition didn't account for all messages.\n\
+                 Either add checks for these messages or verify they're expected.",
+                unconsumed.len(),
+                descriptions.join("\n")
+            );
+        }
     }
 }
