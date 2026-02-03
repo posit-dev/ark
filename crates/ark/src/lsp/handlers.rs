@@ -9,7 +9,6 @@ use anyhow::anyhow;
 use serde_json::Value;
 use stdext::result::ResultExt;
 use stdext::unwrap;
-use stdext::unwrap::IntoResult;
 use tower_lsp::lsp_types::CodeActionParams;
 use tower_lsp::lsp_types::CodeActionResponse;
 use tower_lsp::lsp_types::CompletionItem;
@@ -42,6 +41,8 @@ use tracing::Instrument;
 
 use crate::analysis::input_boundaries::input_boundaries;
 use crate::lsp;
+use crate::lsp::backend::LspError;
+use crate::lsp::backend::LspResult;
 use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
@@ -127,7 +128,7 @@ pub(crate) async fn handle_initialized(
 pub(crate) fn handle_symbol(
     params: WorkspaceSymbolParams,
     state: &WorldState,
-) -> anyhow::Result<Option<Vec<SymbolInformation>>> {
+) -> LspResult<Option<Vec<SymbolInformation>>> {
     symbols::symbols(&params, state)
         .map(|res| Some(res))
         .or_else(|err| {
@@ -141,7 +142,7 @@ pub(crate) fn handle_symbol(
 pub(crate) fn handle_document_symbol(
     params: DocumentSymbolParams,
     state: &WorldState,
-) -> anyhow::Result<Option<DocumentSymbolResponse>> {
+) -> LspResult<Option<DocumentSymbolResponse>> {
     symbols::document_symbols(state, &params)
         .map(|res| Some(DocumentSymbolResponse::Nested(res)))
         .or_else(|err| {
@@ -155,9 +156,9 @@ pub(crate) fn handle_document_symbol(
 pub(crate) fn handle_folding_range(
     params: FoldingRangeParams,
     state: &WorldState,
-) -> anyhow::Result<Option<Vec<FoldingRange>>> {
-    let uri = params.text_document.uri;
-    let document = state.documents.get(&uri).into_result()?;
+) -> LspResult<Option<Vec<FoldingRange>>> {
+    let uri = &params.text_document.uri;
+    let document = state.get_document(uri)?;
     match folding_range(document) {
         Ok(foldings) => Ok(Some(foldings)),
         Err(err) => {
@@ -167,7 +168,7 @@ pub(crate) fn handle_folding_range(
     }
 }
 
-pub(crate) async fn handle_execute_command(client: &Client) -> anyhow::Result<Option<Value>> {
+pub(crate) async fn handle_execute_command(client: &Client) -> LspResult<Option<Value>> {
     match client.apply_edit(WorkspaceEdit::default()).await {
         Ok(res) if res.applied => client.log_message(MessageType::INFO, "applied").await,
         Ok(_) => client.log_message(MessageType::INFO, "rejected").await,
@@ -180,7 +181,7 @@ pub(crate) async fn handle_execute_command(client: &Client) -> anyhow::Result<Op
 pub(crate) fn handle_completion(
     params: CompletionParams,
     state: &WorldState,
-) -> anyhow::Result<Option<CompletionResponse>> {
+) -> LspResult<Option<CompletionResponse>> {
     // Get reference to document.
     let uri = params.text_document_position.text_document.uri;
     let document = state.get_document(&uri)?;
@@ -204,18 +205,13 @@ pub(crate) fn handle_completion(
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_completion_resolve(
-    mut item: CompletionItem,
-) -> anyhow::Result<CompletionItem> {
+pub(crate) fn handle_completion_resolve(mut item: CompletionItem) -> LspResult<CompletionItem> {
     r_task(|| resolve_completion(&mut item))?;
     Ok(item)
 }
 
 #[tracing::instrument(level = "info", skip_all)]
-pub(crate) fn handle_hover(
-    params: HoverParams,
-    state: &WorldState,
-) -> anyhow::Result<Option<Hover>> {
+pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
     let document = state.get_document(&uri)?;
 
@@ -250,7 +246,7 @@ pub(crate) fn handle_hover(
 pub(crate) fn handle_signature_help(
     params: SignatureHelpParams,
     state: &WorldState,
-) -> anyhow::Result<Option<SignatureHelp>> {
+) -> LspResult<Option<SignatureHelp>> {
     let uri = params.text_document_position_params.text_document.uri;
     let document = state.get_document(&uri)?;
 
@@ -280,7 +276,7 @@ pub(crate) fn handle_signature_help(
 pub(crate) fn handle_goto_definition(
     params: GotoDefinitionParams,
     state: &WorldState,
-) -> anyhow::Result<Option<GotoDefinitionResponse>> {
+) -> LspResult<Option<GotoDefinitionResponse>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
     Ok(goto_definition(&document, params).log_err().flatten())
@@ -290,7 +286,7 @@ pub(crate) fn handle_goto_definition(
 pub(crate) fn handle_selection_range(
     params: SelectionRangeParams,
     state: &WorldState,
-) -> anyhow::Result<Option<Vec<SelectionRange>>> {
+) -> LspResult<Option<Vec<SelectionRange>>> {
     let document = state.get_document(&params.text_document.uri)?;
 
     // Get tree-sitter points to return selection ranges for
@@ -317,7 +313,7 @@ pub(crate) fn handle_selection_range(
 pub(crate) fn handle_references(
     params: ReferenceParams,
     state: &WorldState,
-) -> anyhow::Result<Option<Vec<Location>>> {
+) -> LspResult<Option<Vec<Location>>> {
     let locations = match find_references(params, state) {
         Ok(locations) => locations,
         Err(_error) => {
@@ -336,7 +332,7 @@ pub(crate) fn handle_references(
 pub(crate) fn handle_statement_range(
     params: StatementRangeParams,
     state: &WorldState,
-) -> anyhow::Result<Option<StatementRangeResponse>> {
+) -> LspResult<Option<StatementRangeResponse>> {
     let document = state.get_document(&params.text_document.uri)?;
     let point = document.tree_sitter_point_from_lsp_position(params.position)?;
     statement_range(document, point)
@@ -346,7 +342,7 @@ pub(crate) fn handle_statement_range(
 pub(crate) fn handle_help_topic(
     params: HelpTopicParams,
     state: &WorldState,
-) -> anyhow::Result<Option<HelpTopicResponse>> {
+) -> LspResult<Option<HelpTopicResponse>> {
     let document = state.get_document(&params.text_document.uri)?;
     let point = document.tree_sitter_point_from_lsp_position(params.position)?;
     help_topic(point, &document)
@@ -356,7 +352,7 @@ pub(crate) fn handle_help_topic(
 pub(crate) fn handle_indent(
     params: DocumentOnTypeFormattingParams,
     state: &WorldState,
-) -> anyhow::Result<Option<Vec<TextEdit>>> {
+) -> LspResult<Option<Vec<TextEdit>>> {
     let ctxt = params.text_document_position;
     let doc = state.get_document(&ctxt.text_document.uri)?;
     let point = doc.tree_sitter_point_from_lsp_position(ctxt.position)?;
@@ -369,7 +365,7 @@ pub(crate) fn handle_code_action(
     params: CodeActionParams,
     lsp_state: &LspState,
     state: &WorldState,
-) -> anyhow::Result<Option<CodeActionResponse>> {
+) -> LspResult<Option<CodeActionResponse>> {
     let uri = params.text_document.uri;
     let doc = state.get_document(&uri)?;
     let range = doc.tree_sitter_range_from_lsp_range(params.range)?;
@@ -386,17 +382,20 @@ pub(crate) fn handle_code_action(
 pub(crate) fn handle_virtual_document(
     params: VirtualDocumentParams,
     state: &WorldState,
-) -> anyhow::Result<VirtualDocumentResponse> {
+) -> LspResult<VirtualDocumentResponse> {
     if let Some(contents) = state.virtual_documents.get(&params.path) {
         Ok(contents.clone())
     } else {
-        Err(anyhow!("Can't find virtual document {}", params.path))
+        Err(LspError::Anyhow(anyhow!(
+            "Can't find virtual document {}",
+            params.path
+        )))
     }
 }
 
 pub(crate) fn handle_input_boundaries(
     params: InputBoundariesParams,
-) -> anyhow::Result<InputBoundariesResponse> {
+) -> LspResult<InputBoundariesResponse> {
     let boundaries = r_task(|| input_boundaries(&params.text))?;
     Ok(InputBoundariesResponse { boundaries })
 }
