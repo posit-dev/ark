@@ -470,9 +470,11 @@ lapply(1:3, function(x) {
     // Continue to second iteration: x=2.
     // Send `c` via Shell to continue execution. R will hit the breakpoint again
     // on the next iteration of lapply.
+    // Use stream-skipping variants because late-arriving debug output
+    // from previous breakpoint hits can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
 
     // When continuing from inside lapply, the breakpoint is hit again.
     // The flow includes stop_debug (exiting current debug) and start_debug (new hit).
@@ -494,8 +496,8 @@ lapply(1:3, function(x) {
 
     // Continue to third iteration: x=3
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
     frontend.recv_iopub_until(|acc| {
         acc.has_comm_method_count("start_debug", 2) &&
             acc.has_comm_method_count("stop_debug", 2) &&
@@ -512,8 +514,8 @@ lapply(1:3, function(x) {
 
     // Continue past the last iteration - execution completes normally
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
 
     // R exits the debugger and completes lapply (returns list result).
     // stop_debug is async, but execute_result must come before idle.
