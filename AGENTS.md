@@ -57,6 +57,55 @@ just test <test_name>
 just test -p ark
 ```
 
+### Kernel and DAP Test Infrastructure
+
+Integration tests for the kernel and DAP server live in `crates/ark/tests/` and use the test utilities from `crates/ark_test/`.
+
+**Key components:**
+
+- **`DummyArkFrontend`**: A mock Jupyter frontend that communicates with the kernel over ZMQ sockets. Use `DummyArkFrontend::lock()` to acquire it (only one per process).
+
+- **`DapClient`**: A DAP client for testing the debugger. Obtained via `frontend.dap_client()` after starting the kernel.
+
+- **`MessageAccumulator`**: Collects IOPub messages and coalesces stream fragments, making tests immune to batching variations.
+
+**Common patterns:**
+
+```rust
+// Lock the frontend and send an execute request
+let frontend = DummyArkFrontend::lock();
+frontend.send_execute_request("1 + 1", ExecuteRequestOptions::default());
+frontend.recv_iopub_busy();
+frontend.recv_iopub_execute_input();
+frontend.recv_iopub_execute_result();
+frontend.recv_iopub_idle();
+frontend.recv_shell_execute_reply();
+
+// For complex async message flows, use recv_iopub_until with MessageAccumulator
+frontend.recv_iopub_until(|acc| {
+    acc.has_comm_method("start_debug") &&
+    acc.streams_contain("debug at") &&
+    acc.saw_idle()
+});
+
+// Use in_order() to verify message ordering
+frontend.recv_iopub_until(|acc| {
+    acc.in_order(&[is_execute_result(), is_idle()])
+});
+```
+
+**Debugging tests:**
+
+Log messages (from the `log` crate) are not shown in test output. Use `eprintln!` for printf-style debugging.
+
+Enable message tracing to see timestamped DAP and IOPub message flows:
+
+```bash
+ARK_TEST_TRACE=1 just test test_name      # All messages
+ARK_TEST_TRACE=dap just test test_name    # DAP events only
+ARK_TEST_TRACE=iopub just test test_name  # IOPub messages only
+```
+
 ### Required R Packages for Testing
 
 The following R packages are required for tests:
