@@ -310,9 +310,11 @@ foo()
     // 1. .ark_auto_step wrapper
     // 2. .ark_breakpoint function
     // 3. Actual user expression
+    // Use stream-skipping variants because late-arriving debug output
+    // from the previous breakpoint can interleave here.
     frontend.send_execute_request("n", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
 
     // IOPub messages: stepping onto an adjacent breakpoint produces multiple
     // start_debug/stop_debug cycles due to auto-stepping through the injected code.
