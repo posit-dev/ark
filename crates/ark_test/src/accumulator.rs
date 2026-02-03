@@ -134,6 +134,7 @@ impl MessageAccumulator {
 
     /// Wait briefly for any trailing messages (primarily streams) that may
     /// arrive after the condition is met due to batching nondeterminism.
+    #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
     fn settle(&mut self, socket: &Socket, timeout_ms: i64) {
         loop {
             match socket.poll_incoming(timeout_ms) {
@@ -143,6 +144,43 @@ impl MessageAccumulator {
                     }
                 },
                 Ok(false) | Err(_) => break,
+            }
+        }
+    }
+
+    /// Wait briefly for any trailing messages (primarily streams) that may
+    /// arrive after the condition is met due to batching nondeterminism.
+    ///
+    /// On Windows ARM, ZMQ poll with timeout blocks forever instead of
+    /// respecting the timeout. Use non-blocking poll with manual timing.
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    fn settle(&mut self, socket: &Socket, timeout_ms: i64) {
+        // Maximum total time to spend in settle(), as a wall-clock safety limit
+        const MAX_SETTLE_MS: u64 = 500;
+
+        let start = Instant::now();
+        let settle_duration = Duration::from_millis(timeout_ms.max(0) as u64);
+        let max_settle = Duration::from_millis(MAX_SETTLE_MS);
+
+        loop {
+            let elapsed = start.elapsed();
+
+            if elapsed >= max_settle || elapsed >= settle_duration {
+                break;
+            }
+
+            // Use non-blocking poll (timeout=0) to avoid ZMQ blocking forever
+            match socket.poll_incoming(0) {
+                Ok(true) => {
+                    if let Ok(msg) = Message::read_from_socket(socket) {
+                        self.accumulate(msg);
+                    }
+                },
+                Ok(false) => {
+                    // No message available, sleep briefly and try again
+                    std::thread::sleep(Duration::from_millis(10));
+                },
+                Err(_) => break,
             }
         }
     }
