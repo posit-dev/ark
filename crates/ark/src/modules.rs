@@ -17,7 +17,6 @@ use libr::Rf_ScalarLogical;
 use libr::SEXP;
 use once_cell::sync::Lazy;
 use rust_embed::RustEmbed;
-use stdext::result::ResultExt;
 
 #[derive(RustEmbed)]
 #[folder = "src/modules/positron"]
@@ -121,18 +120,24 @@ pub fn initialize() -> anyhow::Result<RObject> {
             // First reload all modules from source to reflect new changes that have
             // not been built into the binary yet.
             log::trace!("Loading R modules from sources via cargo manifest");
-            import_directory(
+
+            // Intentionally panic if module loading fails in debug builds.
+            // Modules are critical for ark to function, and failing fast helps
+            // catch issues during development or extremely broken installs.
+            if let Err(err) = import_directory(
                 &root.join("positron"),
                 RModuleSource::Positron,
                 namespace.sexp,
-            )
-            .unwrap();
-            import_directory(
+            ) {
+                panic!("Failed to load positron modules: {err:?}");
+            }
+            if let Err(err) = import_directory(
                 &root.join("rstudio"),
                 debug::RModuleSource::RStudio,
                 namespace.sexp,
-            )
-            .unwrap();
+            ) {
+                panic!("Failed to load rstudio modules: {err:?}");
+            }
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
