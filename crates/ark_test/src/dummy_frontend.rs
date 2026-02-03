@@ -450,8 +450,10 @@ impl DummyArkFrontend {
         let mut file = NamedTempFile::new().unwrap();
         write!(file, "{code}").unwrap();
 
+        // Use forward slashes for R compatibility on Windows (backslashes would be
+        // interpreted as escape sequences in R strings)
+        let path = file.path().to_string_lossy().replace('\\', "/");
         let url = ExtUrl::from_file_path(file.path()).unwrap();
-        let path = url.path().to_string();
         let uri = url.to_string();
         let filename = file
             .path()
@@ -666,8 +668,10 @@ impl SourceFile {
         let mut file = NamedTempFile::new().unwrap();
         write!(file, "{code}").unwrap();
 
+        // Use forward slashes for R compatibility on Windows (backslashes would be
+        // interpreted as escape sequences in R strings)
+        let path = file.path().to_string_lossy().replace('\\', "/");
         let url = ExtUrl::from_file_path(file.path()).unwrap();
-        let path = url.path().to_string();
         let uri = url.to_string();
 
         // Extract file name
