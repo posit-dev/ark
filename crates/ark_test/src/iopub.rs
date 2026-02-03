@@ -5,21 +5,32 @@
 //
 //
 
-//! Helper predicates for matching IOPub messages in tests.
+//! Predicates for matching individual IOPub messages.
 //!
-//! These functions return boxed predicates for use with `recv_iopub_async()`.
+//! These `is_*()` functions return boxed predicates that match **individual messages**.
+//! They work with:
+//! - `recv_iopub_async()` - receives messages until all predicates match
+//! - `MessageAccumulator::in_order()` - checks message ordering
+//!
+//! For accumulator-level checks (coalesced streams, message counts, etc.),
+//! use the matchers from [`crate::matcher`] with `recv_iopub_matching()`.
 
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::status::ExecutionState;
 
-type Predicate = Box<dyn FnMut(&Message) -> bool>;
+/// A predicate for matching IOPub messages.
+///
+/// Uses `Fn` (not `FnMut`) so it works in all contexts:
+/// - `recv_iopub_async()` which needs `FnMut` (all `Fn` are `FnMut`)
+/// - `MessageAccumulator::in_order()` which needs `Fn`
+pub type Predicate = Box<dyn Fn(&Message) -> bool>;
 
 /// Matches a `start_debug` comm message.
 pub fn is_start_debug() -> Predicate {
     Box::new(|msg| {
         matches!(
             msg,
-            Message::CommMsg(comm) if comm.content.data["method"] == "start_debug"
+            Message::CommMsg(comm) if comm.content.data.get("method").and_then(|v| v.as_str()) == Some("start_debug")
         )
     })
 }
@@ -29,7 +40,7 @@ pub fn is_stop_debug() -> Predicate {
     Box::new(|msg| {
         matches!(
             msg,
-            Message::CommMsg(comm) if comm.content.data["method"] == "stop_debug"
+            Message::CommMsg(comm) if comm.content.data.get("method").and_then(|v| v.as_str()) == Some("stop_debug")
         )
     })
 }
@@ -91,34 +102,4 @@ pub fn execute_result_contains(text: &'static str) -> Predicate {
 /// Matches any Stream message.
 pub fn is_stream() -> Predicate {
     Box::new(|msg| matches!(msg, Message::Stream(_)))
-}
-
-// Predicate functions for use with `in_order`.
-// These return boxed closures for a clean call-site syntax.
-
-type OrderPredicate = Box<dyn Fn(&Message) -> bool>;
-
-/// Matches a `stop_debug` comm message.
-pub fn is_stop_debug_msg() -> OrderPredicate {
-    Box::new(|msg| {
-        matches!(
-            msg,
-            Message::CommMsg(comm) if comm.content.data.get("method").and_then(|v| v.as_str()) == Some("stop_debug")
-        )
-    })
-}
-
-/// Matches an `Idle` status message.
-pub fn is_idle_msg() -> OrderPredicate {
-    Box::new(|msg| {
-        matches!(
-            msg,
-            Message::Status(s) if s.content.execution_state == ExecutionState::Idle
-        )
-    })
-}
-
-/// Matches an ExecuteResult message.
-pub fn is_execute_result_msg() -> OrderPredicate {
-    Box::new(|msg| matches!(msg, Message::ExecuteResult(_)))
 }

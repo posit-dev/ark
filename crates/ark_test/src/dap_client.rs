@@ -494,52 +494,25 @@ impl DapClient {
         }
     }
 
-    /// Drain all pending events from the DAP connection.
-    ///
-    /// Uses a short timeout to collect any events that are ready without
-    /// blocking indefinitely. Returns the collected events.
-    ///
-    /// This is useful when the exact number of events is unpredictable
-    /// but you need to clear the event queue before making requests.
-    pub fn drain_pending_events(&mut self) -> Vec<Event> {
-        self.drain_pending_events_with_timeout(Duration::from_millis(100))
-    }
-
-    /// Drain all pending events from the DAP connection with a custom timeout.
-    ///
-    /// Uses the specified timeout to collect any events that are ready without
-    /// blocking indefinitely. Returns the collected events.
-    pub fn drain_pending_events_with_timeout(&mut self, timeout: Duration) -> Vec<Event> {
-        let mut events = Vec::new();
-
-        // Save original timeout and set the custom one for draining
-        // Use a separate scope to avoid borrow conflict with self.recv()
+    /// Assert that no DAP events arrive within 100ms.
+    #[track_caller]
+    pub fn assert_no_events(&mut self) {
+        // Save original timeout and set a short one for checking
         let original_timeout = {
             let stream = self.reader.get_ref();
             let timeout_val = stream.read_timeout().ok().flatten();
-            let _ = stream.set_read_timeout(Some(timeout));
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
             timeout_val
         };
 
+        let mut unexpected = Vec::new();
         loop {
             match self.recv() {
                 Ok(Sendable::Event(event)) => {
                     trace_dap_event(&event);
-                    events.push(event);
+                    unexpected.push(event);
                 },
-                Ok(Sendable::Response(resp)) => {
-                    // Unexpected response - log it and stop
-                    eprintln!(
-                        "Warning: drain_pending_events received unexpected Response: {:?}",
-                        resp
-                    );
-                    break;
-                },
-                Ok(Sendable::ReverseRequest(_)) => {
-                    break;
-                },
-                Err(_) => {
-                    // Timeout or error - we're done draining
+                Ok(Sendable::Response(_)) | Ok(Sendable::ReverseRequest(_)) | Err(_) => {
                     break;
                 },
             }
@@ -551,7 +524,10 @@ impl DapClient {
             let _ = stream.set_read_timeout(original_timeout);
         }
 
-        events
+        assert!(
+            unexpected.is_empty(),
+            "Expected no DAP events, but received: {unexpected:?}"
+        );
     }
 
     /// Receive and assert the next message is a Continued event.
