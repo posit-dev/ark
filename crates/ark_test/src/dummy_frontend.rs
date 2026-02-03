@@ -259,18 +259,14 @@ impl DummyArkFrontend {
     #[track_caller]
     pub fn recv_iopub_until<F>(&self, condition: F)
     where
-        F: FnMut(&MessageAccumulator) -> bool,
+        F: FnMut(&mut MessageAccumulator) -> bool,
     {
         let mut acc = MessageAccumulator::new();
-
         let result = acc.receive_until(&self.iopub_socket, condition, Duration::from_secs(10));
 
         if let Err(msg) = result {
             panic!("Timeout waiting for IOPub condition.\n{msg}");
         }
-
-        // Drain any remaining messages with short timeout
-        acc.drain(&self.iopub_socket, 100);
     }
 
     /// Send an execute request with tracing
@@ -367,7 +363,7 @@ impl DummyArkFrontend {
         self.recv_iopub_until(|acc| {
             acc.streams_contain("Called from:") &&
                 acc.streams_contain("debug at") &&
-                acc.has_comm_method("start_debug") &&
+                acc.has_comm_method_count("start_debug", 2) &&
                 acc.has_comm_method("stop_debug") &&
                 acc.saw_idle()
         });
@@ -376,13 +372,14 @@ impl DummyArkFrontend {
     /// Receive IOPub messages for a breakpoint hit from a direct function call.
     ///
     /// This is similar to `recv_iopub_breakpoint_hit` but for direct function calls
-    /// (e.g., `foo()`) rather than `source()`. Direct calls don't produce the
-    /// "debug at" message because R is not stepping through source with srcrefs.
+    /// (e.g., `foo()`) rather than `source()`. When the function has source references
+    /// (from a file created with `SourceFile::new()`), R will print `"debug at"`.
     #[track_caller]
     pub fn recv_iopub_breakpoint_hit_direct(&self) {
         self.recv_iopub_until(|acc| {
             acc.streams_contain("Called from:") &&
-                acc.has_comm_method("start_debug") &&
+                acc.streams_contain("debug at") &&
+                acc.has_comm_method_count("start_debug", 2) &&
                 acc.has_comm_method("stop_debug") &&
                 acc.saw_idle()
         });
