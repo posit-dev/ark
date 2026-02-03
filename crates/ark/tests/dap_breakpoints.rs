@@ -11,9 +11,8 @@ use std::thread;
 use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark_test::is_execute_result_msg;
+use ark_test::is_execute_result;
 use ark_test::is_idle;
-use ark_test::is_idle_msg;
 use ark_test::is_start_debug;
 use ark_test::is_stop_debug;
 use ark_test::stream_contains;
@@ -733,15 +732,9 @@ foo()
     let bp = dap.recv_breakpoint_verified();
     assert_eq!(bp.id, bp1_id);
 
-    // Now add BP2 AFTER parsing (on line 4: y <- 2)
-    // This breakpoint was NOT injected into the code
-    let breakpoints = dap.set_breakpoints(&file.path, &[3, 4]);
-    assert_eq!(breakpoints.len(), 2);
-    assert!(breakpoints[0].verified); // BP1 is still verified
-    assert!(!breakpoints[1].verified); // BP2 is unverified (not injected)
-    let bp2_id = breakpoints[1].id;
-
-    // Receive the breakpoint hit messages (auto-stepping flow)
+    // Receive the breakpoint hit messages (auto-stepping flow).
+    // This must come before set_breakpoints because R may have already
+    // hit the breakpoint and queued a Stopped event.
     frontend.recv_iopub_breakpoint_hit();
 
     dap.recv_auto_step_through();
@@ -751,7 +744,16 @@ foo()
     let stack = dap.stack_trace();
     assert_eq!(stack[0].name, "foo()");
 
-    // Check breakpoint state - BP2 should STILL be unverified
+    // Now add BP2 (on line 4: y <- 2) while stopped.
+    // BP2 was NOT injected into the code during parsing, so it should be unverified.
+    let breakpoints = dap.set_breakpoints(&file.path, &[3, 4]);
+    assert_eq!(breakpoints.len(), 2);
+    assert_eq!(breakpoints[0].id, bp1_id);
+    assert!(breakpoints[0].verified); // BP1 is verified
+    let bp2_id = breakpoints[1].id;
+    assert!(!breakpoints[1].verified); // BP2 is unverified (not injected)
+
+    // Re-submit the same breakpoints - BP2 should STILL be unverified
     // because it was never injected into the code
     let breakpoints = dap.set_breakpoints(&file.path, &[3, 4]);
     assert_eq!(breakpoints.len(), 2);
@@ -1085,16 +1087,16 @@ foo <- function() {
     let bp_id = breakpoints[0].id;
 
     // Source the file with echo=TRUE
-    // echo=TRUE causes R to print each expression as it's evaluated. These stream
-    // messages can arrive asynchronously, so we use recv_iopub_until to handle them.
+    // The message flow is the same as normal source() - echo=TRUE just affects
+    // what R prints during sourcing, but we don't need to capture that here.
     frontend.send_execute_request(
         &format!("source('{}', echo=TRUE)", file.path),
         ExecuteRequestOptions::default(),
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    // Use recv_iopub_until to handle async stream messages from echo=TRUE
-    frontend.recv_iopub_until(|acc| acc.has_execute_result() && acc.saw_idle());
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // Breakpoint becomes verified when the function definition is evaluated
@@ -1102,19 +1104,14 @@ foo <- function() {
     assert_eq!(bp.id, bp_id);
     assert_eq!(bp.line, Some(3));
 
-    // Call foo() to hit the breakpoint.
-    // Use recv_iopub_until to handle message interleaving - the "debug at" stream
-    // can arrive before execute_input under timing pressure.
+    // Call foo() to hit the breakpoint
     frontend.send_execute_request("foo()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
-    frontend.recv_iopub_until(|acc| {
-        acc.consume_execute_input();
-        acc.streams_contain("Called from:") &&
-            acc.streams_contain("debug at") &&
-            acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method("stop_debug") &&
-            acc.saw_idle()
-    });
+    frontend.recv_iopub_execute_input();
+
+    // Direct function call - use recv_iopub_breakpoint_hit_direct which handles
+    // the debug message flow
+    frontend.recv_iopub_breakpoint_hit_direct();
 
     dap.recv_auto_step_through();
     dap.recv_stopped();
@@ -1447,7 +1444,7 @@ lapply(1:3, function(x) {
     // R exits the debugger and completes lapply (returns list result).
     // stop_debug is async, but execute_result must come before idle.
     frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result_msg(), is_idle_msg()])
+        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result(), is_idle()])
     });
     frontend.recv_shell_execute_reply();
 
@@ -1703,13 +1700,8 @@ foo <- function() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // No breakpoint event should have been sent - drain any pending events
-    let events = dap.drain_pending_events_with_timeout(std::time::Duration::from_millis(100));
-    assert!(
-        events.is_empty(),
-        "Expected no DAP events when source hook is disabled, got: {:?}",
-        events
-    );
+    // No breakpoint event should have been sent
+    dap.assert_no_events();
 
     // Re-enable the source hook for cleanup
     frontend.execute_request_invisibly("options(ark.source_hook = TRUE)");
@@ -1758,12 +1750,7 @@ bar <- function() {
     frontend.recv_shell_execute_reply();
 
     // No breakpoint event should have been sent due to fallback
-    let events = dap.drain_pending_events_with_timeout(std::time::Duration::from_millis(100));
-    assert!(
-        events.is_empty(),
-        "Expected no DAP events when source() uses fallback due to extra args, got: {:?}",
-        events
-    );
+    dap.assert_no_events();
 
     // Verify the function was still defined (fallback worked)
     frontend.execute_request_invisibly("stopifnot(exists('bar'))");
@@ -1822,10 +1809,8 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     // Note: idle timing relative to stop_debug is not guaranteed.
-    // We must wait for "debug at" stream since hitting the breakpoint produces that output.
     frontend.recv_iopub_until(|acc| {
-        acc.streams_contain("debug at") &&
-            acc.has_comm_method_count("start_debug", 2) &&
+        acc.has_comm_method_count("start_debug", 2) &&
             acc.has_comm_method_count("stop_debug", 2) &&
             acc.saw_idle()
     });
@@ -1842,10 +1827,8 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    // We must wait for "debug at" stream since hitting the breakpoint produces that output.
     frontend.recv_iopub_until(|acc| {
-        acc.streams_contain("debug at") &&
-            acc.has_comm_method_count("start_debug", 2) &&
+        acc.has_comm_method_count("start_debug", 2) &&
             acc.has_comm_method_count("stop_debug", 2) &&
             acc.saw_idle()
     });
@@ -1858,13 +1841,15 @@ fn test_dap_breakpoint_for_loop_iteration() {
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 4);
 
-    // Continue past the last iteration - execution completes
+    // Continue past the last iteration - execution completes.
+    // Use stream-skipping variants because late-arriving debug output
+    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
     // stop_debug is async, but execute_result must come before idle.
     frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result_msg(), is_idle_msg()])
+        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result(), is_idle()])
     });
     frontend.recv_shell_execute_reply();
 

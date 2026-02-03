@@ -20,6 +20,9 @@ use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 use std::time::Instant;
 
+use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::status::ExecutionState;
+use amalthea::wire::stream::Stream;
 use dap::events::Event;
 
 /// Global start time for relative timestamps
@@ -275,6 +278,61 @@ pub fn trace_iopub_message(trace: &IoPubTrace) {
     let formatted = format_iopub_trace(trace);
 
     eprintln!("│ {:>6}ms │ #{:<4} │ IOPub  │ ← {}", ts, seq, formatted);
+}
+
+/// Trace an IOPub `Message` directly.
+///
+/// Converts the message to an `IoPubTrace` and traces it.
+pub fn trace_iopub_msg(msg: &Message) {
+    if !is_iopub_tracing_enabled() {
+        return;
+    }
+
+    let trace = match msg {
+        Message::Status(status) => match status.content.execution_state {
+            ExecutionState::Busy => IoPubTrace::Busy,
+            ExecutionState::Idle => IoPubTrace::Idle,
+            ExecutionState::Starting => IoPubTrace::Status {
+                state: "starting".to_string(),
+            },
+        },
+        Message::ExecuteInput(input) => IoPubTrace::ExecuteInput {
+            code: input.content.code.clone(),
+        },
+        Message::ExecuteResult(_) => IoPubTrace::ExecuteResult,
+        Message::ExecuteError(err) => IoPubTrace::ExecuteError {
+            message: err.content.exception.evalue.clone(),
+        },
+        Message::Stream(stream) => {
+            let name = match stream.content.name {
+                Stream::Stdout => "stdout",
+                Stream::Stderr => "stderr",
+            };
+            IoPubTrace::Stream {
+                name: name.to_string(),
+                text: stream.content.text.clone(),
+            }
+        },
+        Message::CommOpen(comm) => IoPubTrace::CommOpen {
+            target: comm.content.target_name.clone(),
+        },
+        Message::CommMsg(comm) => {
+            let method = comm
+                .content
+                .data
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("?")
+                .to_string();
+            IoPubTrace::CommMsg { method }
+        },
+        Message::CommClose(_) => IoPubTrace::CommClose,
+        _ => IoPubTrace::Other {
+            msg_type: format!("{:?}", std::mem::discriminant(msg)),
+        },
+    };
+
+    trace_iopub_message(&trace);
 }
 
 /// Trace a shell request being sent

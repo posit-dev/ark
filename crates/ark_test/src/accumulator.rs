@@ -314,8 +314,8 @@ impl MessageAccumulator {
     ///
     /// ```ignore
     /// acc.in_order(&[
-    ///     is_execute_result_msg(),
-    ///     is_idle_msg(),
+    ///     is_execute_result(),
+    ///     is_idle(),
     /// ])
     /// ```
     pub fn in_order(&mut self, predicates: &[Box<dyn Fn(&Message) -> bool>]) -> bool {

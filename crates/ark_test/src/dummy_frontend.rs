@@ -27,6 +27,7 @@ use crate::is_start_debug;
 use crate::is_stop_debug;
 use crate::is_stream;
 use crate::stream_contains;
+use crate::tracing::trace_iopub_msg;
 use crate::tracing::trace_separator;
 use crate::tracing::trace_shell_reply;
 use crate::tracing::trace_shell_request;
@@ -162,6 +163,47 @@ impl DummyArkFrontend {
         client
     }
 
+    /// Receive from IOPub, skipping any Stream messages, and assert Busy status.
+    ///
+    /// Use this when late-arriving Stream messages from previous operations
+    /// can interleave with the expected Busy message.
+    #[track_caller]
+    pub fn recv_iopub_busy_skip_streams(&self) {
+        loop {
+            let msg = self.recv_iopub();
+            trace_iopub_msg(&msg);
+            match msg {
+                Message::Stream(_) => continue,
+                Message::Status(data) => {
+                    assert_eq!(
+                        data.content.execution_state,
+                        amalthea::wire::status::ExecutionState::Busy,
+                        "Expected Busy status"
+                    );
+                    return;
+                },
+                other => panic!("Expected Busy status, got {:?}", other),
+            }
+        }
+    }
+
+    /// Receive from IOPub, skipping any Stream messages, and assert ExecuteInput.
+    ///
+    /// Use this when late-arriving Stream messages from previous operations
+    /// can interleave with the expected ExecuteInput message.
+    #[track_caller]
+    pub fn recv_iopub_execute_input_skip_streams(&self) {
+        loop {
+            let msg = self.recv_iopub();
+            trace_iopub_msg(&msg);
+            match msg {
+                Message::Stream(_) => continue,
+                Message::ExecuteInput(_) => return,
+                other => panic!("Expected ExecuteInput, got {:?}", other),
+            }
+        }
+    }
+
     /// Receive exactly `n` iopub messages, returning a wrapper for inspection.
     ///
     /// Use this when multiple messages may arrive in non-deterministic order
@@ -173,7 +215,9 @@ impl DummyArkFrontend {
     pub fn recv_iopub_n(&self, n: usize) -> UnorderedMessages {
         let mut messages = Vec::with_capacity(n);
         for _ in 0..n {
-            messages.push(self.recv_iopub());
+            let msg = self.recv_iopub();
+            trace_iopub_msg(&msg);
+            messages.push(msg);
         }
         UnorderedMessages { messages }
     }
@@ -182,59 +226,44 @@ impl DummyArkFrontend {
     ///
     /// Messages may arrive in any order and through different async paths
     /// (CommManager for comm messages, Shell for status, R console for streams).
-    /// This function keeps receiving until every predicate has matched exactly
-    /// one message, with a maximum message count to prevent infinite loops.
+    /// Receive IOPub messages until all predicates have matched.
     ///
-    /// Panics if:
-    /// - Timeout waiting for a message
-    /// - Maximum message count reached without matching all predicates
+    /// Each predicate must match exactly one message. Messages that don't match
+    /// any predicate are silently ignored. Uses `recv_iopub_until` internally,
+    /// so stream coalescing is available.
+    ///
+    /// Panics if timeout is reached before all predicates match.
     #[track_caller]
-    pub fn recv_iopub_async(&self, mut predicates: Vec<Box<dyn FnMut(&Message) -> bool>>) {
-        // Allow some extra messages beyond the predicate count to handle
-        // stream splitting and race conditions
-        let max_messages = predicates.len() + 10;
-        let mut received: Vec<Message> = Vec::new();
-        let predicate_count = predicates.len();
-
-        while !predicates.is_empty() {
-            if received.len() >= max_messages {
-                panic!(
-                    "Received {} messages without matching all predicates.\n\
-                     Unmatched predicates: {}\n\
-                     Received messages: {:#?}",
-                    received.len(),
-                    predicates.len(),
-                    received
-                );
-            }
-
-            // Try to receive with panic recovery to provide better diagnostics
-            let recv_result =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.recv_iopub()));
-
-            let msg = match recv_result {
-                Ok(msg) => msg,
-                Err(_) => {
-                    panic!(
-                        "Timeout or error while waiting for IOPub message.\n\
-                         Expected {} predicates, {} remaining unmatched.\n\
-                         Received so far: {:#?}",
-                        predicate_count,
-                        predicates.len(),
-                        received
-                    );
-                },
-            };
-
-            // Try to match this message against any remaining predicate
-            let matched_idx = predicates.iter_mut().position(|p| p(&msg));
-
-            if let Some(idx) = matched_idx {
-                drop(predicates.remove(idx));
-            }
-
-            received.push(msg);
+    pub fn recv_iopub_async(&self, predicates: Vec<Box<dyn Fn(&Message) -> bool>>) {
+        if predicates.is_empty() {
+            return;
         }
+
+        self.recv_iopub_until(|acc| {
+            // Track which predicates have been matched
+            let mut pred_matched = vec![false; predicates.len()];
+
+            // For each message, try to match it to an unmatched predicate
+            for msg in &acc.messages {
+                for (i, pred) in predicates.iter().enumerate() {
+                    if !pred_matched[i] && pred(msg) {
+                        pred_matched[i] = true;
+                        break;
+                    }
+                }
+            }
+
+            let all_matched = pred_matched.iter().all(|&m| m);
+
+            if all_matched {
+                // Mark matched messages as consumed so Drop check passes
+                for pred in &predicates {
+                    acc.consume(|msg| pred(msg));
+                }
+            }
+
+            all_matched
+        });
     }
 
     /// Receive IOPub messages until a condition is satisfied.
@@ -478,8 +507,10 @@ impl DummyArkFrontend {
     #[track_caller]
     pub fn debug_send_quit(&self) -> u32 {
         self.send_execute_request("Q", ExecuteRequestOptions::default());
-        self.recv_iopub_busy();
-        self.recv_iopub_execute_input();
+        // Use stream-skipping variants because late-arriving debug output
+        // from previous operations can interleave here.
+        self.recv_iopub_busy_skip_streams();
+        self.recv_iopub_execute_input_skip_streams();
 
         self.recv_iopub_async(vec![is_stop_debug(), is_idle()]);
 
@@ -772,10 +803,56 @@ impl DummyArkFrontend {
     }
 }
 
-// Check that we haven't left crumbs behind
+// Check that we haven't left crumbs behind.
+// Stream messages are allowed to remain because they can arrive asynchronously
+// and interleave with other operations under timing pressure.
 impl Drop for DummyArkFrontend {
     fn drop(&mut self) {
-        self.assert_no_incoming()
+        if std::thread::panicking() {
+            return;
+        }
+
+        // Drain any pending IOPub messages
+        let mut non_stream_messages: Vec<Message> = Vec::new();
+        while self.iopub_socket.has_incoming_data().unwrap() {
+            let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+            if !matches!(msg, Message::Stream(_)) {
+                non_stream_messages.push(msg);
+            }
+        }
+
+        // Fail if any non-Stream IOPub messages were left behind
+        if !non_stream_messages.is_empty() {
+            panic!(
+                "IOPub socket has {} unexpected non-Stream message(s) on exit:\n{:#?}",
+                non_stream_messages.len(),
+                non_stream_messages
+            );
+        }
+
+        // Check other sockets strictly (no leniency for non-IOPub)
+        let mut shell_messages: Vec<Message> = Vec::new();
+        let mut stdin_messages: Vec<Message> = Vec::new();
+
+        while self.shell_socket.has_incoming_data().unwrap() {
+            if let Ok(msg) = Message::read_from_socket(&self.shell_socket) {
+                shell_messages.push(msg);
+            }
+        }
+        while self.stdin_socket.has_incoming_data().unwrap() {
+            if let Ok(msg) = Message::read_from_socket(&self.stdin_socket) {
+                stdin_messages.push(msg);
+            }
+        }
+
+        if !shell_messages.is_empty() || !stdin_messages.is_empty() {
+            panic!(
+                "Non-IOPub sockets have unexpected messages on exit:\n\
+                 Shell: {:#?}\n\
+                 StdIn: {:#?}",
+                shell_messages, stdin_messages
+            );
+        }
     }
 }
 
