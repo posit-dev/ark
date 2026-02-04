@@ -8,11 +8,6 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
-use ark_test::is_execute_result;
-use ark_test::is_idle;
-use ark_test::is_start_debug;
-use ark_test::is_stop_debug;
-use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use dap::types::Thread;
 
@@ -205,18 +200,11 @@ fn test_dap_nested_browser() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Entering nested debug via debugonce produces:
-    // - stop_debug (leaving Browse[1]>)
-    // - start_debug (twice due to auto-stepping behavior)
-    // - Stream with "debugging in:"
-    // - Idle
-    frontend.recv_iopub_async(vec![
-        is_stop_debug(),
-        is_start_debug(),
-        is_start_debug(),
-        stream_contains("debugging in:"),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_stream_stdout_containing("debugging in:");
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // DAP: Continued, then two Stopped events (due to auto-stepping)
@@ -234,17 +222,10 @@ fn test_dap_nested_browser() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Stepping back to parent browser produces:
-    // - stop_debug (leaving identity)
-    // - ExecuteResult with "exiting from:" message
-    // - start_debug (back at parent browser)
-    // - Idle
-    frontend.recv_iopub_async(vec![
-        is_stop_debug(),
-        is_execute_result(),
-        is_start_debug(),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // DAP: Continued (left identity) then Stopped (back at parent browser)
