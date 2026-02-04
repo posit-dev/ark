@@ -205,24 +205,6 @@ impl DummyArkFrontend {
         }
     }
 
-    /// Receive exactly `n` iopub messages, returning a wrapper for inspection.
-    ///
-    /// Use this when multiple messages may arrive in non-deterministic order
-    /// (e.g., from different threads sending to iopub concurrently).
-    ///
-    /// Use `pop()` to extract expected messages and `assert_all_consumed()` to
-    /// verify no unexpected messages remain.
-    #[track_caller]
-    pub fn recv_iopub_n(&self, n: usize) -> UnorderedMessages {
-        let mut messages = Vec::with_capacity(n);
-        for _ in 0..n {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            messages.push(msg);
-        }
-        UnorderedMessages { messages }
-    }
-
     /// Receive iopub messages until all predicates are matched.
     ///
     /// Messages may arrive in any order and through different async paths
@@ -520,30 +502,6 @@ impl DummyArkFrontend {
         self.recv_shell_execute_reply()
     }
 
-    /// Execute `n` (next/step over) and receive all expected messages.
-    #[track_caller]
-    pub fn debug_send_next(&self) -> u32 {
-        self.debug_send_step("n")
-    }
-
-    /// Execute `s` (step in) and receive all expected messages.
-    #[track_caller]
-    pub fn debug_send_step_in(&self) -> u32 {
-        self.debug_send_step("s")
-    }
-
-    /// Execute `f` (finish/step out) and receive all expected messages.
-    #[track_caller]
-    pub fn debug_send_finish(&self) -> u32 {
-        self.debug_send_step("f")
-    }
-
-    /// Execute `c` (continue) and receive all expected messages.
-    #[track_caller]
-    pub fn debug_send_continue(&self) -> u32 {
-        self.debug_send_step("c")
-    }
-
     /// Execute `c` (continue) to next browser() breakpoint in a sourced file.
     ///
     /// When continuing from one browser() to another, R outputs "Called from:"
@@ -604,18 +562,6 @@ impl DummyArkFrontend {
             is_stream(),
             is_idle(),
         ]);
-
-        self.recv_shell_execute_reply()
-    }
-
-    /// Helper for debug step commands that continue execution.
-    #[track_caller]
-    fn debug_send_step(&self, cmd: &str) -> u32 {
-        self.send_execute_request(cmd, ExecuteRequestOptions::default());
-        self.recv_iopub_busy();
-        self.recv_iopub_execute_input();
-
-        self.recv_iopub_async(vec![is_start_debug(), is_idle()]);
 
         self.recv_shell_execute_reply()
     }
@@ -723,44 +669,6 @@ impl SourceFile {
         self.line_count = code.lines().count() as u32;
     }
 }
-
-/// Wrapper for messages that may arrive in non-deterministic order.
-///
-/// Use `pop()` to extract expected messages and `assert_all_consumed()` to
-/// verify no unexpected messages remain.
-#[derive(Debug)]
-pub struct UnorderedMessages {
-    pub messages: Vec<Message>,
-}
-
-impl UnorderedMessages {
-    /// Remove and return the first message matching the predicate.
-    ///
-    /// Panics if no message matches.
-    #[track_caller]
-    pub fn pop<F>(&mut self, mut predicate: F) -> Message
-    where
-        F: FnMut(&Message) -> bool,
-    {
-        let pos = self
-            .messages
-            .iter()
-            .position(|m| predicate(m))
-            .expect("No message matched the predicate");
-        self.messages.remove(pos)
-    }
-
-    /// Assert that all messages have been consumed.
-    ///
-    /// Panics with details of remaining messages if any exist.
-    #[track_caller]
-    pub fn assert_all_consumed(self) {
-        if !self.messages.is_empty() {
-            panic!("Unexpected messages remaining: {:#?}", self.messages);
-        }
-    }
-}
-
 impl DummyArkFrontend {
     fn get_frontend() -> &'static Arc<Mutex<DummyFrontend>> {
         // These are the hard-coded defaults. Call `init()` explicitly to
