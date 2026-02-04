@@ -6,10 +6,6 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark_test::is_idle;
-use ark_test::is_start_debug;
-use ark_test::is_stop_debug;
-use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 
@@ -392,15 +388,9 @@ foo <- function() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // debug(foo); foo() produces:
-    // - start_debug (entering foo at first line)
-    // - Stream with "debugging in:"
-    // - Idle
-    frontend.recv_iopub_async(vec![
-        is_start_debug(),
-        stream_contains("debugging in:"),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stream_stdout_containing("debugging in:");
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_idle();
 
     // DAP: Stopped at first line of foo
     dap.recv_stopped();
@@ -417,13 +407,10 @@ foo <- function() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Stepping produces: stop_debug, start_debug, Stream with "debug at", Idle
-    frontend.recv_iopub_async(vec![
-        is_stop_debug(),
-        is_start_debug(),
-        stream_contains("debug at"),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // DAP: Only Continued then Stopped - no Breakpoint event
