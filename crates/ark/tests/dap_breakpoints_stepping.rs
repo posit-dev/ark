@@ -644,9 +644,11 @@ fn test_dap_breakpoint_for_loop_iteration() {
     assert_eq!(stack[0].line, 4);
 
     // Continue to second iteration: i=2
+    // Use stream-skipping variants because late-arriving debug output
+    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
     // Note: idle timing relative to stop_debug is not guaranteed.
     frontend.recv_iopub_until(|acc| {
         acc.has_comm_method_count("start_debug", 2) &&
@@ -663,9 +665,11 @@ fn test_dap_breakpoint_for_loop_iteration() {
     assert_eq!(stack[0].line, 4);
 
     // Continue to third iteration: i=3
+    // Use stream-skipping variants because late-arriving debug output
+    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_busy_skip_streams();
+    frontend.recv_iopub_execute_input_skip_streams();
     frontend.recv_iopub_until(|acc| {
         acc.has_comm_method_count("start_debug", 2) &&
             acc.has_comm_method_count("stop_debug", 2) &&
