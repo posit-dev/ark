@@ -6,10 +6,6 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark_test::is_execute_result;
-use ark_test::is_idle;
-use ark_test::is_start_debug;
-use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 
@@ -200,12 +196,10 @@ foo()
     assert_eq!(bp.id, bp_id);
     assert_eq!(bp.line, Some(5));
 
-    // Then we hit browser() and stop
-    frontend.recv_iopub_async(vec![
-        is_start_debug(),
-        stream_contains("Called from:"),
-        is_idle(),
-    ]);
+    // Hit browser() and stop
+    frontend.recv_iopub_stream_stdout_containing("Called from:");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
     dap.recv_stopped();
 
@@ -316,14 +310,19 @@ foo()
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
 
-    // IOPub messages: stepping onto an adjacent breakpoint produces multiple
-    // start_debug/stop_debug cycles due to auto-stepping through the injected code.
-    // We expect 4 start_debug, 4 stop_debug, and idle (ordering not guaranteed).
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 4) &&
-            acc.has_comm_method_count("stop_debug", 4) &&
-            acc.saw_idle()
-    });
+    // Multiple start/stop cycles due to auto-stepping through injected breakpoint code
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_idle_skip_streams();
 
     frontend.recv_shell_execute_reply();
 
@@ -469,23 +468,19 @@ lapply(1:3, function(x) {
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 3);
 
-    // Continue to second iteration: x=2.
-    // Send `c` via Shell to continue execution. R will hit the breakpoint again
-    // on the next iteration of lapply.
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous breakpoint hits can interleave here.
+    // Continue to second iteration: x=2
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
 
-    // When continuing from inside lapply, the breakpoint is hit again.
-    // The flow includes stop_debug (exiting current debug) and start_debug (new hit).
-    // Note: idle timing relative to stop_debug is not guaranteed.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    // Hit the breakpoint again on next iteration
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("Called from:");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
 
     // DAP events: Continued from stop_debug, then auto-step through, then stopped
@@ -500,11 +495,14 @@ lapply(1:3, function(x) {
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    // Same pattern as second iteration
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("Called from:");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -519,11 +517,10 @@ lapply(1:3, function(x) {
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
 
-    // R exits the debugger and completes lapply (returns list result).
-    // stop_debug is async, but execute_result must come before idle.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result(), is_idle()])
-    });
+    // R exits the debugger and completes lapply
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -644,17 +641,17 @@ fn test_dap_breakpoint_for_loop_iteration() {
     assert_eq!(stack[0].line, 4);
 
     // Continue to second iteration: i=2
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
-    // Note: idle timing relative to stop_debug is not guaranteed.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    // Hit the breakpoint again on next iteration
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("Called from:");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -665,16 +662,17 @@ fn test_dap_breakpoint_for_loop_iteration() {
     assert_eq!(stack[0].line, 4);
 
     // Continue to third iteration: i=3
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    // Same pattern as second iteration
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("Called from:");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_stream_stdout_containing("debug at");
+    frontend.recv_iopub_start_debug_skip_streams();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -684,16 +682,14 @@ fn test_dap_breakpoint_for_loop_iteration() {
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 4);
 
-    // Continue past the last iteration - execution completes.
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous iterations can interleave here.
+    // Continue past the last iteration
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy_skip_streams();
     frontend.recv_iopub_execute_input_skip_streams();
-    // stop_debug is async, but execute_result must come before idle.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result(), is_idle()])
-    });
+    // R exits the debugger and completes the for loop
+    frontend.recv_iopub_stop_debug_skip_streams();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle_skip_streams();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();

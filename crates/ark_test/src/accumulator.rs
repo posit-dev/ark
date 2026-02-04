@@ -352,8 +352,8 @@ impl MessageAccumulator {
     ///
     /// ```ignore
     /// acc.in_order(&[
-    ///     is_execute_result(),
-    ///     is_idle(),
+    ///     Box::new(|msg| matches!(msg, Message::ExecuteResult(_))),
+    ///     Box::new(|msg| matches!(msg, Message::Status(s) if s.content.execution_state == ExecutionState::Idle)),
     /// ])
     /// ```
     pub fn in_order(&mut self, predicates: &[Box<dyn Fn(&Message) -> bool>]) -> bool {
