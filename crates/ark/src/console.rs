@@ -1009,6 +1009,14 @@ impl Console {
             // Note that for simplicity this state is reset on exit via the
             // cleanups registered in `r_read_console()`. Ideally we'd clean
             // from here for symmetry.
+
+            // Check for auto-stepping _before_ handling active request. If
+            // we're going to auto-step, we should not send the Shell reply yet
+            // since we've not fully finished executing the request. The reply
+            // will be sent when we reach a real user-visible stopping point.
+            if let Some(result) = self.maybe_auto_step(buf, buflen) {
+                return result;
+            }
         }
 
         if let Some(exception) = self.take_exception() {
@@ -1051,38 +1059,6 @@ impl Console {
             // prevents normal stepping with `source()`.
             if harp::r_n_frame().unwrap_or(0) == 0 {
                 unsafe { libr::SET_RDEBUG(libr::R_GlobalEnv, 0) };
-            }
-        }
-
-        // If debugger is active, to prevent injected expressions from
-        // interfering with debug-stepping, we might need to automatically step
-        // over to the next statement by returning `n` to R. Two cases:
-        // - We've just stopped due to an injected breakpoint. In this case
-        //   we're in the `.ark_breakpoint()` function and can look at the current
-        //   `sys.function()` to detect this.
-        // - We've just stepped to another injected breakpoint. In this case we
-        //   look whether our sentinel `.ark_auto_step()` was emitted by R as part
-        //   of the `Debug at` output.
-        if self.debug_is_debugging {
-            // Did we just step onto an injected call (breakpoint or verify)?
-            let at_auto_step = matches!(
-                &self.debug_call_text,
-                DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
-                    if text.trim_start().starts_with("base::.ark_auto_step")
-            );
-
-            // Are we stopped by an injected breakpoint
-            let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
-
-            if in_injected_breakpoint || at_auto_step {
-                let kind = if in_injected_breakpoint { "in" } else { "at" };
-                log::trace!("Auto-step expression reached ({kind}), moving to next expression");
-
-                self.debug_preserve_focus = false;
-                self.debug_send_dap(DapBackendEvent::Continued);
-
-                Self::on_console_input(buf, buflen, String::from("n")).unwrap();
-                return ConsoleResult::NewInput;
             }
         }
 
@@ -2139,6 +2115,48 @@ impl Console {
             })),
             Err(err) => panic!("Could not send input request: {}", err)
         )
+    }
+
+    /// Check if we need to auto-step through injected code.
+    ///
+    /// If debugger is active, to prevent injected expressions from
+    /// interfering with debug-stepping, we might need to automatically step
+    /// over to the next statement by returning `n` to R. Two cases:
+    /// - We've just stopped due to an injected breakpoint. In this case
+    ///   we're in the `.ark_breakpoint()` function and can look at the current
+    ///   `sys.function()` to detect this.
+    /// - We've just stepped to another injected breakpoint. In this case we
+    ///   look whether our sentinel `.ark_auto_step()` was emitted by R as part
+    ///   of the `Debug at` output.
+    ///
+    /// Returns `Some(ConsoleResult::NewInput)` if auto-stepping, `None` otherwise.
+    fn maybe_auto_step(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
+        if !self.debug_is_debugging {
+            return None;
+        }
+
+        // Did we just step onto an injected call (breakpoint or verify)?
+        let at_auto_step = matches!(
+            &self.debug_call_text,
+            DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
+                if text.trim_start().starts_with("base::.ark_auto_step")
+        );
+
+        // Are we stopped by an injected breakpoint
+        let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
+
+        if in_injected_breakpoint || at_auto_step {
+            let kind = if in_injected_breakpoint { "in" } else { "at" };
+            log::trace!("Auto-step expression reached ({kind}), moving to next expression");
+
+            self.debug_preserve_focus = false;
+            self.debug_send_dap(DapBackendEvent::Continued);
+
+            Self::on_console_input(buf, buflen, String::from("n")).unwrap();
+            return Some(ConsoleResult::NewInput);
+        }
+
+        None
     }
 
     /// Invoked by R to write output to the console.
