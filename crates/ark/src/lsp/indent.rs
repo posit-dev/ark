@@ -1,6 +1,8 @@
 use anyhow::anyhow;
 use tower_lsp::lsp_types::TextEdit;
 
+use crate::lsp::backend::LspError;
+use crate::lsp::backend::LspResult;
 use crate::lsp::config::IndentStyle;
 use crate::lsp::config::IndentationConfig;
 use crate::lsp::document::Document;
@@ -19,7 +21,7 @@ use crate::treesitter::NodeTypeExt;
 ///
 /// Once we implement a full formatter, indentation will be provided for any
 /// constructs based on the formatter and will be fully consistent with it.
-pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<TextEdit>>> {
+pub(crate) fn indent_edit(doc: &Document, line: usize) -> LspResult<Option<Vec<TextEdit>>> {
     let text = &doc.contents;
     let ast = &doc.ast;
     let config = &doc.config.indent;
@@ -31,7 +33,7 @@ pub fn indent_edit(doc: &Document, line: usize) -> anyhow::Result<Option<Vec<Tex
         text.chars().filter(|c| *c == '\n').count() + 1
     };
     if line >= line_count {
-        return Err(anyhow!("`line` is OOB"));
+        return Err(LspError::Anyhow(anyhow!("`line` is OOB")));
     }
 
     let indent_pos = tree_sitter::Point {

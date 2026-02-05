@@ -18,6 +18,7 @@ use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::lsp::backend::LspResult;
 use crate::lsp::document::Document;
 use crate::lsp::traits::cursor::TreeCursorExt;
 use crate::lsp::traits::node::NodeExt;
@@ -53,7 +54,7 @@ static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwra
 pub(crate) fn statement_range(
     document: &Document,
     point: Point,
-) -> anyhow::Result<Option<StatementRangeResponse>> {
+) -> LspResult<Option<StatementRangeResponse>> {
     let root = document.ast.root_node();
     let contents = &document.contents;
 
