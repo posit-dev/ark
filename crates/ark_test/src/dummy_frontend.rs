@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
@@ -27,7 +26,6 @@ use crate::tracing::trace_separator;
 use crate::tracing::trace_shell_reply;
 use crate::tracing::trace_shell_request;
 use crate::DapClient;
-use crate::MessageAccumulator;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
@@ -372,82 +370,6 @@ impl DummyArkFrontend {
                     expected, other
                 ),
             }
-        }
-    }
-
-    /// Receive iopub messages until all predicates are matched.
-    ///
-    /// Messages may arrive in any order and through different async paths
-    /// (CommManager for comm messages, Shell for status, R console for streams).
-    /// Receive IOPub messages until all predicates have matched.
-    ///
-    /// Each predicate must match exactly one message. Messages that don't match
-    /// any predicate are silently ignored. Uses `recv_iopub_until` internally,
-    /// so stream coalescing is available.
-    ///
-    /// Panics if timeout is reached before all predicates match.
-    #[track_caller]
-    pub fn recv_iopub_async(&self, predicates: Vec<Box<dyn Fn(&Message) -> bool>>) {
-        if predicates.is_empty() {
-            return;
-        }
-
-        self.recv_iopub_until(|acc| {
-            // Track which predicates have been matched
-            let mut pred_matched = vec![false; predicates.len()];
-
-            // For each message, try to match it to an unmatched predicate
-            for msg in &acc.messages {
-                for (i, pred) in predicates.iter().enumerate() {
-                    if !pred_matched[i] && pred(msg) {
-                        pred_matched[i] = true;
-                        break;
-                    }
-                }
-            }
-
-            let all_matched = pred_matched.iter().all(|&m| m);
-
-            if all_matched {
-                // Mark matched messages as consumed so Drop check passes
-                for pred in &predicates {
-                    acc.consume(|msg| pred(msg));
-                }
-            }
-
-            all_matched
-        });
-    }
-
-    /// Receive IOPub messages until a condition is satisfied.
-    ///
-    /// This is a convenient wrapper around `MessageAccumulator` that handles
-    /// stream coalescing automatically. Stream messages with the same parent
-    /// header are combined before checking the condition, making tests immune
-    /// to whether R batched or split console output.
-    ///
-    /// After the condition is satisfied, any remaining messages are drained
-    /// with a short timeout to prevent interference with subsequent operations.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// frontend.recv_iopub_until(|acc| {
-    ///     acc.streams_contain("Called from:") &&
-    ///     acc.has_comm_method("start_debug") &&
-    ///     acc.saw_idle()
-    /// });
-    /// ```
-    #[track_caller]
-    pub fn recv_iopub_until<F>(&self, condition: F)
-    where
-        F: FnMut(&mut MessageAccumulator) -> bool,
-    {
-        let mut acc = MessageAccumulator::new();
-        let result = acc.receive_until(&self.iopub_socket, condition, Duration::from_secs(10));
-
-        if let Err(msg) = result {
-            panic!("Timeout waiting for IOPub condition.\n{msg}");
         }
     }
 
