@@ -1,7 +1,7 @@
 //
 // graphics_device.rs
 //
-// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 by Posit Software, PBC
 //
 
 // See `doc/graphics-devices.md` for documentation
@@ -626,12 +626,11 @@ impl DeviceContext {
         });
 
         // Let Positron know that we just created a new plot.
-        let iopub_tx = crate::console::Console::get().get_iopub_tx().clone();
         let socket = CommSocket::new(
             CommInitiator::BackEnd,
             id.to_string(),
             POSITRON_PLOT_CHANNEL_ID.to_string(),
-            iopub_tx,
+            self.iopub_tx.clone(),
         );
 
         let settings = self.prerender_settings.get();

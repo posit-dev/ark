@@ -1,7 +1,7 @@
 //
 // ui.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 //
 
@@ -320,11 +320,9 @@ mod tests {
         // Wait for the reply; this should be a FrontendRpcResult.
         let response = iopub_rx.recv_comm_msg();
         match response {
-            CommMsg::Rpc {
-                id, data: result, ..
-            } => {
-                println!("Got RPC result: {:?}", result);
-                let result = serde_json::from_value::<UiBackendReply>(result).unwrap();
+            CommMsg::Rpc { id, data, .. } => {
+                println!("Got RPC result: {:?}", data);
+                let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
                 assert_eq!(id, "test-id-1");
                 // This RPC should return the old width
                 assert_eq!(
@@ -365,11 +363,9 @@ mod tests {
         // Wait for the reply
         let response = iopub_rx.recv_comm_msg();
         match response {
-            CommMsg::Rpc {
-                id, data: result, ..
-            } => {
-                println!("Got RPC result: {:?}", result);
-                let _reply = serde_json::from_value::<JsonRpcError>(result).unwrap();
+            CommMsg::Rpc { id, data, .. } => {
+                println!("Got RPC result: {:?}", data);
+                let _reply = serde_json::from_value::<JsonRpcError>(data).unwrap();
                 // Ensure that the error code is -32601 (method not found)
                 assert_eq!(id, "test-id-2");
 

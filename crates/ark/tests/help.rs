@@ -20,6 +20,7 @@ use ark::help_proxy;
 use ark::r_task::r_task;
 use ark_test::dummy_jupyter_header;
 use ark_test::IOPubReceiverExt;
+use crossbeam::channel::bounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -33,7 +34,7 @@ struct TestRHelp {
 impl TestRHelp {
     fn new(comm_id: String) -> Self {
         // Create a dummy iopub channel to receive responses.
-        let (iopub_tx, iopub_rx) = crossbeam::channel::bounded::<IOPubMessage>(10);
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
         let comm = CommSocket::new(
             CommInitiator::FrontEnd,
@@ -71,8 +72,8 @@ impl TestRHelp {
             })
             .unwrap();
 
-        // Wait for the response
         let response = self.iopub_rx.recv_comm_msg();
+
         match response {
             CommMsg::Rpc { id, data: val, .. } => {
                 let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();

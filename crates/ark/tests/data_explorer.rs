@@ -1,7 +1,7 @@
 //
 // data_explorer.rs
 //
-// Copyright (C) 2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
 use amalthea::comm::comm_channel::CommMsg;
@@ -61,7 +61,7 @@ use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
-use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
@@ -72,7 +72,10 @@ use ark::thread::RThreadSafe;
 use ark_test::dummy_jupyter_header;
 use ark_test::r_test_lock;
 use ark_test::socket_rpc_request;
+use ark_test::IOPubReceiverExt;
+use ark_test::RECV_TIMEOUT;
 use crossbeam::channel::bounded;
+use crossbeam::channel::Receiver;
 use harp::environment::R_ENVS;
 use harp::object::RObject;
 use harp::r_symbol;
@@ -82,26 +85,23 @@ use libr::R_GlobalEnv;
 use libr::Rf_eval;
 use stdext::assert_match;
 
-// We don't care about events coming back quickly, we just don't want to deadlock
-// in case something has gone wrong, so we pick a pretty long timeout to use throughout
-// the tests.
-static RECV_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
 /// Test helper method to open a built-in dataset in the data explorer.
 ///
 /// Parameters:
 /// - dataset: The name of the dataset to open. Must be one of the built-in
 ///   dataset names returned by `data()`.
 ///
-/// Returns a comm socket that can be used to communicate with the data explorer.
-fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
+/// Returns a TestSetup that can be used to communicate with the data explorer.
+fn open_data_explorer(dataset: String) -> TestSetup {
     // Create a dummy comm manager channel.
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    // Create a dummy iopub channel to receive responses.
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
     // Force the dataset to be loaded into the R environment.
     r_task(|| unsafe {
         let data = { RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv)) };
-        RDataExplorer::start(dataset, data, None, comm_manager_tx).unwrap();
+        RDataExplorer::start(dataset, data, None, comm_manager_tx, iopub_tx).unwrap();
     });
 
     // Wait for the new comm to show up.
@@ -109,17 +109,15 @@ fn open_data_explorer(dataset: String) -> socket::comm::CommSocket {
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
-            socket
+            TestSetup { socket, iopub_rx }
         },
         _ => panic!("Unexpected Comm Manager Event"),
     }
 }
 
-fn open_data_explorer_from_expression(
-    expr: &str,
-    bind: Option<&str>,
-) -> anyhow::Result<socket::comm::CommSocket> {
+fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<TestSetup> {
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
     r_task(|| -> anyhow::Result<()> {
         let object = harp::parse_eval_global(expr)?;
@@ -131,7 +129,14 @@ fn open_data_explorer_from_expression(
             }),
             None => None,
         };
-        RDataExplorer::start(String::from("obj"), object, binding, comm_manager_tx).unwrap();
+        RDataExplorer::start(
+            String::from("obj"),
+            object,
+            binding,
+            comm_manager_tx,
+            iopub_tx,
+        )
+        .unwrap();
         Ok(())
     })?;
 
@@ -141,7 +146,7 @@ fn open_data_explorer_from_expression(
     match msg {
         CommManagerEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
-            Ok(socket)
+            Ok(TestSetup { socket, iopub_rx })
         },
         _ => panic!("Unexpected Comm Manager Event"),
     }
@@ -151,34 +156,35 @@ fn open_data_explorer_from_expression(
 ///
 /// Parameters:
 /// - socket: The comm socket to use for communication.
+/// - iopub_rx: The IOPub receiver to get responses from.
 /// - req: The request to send.
 fn socket_rpc(
     socket: &socket::comm::CommSocket,
+    iopub_rx: &Receiver<IOPubMessage>,
     req: DataExplorerBackendRequest,
 ) -> DataExplorerBackendReply {
-    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(&socket, req)
+    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(
+        &socket, iopub_rx, req,
+    )
 }
 
 /// Test setup helper that reduces boilerplate for common test initialization
 struct TestSetup {
     socket: socket::comm::CommSocket,
+    iopub_rx: Receiver<IOPubMessage>,
 }
 
 impl TestSetup {
     fn new(dataset: &str) -> Self {
-        Self {
-            socket: open_data_explorer(String::from(dataset)),
-        }
+        open_data_explorer(String::from(dataset))
     }
 
     fn from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<Self> {
-        Ok(Self {
-            socket: open_data_explorer_from_expression(expr, bind)?,
-        })
+        open_data_explorer_from_expression(expr, bind)
     }
 
-    fn socket(&self) -> &socket::comm::CommSocket {
-        &self.socket
+    fn rpc(&self, req: DataExplorerBackendRequest) -> DataExplorerBackendReply {
+        socket_rpc(&self.socket, &self.iopub_rx, req)
     }
 }
 
@@ -285,13 +291,9 @@ impl RequestBuilder {
 struct TestAssertions;
 
 impl TestAssertions {
-    fn assert_schema_columns(
-        socket: &socket::comm::CommSocket,
-        column_indices: Vec<i64>,
-        expected_count: usize,
-    ) {
+    fn assert_schema_columns(setup: &TestSetup, column_indices: Vec<i64>, expected_count: usize) {
         let req = RequestBuilder::get_schema(column_indices.clone());
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::GetSchemaReply(schema) => {
                 assert_eq!(schema.columns.len(), expected_count,
                     "Schema column count mismatch for indices {:?}: expected {}, got {}",
@@ -301,11 +303,11 @@ impl TestAssertions {
     }
 
     fn assert_search_matches(
-        socket: &socket::comm::CommSocket,
+        setup: &TestSetup,
         req: DataExplorerBackendRequest,
         expected_matches: Vec<i64>,
     ) {
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::SearchSchemaReply(SearchSchemaResult { matches }) => {
                 assert_eq!(matches, expected_matches,
                     "Search results mismatch: expected {:?}, got {:?}", expected_matches, matches);
@@ -314,7 +316,7 @@ impl TestAssertions {
     }
 
     fn assert_data_values_count(
-        socket: &socket::comm::CommSocket,
+        setup: &TestSetup,
         row_start: i64,
         num_rows: i64,
         columns: Vec<i64>,
@@ -322,7 +324,7 @@ impl TestAssertions {
         expected_row_count: usize,
     ) {
         let req = RequestBuilder::get_data_values(row_start, num_rows, columns.clone());
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 assert_eq!(data.columns.len(), expected_column_count,
                     "Data values column count mismatch for request ({}, {}, {:?}): expected {}, got {}",
@@ -336,36 +338,33 @@ impl TestAssertions {
         );
     }
 
-    fn assert_sort_columns_applied(
-        socket: &socket::comm::CommSocket,
-        sort_keys: Vec<ColumnSortKey>,
-    ) {
+    fn assert_sort_columns_applied(setup: &TestSetup, sort_keys: Vec<ColumnSortKey>) {
         let req = RequestBuilder::set_sort_columns(sort_keys.clone());
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::SetSortColumnsReply() => {
                 // Success - sort keys {:?} were applied
             }
         );
     }
 
-    fn assert_state<F>(socket: &socket::comm::CommSocket, check: F)
+    fn assert_state<F>(setup: &TestSetup, check: F)
     where
         F: FnOnce(&amalthea::comm::data_explorer_comm::BackendState),
     {
         let req = RequestBuilder::get_state();
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::GetStateReply(state) => {
                 check(&state);
             }
         );
     }
 
-    fn assert_row_labels<F>(socket: &socket::comm::CommSocket, selection: ArraySelection, check: F)
+    fn assert_row_labels<F>(setup: &TestSetup, selection: ArraySelection, check: F)
     where
         F: FnOnce(&Vec<Vec<String>>),
     {
         let req = RequestBuilder::get_row_labels(selection);
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
                 check(&row_labels.row_labels);
             }
@@ -373,7 +372,7 @@ impl TestAssertions {
     }
 
     fn assert_data_values<F>(
-        socket: &socket::comm::CommSocket,
+        setup: &TestSetup,
         row_start: i64,
         num_rows: i64,
         columns: Vec<i64>,
@@ -382,7 +381,7 @@ impl TestAssertions {
         F: FnOnce(&Vec<Vec<ColumnValue>>),
     {
         let req = get_data_values_request(row_start, num_rows, columns, default_format_options());
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 check(&data.columns);
             }
@@ -390,13 +389,13 @@ impl TestAssertions {
     }
 
     fn assert_row_filters_applied(
-        socket: &socket::comm::CommSocket,
+        setup: &TestSetup,
         filters: Vec<RowFilter>,
         expected_rows: i64,
         had_errors: Option<bool>,
     ) {
         let req = RequestBuilder::set_row_filters(filters.clone());
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::SetRowFiltersReply(FilterResult {
                 selected_num_rows,
                 had_errors: actual_had_errors
@@ -412,7 +411,7 @@ impl TestAssertions {
     }
 
     fn assert_export_data<F>(
-        socket: &socket::comm::CommSocket,
+        setup: &TestSetup,
         format: ExportFormat,
         selection: TableSelection,
         check: F,
@@ -420,19 +419,16 @@ impl TestAssertions {
         F: FnOnce(&ExportedData),
     {
         let req = RequestBuilder::export_data_selection(format, selection);
-        assert_match!(socket_rpc(socket, req),
+        assert_match!(setup.rpc(req),
             DataExplorerBackendReply::ExportDataSelectionReply(exported_data) => {
                 check(&exported_data);
             }
         );
     }
 
-    fn get_column_schema(
-        socket: &socket::comm::CommSocket,
-        column_indices: Vec<i64>,
-    ) -> TableSchema {
+    fn get_column_schema(setup: &TestSetup, column_indices: Vec<i64>) -> TableSchema {
         let req = RequestBuilder::get_schema(column_indices.clone());
-        match socket_rpc(socket, req) {
+        match setup.rpc(req) {
             DataExplorerBackendReply::GetSchemaReply(schema) => schema,
             reply => panic!(
                 "Expected GetSchemaReply for indices {:?}, got {:?}",
@@ -752,7 +748,7 @@ fn get_data_values_request(
 }
 
 fn expect_column_profile_results(
-    socket: &CommSocket,
+    setup: &TestSetup,
     req: DataExplorerBackendRequest,
     check: fn(Vec<ColumnProfileResult>),
 ) {
@@ -769,9 +765,9 @@ fn expect_column_profile_results(
         parent_header: dummy_jupyter_header(),
         data: json,
     };
-    socket.incoming_tx.send(msg).unwrap();
+    setup.socket.incoming_tx.send(msg).unwrap();
 
-    let msg = socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    let msg = setup.iopub_rx.recv_comm_msg();
 
     // Because during tests, no threads are created with r_task::spawn_idle, the messages are in
     // an incorrect order. We first receive the DataExplorerFrontndEvent with the column profiles
@@ -789,7 +785,7 @@ fn expect_column_profile_results(
         }
     );
 
-    let msg = socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    let msg = setup.iopub_rx.recv_comm_msg();
 
     let reply: DataExplorerBackendReply = match msg {
         CommMsg::Rpc { data: value, .. } => {
@@ -803,17 +799,17 @@ fn expect_column_profile_results(
     assert_eq!(reply, DataExplorerBackendReply::GetColumnProfilesReply());
 }
 
-fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: String) {
+fn test_mtcars_sort(setup: &TestSetup, has_row_names: bool, display_name: String) {
     // Check that we got the right number of columns (mtcars has 11 columns)
-    TestAssertions::assert_schema_columns(&socket, (0..11).collect(), 11);
+    TestAssertions::assert_schema_columns(setup, (0..11).collect(), 11);
 
     // Check that we can get data values (5 rows, 5 columns from middle of dataset)
-    TestAssertions::assert_data_values_count(&socket, 5, 5, vec![0, 1, 2, 3, 4], 5, 5);
+    TestAssertions::assert_data_values_count(setup, 5, 5, vec![0, 1, 2, 3, 4], 5, 5);
 
     // Check row names are present
     if has_row_names {
         TestAssertions::assert_row_labels(
-            &socket,
+            setup,
             SelectionBuilder::indices(vec![5, 6, 7, 8, 9]),
             |labels| {
                 assert_eq!(labels[0][0], "Valiant");
@@ -825,16 +821,16 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
 
     // Sort by 'mpg' column (ascending)
     let mpg_sort_keys = vec![SelectionBuilder::column_sort_key(0, true)];
-    TestAssertions::assert_sort_columns_applied(&socket, mpg_sort_keys.clone());
+    TestAssertions::assert_sort_columns_applied(setup, mpg_sort_keys.clone());
 
     // Verify the state shows correct sort keys and display name
-    TestAssertions::assert_state(&socket, |state| {
+    TestAssertions::assert_state(setup, |state| {
         assert_eq!(state.display_name, display_name);
         assert_eq!(state.sort_keys, mpg_sort_keys);
     });
 
     // Check sorted values are correct (first three rows)
-    TestAssertions::assert_data_values(&socket, 0, 3, vec![0, 1], |data| {
+    TestAssertions::assert_data_values(setup, 0, 3, vec![0, 1], |data| {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0].len(), 3);
         assert_eq!(data[0][0], ColumnValue::FormattedValue("10.40".to_string()));
@@ -845,7 +841,7 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
     // Row labels should be sorted as well
     if has_row_names {
         TestAssertions::assert_row_labels(
-            &socket,
+            setup,
             SelectionBuilder::indices(vec![0, 1, 2]),
             |labels| {
                 assert_eq!(labels[0][0], "Cadillac Fleetwood");
@@ -860,10 +856,10 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
         SelectionBuilder::column_sort_key(1, false),
         SelectionBuilder::column_sort_key(0, false),
     ];
-    TestAssertions::assert_sort_columns_applied(&socket, descending_sort_keys);
+    TestAssertions::assert_sort_columns_applied(setup, descending_sort_keys);
 
     // Check the complex sorted values
-    TestAssertions::assert_data_values(&socket, 0, 3, vec![0, 1], |data| {
+    TestAssertions::assert_data_values(setup, 0, 3, vec![0, 1], |data| {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0][0], ColumnValue::FormattedValue("19.20".to_string()));
         assert_eq!(data[0][1], ColumnValue::FormattedValue("18.70".to_string()));
@@ -875,7 +871,7 @@ fn test_mtcars_sort(socket: CommSocket, has_row_names: bool, display_name: Strin
 fn test_basic_mtcars() {
     let _lock = r_test_lock();
     let setup = TestSetup::new("mtcars");
-    test_mtcars_sort(setup.socket, true, String::from("mtcars"));
+    test_mtcars_sort(&setup, true, String::from("mtcars"));
 }
 
 #[test]
@@ -889,7 +885,7 @@ fn test_tibble_support() {
     }
 
     let setup = TestSetup::new("mtcars_tib");
-    test_mtcars_sort(setup.socket, false, String::from("mtcars_tib"));
+    test_mtcars_sort(&setup, false, String::from("mtcars_tib"));
 
     r_task(|| {
         harp::parse_eval_global("rm(mtcars_tib)").unwrap();
@@ -900,17 +896,16 @@ fn test_tibble_support() {
 fn test_women_dataset() {
     let _lock = r_test_lock();
     let setup = TestSetup::new("women");
-    let socket = setup.socket();
 
     // Check initial data values (first 2 rows)
-    TestAssertions::assert_data_values(socket, 0, 2, vec![0, 1], |data| {
+    TestAssertions::assert_data_values(&setup, 0, 2, vec![0, 1], |data| {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0][0], ColumnValue::FormattedValue("58.00".to_string()));
         assert_eq!(data[0][1], ColumnValue::FormattedValue("59.00".to_string()));
     });
 
     // Check row names
-    TestAssertions::assert_row_labels(socket, SelectionBuilder::indices(vec![0, 1, 2]), |labels| {
+    TestAssertions::assert_row_labels(&setup, SelectionBuilder::indices(vec![0, 1, 2]), |labels| {
         assert_eq!(labels[0][0], "1");
         assert_eq!(labels[0][1], "2");
         assert_eq!(labels[0][2], "3");
@@ -918,11 +913,11 @@ fn test_women_dataset() {
 
     // Sort by height (descending)
     let sort_keys = vec![SelectionBuilder::column_sort_key(0, false)];
-    TestAssertions::assert_sort_columns_applied(socket, sort_keys);
+    TestAssertions::assert_sort_columns_applied(&setup, sort_keys);
 
     // Get schema to use for filtering
     let req = RequestBuilder::get_schema(vec![0, 1]);
-    let schema = match socket_rpc(socket, req) {
+    let schema = match setup.rpc(req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
         _ => panic!("Expected schema reply"),
     };
@@ -933,10 +928,10 @@ fn test_women_dataset() {
         FilterComparisonOp::Lt,
         "60",
     )];
-    TestAssertions::assert_row_filters_applied(socket, filters, 2, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, filters, 2, Some(false));
 
     // Check filtered and sorted data
-    TestAssertions::assert_data_values(socket, 0, 2, vec![0, 1], |data| {
+    TestAssertions::assert_data_values(&setup, 0, 2, vec![0, 1], |data| {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0][0], ColumnValue::FormattedValue("59.00".to_string()));
         assert_eq!(data[0][1], ColumnValue::FormattedValue("58.00".to_string()));
@@ -947,24 +942,23 @@ fn test_women_dataset() {
 fn test_matrix_support() {
     let _lock = r_test_lock();
     let setup = TestSetup::new("volcano");
-    let socket = setup.socket();
 
     // Verify volcano matrix has 61 columns
-    TestAssertions::assert_schema_columns(socket, (0..61).collect_vec(), 61);
+    TestAssertions::assert_schema_columns(&setup, (0..61).collect_vec(), 61);
 
     // Get schema for filtering
     let req = RequestBuilder::get_schema((0..61).collect_vec());
-    let schema = match socket_rpc(socket, req) {
+    let schema = match setup.rpc(req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
         _ => panic!("Expected schema reply"),
     };
 
     // Sort by first column (ascending)
     let sort_keys = vec![SelectionBuilder::column_sort_key(0, true)];
-    TestAssertions::assert_sort_columns_applied(socket, sort_keys);
+    TestAssertions::assert_sort_columns_applied(&setup, sort_keys);
 
     // Check sorted data values (first 4 rows, 2 columns)
-    TestAssertions::assert_data_values(socket, 0, 4, vec![0, 1], |data| {
+    TestAssertions::assert_data_values(&setup, 0, 4, vec![0, 1], |data| {
         assert_eq!(data.len(), 2);
         assert_eq!(data[0][0], ColumnValue::FormattedValue("97.00".to_string()));
         assert_eq!(data[0][1], ColumnValue::FormattedValue("97.00".to_string()));
@@ -978,7 +972,7 @@ fn test_matrix_support() {
         FilterComparisonOp::Lt,
         "100",
     )];
-    TestAssertions::assert_row_filters_applied(socket, filters, 8, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, filters, 8, Some(false));
 }
 
 #[test]
@@ -992,7 +986,7 @@ fn test_data_table_support() {
     }
 
     let setup = TestSetup::new("mtcars_dt");
-    test_mtcars_sort(setup.socket, false, String::from("mtcars_dt"));
+    test_mtcars_sort(&setup, false, String::from("mtcars_dt"));
 
     r_task(|| {
         harp::parse_eval_global("rm(mtcars_dt)").unwrap();
@@ -1007,11 +1001,10 @@ fn test_null_counts() {
         None,
     )
     .unwrap();
-    let socket = setup.socket();
 
     // Get schema for filtering
     let req = RequestBuilder::get_schema(vec![0]);
-    let schema = match socket_rpc(socket, req) {
+    let schema = match setup.rpc(req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
         _ => panic!("Expected schema reply"),
     };
@@ -1021,28 +1014,28 @@ fn test_null_counts() {
         RequestBuilder::get_column_profiles(String::from("id"), vec![ProfileBuilder::null_count(
             0,
         )]);
-    expect_column_profile_results(socket, req, |data| {
+    expect_column_profile_results(&setup, req, |data| {
         assert_eq!(data.len(), 1);
         assert_eq!(data[0].null_count, Some(3));
     });
 
     // Filter out null values (NotNull filter)
     let filters = vec![RowFilterBuilder::not_null(schema.columns[0].clone())];
-    TestAssertions::assert_row_filters_applied(socket, filters, 6, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, filters, 6, Some(false));
 
     // Null count should now be 0 (after filtering out nulls)
     let req =
         RequestBuilder::get_column_profiles(String::from("id2"), vec![ProfileBuilder::null_count(
             0,
         )]);
-    expect_column_profile_results(socket, req, |data| {
+    expect_column_profile_results(&setup, req, |data| {
         assert_eq!(data.len(), 1);
         assert_eq!(data[0].null_count, Some(0));
     });
 
     // Filter to show ONLY null values (IsNull filter)
     let filters = vec![RowFilterBuilder::is_null(schema.columns[0].clone())];
-    TestAssertions::assert_row_filters_applied(socket, filters, 3, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, filters, 3, Some(false));
 }
 
 #[test]
@@ -1057,7 +1050,6 @@ fn test_summary_stats() {
     });
 
     let setup = TestSetup::new("df");
-    let socket = setup.socket();
 
     // Request summary stats for all 3 columns
     let req = RequestBuilder::get_column_profiles(
@@ -1065,7 +1057,7 @@ fn test_summary_stats() {
         (0..3).map(|i| ProfileBuilder::summary_stats(i)).collect(),
     );
 
-    expect_column_profile_results(socket, req, |data| {
+    expect_column_profile_results(&setup, req, |data| {
         assert_eq!(data.len(), 3);
 
         // First column: numeric stats
@@ -1123,11 +1115,10 @@ fn test_search_filters() {
     });
 
     let setup = TestSetup::new("words");
-    let socket = setup.socket();
 
     // Get schema for filtering
     let req = RequestBuilder::get_schema(vec![0]);
-    let schema = match socket_rpc(socket, req) {
+    let schema = match setup.rpc(req) {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
         _ => panic!("Expected schema reply"),
     };
@@ -1139,7 +1130,7 @@ fn test_search_filters() {
         ".",
         false,
     );
-    TestAssertions::assert_row_filters_applied(socket, vec![dot_filter.clone()], 2, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, vec![dot_filter.clone()], 2, Some(false));
 
     // Combine filters: contains "." OR ends with "ent" (matches 4 rows)
     let mut ent_filter = RowFilterBuilder::text_search(
@@ -1150,7 +1141,7 @@ fn test_search_filters() {
     );
     ent_filter.condition = RowFilterCondition::Or;
     TestAssertions::assert_row_filters_applied(
-        socket,
+        &setup,
         vec![dot_filter, ent_filter],
         4,
         Some(false),
@@ -1158,10 +1149,10 @@ fn test_search_filters() {
 
     // Filter for empty values (matches 1 row)
     let empty_filter = RowFilterBuilder::is_empty(schema.columns[0].clone());
-    TestAssertions::assert_row_filters_applied(socket, vec![empty_filter], 1, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, vec![empty_filter], 1, Some(false));
 
     // Check table state: 1 row visible out of 7 total
-    TestAssertions::assert_state(socket, |state| {
+    TestAssertions::assert_state(&setup, |state| {
         assert_eq!(state.table_shape.num_rows, 1);
         assert_eq!(state.table_unfiltered_shape.num_rows, 7);
     });
@@ -1181,10 +1172,10 @@ fn test_search_filters() {
     });
 
     // Open the dates data set in the data explorer.
-    let socket = open_data_explorer(String::from("test_dates"));
+    let dates_setup = open_data_explorer(String::from("test_dates"));
 
     // Get the schema of the data set.
-    let schema = TestAssertions::get_column_schema(&socket, vec![0]);
+    let schema = TestAssertions::get_column_schema(&dates_setup, vec![0]);
 
     // Next, apply a filter to the data set. Check for rows that are greater than
     // "marshmallows". This is an invalid filter because the column is a date.
@@ -1204,7 +1195,7 @@ fn test_search_filters() {
 
     // We should get a SetRowFiltersReply back. Because the filter is invalid,
     // the number of selected rows should be 3 (all the rows in the data set)
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(dates_setup.rpc(req),
     DataExplorerBackendReply::SetRowFiltersReply(
         FilterResult { selected_num_rows: num_rows, had_errors: Some(true)}
     ) => {
@@ -1214,7 +1205,7 @@ fn test_search_filters() {
     // We also want to make sure that invalid filters are marked along with their
     // error messages.
     let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(dates_setup.rpc(req),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.row_filters[0].is_valid, Some(false));
             assert!(state.row_filters[0].error_message.is_some());
@@ -1234,16 +1225,15 @@ fn test_search_filters() {
         Some("test_bools"),
     )
     .unwrap();
-    let bools_socket = bools_setup.socket();
-    let bools_schema = TestAssertions::get_column_schema(&bools_socket, vec![0]);
+    let bools_schema = TestAssertions::get_column_schema(&bools_setup, vec![0]);
 
     // Apply boolean filter: check for TRUE values
     let true_filter = RowFilterBuilder::is_true(bools_schema.columns[0].clone());
-    TestAssertions::assert_row_filters_applied(bools_socket, vec![true_filter], 3, Some(false));
+    TestAssertions::assert_row_filters_applied(&bools_setup, vec![true_filter], 3, Some(false));
 
     // Apply boolean filter: check for FALSE values
     let false_filter = RowFilterBuilder::is_false(bools_schema.columns[0].clone());
-    TestAssertions::assert_row_filters_applied(bools_socket, vec![false_filter], 2, Some(false));
+    TestAssertions::assert_row_filters_applied(&bools_setup, vec![false_filter], 2, Some(false));
 
     let has_tibble = r_task(|| {
         harp::parse_eval_global(
@@ -1258,12 +1248,12 @@ fn test_search_filters() {
     }
 
     // Open the data set in the data explorer.
-    let socket = open_data_explorer(String::from("list_cols"));
+    let list_cols_setup = open_data_explorer(String::from("list_cols"));
 
     // Get the values from the first column again. Because a sort is applied,
     // the new value we wrote should be at the end.
     let req = get_data_values_request(0, 4, vec![0, 1], default_format_options());
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(list_cols_setup.rpc(req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 2);
             assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("<numeric [4]>".to_string()));
@@ -1283,7 +1273,7 @@ fn test_search_filters() {
 fn test_live_updates() {
     let _lock = r_test_lock();
 
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
         Some("x"),
     )
@@ -1299,7 +1289,7 @@ fn test_live_updates() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1317,12 +1307,12 @@ fn test_live_updates() {
     });
 
     // We should get a SetSortColumnsReply back.
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
 DataExplorerBackendReply::SetSortColumnsReply() => {});
 
     // Get the values from the first column.
     let req = get_data_values_request(0, 3, vec![0], default_format_options());
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 1);
             assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("0.00".to_string()));
@@ -1341,7 +1331,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1352,7 +1342,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     // Get the values from the first column again. Because a sort is applied,
     // the new value we wrote should be at the end.
     let req = get_data_values_request(0, 3, vec![0], default_format_options());
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 1);
             assert_eq!(data.columns[0][0], ColumnValue::FormattedValue("1.00".to_string()));
@@ -1371,7 +1361,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     EVENTS.console_prompt.emit(());
 
     // This should trigger a schema update event.
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's schema update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1385,7 +1375,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     });
 
     // Check that we got the right number of columns.
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 3);
         }
@@ -1400,7 +1390,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     EVENTS.console_prompt.emit(());
 
     // Wait for an close event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Close => {}
     );
 }
@@ -1410,14 +1400,14 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 #[test]
 fn test_invalid_filters_preserved() {
     let _lock = r_test_lock();
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
         Some("test_df"),
     )
     .unwrap();
 
     // Get the schema of the data set.
-    let schema = TestAssertions::get_column_schema(&socket, vec![0]);
+    let schema = TestAssertions::get_column_schema(&setup, vec![0]);
 
     // Next, apply a filter to the data set. Check for rows that are greater than
     // "marshmallows". This is an invalid filter because the column is a date.
@@ -1434,7 +1424,7 @@ fn test_invalid_filters_preserved() {
     let req = RequestBuilder::set_row_filters(vec![x_is_empty.clone()]);
 
     // We should get a SetRowFiltersReply back and we should get a single row
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
     DataExplorerBackendReply::SetRowFiltersReply(
         FilterResult { selected_num_rows: num_rows, had_errors: Some(false)}
     ) => {
@@ -1452,7 +1442,7 @@ fn test_invalid_filters_preserved() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1462,7 +1452,7 @@ fn test_invalid_filters_preserved() {
 
     // Check the backend state. The filter should be marked invalid and have an error message.
     let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.row_filters[0].is_valid, Some(false));
             assert!(state.row_filters[0].error_message.is_some());
@@ -1480,7 +1470,7 @@ fn test_invalid_filters_preserved() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1490,7 +1480,7 @@ fn test_invalid_filters_preserved() {
 
     // Check the backend state. The filter should be marked valid
     let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.row_filters[0].is_valid, Some(true));
             assert!(state.row_filters[0].error_message.is_none());
@@ -1508,7 +1498,7 @@ fn test_invalid_filters_preserved() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1518,7 +1508,7 @@ fn test_invalid_filters_preserved() {
 
     // Check the backend state. The filter should be marked valid
     let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.row_filters[0].is_valid, Some(false));
             assert!(state.row_filters[0].error_message.is_some());
@@ -1544,14 +1534,14 @@ fn test_data_explorer_special_values() {
             f = list(NULL, list(1,2,3), list(4,5,6), list(7,8,9), list(10,11,12))
         )";
 
-    let socket = match open_data_explorer_from_expression(code, None) {
-        Ok(socket) => socket,
+    let setup = match open_data_explorer_from_expression(code, None) {
+        Ok(setup) => setup,
         Err(_) => return, // Skip test if tibble is not installed
     };
 
     let req = get_data_values_request(0, 5, vec![0, 1, 2, 3, 4, 5], default_format_options());
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 6);
 
@@ -1582,7 +1572,7 @@ fn test_data_explorer_special_values() {
 #[test]
 fn test_export_data() {
     let _lock = r_test_lock();
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         r#"data.frame(
                 a = c(1, 3, 2),
                 b = c('a', 'b', 'c'),
@@ -1596,7 +1586,7 @@ fn test_export_data() {
 
     // Test initial export: should get "b" (row 1, col 1)
     TestAssertions::assert_export_data(
-        &socket,
+        &setup,
         ExportFormat::Csv,
         single_cell_selection.clone(),
         |exported| {
@@ -1610,10 +1600,10 @@ fn test_export_data() {
         column_index: 0,
         ascending: false,
     }]);
-    socket_rpc(&socket, req);
+    setup.rpc(req);
 
     TestAssertions::assert_export_data(
-        &socket,
+        &setup,
         ExportFormat::Csv,
         single_cell_selection.clone(),
         |exported| {
@@ -1622,13 +1612,13 @@ fn test_export_data() {
     );
 
     // Filter to show only TRUE values in boolean column, then test export: should get "a"
-    let schema = TestAssertions::get_column_schema(&socket, vec![0, 1, 2]);
+    let schema = TestAssertions::get_column_schema(&setup, vec![0, 1, 2]);
     let filter = RowFilterBuilder::is_true(schema.columns[2].clone());
     let req = RequestBuilder::set_row_filters(vec![filter]);
-    socket_rpc(&socket, req);
+    setup.rpc(req);
 
     TestAssertions::assert_export_data(
-        &socket,
+        &setup,
         ExportFormat::Csv,
         single_cell_selection,
         |exported| {
@@ -1643,7 +1633,7 @@ fn test_export_data() {
 fn test_update_data_filters_reapplied() {
     let _lock = r_test_lock();
 
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         r#"
             x <- data.frame(
                 a = c(3, 3, 3, 1),
@@ -1655,12 +1645,12 @@ fn test_update_data_filters_reapplied() {
     .unwrap();
 
     // Get the schema of the data set.
-    let schema = TestAssertions::get_column_schema(&socket, vec![0]);
+    let schema = TestAssertions::get_column_schema(&setup, vec![0]);
 
     // Apply filter by the `a` columns. Expecting to get 3 rows larger than 1.
     let x_gt_1 =
         RowFilterBuilder::comparison(schema.columns[0].clone(), FilterComparisonOp::Gt, "1");
-    TestAssertions::assert_row_filters_applied(&socket, vec![x_gt_1.clone()], 3, Some(false));
+    TestAssertions::assert_row_filters_applied(&setup, vec![x_gt_1.clone()], 3, Some(false));
 
     // Also add a sorting to check that data will be sorted in the correct way
     // after the data update.
@@ -1669,11 +1659,11 @@ fn test_update_data_filters_reapplied() {
         column_index: 0,
         ascending: true,
     }]);
-    socket_rpc(&socket, req);
+    setup.rpc(req);
 
     // Check the number of rows when using the GetData method
     let expect_get_data_rows = |n, values| {
-        TestAssertions::assert_data_values(&socket, 0, 5, vec![0, 1], |data| {
+        TestAssertions::assert_data_values(&setup, 0, 5, vec![0, 1], |data| {
             assert_eq!(data[0].len(), n);
             assert_eq!(data[1], values);
         });
@@ -1697,7 +1687,7 @@ fn test_update_data_filters_reapplied() {
 
     // Wait for an update event to arrive
     // Since only data changed, we expect a Data Update Event
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1720,13 +1710,13 @@ fn test_set_membership_helper(
     expected_inclusive_count: usize,
     expected_exclusive_count: usize,
 ) {
-    let socket = open_data_explorer(String::from(data_frame_name));
+    let setup = open_data_explorer(String::from(data_frame_name));
 
     let req = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
         column_indices: vec![0],
     });
 
-    let schema_reply = socket_rpc(&socket, req);
+    let schema_reply = setup.rpc(req);
     let schema = match schema_reply {
         DataExplorerBackendReply::GetSchemaReply(schema) => schema,
         _ => panic!("Unexpected reply: {:?}", schema_reply),
@@ -1742,7 +1732,7 @@ fn test_set_membership_helper(
 
     let req = RequestBuilder::set_row_filters(vec![inclusive_filter]);
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
     DataExplorerBackendReply::SetRowFiltersReply(
         FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
     ) => {
@@ -1759,7 +1749,7 @@ fn test_set_membership_helper(
 
     let req = RequestBuilder::set_row_filters(vec![exclusive_filter]);
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
     DataExplorerBackendReply::SetRowFiltersReply(
         FilterResult { selected_num_rows: num_rows, had_errors: Some(false) }
     ) => {
@@ -1854,7 +1844,7 @@ fn test_set_membership_filter() {
 fn test_get_data_values_by_indices() {
     let _lock = r_test_lock();
 
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "data.frame(x = c(1:10), y = letters[1:10], z = seq(0,1, length.out = 10))",
         None,
     )
@@ -1878,7 +1868,7 @@ fn test_get_data_values_by_indices() {
     };
 
     let expect_get_data_values = |column_indices, row_indices, results: Vec<Vec<&str>>| {
-        assert_match!(socket_rpc(&socket, make_req(column_indices, row_indices)),
+        assert_match!(setup.rpc(make_req(column_indices, row_indices)),
             DataExplorerBackendReply::GetDataValuesReply(data) => {
                 for (i, value) in enumerate(data.columns.iter()) {
                     let formatted_results: Vec<Vec<ColumnValue>> = results.clone().into_iter().map(|inner| {
@@ -1903,7 +1893,7 @@ fn test_data_update_num_rows() {
     // Regression test for https://github.com/posit-dev/positron/issues/4286
     // We test that after sending the data update event we also correctly update the
     // new number of rows.
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         r#"
                 x <- data.frame(
                     a = c(3, 3, 3, 1),
@@ -1915,7 +1905,7 @@ fn test_data_update_num_rows() {
     .unwrap();
 
     let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetStateReply(backend_state) => {
+    assert_match!(setup.rpc(req), DataExplorerBackendReply::GetStateReply(backend_state) => {
         assert_eq!(backend_state.table_shape.num_rows, 4);
     });
 
@@ -1930,7 +1920,7 @@ fn test_data_update_num_rows() {
     EVENTS.console_prompt.emit(());
 
     // Wait for an update event to arrive
-    assert_match!(socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap(),
+    assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
             // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
@@ -1940,7 +1930,7 @@ fn test_data_update_num_rows() {
 
     // Now get the shape and check num rows.
     let req = DataExplorerBackendRequest::GetState;
-    assert_match!(socket_rpc(&socket, req), DataExplorerBackendReply::GetStateReply(backend_state) => {
+    assert_match!(setup.rpc(req), DataExplorerBackendReply::GetStateReply(backend_state) => {
         assert_eq!(backend_state.table_shape.num_rows, 2);
     });
 }
@@ -1949,14 +1939,14 @@ fn test_data_update_num_rows() {
 fn test_histogram() {
     let _lock = r_test_lock();
 
-    let socket =
+    let setup =
         open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
 
     let histogram_req =
         ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 10, None);
     let req = RequestBuilder::get_column_profiles("histogram_req".to_string(), vec![histogram_req]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
         assert_eq!(histogram, ColumnHistogram {
             bin_edges: r_task(|| format_string(
@@ -1975,7 +1965,7 @@ fn test_histogram() {
 fn test_histogram_single_bin_same_values() {
     let _lock = r_test_lock();
 
-    let socket = open_data_explorer_from_expression("data.frame(x = rep(5, 10))", None).unwrap();
+    let setup = open_data_explorer_from_expression("data.frame(x = rep(5, 10))", None).unwrap();
 
     let histogram_req =
         ProfileBuilder::small_histogram(0, ColumnHistogramParamsMethod::Fixed, 5, None);
@@ -1983,7 +1973,7 @@ fn test_histogram_single_bin_same_values() {
         histogram_req,
     ]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
 
         // When all values are the same, we should get a single bin with count = number of values
@@ -2005,14 +1995,14 @@ fn test_histogram_single_bin_same_values() {
 fn test_frequency_table() {
     let _lock = r_test_lock();
 
-    let socket =
+    let setup =
         open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
             .unwrap();
 
     let freq_table_req = ProfileBuilder::small_frequency_table(0, 5);
     let req = RequestBuilder::get_column_profiles("freq_table".to_string(), vec![freq_table_req]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
         assert_eq!(freq_table, ColumnFrequencyTable {
             values: format_column(
@@ -2030,7 +2020,7 @@ fn test_row_names_matrix() {
     let _lock = r_test_lock();
 
     // Convert mtcars to a matrix
-    let socket =
+    let setup =
         open_data_explorer_from_expression("as.matrix(mtcars)", Some("mtcars_matrix")).unwrap();
 
     // Check row names are present
@@ -2040,13 +2030,13 @@ fn test_row_names_matrix() {
         }),
         format_options: default_format_options(),
     });
-    assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
+    assert_match!(setup.rpc(DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.has_row_labels, true)
         }
     );
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetRowLabelsReply(row_labels) => {
             let labels = row_labels.row_labels;
             assert_eq!(labels[0][0], "Valiant");
@@ -2056,10 +2046,10 @@ fn test_row_names_matrix() {
     );
 
     // Convert mtcars to a matrix
-    let socket =
+    let setup2 =
         open_data_explorer_from_expression("matrix(0, ncol =10, nrow = 10)", Some("zero_matrix"))
             .unwrap();
-    assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
+    assert_match!(setup2.rpc(DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.has_row_labels, false)
         }
@@ -2069,7 +2059,7 @@ fn test_row_names_matrix() {
 #[test]
 fn test_schema_identification() {
     let _lock = r_test_lock();
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "data.frame(
             a = c(1, 2, 3),
             b = c('a', 'b', 'c'),
@@ -2086,7 +2076,7 @@ fn test_schema_identification() {
         column_indices: vec![0, 1, 2, 3, 4, 5],
     });
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 6);
 
@@ -2111,7 +2101,6 @@ fn test_schema_identification() {
 fn test_search_schema_text_filters() {
     let _lock = r_test_lock();
     let setup = TestDataBuilder::create_search_test_dataframe().unwrap();
-    let socket = setup.socket();
 
     // Schema: user_name(0), user_age(1), user_id(2), email_address(3), admin_email(4),
     //         score(5), bonus_score(6), is_active(7), is_premium(8), registration_date(9), last_login(10)
@@ -2123,7 +2112,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]);
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1, 2]);
 
     // Test starts_with search: 'email' should match email_address only (not admin_email)
     let req = RequestBuilder::search_schema_text(
@@ -2132,7 +2121,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![3]);
+    TestAssertions::assert_search_matches(&setup, req, vec![3]);
 
     // Test ends_with search: 'active' should match is_active only (not is_premium)
     let req = RequestBuilder::search_schema_text(
@@ -2141,7 +2130,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![7]);
+    TestAssertions::assert_search_matches(&setup, req, vec![7]);
 
     // Test ends_with search: 'email' should match admin_email only (email_address ends with 'address')
     let req = RequestBuilder::search_schema_text(
@@ -2150,7 +2139,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![4]); // admin_email only
+    TestAssertions::assert_search_matches(&setup, req, vec![4]); // admin_email only
 
     // Test ends_with search for multiple matches: columns ending with 'e'
     let req = RequestBuilder::search_schema_text(
@@ -2159,7 +2148,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 5, 6, 7, 9]); // user_name, user_age, score, bonus_score, is_active, registration_date
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1, 5, 6, 7, 9]); // user_name, user_age, score, bonus_score, is_active, registration_date
 
     // Test case sensitivity: uppercase 'USER' with case_sensitive=true should match nothing
     let req = RequestBuilder::search_schema_text(
@@ -2168,7 +2157,7 @@ fn test_search_schema_text_filters() {
         true,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
+    TestAssertions::assert_search_matches(&setup, req, vec![] as Vec<i64>);
 
     // Test case sensitivity: uppercase 'USER' with case_sensitive=false should match user columns
     let req = RequestBuilder::search_schema_text(
@@ -2177,7 +2166,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]);
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1, 2]);
 
     // Test not_contains search: columns that don't contain 'user'
     let req = RequestBuilder::search_schema_text(
@@ -2186,7 +2175,7 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![3, 4, 5, 6, 7, 8, 9, 10]); // all except user_* columns
+    TestAssertions::assert_search_matches(&setup, req, vec![3, 4, 5, 6, 7, 8, 9, 10]); // all except user_* columns
 
     // Test search with special characters: 'score' should match score and bonus_score
     let req = RequestBuilder::search_schema_text(
@@ -2195,14 +2184,13 @@ fn test_search_schema_text_filters() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![5, 6]); // score, bonus_score
+    TestAssertions::assert_search_matches(&setup, req, vec![5, 6]); // score, bonus_score
 }
 
 #[test]
 fn test_search_schema_data_type_filters() {
     let _lock = r_test_lock();
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
-    let socket = setup.socket();
 
     // Schema: name(0 - str), age(1 - int), score(2 - dbl), is_active(3 - lgl), date_joined(4 - Date)
 
@@ -2211,35 +2199,35 @@ fn test_search_schema_data_type_filters() {
         vec![ColumnDisplayType::Integer, ColumnDisplayType::Floating],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![1, 2]);
+    TestAssertions::assert_search_matches(&setup, req, vec![1, 2]);
 
     // Test filter for string columns: should match name only
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::String],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0]);
+    TestAssertions::assert_search_matches(&setup, req, vec![0]);
 
     // Test filter for boolean columns: should match is_active only
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::Boolean],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![3]);
+    TestAssertions::assert_search_matches(&setup, req, vec![3]);
 
     // Test filter for date columns: should match date_joined only
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::Date],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![4]);
+    TestAssertions::assert_search_matches(&setup, req, vec![4]);
 
     // Test filter for multiple data types: string and boolean
     let req = RequestBuilder::search_schema_data_types(
         vec![ColumnDisplayType::String, ColumnDisplayType::Boolean],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 3]); // name, is_active
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 3]); // name, is_active
 
     // Test filter for all numeric-like types: Integer, Floating and Date
     let req = RequestBuilder::search_schema_data_types(
@@ -2250,32 +2238,31 @@ fn test_search_schema_data_type_filters() {
         ],
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![1, 2, 4]); // age, score, date_joined
+    TestAssertions::assert_search_matches(&setup, req, vec![1, 2, 4]); // age, score, date_joined
 
     // Test empty filter (should match nothing when no types specified)
     let req = RequestBuilder::search_schema_data_types(vec![], SearchSchemaSortOrder::Original);
-    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
+    TestAssertions::assert_search_matches(&setup, req, vec![] as Vec<i64>);
 }
 
 #[test]
 fn test_search_schema_sort_orders() {
     let _lock = r_test_lock();
     let setup = TestDataBuilder::create_sort_order_test_dataframe().unwrap();
-    let socket = setup.socket();
 
     // Test original sort order (no filters)
     let req = RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::Original);
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]);
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1, 2]);
 
     // Test ascending sort order
     let req =
         RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::AscendingName);
-    TestAssertions::assert_search_matches(socket, req, vec![1, 2, 0]); // apple, banana, zebra
+    TestAssertions::assert_search_matches(&setup, req, vec![1, 2, 0]); // apple, banana, zebra
 
     // Test descending sort order
     let req =
         RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::DescendingName);
-    TestAssertions::assert_search_matches(socket, req, vec![0, 2, 1]); // zebra, banana, apple
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 2, 1]); // zebra, banana, apple
 }
 
 #[test]
@@ -2291,7 +2278,6 @@ fn test_search_schema_combined_filters() {
         None,
     )
     .unwrap();
-    let socket = setup.socket();
 
     // Test combined filters: text contains 'user' AND data type is string
     let filters = vec![
@@ -2299,13 +2285,13 @@ fn test_search_schema_combined_filters() {
         FilterBuilder::match_data_types(vec![ColumnDisplayType::String]),
     ];
     let req = RequestBuilder::search_schema_with_filters(filters, SearchSchemaSortOrder::Original);
-    TestAssertions::assert_search_matches(socket, req, vec![0]); // Only user_name matches both
+    TestAssertions::assert_search_matches(&setup, req, vec![0]); // Only user_name matches both
 
     // Test text contains 'name' sorted descending
     let filters = vec![FilterBuilder::text_contains("name", false)];
     let req =
         RequestBuilder::search_schema_with_filters(filters, SearchSchemaSortOrder::DescendingName);
-    TestAssertions::assert_search_matches(socket, req, vec![0, 2]); // user_name, admin_name
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 2]); // user_name, admin_name
 }
 
 #[test]
@@ -2324,7 +2310,7 @@ fn test_search_schema_no_matches() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(setup.socket(), req, vec![] as Vec<i64>);
+    TestAssertions::assert_search_matches(&setup, req, vec![] as Vec<i64>);
 }
 
 #[test]
@@ -2344,20 +2330,19 @@ fn test_search_schema_type_sort_orders() {
         None,
     )
     .unwrap();
-    let socket = setup.socket();
 
     // Test ascending type sort order - should sort by lowercase type name
     // Schema has: str(0,5), lgl(1), int(2), dbl(3), fct(4)
     // Expected order: dbl columns, fct columns, int columns, lgl columns, str columns
     let req =
         RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::AscendingType);
-    TestAssertions::assert_search_matches(socket, req, vec![3, 4, 2, 1, 0, 5]);
+    TestAssertions::assert_search_matches(&setup, req, vec![3, 4, 2, 1, 0, 5]);
 
     // Test descending type sort order - should sort by lowercase type name in reverse
     // Expected order: str columns, lgl columns, int columns, fct columns, dbl columns
     let req =
         RequestBuilder::search_schema_with_filters(vec![], SearchSchemaSortOrder::DescendingType);
-    TestAssertions::assert_search_matches(socket, req, vec![0, 5, 1, 2, 4, 3]);
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 5, 1, 2, 4, 3]);
 
     // Test type sorting with filters - only numeric types (int, dbl)
     let filters = vec![FilterBuilder::match_data_types(vec![
@@ -2370,12 +2355,12 @@ fn test_search_schema_type_sort_orders() {
         filters.clone(),
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![3, 2]); // height (dbl), age (int)
+    TestAssertions::assert_search_matches(&setup, req, vec![3, 2]); // height (dbl), age (int)
 
     // Descending type sort with filter: int first, then dbl
     let req =
         RequestBuilder::search_schema_with_filters(filters, SearchSchemaSortOrder::DescendingType);
-    TestAssertions::assert_search_matches(socket, req, vec![2, 3]); // age (int), height (dbl)
+    TestAssertions::assert_search_matches(&setup, req, vec![2, 3]); // age (int), height (dbl)
 
     // Test type sorting with boolean filter - single boolean column
     let bool_filters = vec![FilterBuilder::match_data_types(vec![
@@ -2386,7 +2371,7 @@ fn test_search_schema_type_sort_orders() {
         bool_filters,
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![1]); // is_active
+    TestAssertions::assert_search_matches(&setup, req, vec![1]); // is_active
 
     // Test edge case: type sorting with no matches
     let no_match_filters = vec![FilterBuilder::match_data_types(vec![
@@ -2397,7 +2382,7 @@ fn test_search_schema_type_sort_orders() {
         no_match_filters,
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>); // No datetime columns
+    TestAssertions::assert_search_matches(&setup, req, vec![] as Vec<i64>); // No datetime columns
 
     // Test combined text and type filters with type sorting
     let combined_filters = vec![
@@ -2409,7 +2394,7 @@ fn test_search_schema_type_sort_orders() {
         combined_filters,
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![4, 0]); // category, name (both str type and contain 'a')
+    TestAssertions::assert_search_matches(&setup, req, vec![4, 0]); // category, name (both str type and contain 'a')
 }
 
 #[test]
@@ -2428,7 +2413,6 @@ fn test_search_schema_text_with_sort_orders() {
         None,
     )
     .unwrap();
-    let socket = setup.socket();
 
     // Schema: zebra_name(0), apple_name(1), banana_score(2), cherry_id(3), date_value(4)
 
@@ -2439,7 +2423,7 @@ fn test_search_schema_text_with_sort_orders() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1]); // original order
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1]); // original order
 
     // Test text search with ascending name sort: apple_name, zebra_name
     let req = RequestBuilder::search_schema_text(
@@ -2448,7 +2432,7 @@ fn test_search_schema_text_with_sort_orders() {
         false,
         SearchSchemaSortOrder::AscendingName,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![1, 0]); // apple_name first
+    TestAssertions::assert_search_matches(&setup, req, vec![1, 0]); // apple_name first
 
     // Test text search with descending name sort: zebra_name, apple_name
     let req = RequestBuilder::search_schema_text(
@@ -2457,7 +2441,7 @@ fn test_search_schema_text_with_sort_orders() {
         false,
         SearchSchemaSortOrder::DescendingName,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1]); // zebra_name first
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1]); // zebra_name first
 
     // Test text search with type sort: both name columns are strings, so maintains relative order
     let req = RequestBuilder::search_schema_text(
@@ -2466,7 +2450,7 @@ fn test_search_schema_text_with_sort_orders() {
         false,
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1]); // both str type, original relative order
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1]); // both str type, original relative order
 
     // Test broader search with type sorting: search for anything containing 'a'
     let req = RequestBuilder::search_schema_text(
@@ -2475,14 +2459,13 @@ fn test_search_schema_text_with_sort_orders() {
         false,
         SearchSchemaSortOrder::AscendingType,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![2, 4, 0, 1]); // banana_score(dbl), date_value(dbl), zebra_name(str), apple_name(str)
+    TestAssertions::assert_search_matches(&setup, req, vec![2, 4, 0, 1]); // banana_score(dbl), date_value(dbl), zebra_name(str), apple_name(str)
 }
 
 #[test]
 fn test_search_schema_edge_cases() {
     let _lock = r_test_lock();
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
-    let socket = setup.socket();
 
     // Test empty search term
     let req = RequestBuilder::search_schema_text(
@@ -2491,7 +2474,7 @@ fn test_search_schema_edge_cases() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2, 3, 4]); // Empty string matches all columns
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1, 2, 3, 4]); // Empty string matches all columns
 
     // Test search term that matches nothing
     let req = RequestBuilder::search_schema_text(
@@ -2500,7 +2483,7 @@ fn test_search_schema_edge_cases() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![] as Vec<i64>);
+    TestAssertions::assert_search_matches(&setup, req, vec![] as Vec<i64>);
 
     // Test single character search
     let req = RequestBuilder::search_schema_text(
@@ -2509,7 +2492,7 @@ fn test_search_schema_edge_cases() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2, 3, 4]); // name, age, score, is_active, date_joined
+    TestAssertions::assert_search_matches(&setup, req, vec![0, 1, 2, 3, 4]); // name, age, score, is_active, date_joined
 
     // Test underscore search (common separator)
     let req = RequestBuilder::search_schema_text(
@@ -2518,15 +2501,14 @@ fn test_search_schema_edge_cases() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![3, 4]); // is_active, date_joined
+    TestAssertions::assert_search_matches(&setup, req, vec![3, 4]); // is_active, date_joined
 
     // Test case sensitivity with mixed case
-    let setup = TestSetup::from_expression(
+    let setup2 = TestSetup::from_expression(
         "data.frame(UserName = c('test'), userName = c('test'), username = c('test'))",
         None,
     )
     .unwrap();
-    let socket = setup.socket();
 
     // Case sensitive search: exact 'UserName' should match first column only
     let req = RequestBuilder::search_schema_text(
@@ -2535,7 +2517,7 @@ fn test_search_schema_edge_cases() {
         true,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0]); // Only exact case match
+    TestAssertions::assert_search_matches(&setup2, req, vec![0]); // Only exact case match
 
     // Case insensitive search should match all variations
     let req = RequestBuilder::search_schema_text(
@@ -2544,7 +2526,7 @@ fn test_search_schema_edge_cases() {
         false,
         SearchSchemaSortOrder::Original,
     );
-    TestAssertions::assert_search_matches(socket, req, vec![0, 1, 2]); // All variations
+    TestAssertions::assert_search_matches(&setup2, req, vec![0, 1, 2]); // All variations
 }
 
 #[test]
@@ -2569,11 +2551,10 @@ fn test_column_labels() {
     });
 
     let setup = TestSetup::new("df_with_labels");
-    let socket = setup.socket();
 
     // Get schema and verify column labels are present
     let req = RequestBuilder::get_schema(vec![0, 1, 2]);
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc(req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 3);
 
@@ -2616,11 +2597,10 @@ fn test_column_labels_missing() {
     });
 
     let setup = TestSetup::new("df_no_labels");
-    let socket = setup.socket();
 
     // Get schema and verify column labels are None
     let req = RequestBuilder::get_schema(vec![0, 1, 2]);
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 3);
 
@@ -2676,11 +2656,10 @@ fn test_column_labels_haven_compatibility() {
     });
 
     let setup = TestSetup::new("df_haven");
-    let socket = setup.socket();
 
     // Get schema and verify column labels work with both regular and haven labelled columns
     let req = RequestBuilder::get_schema(vec![0, 1]);
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 2);
 
@@ -2736,11 +2715,10 @@ fn test_column_labels_edge_cases() {
     });
 
     let setup = TestSetup::new("df_edge_cases");
-    let socket = setup.socket();
 
     // Get schema and verify edge cases are handled correctly
     let req = RequestBuilder::get_schema(vec![0, 1, 2, 3, 4]);
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 5);
 
@@ -2789,7 +2767,6 @@ fn test_export_with_sort_order() {
     });
 
     let setup = TestSetup::new("df_sort_test");
-    let socket = setup.socket();
 
     // First, apply a sort by the 'value' column in ascending order
     let req = RequestBuilder::set_sort_columns(vec![ColumnSortKey {
@@ -2797,7 +2774,7 @@ fn test_export_with_sort_order() {
         ascending: true,
     }]);
     assert_match!(
-        socket_rpc(socket, req),
+        setup.rpc(req),
         DataExplorerBackendReply::SetSortColumnsReply()
     );
 
@@ -2812,7 +2789,7 @@ fn test_export_with_sort_order() {
         },
         format: ExportFormat::Csv,
     });
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
             assert_eq!(format, ExportFormat::Csv);
             // After sorting by value ascending, the id column should be: 1, 2, 3, 4
@@ -2830,7 +2807,7 @@ fn test_export_with_sort_order() {
         },
         format: ExportFormat::Csv,
     });
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
             assert_eq!(format, ExportFormat::Csv);
             // After sorting by value ascending, should be: Alice, Bob, Charlie, David
@@ -2849,7 +2826,7 @@ fn test_export_with_sort_order() {
         },
         format: ExportFormat::Csv,
     });
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
             assert_eq!(format, ExportFormat::Csv);
             // After sorting by value ascending
@@ -2863,7 +2840,7 @@ fn test_export_with_sort_order() {
         ascending: false,
     }]);
     assert_match!(
-        socket_rpc(socket, req),
+        setup.rpc(req),
         DataExplorerBackendReply::SetSortColumnsReply()
     );
 
@@ -2878,7 +2855,7 @@ fn test_export_with_sort_order() {
         },
         format: ExportFormat::Csv,
     });
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
             assert_eq!(format, ExportFormat::Csv);
             // After sorting by value descending, the id column should be: 4, 3, 2, 1
@@ -2898,7 +2875,7 @@ fn test_export_with_sort_order() {
         },
     ]);
     assert_match!(
-        socket_rpc(socket, req),
+        setup.rpc(req),
         DataExplorerBackendReply::SetSortColumnsReply()
     );
 
@@ -2912,7 +2889,7 @@ fn test_export_with_sort_order() {
         },
         format: ExportFormat::Tsv, // Also test TSV format
     });
-    assert_match!(socket_rpc(socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::ExportDataSelectionReply(ExportedData { data, format }) => {
             assert_eq!(format, ExportFormat::Tsv);
             // After sorting by id ascending (primary sort)
@@ -2931,7 +2908,7 @@ fn test_empty_data_frame_schema() {
     let _lock = r_test_lock();
 
     // Test schema behavior with 0-row data frames for different column types
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "data.frame(
             a = numeric(0),
             b = character(0),
@@ -2948,7 +2925,7 @@ fn test_empty_data_frame_schema() {
         column_indices: vec![0, 1, 2, 3, 4, 5],
     });
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 6);
 
@@ -2985,7 +2962,7 @@ fn test_empty_data_frame_data_values() {
     let _lock = r_test_lock();
 
     // Test data values request behavior with 0-row data frames
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "data.frame(
             numbers = numeric(0),
             strings = character(0),
@@ -2997,7 +2974,7 @@ fn test_empty_data_frame_data_values() {
 
     let req = get_data_values_request(0, 10, vec![0, 1, 2], default_format_options());
 
-    assert_match!(socket_rpc(&socket, req),
+    assert_match!(setup.rpc( req),
         DataExplorerBackendReply::GetDataValuesReply(data) => {
             assert_eq!(data.columns.len(), 3);
             // Each column should be empty
@@ -3013,11 +2990,11 @@ fn test_empty_data_frame_state() {
     let _lock = r_test_lock();
 
     // Test state request with 0-row data frame
-    let socket =
+    let setup =
         open_data_explorer_from_expression("data.frame(x = numeric(0), y = character(0))", None)
             .unwrap();
 
-    assert_match!(socket_rpc(&socket, DataExplorerBackendRequest::GetState),
+    assert_match!(setup.rpc( DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
             assert_eq!(state.table_shape.num_rows, 0);
             assert_eq!(state.table_shape.num_columns, 2);
@@ -3032,7 +3009,7 @@ fn test_empty_data_frame_column_profiles() {
     let _lock = r_test_lock();
 
     // Test column profile requests (histograms, summary stats) with 0-row data frames
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "data.frame(numbers = numeric(0), strings = character(0))",
         None,
     )
@@ -3044,7 +3021,7 @@ fn test_empty_data_frame_column_profiles() {
     let req =
         RequestBuilder::get_column_profiles("empty_histogram".to_string(), vec![histogram_req]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
         assert_eq!(histogram.bin_edges, Vec::<String>::new());
         assert_eq!(histogram.bin_counts, Vec::<i64>::new());
@@ -3055,7 +3032,7 @@ fn test_empty_data_frame_column_profiles() {
     let req =
         RequestBuilder::get_column_profiles("empty_freq_table".to_string(), vec![freq_table_req]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
         assert_eq!(freq_table.values.len(), 0);
         assert_eq!(freq_table.counts.len(), 0);
@@ -3068,7 +3045,7 @@ fn test_single_row_data_frame_column_profiles() {
     let _lock = r_test_lock();
 
     // Test column profiles specifically for 1-row data frames to ensure sparklines work
-    let socket = open_data_explorer_from_expression(
+    let setup = open_data_explorer_from_expression(
         "data.frame(
             single_num = c(42.5),
             single_str = c('hello'),
@@ -3085,7 +3062,7 @@ fn test_single_row_data_frame_column_profiles() {
     let req =
         RequestBuilder::get_column_profiles("single_histogram".to_string(), vec![histogram_req]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let histogram = profiles[0].small_histogram.clone().unwrap();
         assert_eq!(histogram.bin_edges, vec!["42.50", "42.50"]);
         assert_eq!(histogram.bin_counts, vec![1]);
@@ -3096,7 +3073,7 @@ fn test_single_row_data_frame_column_profiles() {
     let req =
         RequestBuilder::get_column_profiles("single_freq_table".to_string(), vec![freq_table_req]);
 
-    expect_column_profile_results(&socket, req, |profiles| {
+    expect_column_profile_results(&setup, req, |profiles| {
         let freq_table = profiles[0].small_frequency_table.clone().unwrap();
         assert_eq!(freq_table.values.len(), 1);
         assert_eq!(freq_table.counts, vec![1]);
@@ -3117,7 +3094,7 @@ fn test_single_row_data_frame_column_profiles() {
                 histogram_req,
             ]);
 
-        expect_column_profile_results(&socket, req, |profiles| {
+        expect_column_profile_results(&setup, req, |profiles| {
             let histogram = profiles[0].small_histogram.clone().unwrap();
             assert_eq!(histogram.bin_edges, vec!["7", "7"]);
             assert_eq!(histogram.bin_counts, vec![1]);
