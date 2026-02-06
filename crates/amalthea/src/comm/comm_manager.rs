@@ -1,12 +1,11 @@
 /*
  * comm_manager.rs
  *
- * Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
 use crossbeam::channel::Receiver;
-use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use log::info;
 use log::warn;
@@ -21,8 +20,6 @@ use crate::comm::event::CommManagerRequest;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubMessage;
-use crate::wire::comm_close::CommClose;
-use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 
 pub struct CommManager {
@@ -65,177 +62,105 @@ impl CommManager {
      * The main execution thread for the comm manager; listens for comm events
      * and dispatches them accordingly. Blocks until a message is received;
      * intended to be called in a loop.
+     *
+     * NOTE: Comms now route their outgoing messages directly through IOPub
+     * via CommOutgoingTx, so we no longer need to poll outgoing_rx from each
+     * CommSocket. This thread just handles lifecycle events.
      */
     pub fn execution_thread(&mut self) {
-        let mut sel = Select::new();
-
-        // Listen for messages from each of the open comms that are destined for
-        // the frontend
-        for comm_socket in &self.open_comms {
-            sel.recv(&comm_socket.outgoing_rx);
-        }
-
-        // Add a receiver for the comm_event channel; this is used to
-        // unblock the select when a comm is added or removed so we can
-        // start a new `Select` with the updated set of open comms.
-        sel.recv(&self.comm_event_rx);
-
-        // Wait until a message is received (blocking call)
-        let oper = sel.select();
-
-        // Look up the index in the set of open comms
-        let index = oper.index();
-        if index >= self.open_comms.len() {
-            // If the index is greater than the number of open comms,
-            // then the message was received on the comm_event channel.
-            let comm_event = oper.recv(&self.comm_event_rx);
-            if let Err(err) = comm_event {
-                warn!("Error receiving comm_event message: {}", err);
+        // Wait for a comm event (blocking call)
+        let comm_event = match self.comm_event_rx.recv() {
+            Ok(event) => event,
+            Err(err) => {
+                warn!("Error receiving comm_event message: {err}");
                 return;
-            }
-            match comm_event.unwrap() {
-                // A Comm was opened
-                CommManagerEvent::Opened(comm_socket, val) => {
-                    // Notify the frontend, if this request originated from the back end
-                    if comm_socket.initiator == CommInitiator::BackEnd {
-                        self.iopub_tx
-                            .send(IOPubMessage::CommOpen(CommOpen {
-                                comm_id: comm_socket.comm_id.clone(),
-                                target_name: comm_socket.comm_name.clone(),
-                                data: val,
-                            }))
-                            .unwrap();
-                    }
+            },
+        };
 
-                    // Add to our own list of open comms
-                    self.open_comms.push(comm_socket);
+        match comm_event {
+            // A Comm was opened
+            CommManagerEvent::Opened(comm_socket, val) => {
+                // Notify the frontend, if this request originated from the back end
+                if comm_socket.initiator == CommInitiator::BackEnd {
+                    self.iopub_tx
+                        .send(IOPubMessage::CommOpen(CommOpen {
+                            comm_id: comm_socket.comm_id.clone(),
+                            target_name: comm_socket.comm_name.clone(),
+                            data: val,
+                        }))
+                        .log_err();
+                }
+
+                // Add to our own list of open comms
+                self.open_comms.push(comm_socket);
+
+                info!(
+                    "Comm channel opened; there are now {} open comms",
+                    self.open_comms.len()
+                );
+            },
+
+            // A message was received from the frontend
+            CommManagerEvent::Message(comm_id, msg) => {
+                // Find the index of the comm in the vector
+                let index = self
+                    .open_comms
+                    .iter()
+                    .position(|comm_socket| comm_socket.comm_id == comm_id);
+
+                // If we found it, send the message to the comm
+                if let Some(index) = index {
+                    let comm = &self.open_comms[index];
+                    log::trace!("Comm manager: Sending message to comm '{}'", comm.comm_name);
+
+                    comm.incoming_tx.send(msg).log_err();
+                } else {
+                    log::warn!("Received message for unknown comm channel {comm_id}: {msg:?}",);
+                }
+            },
+
+            // A Comm was closed; attempt to remove it from the set of open comms
+            CommManagerEvent::Closed(comm_id) => {
+                // Find the index of the comm in the vector
+                let index = self
+                    .open_comms
+                    .iter()
+                    .position(|comm_socket| comm_socket.comm_id == comm_id);
+
+                // If we found it, remove it.
+                if let Some(index) = index {
+                    // Notify the comm that it's been closed
+                    let comm = &self.open_comms[index];
+                    comm.incoming_tx.send(CommMsg::Close).log_err();
+
+                    // Remove it from our list of open comms
+                    self.open_comms.remove(index);
 
                     info!(
-                        "Comm channel opened; there are now {} open comms",
+                        "Comm channel closed; there are now {} open comms",
                         self.open_comms.len()
                     );
-                },
+                } else {
+                    warn!("Received close message for unknown comm channel {comm_id}",);
+                }
+            },
 
-                // A message was received from the frontend
-                CommManagerEvent::Message(comm_id, msg) => {
-                    // Find the index of the comm in the vector
-                    let index = self
+            // A comm manager request
+            CommManagerEvent::Request(req) => match req {
+                // Requesting information about the open comms
+                CommManagerRequest::Info(tx) => {
+                    let comms: Vec<CommInfo> = self
                         .open_comms
                         .iter()
-                        .position(|comm_socket| comm_socket.comm_id == comm_id);
+                        .map(|comm| CommInfo {
+                            id: comm.comm_id.clone(),
+                            name: comm.comm_name.clone(),
+                        })
+                        .collect();
 
-                    // If we found it, send the message to the comm. TODO: Fewer unwraps
-                    if let Some(index) = index {
-                        let comm = self.open_comms.get(index).unwrap();
-                        log::trace!("Comm manager: Sending message to comm '{}'", comm.comm_name);
-
-                        comm.incoming_tx.send(msg).unwrap();
-                    } else {
-                        log::warn!(
-                            "Received message for unknown comm channel {}: {:?}",
-                            comm_id,
-                            msg
-                        );
-                    }
+                    tx.send(CommManagerInfoReply { comms }).log_err();
                 },
-
-                // A Comm was closed; attempt to remove it from the set of open comms
-                CommManagerEvent::Closed(comm_id) => {
-                    // Find the index of the comm in the vector
-                    let index = self
-                        .open_comms
-                        .iter()
-                        .position(|comm_socket| comm_socket.comm_id == comm_id);
-
-                    // If we found it, remove it.
-                    if let Some(index) = index {
-                        // Notify the comm that it's been closed
-                        let comm = self.open_comms.get(index).unwrap();
-                        comm.incoming_tx.send(CommMsg::Close).log_err();
-
-                        // Remove it from our list of open comms
-                        self.open_comms.remove(index);
-
-                        info!(
-                            "Comm channel closed; there are now {} open comms",
-                            self.open_comms.len()
-                        );
-                    } else {
-                        warn!(
-                            "Received close message for unknown comm channel {}",
-                            comm_id
-                        );
-                    }
-                },
-
-                // A comm manager request
-                CommManagerEvent::Request(req) => match req {
-                    // Requesting information about the open comms
-                    CommManagerRequest::Info(tx) => {
-                        let comms: Vec<CommInfo> = self
-                            .open_comms
-                            .iter()
-                            .map(|comm| CommInfo {
-                                id: comm.comm_id.clone(),
-                                name: comm.comm_name.clone(),
-                            })
-                            .collect();
-
-                        tx.send(CommManagerInfoReply { comms }).unwrap();
-                    },
-                },
-            }
-        } else {
-            // Otherwise, the message was received on one of the open comms.
-            let comm_socket = &self.open_comms[index];
-            let comm_msg = match oper.recv(&comm_socket.outgoing_rx) {
-                Ok(msg) => msg,
-                Err(err) => {
-                    warn!("Error receiving comm message: {}", err);
-                    return;
-                },
-            };
-
-            // Amend the message with the comm's ID, convert it to an
-            // IOPub message, and send it to the frontend
-            let msg = match comm_msg {
-                // The comm is emitting data to the frontend without being
-                // asked; this is treated like an event.
-                CommMsg::Data(data) => IOPubMessage::CommMsgEvent(CommWireMsg {
-                    comm_id: comm_socket.comm_id.clone(),
-                    data,
-                }),
-
-                // The comm is replying to a message from the frontend
-                CommMsg::Rpc {
-                    id: _,
-                    parent_header,
-                    data,
-                } => {
-                    // Create the payload to send to the frontend
-                    let payload = CommWireMsg {
-                        comm_id: comm_socket.comm_id.clone(),
-                        data,
-                    };
-
-                    // The header travels with the message for proper parenting
-                    match parent_header {
-                        Some(header) => IOPubMessage::CommMsgReply(header, payload),
-                        None => {
-                            // No header means this came from a test or other
-                            // context without a real Jupyter request
-                            IOPubMessage::CommMsgEvent(payload)
-                        },
-                    }
-                },
-
-                CommMsg::Close => IOPubMessage::CommClose(CommClose {
-                    comm_id: comm_socket.comm_id.clone(),
-                }),
-            };
-
-            // Deliver the message to the frontend
-            self.iopub_tx.send(msg).unwrap();
+            },
         }
     }
 }

@@ -14,6 +14,7 @@ rust-version.workspace = true
 amalthea = { path = "../amalthea" }
 anyhow = "1.0.80"
 ark = { path = "../ark" }
+crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
 dap = { git = "https://github.com/sztomi/dap-rs", branch = "main", features = ["client"] }
 harp = { path = "../harp" }
 log = "0.4.17"

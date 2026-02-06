@@ -1,7 +1,7 @@
 /*
  * mod.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -42,6 +42,7 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use log::warn;
 use serde_json::json;
+use stdext::result::ResultExt;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
@@ -260,7 +261,7 @@ impl ShellHandler for Shell {
                 CommMsg::Data(val) => {
                     // Echo back the data we received on the comm channel to the
                     // sender.
-                    comm.outgoing_tx.send(CommMsg::Data(val)).unwrap();
+                    comm.outgoing_tx.send(CommMsg::Data(val)).log_err();
                 },
                 CommMsg::Rpc {
                     id,
@@ -275,7 +276,7 @@ impl ShellHandler for Shell {
                             parent_header,
                             data: val,
                         })
-                        .unwrap();
+                        .log_err();
                 },
                 CommMsg::Close => {
                     // Close the channel and exit the thread.

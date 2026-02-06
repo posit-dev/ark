@@ -13,6 +13,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
+use amalthea::socket::comm::CommOutgoingTx;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
 use stdext::result::ResultExt;
@@ -163,7 +164,7 @@ pub struct Dap {
     current_breakpoint_id: i64,
 
     /// Channel for sending events to the comm frontend.
-    comm_tx: Option<Sender<CommMsg>>,
+    comm_tx: Option<CommOutgoingTx>,
 
     /// Channel for sending debug commands to `read_console()`
     r_request_tx: Sender<RRequest>,
@@ -480,7 +481,7 @@ impl ServerHandler for Dap {
         &mut self,
         server_start: ServerStartMessage,
         server_started_tx: Sender<ServerStartedMessage>,
-        comm_tx: Sender<CommMsg>,
+        comm_tx: CommOutgoingTx,
     ) -> Result<(), amalthea::error::Error> {
         log::info!("DAP: Spawning thread");
 

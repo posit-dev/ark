@@ -19,6 +19,7 @@ use amalthea::comm::variables_comm::VariablesBackendReply;
 use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -67,6 +68,7 @@ pub enum LastValue {
 pub struct RVariables {
     comm: CommSocket,
     comm_manager_tx: Sender<CommManagerEvent>,
+    iopub_tx: Sender<IOPubMessage>,
     pub env: RThreadSafe<RObject>,
     /// `Binding` does not currently protect anything, and therefore doesn't
     /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
@@ -101,9 +103,14 @@ impl RVariables {
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the frontend
      */
-    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
+    pub fn start(
+        env: RObject,
+        comm: CommSocket,
+        comm_manager_tx: Sender<CommManagerEvent>,
+        iopub_tx: Sender<IOPubMessage>,
+    ) {
         // Start with default settings
-        Self::start_with_config(env, comm, comm_manager_tx, LastValue::UseOption);
+        Self::start_with_config(env, comm, comm_manager_tx, iopub_tx, LastValue::UseOption);
     }
 
     /**
@@ -117,6 +124,7 @@ impl RVariables {
         env: RObject,
         comm: CommSocket,
         comm_manager_tx: Sender<CommManagerEvent>,
+        iopub_tx: Sender<IOPubMessage>,
         show_last_value: LastValue,
     ) {
         // Validate that the RObject we were passed is actually an environment
@@ -139,6 +147,7 @@ impl RVariables {
             let environment = Self {
                 comm,
                 comm_manager_tx,
+                iopub_tx,
                 env,
                 current_bindings,
                 version: 0,
@@ -404,6 +413,7 @@ impl RVariables {
                 obj,
                 Some(binding),
                 self.comm_manager_tx.clone(),
+                self.iopub_tx.clone(),
             )?;
             Ok(Some(viewer_id))
         })

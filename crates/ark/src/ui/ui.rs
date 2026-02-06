@@ -255,7 +255,9 @@ mod tests {
     use amalthea::comm::ui_comm::UiFrontendEvent;
     use amalthea::socket::comm::CommInitiator;
     use amalthea::socket::comm::CommSocket;
+    use amalthea::socket::iopub::IOPubMessage;
     use amalthea::socket::stdin::StdInRequest;
+    use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
@@ -269,11 +271,15 @@ mod tests {
 
     #[test]
     fn test_ui_comm() {
+        // Create a dummy iopub channel to receive responses.
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
         // Create a sender/receiver pair for the comm channel.
         let comm_socket = CommSocket::new(
             CommInitiator::FrontEnd,
             String::from("test-ui-comm-id"),
             String::from("positron.UI"),
+            iopub_tx,
         );
 
         // Communication channel between the main thread and the Amalthea
@@ -310,13 +316,8 @@ mod tests {
             })
             .unwrap();
 
-        // Wait for the reply; this should be a FrontendRpcResult. We don't wait
-        // more than a second since this should be quite fast and we don't want to
-        // hang the test suite if it doesn't return.
-        let response = comm_socket
-            .outgoing_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
+        // Wait for the reply; this should be a FrontendRpcResult.
+        let response = iopub_rx.recv_comm_msg();
         match response {
             CommMsg::Rpc {
                 id, data: result, ..
@@ -361,10 +362,7 @@ mod tests {
             .unwrap();
 
         // Wait for the reply
-        let response = comm_socket
-            .outgoing_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
+        let response = iopub_rx.recv_comm_msg();
         match response {
             CommMsg::Rpc {
                 id, data: result, ..

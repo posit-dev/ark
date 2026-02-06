@@ -1,7 +1,7 @@
 /*
  * server_comm.rs
  *
- * Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -10,9 +10,9 @@ use std::sync::Mutex;
 
 use crossbeam::channel::Sender;
 
-use crate::comm::comm_channel::CommMsg;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
+use crate::socket::comm::CommOutgoingTx;
 
 /// Message sent from the frontend requesting a server to start
 #[derive(Debug, serde::Deserialize)]
@@ -52,7 +52,7 @@ impl ServerStartedMessage {
 
 pub struct ServerComm {
     handler: Arc<Mutex<dyn ServerHandler>>,
-    msg_tx: Sender<CommMsg>,
+    msg_tx: CommOutgoingTx,
 }
 
 /**
@@ -63,7 +63,7 @@ pub struct ServerComm {
  * - `msg_tx` is the channel that will be used to send messages to the frontend.
  */
 impl ServerComm {
-    pub fn new(handler: Arc<Mutex<dyn ServerHandler>>, msg_tx: Sender<CommMsg>) -> ServerComm {
+    pub fn new(handler: Arc<Mutex<dyn ServerHandler>>, msg_tx: CommOutgoingTx) -> ServerComm {
         ServerComm { handler, msg_tx }
     }
 
@@ -78,16 +78,5 @@ impl ServerComm {
         let mut handler = self.handler.lock().unwrap();
         handler.start(server_start, server_started_tx, self.msg_tx.clone())?;
         Ok(())
-    }
-
-    /**
-     * Returns a Sender that can accept comm channel messages (required as
-     * part of the `CommChannel` contract). Because the LSP or DAP
-     * communicate over their own TCP connection, they do not process
-     * messages from the comm, and they are discarded here.
-     */
-    pub fn msg_sender(&self) -> Sender<CommMsg> {
-        let (msg_tx, _msg_rx) = crossbeam::channel::unbounded();
-        msg_tx
     }
 }
