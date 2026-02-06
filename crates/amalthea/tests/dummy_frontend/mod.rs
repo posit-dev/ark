@@ -1,7 +1,7 @@
 /*
  * dummy_frontend.rs
  *
- * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -27,30 +27,57 @@ use crossbeam::channel::Sender;
 use super::control;
 use super::shell;
 
-static AMALTHEA_FRONTEND: OnceLock<Arc<Mutex<(DummyFrontend, Sender<CommManagerEvent>)>>> =
-    OnceLock::new();
+static AMALTHEA_FRONTEND: OnceLock<
+    Arc<
+        Mutex<(
+            DummyFrontend,
+            Sender<CommManagerEvent>,
+            Sender<IOPubMessage>,
+        )>,
+    >,
+> = OnceLock::new();
 
 /// Wrapper around `DummyFrontend` that checks sockets are empty on drop
 pub struct DummyAmaltheaFrontend {
     pub comm_manager_tx: Sender<CommManagerEvent>,
-    guard: MutexGuard<'static, (DummyFrontend, Sender<CommManagerEvent>)>,
+    pub iopub_tx: Sender<IOPubMessage>,
+    guard: MutexGuard<
+        'static,
+        (
+            DummyFrontend,
+            Sender<CommManagerEvent>,
+            Sender<IOPubMessage>,
+        ),
+    >,
 }
 
 impl DummyAmaltheaFrontend {
     pub fn lock() -> Self {
         let guard = Self::get_frontend().lock().unwrap();
         let comm_manager_tx = guard.1.clone();
+        let iopub_tx = guard.2.clone();
         Self {
             guard,
             comm_manager_tx,
+            iopub_tx,
         }
     }
 
-    fn get_frontend() -> &'static Arc<Mutex<(DummyFrontend, Sender<CommManagerEvent>)>> {
+    fn get_frontend() -> &'static Arc<
+        Mutex<(
+            DummyFrontend,
+            Sender<CommManagerEvent>,
+            Sender<IOPubMessage>,
+        )>,
+    > {
         AMALTHEA_FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyAmaltheaFrontend::init())))
     }
 
-    fn init() -> (DummyFrontend, Sender<CommManagerEvent>) {
+    fn init() -> (
+        DummyFrontend,
+        Sender<CommManagerEvent>,
+        Sender<IOPubMessage>,
+    ) {
         let connection = DummyConnection::new();
         let (connection_file, registration_file) = connection.get_connection_files();
 
@@ -74,8 +101,7 @@ impl DummyAmaltheaFrontend {
         // Perform kernel connection on its own thread to
         // avoid deadlocking as it waits for the `HandshakeReply`
         stdext::spawn!("dummy_kernel", {
-            let comm_manager_tx = comm_manager_tx.clone();
-
+            let iopub_tx = iopub_tx.clone();
             move || {
                 let server_handlers = HashMap::new();
                 if let Err(err) = kernel::connect(
@@ -88,7 +114,6 @@ impl DummyAmaltheaFrontend {
                     StreamBehavior::None,
                     iopub_tx,
                     iopub_rx,
-                    comm_manager_tx,
                     comm_manager_rx,
                     stdin_request_rx,
                     stdin_reply_tx,
@@ -99,7 +124,7 @@ impl DummyAmaltheaFrontend {
         });
 
         let frontend = DummyFrontend::from_connection(connection);
-        (frontend, comm_manager_tx)
+        (frontend, comm_manager_tx, iopub_tx)
     }
 }
 

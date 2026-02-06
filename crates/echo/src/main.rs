@@ -1,7 +1,7 @@
 /*
  * main.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -31,7 +31,7 @@ use crate::shell::Shell;
 fn start_kernel(connection_file: ConnectionFile, registration_file: Option<RegistrationFile>) {
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
+    let (_comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
 
     // Communication channel with StdIn
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
@@ -59,7 +59,6 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
         StreamBehavior::None,
         iopub_tx,
         iopub_rx,
-        comm_manager_tx,
         comm_manager_rx,
         stdin_request_rx,
         stdin_reply_tx,

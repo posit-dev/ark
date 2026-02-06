@@ -18,6 +18,7 @@ use ark::help::message::HelpEvent;
 use ark::help::r_help::RHelp;
 use ark::help_proxy;
 use ark::r_task::r_task;
+use ark_test::dummy_jupyter_header;
 use ark_test::IOPubReceiverExt;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
@@ -65,7 +66,7 @@ impl TestRHelp {
             .incoming_tx
             .send(CommMsg::Rpc {
                 id: request_id.clone(),
-                parent_header: None,
+                parent_header: dummy_jupyter_header(),
                 data,
             })
             .unwrap();

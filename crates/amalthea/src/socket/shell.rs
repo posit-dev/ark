@@ -1,12 +1,13 @@
 /*
  * shell.rs
  *
- * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -20,8 +21,6 @@ use crate::comm::comm_channel::comm_rpc_message;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
 use crate::comm::event::CommManagerEvent;
-use crate::comm::event::CommManagerInfoReply;
-use crate::comm::event::CommManagerRequest;
 use crate::comm::server_comm::ServerComm;
 use crate::comm::server_comm::ServerStartedMessage;
 use crate::error::Error;
@@ -51,6 +50,16 @@ use crate::wire::status::KernelStatus;
 
 /// Wrapper for the Shell socket; receives requests for execution, etc. from the
 /// frontend and handles them or dispatches them to the execution thread.
+///
+/// Shell also manages comm channels (Jupyter's bidirectional communication
+/// mechanism for custom messages between frontend and backend). This includes:
+/// - Handling `comm_open`, `comm_msg`, and `comm_close` requests from the frontend
+/// - Processing backend-initiated comm events (opens, messages) via `comm_manager_rx`
+/// - Routing messages to/from individual comm handlers
+///
+/// Comm management lives in Shell because frontend comm requests (`comm_open`,
+/// `comm_msg`, `comm_close`) arrive on the Shell socket. Backend-initiated comms
+/// piggyback on this infrastructure via `comm_manager_rx`.
 pub struct Shell {
     /// The ZeroMQ Shell socket
     socket: Socket,
@@ -64,8 +73,19 @@ pub struct Shell {
     /// Map of server handler target names to their handlers
     server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 
-    /// Channel used to deliver comm events to the comm manager
-    comm_manager_tx: Sender<CommManagerEvent>,
+    /// Socket to receive notifications when comm events arrive
+    comm_notif_socket: Socket,
+
+    /// Channel to receive comm registration events from backend-initiated comms
+    comm_manager_rx: Receiver<CommManagerEvent>,
+
+    /// The set of currently open comm channels
+    open_comms: RefCell<Vec<CommSocket>>,
+
+    /// Marker to prevent Shell from being sent to another thread.
+    /// Shell uses RefCell for interior mutability and must only be accessed
+    /// from the shell thread where it is created.
+    _not_send: PhantomData<*const ()>,
 }
 
 impl Shell {
@@ -73,14 +93,15 @@ impl Shell {
     ///
     /// * `socket` - The underlying ZeroMQ Shell socket
     /// * `iopub_tx` - A channel that delivers messages to the IOPub socket
-    /// * `comm_manager_tx` - A channel that delivers messages to the comm manager thread
-    /// * `comm_changed_rx` - A channel that receives messages from the comm manager thread
+    /// * `comm_notif_socket` - Socket to receive notifications when comm events arrive
+    /// * `comm_manager_rx` - A channel that receives comm registration events from backend comms
     /// * `shell_handler` - The language's shell channel handler
     /// * `server_handlers` - A map of server handler target names to their handlers
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_notif_socket: Socket,
+        comm_manager_rx: Receiver<CommManagerEvent>,
         shell_handler: Box<dyn ShellHandler>,
         server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
@@ -92,30 +113,138 @@ impl Shell {
             iopub_tx,
             shell_handler,
             server_handlers,
-            comm_manager_tx,
+            comm_notif_socket,
+            comm_manager_rx,
+            open_comms: RefCell::new(Vec::new()),
+            _not_send: PhantomData,
         }
     }
 
     /// Main loop for the Shell thread; to be invoked by the kernel.
     pub fn listen(&mut self) {
-        // Begin listening for shell messages
+        // Create poll items for both the shell socket and comm notification socket
+        let mut poll_items = vec![
+            self.socket.socket.as_poll_item(zmq::POLLIN),
+            self.comm_notif_socket.socket.as_poll_item(zmq::POLLIN),
+        ];
+
         loop {
-            log::trace!("Waiting for shell messages");
-            // Attempt to read the next message from the ZeroMQ socket
-            let message = match Message::read_from_socket(&self.socket) {
-                Ok(m) => m,
+            log::trace!("Waiting for shell messages or comm events");
+
+            // Poll both sockets, blocking until one is ready (-1 is the flag
+            // for blocking undefinitely)
+            let n = match zmq::poll(&mut poll_items, -1) {
+                Ok(n) => n,
                 Err(err) => {
-                    log::warn!("Could not read message from shell socket: {err}");
+                    log::warn!("Could not poll shell sockets: {err}");
                     continue;
                 },
             };
 
-            // Handle the message; any failures while handling the messages are
-            // delivered to the client instead of reported up the stack, so the
-            // only errors likely here are "can't deliver to client"
-            if let Err(err) = self.process_message(message) {
-                log::error!("Could not handle shell message: {err}");
+            if n == 0 {
+                continue;
             }
+
+            // Check for comm event notifications
+            if poll_items[1].is_readable() {
+                self.process_comm_notification();
+            }
+
+            // Check for shell messages
+            if poll_items[0].is_readable() {
+                // Attempt to read the next message from the ZeroMQ socket
+                let message = match Message::read_from_socket(&self.socket) {
+                    Ok(m) => m,
+                    Err(err) => {
+                        log::warn!("Could not read message from shell socket: {err}");
+                        continue;
+                    },
+                };
+
+                // Handle the message; any failures while handling the messages are
+                // delivered to the client instead of reported up the stack, so the
+                // only errors likely here are "can't deliver to client"
+                if let Err(err) = self.process_message(message) {
+                    log::error!("Could not handle shell message: {err}");
+                }
+            }
+        }
+    }
+
+    /// Process comm event notifications from the notifier thread.
+    /// Drains all pending notifications and all pending events.
+    fn process_comm_notification(&self) {
+        // Consume all pending notifications (edge-triggered wakeups may coalesce)
+        loop {
+            let mut msg = zmq::Message::new();
+            match self.comm_notif_socket.socket.recv(&mut msg, zmq::DONTWAIT) {
+                Ok(_) => continue,
+                Err(zmq::Error::EAGAIN) => break, // No more pending notifications
+                Err(err) => {
+                    log::error!("Could not receive comm notification: {err}");
+                    break;
+                },
+            }
+        }
+
+        // Drain all pending comm events
+        while let Ok(event) = self.comm_manager_rx.try_recv() {
+            self.process_comm_event(event);
+        }
+    }
+
+    /// Process a comm lifecycle event from `comm_manager_rx`.
+    fn process_comm_event(&self, event: CommManagerEvent) {
+        match event {
+            CommManagerEvent::Opened(comm_socket, data) => {
+                // For backend-initiated comms, notify the frontend via IOPub
+                if comm_socket.initiator == CommInitiator::BackEnd {
+                    self.iopub_tx
+                        .send(IOPubMessage::CommOpen(CommOpen {
+                            comm_id: comm_socket.comm_id.clone(),
+                            target_name: comm_socket.comm_name.clone(),
+                            data,
+                        }))
+                        .log_err();
+                }
+
+                // Add the comm to our list of open comms
+                self.open_comms.borrow_mut().push(comm_socket);
+
+                log::info!(
+                    "Comm channel opened (backend); there are now {} open comms",
+                    self.open_comms.borrow().len()
+                );
+            },
+
+            CommManagerEvent::Message(comm_id, msg) => {
+                let open_comms = self.open_comms.borrow();
+                let Some(comm) = open_comms.iter().find(|c| c.comm_id == comm_id) else {
+                    log::warn!("Received message for unknown comm channel {comm_id}: {msg:?}");
+                    return;
+                };
+
+                log::trace!("Sending message to comm '{}'", comm.comm_name);
+                comm.incoming_tx.send(msg).log_err();
+            },
+
+            CommManagerEvent::Closed(comm_id) => {
+                let mut open_comms = self.open_comms.borrow_mut();
+                let Some(idx) = open_comms.iter().position(|c| c.comm_id == comm_id) else {
+                    log::warn!("Received close message for unknown comm channel {comm_id}");
+                    return;
+                };
+
+                // Notify the comm that it's being closed
+                open_comms[idx].incoming_tx.send(CommMsg::Close).log_err();
+
+                open_comms.remove(idx);
+
+                log::info!(
+                    "Comm channel closed; there are now {} open comms",
+                    open_comms.len()
+                );
+            },
         }
     }
 
@@ -243,28 +372,27 @@ impl Shell {
     fn handle_comm_info_request(&self, req: &CommInfoRequest) -> crate::Result<CommInfoReply> {
         log::info!("Received request for open comms: {req:?}");
 
-        // One off sender/receiver pair for this request
-        let (tx, rx) = crossbeam::channel::bounded(1);
-
-        // Request the list of open comms from the comm manager
-        self.comm_manager_tx
-            .send(CommManagerEvent::Request(CommManagerRequest::Info(tx)))
-            .unwrap();
-
-        // Wait on the reply
-        let CommManagerInfoReply { comms } = rx.recv().unwrap();
-
         // Convert to a JSON object
         let mut info = serde_json::Map::new();
 
-        for comm in comms.into_iter() {
+        let open_comms = self.open_comms.borrow();
+        for comm in open_comms.iter() {
             // Only include comms that match the target name, if one was specified
-            if req.target_name.is_empty() || req.target_name == comm.name {
+            if req.target_name.is_empty() || req.target_name == comm.comm_name {
                 let comm_info_target = CommInfoTargetName {
-                    target_name: comm.name,
+                    target_name: comm.comm_name.clone(),
                 };
-                let comm_info = serde_json::to_value(comm_info_target).unwrap();
-                info.insert(comm.id, comm_info);
+                let comm_info = match serde_json::to_value(comm_info_target) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        log::error!(
+                            "Failed to serialize comm info for {}: {err:?}",
+                            comm.comm_name
+                        );
+                        continue;
+                    },
+                };
+                info.insert(comm.comm_id.clone(), comm_info);
             }
         }
 
@@ -313,7 +441,7 @@ impl Shell {
             // proper message parenting
             CommMsg::Rpc {
                 id: request_id,
-                parent_header: Some(header),
+                parent_header: header,
                 data: msg.data.clone(),
             }
         } else {
@@ -321,9 +449,17 @@ impl Shell {
         };
 
         // Send the message to the comm
-        self.comm_manager_tx
-            .send(CommManagerEvent::Message(msg.comm_id.clone(), comm_msg))
-            .unwrap();
+        let open_comms = self.open_comms.borrow();
+        let Some(comm) = open_comms.iter().find(|c| c.comm_id == msg.comm_id) else {
+            log::warn!(
+                "Received message for unknown comm channel {}: {comm_msg:?}",
+                msg.comm_id
+            );
+            return Ok(());
+        };
+
+        log::trace!("Sending message to comm '{}'", comm.comm_name);
+        comm.incoming_tx.send(comm_msg).log_err();
 
         Ok(())
     }
@@ -368,7 +504,6 @@ impl Shell {
         // because we're processing a request from the frontend to open a comm.
         let comm_id = msg.comm_id.clone();
         let comm_name = msg.target_name.clone();
-        let comm_data = msg.data.clone();
         let comm_socket = CommSocket::new(
             CommInitiator::FrontEnd,
             comm_id.clone(),
@@ -429,11 +564,13 @@ impl Shell {
             return Err(Error::UnknownCommName(comm_name.clone()));
         }
 
-        // Send a notification to the comm message listener thread that a new
-        // comm has been opened
-        self.comm_manager_tx
-            .send(CommManagerEvent::Opened(comm_socket.clone(), comm_data))
-            .log_err();
+        // Add the comm to our list of open comms
+        self.open_comms.borrow_mut().push(comm_socket.clone());
+
+        log::info!(
+            "Comm channel opened; there are now {} open comms",
+            self.open_comms.borrow().len()
+        );
 
         // If the comm wraps a server, send notification once the server is ready to
         // accept connections. This also sends back the port number to connect on. Failing
@@ -504,11 +641,24 @@ impl Shell {
 
     /// Handle a request to close a comm
     fn handle_comm_close(&self, msg: &CommClose) -> crate::Result<()> {
-        // Send a notification to the comm message listener thread notifying it that
-        // the comm has been closed
-        self.comm_manager_tx
-            .send(CommManagerEvent::Closed(msg.comm_id.clone()))
-            .unwrap();
+        let mut open_comms = self.open_comms.borrow_mut();
+        let Some(idx) = open_comms.iter().position(|c| c.comm_id == msg.comm_id) else {
+            log::warn!(
+                "Received close message for unknown comm channel {}",
+                msg.comm_id
+            );
+            return Ok(());
+        };
+
+        // Notify the comm that it's being closed
+        open_comms[idx].incoming_tx.send(CommMsg::Close).log_err();
+
+        open_comms.remove(idx);
+
+        log::info!(
+            "Comm channel closed; there are now {} open comms",
+            open_comms.len()
+        );
 
         Ok(())
     }

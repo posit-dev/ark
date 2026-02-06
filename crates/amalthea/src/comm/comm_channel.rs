@@ -46,9 +46,9 @@ pub enum CommMsg {
     Rpc {
         /// Unique ID of the RPC invocation (the Jupyter message ID)
         id: String,
-        /// Parent header from the original request (Some for requests from
-        /// frontend, echoed back in replies for proper message parenting)
-        parent_header: Option<JupyterHeader>,
+        /// Parent header from the original request, echoed back in replies
+        /// for proper message parenting
+        parent_header: JupyterHeader,
         /// The data associated with the RPC (request or response)
         data: Value,
     },

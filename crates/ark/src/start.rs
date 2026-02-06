@@ -1,7 +1,7 @@
 //
 // start.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -125,7 +125,6 @@ pub fn start_kernel(
         stream_behavior,
         iopub_tx.clone(),
         iopub_rx,
-        comm_manager_tx.clone(),
         comm_manager_rx,
         stdin_request_rx,
         stdin_reply_tx,

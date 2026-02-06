@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
+use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
-use crossbeam::select;
 use stdext::result::ResultExt;
 
 use crate::comm::comm_channel::CommMsg;
@@ -90,8 +90,6 @@ pub enum IOPubMessage {
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
     CommOpen(CommOpen),
-    CommMsgReply(JupyterHeader, CommWireMsg),
-    CommMsgEvent(CommWireMsg),
     CommClose(CommClose),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
@@ -105,6 +103,13 @@ pub enum IOPubMessage {
 #[derive(Debug)]
 pub struct Wait {
     pub wait_tx: Sender<()>,
+}
+
+/// Indexes into the Select for fixed channels.
+struct SelectIndex {
+    iopub_rx: usize,
+    inbound_rx: usize,
+    flush_tick: usize,
 }
 
 impl IOPub {
@@ -136,50 +141,69 @@ impl IOPub {
     }
 
     /// Listen for IOPub messages from other threads. Does not return.
+    ///
+    /// This unified event loop handles:
+    /// - IOPub messages from the kernel (status, streams, display data, etc.)
+    /// - Subscription messages from the ZMQ socket
+    /// - Periodic stream buffer flushing
     pub fn listen(&mut self) {
-        // Flush the active stream (either stdout or stderr) at regular
-        // intervals
-        let flush_interval = *StreamBuffer::interval();
-        let flush_interval = tick(flush_interval);
+        let flush_tick = tick(*StreamBuffer::interval());
 
         loop {
-            select! {
-                recv(self.rx) -> message => {
-                    match message {
-                        Ok(message) => {
-                            if let Err(error) = self.process_outbound_message(message) {
-                                log::warn!("Error delivering outbound iopub message: {error:?}")
-                            }
-                        },
-                        Err(error) => {
-                            log::warn!("Failed to receive outbound iopub message: {error:?}");
-                        },
-                    }
-                },
-                recv(self.inbound_rx) -> message => {
-                    match message.unwrap() {
-                        Ok(message) => {
-                            if let Err(error) = self.process_inbound_message(message) {
-                                log::warn!("Error processing inbound iopub message: {error:?}")
-                            }
-                        },
-                        Err(error) => {
-                            log::warn!("Failed to receive inbound iopub message: {error:?}");
-                        }
-                    }
-                },
-                recv(flush_interval) -> message => {
-                    match message {
-                        Ok(_) => self.flush_stream(),
-                        Err(_) => unreachable!()
-                    }
+            let mut sel = Select::new();
+
+            // Fixed channels
+            let iopub_rx = sel.recv(&self.rx);
+            let inbound_rx = sel.recv(&self.inbound_rx);
+            let flush_tick_idx = sel.recv(&flush_tick);
+
+            let idx = SelectIndex {
+                iopub_rx,
+                inbound_rx,
+                flush_tick: flush_tick_idx,
+            };
+
+            // Block until something is ready
+            let oper = sel.select();
+            let selected_idx = oper.index();
+
+            // Each branch must consume `oper` by calling `oper.recv()` to release
+            // the borrows held by the Select, allowing us to call `&mut self` methods.
+            if selected_idx == idx.iopub_rx {
+                let msg = match oper.recv(&self.rx) {
+                    Ok(msg) => msg,
+                    Err(_) => panic!("IOPub message channel disconnected"),
+                };
+                if let Err(err) = self.process_iopub_message(msg) {
+                    log::warn!("Error processing IOPub message: {err:?}");
                 }
+            } else if selected_idx == idx.inbound_rx {
+                let msg = oper.recv(&self.inbound_rx);
+                match msg {
+                    Ok(Ok(msg)) => {
+                        if let Err(err) = self.process_subscription_message(msg) {
+                            log::warn!("Error processing subscription message: {err:?}");
+                        }
+                    },
+                    Ok(Err(err)) => {
+                        log::warn!("Failed to receive subscription message: {err:?}");
+                    },
+                    Err(err) => {
+                        log::warn!("Subscription channel closed: {err:?}");
+                    },
+                }
+            } else if selected_idx == idx.flush_tick {
+                let _ = oper.recv(&flush_tick);
+                self.flush_stream();
             }
         }
     }
 
-    /// Process an IOPub message from another thread.
-    fn process_outbound_message(&mut self, message: IOPubMessage) -> crate::Result<()> {
+    /// Process an outbound IOPub message received from another thread.
+    ///
+    /// These messages originate from Shell, Control, or comm handlers and are
+    /// forwarded to the frontend via the IOPub ZMQ socket.
+    fn process_iopub_message(&mut self, message: IOPubMessage) -> crate::Result<()> {
         match message {
             IOPubMessage::Status(context, context_channel, content) => {
                 // When we enter the Busy state as a result of a message, we
@@ -232,12 +256,6 @@ impl IOPub {
             IOPubMessage::CommOpen(content) => {
                 self.forward(Message::CommOpen(self.message(content)))
             },
-            IOPubMessage::CommMsgEvent(content) => {
-                self.forward(Message::CommMsg(self.message(content)))
-            },
-            IOPubMessage::CommMsgReply(header, content) => {
-                self.forward(Message::CommMsg(self.message_with_header(header, content)))
-            },
             IOPubMessage::CommClose(content) => {
                 self.forward(Message::CommClose(self.message(content)))
             },
@@ -262,40 +280,6 @@ impl IOPub {
         }
     }
 
-    /// Process an outgoing message from a comm channel.
-    fn process_comm_outgoing(&mut self, comm_id: String, comm_msg: CommMsg) {
-        let msg = match comm_msg {
-            CommMsg::Data(data) => {
-                // Event: the comm is emitting data to the frontend without being asked
-                Message::CommMsg(self.message(CommWireMsg { comm_id, data }))
-            },
-
-            CommMsg::Rpc {
-                id: _,
-                parent_header,
-                data,
-            } => {
-                // RPC reply: the comm is replying to a frontend request
-                let payload = CommWireMsg { comm_id, data };
-
-                match parent_header {
-                    Some(header) => Message::CommMsg(self.message_with_header(header, payload)),
-                    None => {
-                        // NOTE: No header only happens in tests that construct
-                        // `CommMsg::Rpc` without a real Jupyter header.
-                        // Production RPCs always have a header from
-                        // `handle_comm_msg()`.
-                        Message::CommMsg(self.message_create(None, payload))
-                    },
-                }
-            },
-
-            CommMsg::Close => Message::CommClose(self.message(CommClose { comm_id })),
-        };
-
-        self.forward(msg).log_err();
-    }
-
     /// As an XPUB socket, the only inbound message that IOPub receives is
     /// a subscription message that notifies us when a SUB subscribes or
     /// unsubscribes.
@@ -303,7 +287,7 @@ impl IOPub {
     /// When we get a subscription notification, we forward along an IOPub
     /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
     /// that don't know how to process this `Welcome` message should just ignore it.
-    fn process_inbound_message(&mut self, message: SubscriptionMessage) -> crate::Result<()> {
+    fn process_subscription_message(&mut self, message: SubscriptionMessage) -> crate::Result<()> {
         let subscription = message.subscription;
 
         match message.kind {
@@ -349,6 +333,30 @@ impl IOPub {
         self.subscription_tx = None;
 
         Ok(())
+    }
+
+    /// Process an outgoing message from a comm channel.
+    fn process_comm_outgoing(&mut self, comm_id: String, comm_msg: CommMsg) {
+        let msg = match comm_msg {
+            CommMsg::Data(data) => {
+                // Event: the comm is emitting data to the frontend without being asked
+                Message::CommMsg(self.message(CommWireMsg { comm_id, data }))
+            },
+
+            CommMsg::Rpc {
+                id: _,
+                parent_header,
+                data,
+            } => {
+                // RPC reply: the comm is replying to a frontend request
+                let payload = CommWireMsg { comm_id, data };
+                Message::CommMsg(self.message_with_header(parent_header, payload))
+            },
+
+            CommMsg::Close => Message::CommClose(self.message(CommClose { comm_id })),
+        };
+
+        self.forward(msg).log_err();
     }
 
     /// Create a message using the underlying socket with the given content.
@@ -455,7 +463,7 @@ impl IOPub {
     /// different socket that is sent after waiting to still get processed by
     /// the frontend before the messages we cleared from the IOPub queue.
     fn process_wait_request(&mut self, message: Wait) -> crate::Result<()> {
-        message.wait_tx.send(()).unwrap();
+        message.wait_tx.send(()).log_err();
         Ok(())
     }
 }

@@ -1,7 +1,7 @@
 /*
  * kernel.rs
  *
- * Copyright (C) 2022-2025 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -12,12 +12,11 @@ use std::sync::Mutex;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
+use stdext::debug_panic;
 use stdext::spawn;
 use stdext::unwrap;
 
-use crate::comm::comm_manager::CommManager;
 use crate::comm::event::CommManagerEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
@@ -43,10 +42,6 @@ use crate::wire::jupyter_message::OutboundMessage;
 use crate::wire::jupyter_message::Status;
 use crate::wire::subscription_message::SubscriptionMessage;
 
-macro_rules! report_error {
-    ($($arg:tt)+) => (if cfg!(debug_assertions) { panic!($($arg)+) } else { log::error!($($arg)+) })
-}
-
 /// Possible behaviors for the stream capture thread. When set to `Capture`,
 /// the stream capture thread will capture all output to stdout and stderr.
 /// When set to `None`, no stream output is captured.
@@ -67,7 +62,6 @@ pub fn connect(
     stream_behavior: StreamBehavior,
     iopub_tx: Sender<IOPubMessage>,
     iopub_rx: Receiver<IOPubMessage>,
-    comm_manager_tx: Sender<CommManagerEvent>,
     comm_manager_rx: Receiver<CommManagerEvent>,
     // Receiver channel for the stdin socket; when input is needed, the
     // language runtime can request it by sending an StdInRequest::Input to
@@ -88,9 +82,6 @@ pub fn connect(
     // socket threads and the 0MQ forwarding thread
     let (outbound_tx, outbound_rx) = unbounded();
 
-    // Create the comm manager thread
-    CommManager::start(iopub_tx.clone(), comm_manager_rx);
-
     // Create the Shell ROUTER/DEALER socket and start a thread to listen
     // for client messages.
     let shell_socket = Socket::new(
@@ -103,12 +94,36 @@ pub fn connect(
     )?;
     let shell_port = port_finalize(&shell_socket, connection_file.shell_port)?;
 
+    // Internal sockets for notifying Shell when comm events arrive
+    let notif_endpoint = String::from("inproc://shell_comm_notifier");
+    let shell_comm_notif_socket_tx = Socket::new_pair(
+        session.clone(),
+        ctx.clone(),
+        String::from("ShellCommNotifierTx"),
+        None,
+        notif_endpoint.clone(),
+        true,
+    )?;
+    let shell_comm_notif_socket_rx = Socket::new_pair(
+        session.clone(),
+        ctx.clone(),
+        String::from("ShellCommNotifierRx"),
+        None,
+        notif_endpoint,
+        false,
+    )?;
+
+    // Channel for comm events flowing from notifier thread to Shell. The
+    // notifier watches `comm_manager_rx` and forwards events via `shell_comm_tx`.
+    let (shell_comm_tx, shell_comm_rx) = unbounded::<CommManagerEvent>();
+
     let iopub_tx_clone = iopub_tx.clone();
     spawn!(format!("{name}-shell"), move || {
         shell_thread(
             shell_socket,
             iopub_tx_clone,
-            comm_manager_tx,
+            shell_comm_notif_socket_rx,
+            shell_comm_rx,
             shell_handler,
             server_handlers,
         )
@@ -228,7 +243,9 @@ pub fn connect(
         false,
     )?;
 
-    let outbound_rx_clone = outbound_rx.clone();
+    // Channel for outbound messages flowing from notifier to ZMQ forwarding thread.
+    // The notifier watches `outbound_rx` and forwards messages via `zmq_outbound_tx`.
+    let (zmq_outbound_tx, zmq_outbound_rx) = unbounded::<OutboundMessage>();
 
     // Forwarding thread that bridges 0MQ sockets and Amalthea
     // channels. Currently only used by StdIn.
@@ -239,15 +256,26 @@ pub fn connect(
             stdin_inbound_tx,
             iopub_socket,
             iopub_inbound_tx,
-            outbound_rx_clone,
+            zmq_outbound_rx,
         )
     });
 
-    // The notifier thread watches Amalthea channels of outgoing
-    // messages for readiness. When a channel is hot, it notifies the
-    // forwarding thread through a 0MQ socket.
-    spawn!(format!("{name}-zmq-notifier"), move || {
-        zmq_notifier_thread(outbound_notif_socket_tx, outbound_rx)
+    // The notifier thread watches multiple Amalthea channels for readiness and
+    // notifies the appropriate threads via inproc sockets:
+    // - outbound_rx -> zmq_forwarding_thread (for IOPub/StdIn messages)
+    // - comm_manager_rx -> Shell (for comm events from backend)
+    // This bridges crossbeam channels to inproc ZMQ sockets, allowing threads
+    // to use `zmq_poll()` to wait on both external ZMQ sockets and internal
+    // channel events.
+    spawn!(format!("{name}-notifier"), move || {
+        notifier_thread(
+            outbound_notif_socket_tx,
+            outbound_rx,
+            zmq_outbound_tx,
+            shell_comm_notif_socket_tx,
+            comm_manager_rx,
+            shell_comm_tx,
+        )
     });
 
     let iopub_tx_clone = iopub_tx.clone();
@@ -353,14 +381,16 @@ fn control_thread(
 fn shell_thread(
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_notif_socket: Socket,
+    comm_manager_rx: Receiver<CommManagerEvent>,
     shell_handler: Box<dyn ShellHandler>,
     server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 ) -> Result<(), Error> {
     let mut shell = Shell::new(
         socket,
         iopub_tx.clone(),
-        comm_manager_tx,
+        comm_notif_socket,
+        comm_manager_rx,
         shell_handler,
         server_handlers,
     );
@@ -402,50 +432,45 @@ fn stdin_thread(
     Ok(())
 }
 
-/// Starts the thread that forwards 0MQ messages to Amalthea channels
-/// and vice versa.
+/// Forwards messages between ZMQ sockets and Amalthea channels.
 ///
-/// This is a solution to the problem of polling/selecting from 0MQ sockets and
-/// crossbeam channels at the same time. Message events on crossbeam channels
-/// are emitted by the notifier thread (see below) on a 0MQ socket. The
-/// forwarding thread is then able to listen on 0MQ sockets (e.g. StdIn replies
-/// and IOPub subscriptions) and the notification socket at the same time.
+/// This solves the problem of polling/selecting from ZMQ sockets and crossbeam
+/// channels at the same time. ZMQ sockets can only be owned by one thread, but
+/// we need to listen for multiple event sources. For example, with IOPub we need
+/// to both send messages to the frontend AND listen for subscription events.
 ///
-/// Part of the problem this setup solves is that 0MQ sockets can only be owned
-/// by one thread at a time. Take IOPUb as an example: we need to listen on that
-/// socket for subscription events. We also need to listen for new IOPub
-/// messages to send to the client, sent via Crossbeam channels. So we need at
-/// least two threads listening for these two different kinds of events. But the
-/// forwarding thread has to fully own the socket to be able to listen to it. So
-/// it's also in charge of sending IOPub messages on that socket. When an IOPub
-/// message comes in, the notifier thread wakes up the forwarding thread which
-/// then pulls messages from the channel and forwards them to the IOPub socket.
+/// The solution: the notifier thread watches crossbeam channels and forwards
+/// messages to this thread via `zmq_outbound_rx`, then sends a ZMQ notification.
+/// The forwarding thread below then uses `zmq_poll()` to wait on:
+/// - Outbound notification socket: wakes up when messages are ready to send
+/// - StdIn socket: receives replies from the frontend
+/// - IOPub socket: receives subscription events from the frontend
+///
+/// When the outbound notification fires, this thread drains all pending messages
+/// from `zmq_outbound_rx` and sends them to the appropriate ZMQ socket.
 ///
 /// Terminology:
-/// - Outbound means that a crossbeam message needs to be forwarded to a 0MQ socket.
-/// - Inbound means that a 0MQ message needs to be forwarded to a crossbeam channel.
+/// - Outbound: Amalthea channel -> ZMQ socket (e.g. IOPub messages to frontend)
+/// - Inbound: ZMQ socket -> Amalthea channel (e.g. StdIn replies from frontend)
 fn zmq_forwarding_thread(
     outbound_notif_socket: Socket,
     stdin_socket: Socket,
     stdin_inbound_tx: Sender<crate::Result<Message>>,
     iopub_socket: Socket,
     iopub_inbound_tx: Sender<crate::Result<SubscriptionMessage>>,
-    outbound_rx: Receiver<OutboundMessage>,
+    zmq_outbound_rx: Receiver<OutboundMessage>,
 ) {
-    // This function checks for notifications that an outgoing message
-    // is ready to be read on an Amalthea channel. It returns
-    // immediately whether a message is ready or not.
-    let has_outbound = || -> bool {
+    // Consume notification and return whether one was present.
+    let consume_outbound_notification = || -> bool {
         if let Ok(n) = outbound_notif_socket.socket.poll(zmq::POLLIN, 0) {
             if n == 0 {
                 return false;
             }
             // Consume notification
-            let _ = unwrap!(outbound_notif_socket.socket.recv_bytes(0), Err(err) => {
-                report_error!("Could not consume outbound notification socket: {}", err);
+            if let Err(err) = outbound_notif_socket.socket.recv_bytes(0) {
+                debug_panic!("Could not consume outbound notification: {err:?}");
                 return false;
-            });
-
+            }
             true
         } else {
             false
@@ -460,21 +485,17 @@ fn zmq_forwarding_thread(
         }
     };
 
-    // Forwards channel message from Amalthea to the frontend via the
-    // corresponding 0MQ socket. Should consume exactly 1 message and
-    // notify back the notifier thread to keep the mechanism synchronised.
-    let forward_outbound = || -> anyhow::Result<()> {
-        // Consume message and forward it
-        let outbound_msg = outbound_rx.recv()?;
-        match outbound_msg {
-            OutboundMessage::StdIn(msg) => msg.send(&stdin_socket)?,
-            OutboundMessage::IOPub(msg) => msg.send(&iopub_socket)?,
-        };
-
-        // Notify back
-        outbound_notif_socket.send(zmq::Message::new())?;
-
-        Ok(())
+    // Drain all pending outbound messages and forward to ZMQ.
+    let drain_outbound = || {
+        while let Ok(outbound_msg) = zmq_outbound_rx.try_recv() {
+            let result = match outbound_msg {
+                OutboundMessage::StdIn(msg) => msg.send(&stdin_socket),
+                OutboundMessage::IOPub(msg) => msg.send(&iopub_socket),
+            };
+            if let Err(err) = result {
+                debug_panic!("While forwarding outbound message: {err:?}");
+            }
+        }
     };
 
     // Forwards 0MQ message from the frontend to the corresponding
@@ -507,24 +528,21 @@ fn zmq_forwarding_thread(
         let n = unwrap!(
             zmq::poll(&mut poll_items, -1),
             Err(err) => {
-                report_error!("While polling 0MQ items: {}", err);
+                debug_panic!("While polling 0MQ items: {err:?}");
                 0
             }
         );
 
         for _ in 0..n {
-            if has_outbound() {
-                unwrap!(
-                    forward_outbound(),
-                    Err(err) => report_error!("While forwarding outbound message: {}", err)
-                );
+            if consume_outbound_notification() {
+                drain_outbound();
                 continue;
             }
 
             if has_inbound(&stdin_socket) {
                 unwrap!(
                     forward_inbound(&stdin_socket, &stdin_inbound_tx),
-                    Err(err) => report_error!("While forwarding inbound message: {}", err)
+                    Err(err) => debug_panic!("While forwarding inbound message: {err:?}")
                 );
                 continue;
             }
@@ -532,47 +550,145 @@ fn zmq_forwarding_thread(
             if has_inbound(&iopub_socket) {
                 unwrap!(
                     forward_inbound_subscription(&iopub_socket, &iopub_inbound_tx),
-                    Err(err) => report_error!("While forwarding inbound message: {}", err)
+                    Err(err) => debug_panic!("While forwarding inbound message: {err:?}")
                 );
                 continue;
             }
 
-            report_error!("Could not find readable message");
+            debug_panic!("Could not find readable message");
         }
     }
 }
 
-/// Starts the thread that notifies the forwarding thread that new outgoing
-/// messages have arrived from Amalthea channels. This wakes up the forwarding
-/// thread which will then pop the message from the channel and forward them to
-/// the relevant zeromq socket.
-fn zmq_notifier_thread(notif_socket: Socket, outbound_rx: Receiver<OutboundMessage>) {
-    let mut sel = Select::new();
-    sel.recv(&outbound_rx);
+/// A channel forwarder that consumes from a source channel, forwards to a
+/// destination channel, and sends a ZMQ notification so the destination wakes
+/// up from watching ZMQ socket to inspect the Crossbeam channels.
+struct Forwarder<T> {
+    name: &'static str,
+    source_rx: Receiver<T>,
+    destination_tx: Sender<T>,
+    notif_socket: Socket,
+    connected: bool,
+}
 
-    loop {
-        let _ = sel.ready();
+impl<T> Forwarder<T> {
+    fn new(
+        name: &'static str,
+        source_rx: Receiver<T>,
+        destination_tx: Sender<T>,
+        notif_socket: Socket,
+    ) -> Self {
+        Self {
+            name,
+            source_rx,
+            destination_tx,
+            notif_socket,
+            connected: true,
+        }
+    }
 
-        unwrap!(
-            notif_socket.send(zmq::Message::new()),
-            Err(err) => {
-                report_error!("Couldn't notify 0MQ thread: {}", err);
-                continue;
-            }
-        );
+    /// Process a ready notification: consume, forward, and notify.
+    fn process(&mut self) {
+        // Consume from source
+        let msg = match self.source_rx.try_recv() {
+            Ok(msg) => msg,
+            Err(crossbeam::channel::TryRecvError::Empty) => return,
+            Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                debug_panic!("{} channel disconnected", self.name);
+                self.connected = false;
+                return;
+            },
+        };
 
-        // To keep things synchronised, wait to be notified that the
-        // channel message has been consumed before continuing the loop.
-        unwrap!(
-            {
-                let mut msg = zmq::Message::new();
-                notif_socket.recv(&mut msg)
+        // Forward to destination
+        if let Err(err) = self.destination_tx.send(msg) {
+            debug_panic!("Couldn't forward {} message: {err:?}", self.name);
+            self.connected = false;
+            return;
+        }
+
+        // Notify destination via inproc PAIR socket
+        match self
+            .notif_socket
+            .socket
+            .send(zmq::Message::new(), zmq::DONTWAIT)
+        {
+            Ok(()) => {},
+            Err(zmq::Error::EAGAIN) => {
+                // EAGAIN shouldn't happen because inproc sockets have unbounded
+                // queues (no high-water mark backpressure)
+                debug_panic!("Unexpected EAGAIN on {} inproc notification", self.name);
             },
             Err(err) => {
-                report_error!("Couldn't received acknowledgement from 0MQ thread: {}", err);
-                continue;
-            }
-        );
+                debug_panic!("Couldn't send {} notification: {err:?}", self.name);
+            },
+        }
+    }
+}
+
+/// Notifier thread that watches multiple Amalthea channels for readiness
+/// and notifies the appropriate consumer threads via inproc sockets.
+///
+/// This thread bridges crossbeam channels to ZMQ poll() by:
+/// 1. Watching `outbound_rx` for IOPub/StdIn messages -> forwards via `zmq_outbound_tx`
+/// 2. Watching `comm_manager_rx` for comm events -> forwards via `shell_comm_tx`
+///
+/// Both use fire-and-forget notifications: the notifier consumes messages,
+/// forwards them through a channel, and sends a DONTWAIT notification.
+/// Consumer threads drain all pending messages when they wake up.
+fn notifier_thread(
+    outbound_notif_socket: Socket,
+    outbound_rx: Receiver<OutboundMessage>,
+    zmq_outbound_tx: Sender<OutboundMessage>,
+    shell_comm_notif_socket: Socket,
+    comm_manager_rx: Receiver<CommManagerEvent>,
+    shell_comm_tx: Sender<CommManagerEvent>,
+) {
+    use crossbeam::channel::Select;
+
+    let mut outbound = Forwarder::new(
+        "outbound",
+        outbound_rx,
+        zmq_outbound_tx,
+        outbound_notif_socket,
+    );
+    let mut comm = Forwarder::new(
+        "comm",
+        comm_manager_rx,
+        shell_comm_tx,
+        shell_comm_notif_socket,
+    );
+
+    loop {
+        let mut sel = Select::new();
+        let outbound_idx = if outbound.connected {
+            Some(sel.recv(&outbound.source_rx))
+        } else {
+            None
+        };
+        let comm_idx = if comm.connected {
+            Some(sel.recv(&comm.source_rx))
+        } else {
+            None
+        };
+
+        if outbound_idx.is_none() && comm_idx.is_none() {
+            log::info!("All channels disconnected, notifier thread exiting");
+            return;
+        }
+
+        // Block until one channel is ready
+        let ready_idx = sel.ready();
+
+        if outbound_idx.is_some_and(|idx| ready_idx == idx) {
+            outbound.process();
+            continue;
+        }
+
+        if comm_idx.is_some_and(|idx| ready_idx == idx) {
+            comm.process();
+            continue;
+        }
     }
 }
 

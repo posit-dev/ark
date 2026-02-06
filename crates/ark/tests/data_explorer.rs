@@ -69,6 +69,7 @@ use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
+use ark_test::dummy_jupyter_header;
 use ark_test::r_test_lock;
 use ark_test::socket_rpc_request;
 use crossbeam::channel::bounded;
@@ -765,7 +766,7 @@ fn expect_column_profile_results(
     // Convert the request to a CommMsg and send it.
     let msg = CommMsg::Rpc {
         id,
-        parent_header: None,
+        parent_header: dummy_jupyter_header(),
         data: json,
     };
     socket.incoming_tx.send(msg).unwrap();
