@@ -10,20 +10,24 @@ use amalthea::comm::connections_comm::ListObjectsParams;
 use amalthea::comm::connections_comm::ObjectSchema;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket;
+use amalthea::socket::iopub::IOPubMessage;
 use ark::connections::r_connection::Metadata;
 use ark::connections::r_connection::RConnection;
 use ark::modules::ARK_ENVS;
 use ark::r_task::r_task;
 use ark_test::socket_rpc_request;
 use crossbeam::channel::bounded;
+use crossbeam::channel::Receiver;
 use harp::exec::RFunction;
 use harp::object::RObject;
 use stdext::assert_match;
 
-fn open_dummy_connection() -> socket::comm::CommSocket {
+fn open_dummy_connection() -> (socket::comm::CommSocket, Receiver<IOPubMessage>) {
     print!("testing!\n");
 
     let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    // Create a dummy iopub channel to receive responses.
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
     let comm_id = r_task(|| unsafe {
         let mut dummy_connection = RFunction::new("", ".ps.register_dummy_connection");
@@ -38,6 +42,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
     // we run this in a spare thread because it will block until we read the messsage
     stdext::spawn!("start-connection-thread", {
         let id = comm_id.clone();
+        let iopub_tx = iopub_tx.clone();
         move || {
             let metadata = Metadata {
                 name: String::from("Dummy conn"),
@@ -47,7 +52,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
                 language_id: String::from("r"),
             };
 
-            RConnection::start(metadata, comm_manager_tx, id)
+            RConnection::start(metadata, comm_manager_tx, iopub_tx, id)
         }
     });
 
@@ -60,7 +65,7 @@ fn open_dummy_connection() -> socket::comm::CommSocket {
         CommManagerEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.connection");
             assert_eq!(socket.comm_id, comm_id);
-            socket
+            (socket, iopub_rx)
         },
         _ => panic!("Unexpected Comm Manager Event"),
     }
@@ -83,14 +88,15 @@ fn field(name: &str, dtype: &str) -> FieldSchema {
 
 fn socket_rpc(
     socket: &socket::comm::CommSocket,
+    iopub_rx: &Receiver<IOPubMessage>,
     req: ConnectionsBackendRequest,
 ) -> ConnectionsBackendReply {
-    socket_rpc_request::<ConnectionsBackendRequest, ConnectionsBackendReply>(&socket, req)
+    socket_rpc_request::<ConnectionsBackendRequest, ConnectionsBackendReply>(&socket, iopub_rx, req)
 }
 
 #[test]
 fn test_connections_get_icon() {
-    let socket = open_dummy_connection();
+    let (socket, iopub_rx) = open_dummy_connection();
 
     // Check that we get the correct icons
     let cases: Vec<(Vec<ObjectSchema>, String)> = vec![
@@ -112,7 +118,7 @@ fn test_connections_get_icon() {
 
     for (path, icon_path) in cases {
         assert_match!(
-            socket_rpc(&socket, ConnectionsBackendRequest::GetIcon(GetIconParams { path })),
+            socket_rpc(&socket, &iopub_rx, ConnectionsBackendRequest::GetIcon(GetIconParams { path })),
             ConnectionsBackendReply::GetIconReply(path) => {
                 assert_eq!(path, icon_path);
             }
@@ -122,7 +128,7 @@ fn test_connections_get_icon() {
 
 #[test]
 fn test_connections_contains_data() {
-    let socket = open_dummy_connection();
+    let (socket, iopub_rx) = open_dummy_connection();
 
     // Check that we get the correct `contains_data`
     let cases: Vec<(Vec<ObjectSchema>, bool)> = vec![
@@ -135,7 +141,7 @@ fn test_connections_contains_data() {
 
     for (path, contains_data) in cases {
         assert_match!(
-            socket_rpc(&socket, ConnectionsBackendRequest::ContainsData(ContainsDataParams { path })),
+            socket_rpc(&socket, &iopub_rx, ConnectionsBackendRequest::ContainsData(ContainsDataParams { path })),
             ConnectionsBackendReply::ContainsDataReply(val) => {
                 assert_eq!(val, contains_data);
             }
@@ -145,7 +151,7 @@ fn test_connections_contains_data() {
 
 #[test]
 fn test_connections_list_objects() {
-    let socket = open_dummy_connection();
+    let (socket, iopub_rx) = open_dummy_connection();
 
     // Check that we get the correct list of objects
     let cases: Vec<(Vec<ObjectSchema>, Vec<ObjectSchema>)> = vec![
@@ -159,7 +165,7 @@ fn test_connections_list_objects() {
 
     for (path, objects) in cases {
         assert_match!(
-            socket_rpc(&socket, ConnectionsBackendRequest::ListObjects(ListObjectsParams { path })),
+            socket_rpc(&socket, &iopub_rx, ConnectionsBackendRequest::ListObjects(ListObjectsParams { path })),
             ConnectionsBackendReply::ListObjectsReply(val) => {
                 assert_eq!(val, objects);
             }
@@ -169,7 +175,7 @@ fn test_connections_list_objects() {
 
 #[test]
 fn test_connection_list_fields() {
-    let socket = open_dummy_connection();
+    let (socket, iopub_rx) = open_dummy_connection();
 
     // Check that we get the correct list of objects
     let cases: Vec<(Vec<ObjectSchema>, Vec<FieldSchema>)> = vec![
@@ -187,7 +193,7 @@ fn test_connection_list_fields() {
 
     for (path, objects) in cases {
         assert_match!(
-            socket_rpc(&socket, ConnectionsBackendRequest::ListFields(ListFieldsParams { path })),
+            socket_rpc(&socket, &iopub_rx, ConnectionsBackendRequest::ListFields(ListFieldsParams { path })),
             ConnectionsBackendReply::ListFieldsReply(val) => {
                 assert_eq!(val, objects);
             }
@@ -197,7 +203,7 @@ fn test_connection_list_fields() {
 
 #[test]
 fn test_send_frontend_event() {
-    let socket = open_dummy_connection();
+    let (socket, iopub_rx) = open_dummy_connection();
 
     let event = ConnectionsFrontendEvent::Update;
 
@@ -206,10 +212,15 @@ fn test_send_frontend_event() {
         .send(CommMsg::Data(serde_json::to_value(event).unwrap()))
         .unwrap();
 
-    let msg = socket
-        .outgoing_rx
+    let iopub_msg = iopub_rx
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
+
+    // Extract the CommMsg from the IOPub message
+    let msg = match iopub_msg {
+        IOPubMessage::CommOutgoing(_comm_id, comm_msg) => comm_msg,
+        _ => panic!("Expected CommOutgoing message, got {:?}", iopub_msg),
+    };
 
     if let CommMsg::Data(value) = msg {
         let v: ConnectionsFrontendEvent = serde_json::from_value(value).unwrap();
