@@ -15,12 +15,12 @@ use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use ark_test::r_test_lock;
 use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
 use ark::variables::r_variables::LastValue;
 use ark::variables::r_variables::RVariables;
+use ark_test::r_test_lock;
 use crossbeam::channel::bounded;
 use harp::environment::R_ENVS;
 use harp::exec::RFunction;
@@ -111,7 +111,11 @@ fn test_variables_list() {
     let data = serde_json::to_value(request).unwrap();
     let request_id = String::from("refresh-id-1234");
     incoming_tx
-        .send(CommMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc {
+            id: request_id.clone(),
+            parent_header: None,
+            data,
+        })
         .unwrap();
 
     // The test might receive an update event before the RPC response; consume
@@ -123,7 +127,9 @@ fn test_variables_list() {
     }
 
     let data = match msg {
-        CommMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc {
+            id: reply_id, data, ..
+        } => {
             // Ensure that the reply ID we received from then environment pane
             // matches the request ID we sent
             assert_eq!(request_id, reply_id);
@@ -187,7 +193,11 @@ fn test_variables_list() {
     let data = serde_json::to_value(clear).unwrap();
     let request_id = String::from("clear-id-1235");
     incoming_tx
-        .send(CommMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc {
+            id: request_id.clone(),
+            parent_header: None,
+            data,
+        })
         .unwrap();
 
     // Wait up to 1s for the comm to send us an update message
@@ -211,7 +221,9 @@ fn test_variables_list() {
 
     // Wait for the success message to be delivered
     let data = match outgoing_rx.recv().unwrap() {
-        CommMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc {
+            id: reply_id, data, ..
+        } => {
             // Ensure that the reply ID we received from then environment pane
             // matches the request ID we sent
             assert_eq!(request_id, reply_id);
@@ -271,11 +283,17 @@ fn test_variables_list() {
     let data = serde_json::to_value(delete).unwrap();
     let request_id = String::from("delete-id-1236");
     incoming_tx
-        .send(CommMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc {
+            id: request_id.clone(),
+            parent_header: None,
+            data,
+        })
         .unwrap();
 
     let data = match outgoing_rx.recv().unwrap() {
-        CommMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc {
+            id: reply_id, data, ..
+        } => {
             assert_eq!(request_id, reply_id);
             data
         },
@@ -594,12 +612,18 @@ fn test_query_table_summary() {
     let request_id = String::from("df-summary-id");
 
     incoming_tx
-        .send(CommMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc {
+            id: request_id.clone(),
+            parent_header: None,
+            data,
+        })
         .unwrap();
 
     // Get the response
     let data = match outgoing_rx.recv().unwrap() {
-        CommMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc {
+            id: reply_id, data, ..
+        } => {
             assert_eq!(request_id, reply_id);
             data
         },
@@ -666,12 +690,18 @@ fn test_query_table_summary() {
     let request_id = String::from("matrix-summary-id");
 
     incoming_tx
-        .send(CommMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc {
+            id: request_id.clone(),
+            parent_header: None,
+            data,
+        })
         .unwrap();
 
     // Get the response
     let data = match outgoing_rx.recv().unwrap() {
-        CommMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc {
+            id: reply_id, data, ..
+        } => {
             assert_eq!(request_id, reply_id);
             data
         },
@@ -733,12 +763,18 @@ fn test_query_table_summary() {
     let request_id = String::from("non-table-summary-id");
 
     incoming_tx
-        .send(CommMsg::Rpc(request_id.clone(), data))
+        .send(CommMsg::Rpc {
+            id: request_id.clone(),
+            parent_header: None,
+            data,
+        })
         .unwrap();
 
     // Get the error response
     let data = match outgoing_rx.recv().unwrap() {
-        CommMsg::Rpc(reply_id, data) => {
+        CommMsg::Rpc {
+            id: reply_id, data, ..
+        } => {
             assert_eq!(request_id, reply_id);
             data
         },

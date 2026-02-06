@@ -21,7 +21,11 @@ where
     let id = uuid::Uuid::new_v4().to_string();
     let json = serde_json::to_value(req).unwrap();
 
-    let msg = CommMsg::Rpc(id, json);
+    let msg = CommMsg::Rpc {
+        id,
+        parent_header: None,
+        data: json,
+    };
     socket.incoming_tx.send(msg).unwrap();
     let msg = socket
         .outgoing_rx
@@ -29,7 +33,7 @@ where
         .unwrap();
 
     match msg {
-        CommMsg::Rpc(_id, value) => serde_json::from_value(value).unwrap(),
+        CommMsg::Rpc { data: value, .. } => serde_json::from_value(value).unwrap(),
         _ => panic!("Unexpected Comm Message"),
     }
 }

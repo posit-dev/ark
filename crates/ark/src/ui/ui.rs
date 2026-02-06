@@ -303,7 +303,11 @@ mod tests {
         });
         comm_socket
             .incoming_tx
-            .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
+            .send(CommMsg::Rpc {
+                id,
+                parent_header: None,
+                data: serde_json::to_value(request).unwrap(),
+            })
             .unwrap();
 
         // Wait for the reply; this should be a FrontendRpcResult. We don't wait
@@ -314,7 +318,9 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap();
         match response {
-            CommMsg::Rpc(id, result) => {
+            CommMsg::Rpc {
+                id, data: result, ..
+            } => {
                 println!("Got RPC result: {:?}", result);
                 let result = serde_json::from_value::<UiBackendReply>(result).unwrap();
                 assert_eq!(id, "test-id-1");
@@ -347,7 +353,11 @@ mod tests {
         });
         comm_socket
             .incoming_tx
-            .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
+            .send(CommMsg::Rpc {
+                id,
+                parent_header: None,
+                data: serde_json::to_value(request).unwrap(),
+            })
             .unwrap();
 
         // Wait for the reply
@@ -356,7 +366,9 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(1))
             .unwrap();
         match response {
-            CommMsg::Rpc(id, result) => {
+            CommMsg::Rpc {
+                id, data: result, ..
+            } => {
                 println!("Got RPC result: {:?}", result);
                 let _reply = serde_json::from_value::<JsonRpcError>(result).unwrap();
                 // Ensure that the error code is -32601 (method not found)

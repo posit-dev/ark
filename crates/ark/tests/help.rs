@@ -54,14 +54,18 @@ impl TestRHelp {
         let request_id = String::from(id);
         self.comm
             .incoming_tx
-            .send(CommMsg::Rpc(request_id.clone(), data))
+            .send(CommMsg::Rpc {
+                id: request_id.clone(),
+                parent_header: None,
+                data,
+            })
             .unwrap();
 
         // Wait for the response (up to 1 second; this should be fast!)
         let duration = std::time::Duration::from_secs(1);
         let response = self.comm.outgoing_rx.recv_timeout(duration).unwrap();
         match response {
-            CommMsg::Rpc(id, val) => {
+            CommMsg::Rpc { id, data: val, .. } => {
                 let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
                 match response {
                     HelpBackendReply::ShowHelpTopicReply(found) => {

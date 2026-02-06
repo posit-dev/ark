@@ -442,7 +442,7 @@ impl DeviceContext {
             };
 
             match message {
-                CommMsg::Rpc(_, _) => {
+                CommMsg::Rpc { .. } => {
                     log::trace!("Handling `RPC` for plot `id` {id}");
                     socket.handle_request(message, |req| self.handle_rpc(req, id));
                 },
