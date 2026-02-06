@@ -70,6 +70,7 @@ rustc-hash = "2.1.1"
 tracing-error = "0.2.0"
 
 [dev-dependencies]
+ark_test = { path = "../ark_test" }
 insta = { version = "1.39.0" }
 stdext = { path = "../stdext", features = ["testing"] }
 tempfile = "3.13.0"

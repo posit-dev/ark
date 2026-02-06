@@ -1569,9 +1569,6 @@ impl Console {
             // For continue-like commands, we do not preserve focus,
             // i.e. we let the cursor jump to the stopped position.
             self.debug_preserve_focus = false;
-
-            // Let the DAP client know that execution is now continuing
-            self.debug_send_dap(DapBackendEvent::Continued);
         }
 
         // Forward the command to R's base REPL.

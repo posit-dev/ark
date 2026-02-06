@@ -1,5 +1,5 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 
 // These tests assert that we've correctly turned off the `R_StackLimit` check during integration
 // tests that use the `DummyArkFrontend`. It is turned off using `stdext::IS_TESTING` in the

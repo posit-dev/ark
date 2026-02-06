@@ -1,5 +1,5 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark::fixtures::DummyArkFrontendNotebook;
+use ark_test::DummyArkFrontendNotebook;
 
 #[test]
 fn test_notebook_execute_request() {

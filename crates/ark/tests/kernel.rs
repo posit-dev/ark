@@ -1,7 +1,7 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::kernel_info_request::KernelInfoRequest;
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 use stdext::assert_match;
 
 #[test]

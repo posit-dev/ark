@@ -7,7 +7,7 @@
 use std::io::Write;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark::fixtures::DummyArkFrontendDefaultRepos;
+use ark_test::DummyArkFrontendDefaultRepos;
 
 /// Using a configuration file, set the default CRAN repo to a custom value,
 /// and add an extra internal repo.

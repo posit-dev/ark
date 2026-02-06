@@ -8,11 +8,11 @@ use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionTextEdit;
 
-use crate::fixtures::utils::point_from_cursor;
+use crate::fixtures::point_from_cursor;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::sources::utils::has_priority_prefix;
-use crate::lsp::document_context::DocumentContext;
 use crate::lsp::document::Document;
+use crate::lsp::document_context::DocumentContext;
 use crate::lsp::state::WorldState;
 
 pub(crate) fn get_completions_at_cursor(cursor_text: &str) -> anyhow::Result<Vec<CompletionItem>> {

@@ -1,7 +1,7 @@
 #[cfg(unix)]
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::jupyter_message::Status;
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 
 /// Install a SIGINT handler for shutdown tests. This overrides the test runner
 /// handler so it doesn't cancel our test.
