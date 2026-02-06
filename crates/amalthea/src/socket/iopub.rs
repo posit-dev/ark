@@ -1,7 +1,7 @@
 /*
  * iopub.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -11,7 +11,9 @@ use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use stdext::result::ResultExt;
 
+use crate::comm::comm_channel::CommMsg;
 use crate::session::Session;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
@@ -94,6 +96,8 @@ pub enum IOPubMessage {
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
     Wait(Wait),
+    /// Outgoing comm message from a backend. The String is the comm_id.
+    CommOutgoing(String, CommMsg),
 }
 
 /// A special IOPub message used to block the sender until the IOPub queue has
@@ -250,7 +254,46 @@ impl IOPub {
                 ))
             },
             IOPubMessage::Wait(content) => self.process_wait_request(content),
+            IOPubMessage::CommOutgoing(comm_id, comm_msg) => {
+                self.flush_stream();
+                self.process_comm_outgoing(comm_id, comm_msg);
+                Ok(())
+            },
         }
+    }
+
+    /// Process an outgoing message from a comm channel.
+    fn process_comm_outgoing(&mut self, comm_id: String, comm_msg: CommMsg) {
+        let msg = match comm_msg {
+            CommMsg::Data(data) => {
+                // Event: the comm is emitting data to the frontend without being asked
+                Message::CommMsg(self.message(CommWireMsg { comm_id, data }))
+            },
+
+            CommMsg::Rpc {
+                id: _,
+                parent_header,
+                data,
+            } => {
+                // RPC reply: the comm is replying to a frontend request
+                let payload = CommWireMsg { comm_id, data };
+
+                match parent_header {
+                    Some(header) => Message::CommMsg(self.message_with_header(header, payload)),
+                    None => {
+                        // NOTE: No header only happens in tests that construct
+                        // `CommMsg::Rpc` without a real Jupyter header.
+                        // Production RPCs always have a header from
+                        // `handle_comm_msg()`.
+                        Message::CommMsg(self.message_create(None, payload))
+                    },
+                }
+            },
+
+            CommMsg::Close => Message::CommClose(self.message(CommClose { comm_id })),
+        };
+
+        self.forward(msg).log_err();
     }
 
     /// As an XPUB socket, the only inbound message that IOPub receives is
