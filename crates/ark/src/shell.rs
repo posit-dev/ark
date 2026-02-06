@@ -1,7 +1,7 @@
 //
 // shell.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::Comm;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
@@ -232,7 +233,10 @@ impl ShellHandler for Shell {
     /// the UI has been disconnected and reconnected.
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
-            Comm::Variables => handle_comm_open_variables(comm, self.comm_manager_tx.clone()),
+            Comm::Variables => {
+                let iopub_tx = comm.outgoing_tx.iopub_tx().clone();
+                handle_comm_open_variables(comm, self.comm_manager_tx.clone(), iopub_tx)
+            },
             Comm::Ui => handle_comm_open_ui(
                 comm,
                 self.stdin_request_tx.clone(),
@@ -250,10 +254,11 @@ impl ShellHandler for Shell {
 fn handle_comm_open_variables(
     comm: CommSocket,
     comm_manager_tx: Sender<CommManagerEvent>,
+    iopub_tx: Sender<IOPubMessage>,
 ) -> amalthea::Result<bool> {
     r_task(|| {
         let global_env = RObject::view(R_ENVS.global);
-        RVariables::start(global_env, comm, comm_manager_tx);
+        RVariables::start(global_env, comm, comm_manager_tx, iopub_tx);
         Ok(true)
     })
 }

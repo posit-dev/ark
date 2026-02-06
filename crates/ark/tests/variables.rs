@@ -1,7 +1,7 @@
 //
 // variables.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -15,12 +15,14 @@ use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
 use ark::variables::r_variables::LastValue;
 use ark::variables::r_variables::RVariables;
 use ark_test::r_test_lock;
+use ark_test::IOPubReceiverExt;
 use crossbeam::channel::bounded;
 use harp::environment::R_ENVS;
 use harp::exec::RFunction;
@@ -59,11 +61,15 @@ fn test_variables_list() {
         RThreadSafe::new(env)
     });
 
+    // Create a dummy iopub channel to receive responses.
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
     // Create a sender/receiver pair for the comm channel.
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-environment-comm-id"),
         String::from("positron.environment"),
+        iopub_tx.clone(),
     );
 
     // Create a dummy comm manager channel that isn't actually used.
@@ -74,14 +80,13 @@ fn test_variables_list() {
     // Create a new environment handler and give it the test
     // environment we created.
     let incoming_tx = comm.incoming_tx.clone();
-    let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
         let test_env = test_env.get().clone();
-        RVariables::start(test_env, comm.clone(), comm_manager_tx.clone());
+        RVariables::start(test_env, comm.clone(), comm_manager_tx.clone(), iopub_tx);
     });
 
     // Ensure we get a list of variables after initialization
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message"),
@@ -120,10 +125,10 @@ fn test_variables_list() {
 
     // The test might receive an update event before the RPC response; consume
     // any update events first
-    let mut msg = outgoing_rx.recv().unwrap();
+    let mut msg = iopub_rx.recv_comm_msg();
     while let CommMsg::Data(_) = msg {
         // Continue receiving until we get the RPC response
-        msg = outgoing_rx.recv().unwrap();
+        msg = iopub_rx.recv_comm_msg();
     }
 
     let data = match msg {
@@ -168,7 +173,7 @@ fn test_variables_list() {
     EVENTS.console_prompt.emit(());
 
     // Wait for the new list of variables to be delivered
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message, got {:?}", msg),
@@ -201,8 +206,8 @@ fn test_variables_list() {
         .unwrap();
 
     // Wait up to 1s for the comm to send us an update message
-    let msg = outgoing_rx
-        .recv_timeout(std::time::Duration::from_secs(1))
+    let msg = iopub_rx
+        .recv_comm_msg_timeout(std::time::Duration::from_secs(1))
         .unwrap();
     let data = match msg {
         CommMsg::Data(data) => data,
@@ -220,7 +225,7 @@ fn test_variables_list() {
     }
 
     // Wait for the success message to be delivered
-    let data = match outgoing_rx.recv().unwrap() {
+    let data = match iopub_rx.recv_comm_msg() {
         CommMsg::Rpc {
             id: reply_id, data, ..
         } => {
@@ -261,7 +266,7 @@ fn test_variables_list() {
     // Simulate a prompt signal
     EVENTS.console_prompt.emit(());
 
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message, got {:?}", msg),
@@ -290,7 +295,7 @@ fn test_variables_list() {
         })
         .unwrap();
 
-    let data = match outgoing_rx.recv().unwrap() {
+    let data = match iopub_rx.recv_comm_msg() {
         CommMsg::Rpc {
             id: reply_id, data, ..
         } => {
@@ -335,11 +340,15 @@ fn test_variables_last_value_enabled() {
         RThreadSafe::new(env)
     });
 
+    // Create a dummy iopub channel to receive responses.
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
     // Create a sender/receiver pair for the comm channel
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-last-value-enabled-comm-id"),
         String::from("positron.environment"),
+        iopub_tx.clone(),
     );
 
     // Create a dummy comm manager channel
@@ -347,19 +356,19 @@ fn test_variables_last_value_enabled() {
 
     // Create a new environment handler with show_last_value=true
     let incoming_tx = comm.incoming_tx.clone();
-    let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
         let test_env = test_env.get().clone();
         RVariables::start_with_config(
             test_env,
             comm.clone(),
             comm_manager_tx.clone(),
+            iopub_tx,
             LastValue::Always,
         );
     });
 
     // Ensure we get a list of variables after initialization
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message"),
@@ -387,7 +396,7 @@ fn test_variables_last_value_enabled() {
     EVENTS.console_prompt.emit(());
 
     // Wait for the update event
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message"),
@@ -423,7 +432,7 @@ fn test_variables_last_value_enabled() {
     // If we haven't seen both variables yet, try to get a second update
     if !seen_last_value || !seen_test_var {
         // It's possible that we won't get another update, so use a timeout
-        if let Ok(msg) = outgoing_rx.recv_timeout(std::time::Duration::from_millis(500)) {
+        if let Some(msg) = iopub_rx.recv_comm_msg_timeout(std::time::Duration::from_millis(500)) {
             if let CommMsg::Data(data) = msg {
                 let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
                 if let VariablesFrontendEvent::Update(params) = evt {
@@ -470,11 +479,15 @@ fn test_variables_last_value_disabled() {
         RThreadSafe::new(env)
     });
 
+    // Create a dummy iopub channel to receive responses.
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
     // Create a sender/receiver pair for the comm channel
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-last-value-disabled-comm-id"),
         String::from("positron.environment"),
+        iopub_tx.clone(),
     );
 
     // Create a dummy comm manager channel
@@ -482,14 +495,13 @@ fn test_variables_last_value_disabled() {
 
     // Create a new environment handler (default show_last_value=false)
     let incoming_tx = comm.incoming_tx.clone();
-    let outgoing_rx = comm.outgoing_rx.clone();
     r_task(|| {
         let test_env = test_env.get().clone();
-        RVariables::start(test_env, comm.clone(), comm_manager_tx.clone());
+        RVariables::start(test_env, comm.clone(), comm_manager_tx.clone(), iopub_tx);
     });
 
     // Ensure we get a list of variables after initialization
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message"),
@@ -516,7 +528,7 @@ fn test_variables_last_value_disabled() {
     EVENTS.console_prompt.emit(());
 
     // Wait for the update event
-    let msg = outgoing_rx.recv().unwrap();
+    let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
         CommMsg::Data(data) => data,
         _ => panic!("Expected data message"),
@@ -553,21 +565,29 @@ fn test_variables_last_value_disabled() {
 fn test_query_table_summary() {
     let _lock = r_test_lock();
 
+    // Create a dummy iopub channel to receive responses.
+    let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
     // Create a sender/receiver pair for the comm channel
     let comm = CommSocket::new(
         CommInitiator::FrontEnd,
         String::from("test-table-summary-comm-id"),
         String::from("positron.environment"),
+        iopub_tx.clone(),
     );
     let incoming_tx = comm.incoming_tx.clone();
-    let outgoing_rx = comm.outgoing_rx.clone();
 
     // Simulate comm manager
     let (comm_manager_tx, _) = bounded::<CommManagerEvent>(0);
 
     r_task(|| {
         // Create a new variables comm
-        RVariables::start(RObject::from(R_ENVS.global), comm.clone(), comm_manager_tx);
+        RVariables::start(
+            RObject::from(R_ENVS.global),
+            comm.clone(),
+            comm_manager_tx,
+            iopub_tx,
+        );
 
         // Create test datasets
         let code = r#"
@@ -598,7 +618,7 @@ fn test_query_table_summary() {
     // Simulate a prompt signal to refresh the variable list
     // and consume the update event
     EVENTS.console_prompt.emit(());
-    let _ = outgoing_rx.recv().unwrap();
+    let _ = iopub_rx.recv_comm_msg();
 
     // --- TEST 1: Query summary for data.frame with summary_stats query type ---
 
@@ -620,7 +640,7 @@ fn test_query_table_summary() {
         .unwrap();
 
     // Get the response
-    let data = match outgoing_rx.recv().unwrap() {
+    let data = match iopub_rx.recv_comm_msg() {
         CommMsg::Rpc {
             id: reply_id, data, ..
         } => {
@@ -698,7 +718,7 @@ fn test_query_table_summary() {
         .unwrap();
 
     // Get the response
-    let data = match outgoing_rx.recv().unwrap() {
+    let data = match iopub_rx.recv_comm_msg() {
         CommMsg::Rpc {
             id: reply_id, data, ..
         } => {
@@ -751,7 +771,7 @@ fn test_query_table_summary() {
     // Simulate a prompt signal to refresh the variable list
     // and consume the update event
     EVENTS.console_prompt.emit(());
-    let _ = outgoing_rx.recv().unwrap();
+    let _ = iopub_rx.recv_comm_msg();
 
     // Request table summary for non-table object
     let query_non_table = VariablesBackendRequest::QueryTableSummary(QueryTableSummaryParams {
@@ -771,7 +791,7 @@ fn test_query_table_summary() {
         .unwrap();
 
     // Get the error response
-    let data = match outgoing_rx.recv().unwrap() {
+    let data = match iopub_rx.recv_comm_msg() {
         CommMsg::Rpc {
             id: reply_id, data, ..
         } => {

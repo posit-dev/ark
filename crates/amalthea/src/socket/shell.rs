@@ -369,8 +369,12 @@ impl Shell {
         let comm_id = msg.comm_id.clone();
         let comm_name = msg.target_name.clone();
         let comm_data = msg.data.clone();
-        let comm_socket =
-            CommSocket::new(CommInitiator::FrontEnd, comm_id.clone(), comm_name.clone());
+        let comm_socket = CommSocket::new(
+            CommInitiator::FrontEnd,
+            comm_id.clone(),
+            comm_name.clone(),
+            self.iopub_tx.clone(),
+        );
 
         // Optional notification channel used by server comms to indicate
         // they are ready to accept connections

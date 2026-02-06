@@ -1,7 +1,7 @@
 //
 // connection.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 
 use std::collections::HashMap;
@@ -22,6 +22,7 @@ use amalthea::comm::connections_comm::PreviewObjectParams;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -59,12 +60,14 @@ impl RConnection {
     pub fn start(
         metadata: Metadata,
         comm_manager_tx: Sender<CommManagerEvent>,
+        iopub_tx: Sender<IOPubMessage>,
         comm_id: String,
     ) -> Result<String, anyhow::Error> {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
             String::from("positron.connection"),
+            iopub_tx,
         );
 
         let connection = Self {
@@ -325,7 +328,12 @@ pub unsafe extern "C-unwind" fn ps_connection_opened(
         code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
     };
 
-    if let Err(err) = RConnection::start(metadata, console.get_comm_manager_tx().clone(), id) {
+    if let Err(err) = RConnection::start(
+        metadata,
+        console.get_comm_manager_tx().clone(),
+        console.get_iopub_tx().clone(),
+        id,
+    ) {
         log::error!("Connection Pane: Failed to start connection: {err:?}");
         return Err(err);
     }

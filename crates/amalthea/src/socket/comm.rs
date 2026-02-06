@@ -1,18 +1,53 @@
 /*
  * comm.rs
  *
- * Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use stdext::result::ResultExt;
 
 use crate::comm::base_comm::json_rpc_error;
 use crate::comm::base_comm::JsonRpcErrorCode;
 use crate::comm::comm_channel::CommMsg;
+use crate::socket::iopub::IOPubMessage;
+
+/// A sender for outgoing comm messages that routes through the IOPub channel.
+///
+/// This wrapper ensures comm messages go through the same channel as other
+/// IOPub messages (like `ExecuteResult`), providing deterministic message
+/// ordering when emitted from the same thread.
+#[derive(Clone)]
+pub struct CommOutgoingTx {
+    comm_id: String,
+    iopub_tx: Sender<IOPubMessage>,
+}
+
+impl CommOutgoingTx {
+    /// Create a new `CommOutgoingTx` for a specific comm channel.
+    pub fn new(comm_id: String, iopub_tx: Sender<IOPubMessage>) -> Self {
+        Self { comm_id, iopub_tx }
+    }
+
+    /// Send an outgoing comm message through IOPub.
+    pub fn send(&self, msg: CommMsg) -> Result<(), SendError<IOPubMessage>> {
+        self.iopub_tx
+            .send(IOPubMessage::CommOutgoing(self.comm_id.clone(), msg))
+    }
+
+    /// Get the underlying IOPub sender.
+    ///
+    /// This is useful when you need to create new `CommSocket`s that should
+    /// route through the same IOPub channel.
+    pub fn iopub_tx(&self) -> &Sender<IOPubMessage> {
+        &self.iopub_tx
+    }
+}
 
 /**
  * A `CommSocket` is a relay between the back end and the frontend of a comm.
@@ -37,15 +72,9 @@ pub struct CommSocket {
     /// the comm is owned by the frontend or the back end.
     pub initiator: CommInitiator,
 
-    /// The channel receiving messages from the back end that are to be relayed
-    /// to the frontend (ultimately via IOPub). These messages are freeform
-    /// JSON values.
-    pub outgoing_rx: Receiver<CommMsg>,
-
-    /// The other side of the channel receiving messages from the back end. This
-    /// `Sender` is passed to the back end of the comm channel so that it can
-    /// send messages to the frontend.
-    pub outgoing_tx: Sender<CommMsg>,
+    /// Sender for outgoing messages to the frontend. Routes through IOPub
+    /// for deterministic message ordering.
+    pub outgoing_tx: CommOutgoingTx,
 
     /// The channel that will accept messages from the frontend and relay them
     /// to the back end.
@@ -83,17 +112,22 @@ impl CommSocket {
      * - `comm_name`: The comm's name. This is a freeform string since comm
      *    names have no restrictions in the Jupyter protocol, but it's typically a
      *    member of the Comm enum.
+     * - `iopub_tx`: The IOPub channel for sending messages to the frontend.
      */
-    pub fn new(initiator: CommInitiator, comm_id: String, comm_name: String) -> Self {
-        let (outgoing_tx, outgoing_rx) = crossbeam::channel::unbounded();
+    pub fn new(
+        initiator: CommInitiator,
+        comm_id: String,
+        comm_name: String,
+        iopub_tx: Sender<IOPubMessage>,
+    ) -> Self {
         let (incoming_tx, incoming_rx) = crossbeam::channel::unbounded();
+        let outgoing_tx = CommOutgoingTx::new(comm_id.clone(), iopub_tx);
 
         Self {
             comm_id,
             comm_name,
             initiator,
             outgoing_tx,
-            outgoing_rx,
             incoming_tx,
             incoming_rx,
         }
@@ -169,7 +203,7 @@ impl CommSocket {
             data: json,
         };
 
-        self.outgoing_tx.send(response).unwrap();
+        self.outgoing_tx.send(response).log_err();
         true
     }
 }

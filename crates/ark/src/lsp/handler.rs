@@ -1,16 +1,16 @@
 //
 // handler.rs
 //
-// Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
 use std::sync::Arc;
 
-use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
+use amalthea::socket::comm::CommOutgoingTx;
 use bus::BusReader;
 use crossbeam::channel::Sender;
 use stdext::spawn;
@@ -57,7 +57,7 @@ impl ServerHandler for Lsp {
         &mut self,
         server_start: ServerStartMessage,
         server_started_tx: Sender<ServerStartedMessage>,
-        _comm_tx: Sender<CommMsg>,
+        _comm_tx: CommOutgoingTx,
     ) -> Result<(), amalthea::error::Error> {
         // If the kernel hasn't been initialized yet, wait for it to finish.
         // This prevents the LSP from attempting to start up before the kernel

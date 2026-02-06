@@ -6,7 +6,9 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::comm_rpc_message;
 use amalthea::socket::comm::CommInitiator;
+use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use anyhow::Context;
 use crossbeam::channel::Sender;
 use harp::utils::r_is_null;
@@ -21,7 +23,7 @@ use uuid::Uuid;
 
 use crate::console::Console;
 
-static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<Sender<CommMsg>>>> =
+static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<CommOutgoingTx>>> =
     LazyLock::new(|| Mutex::new(None));
 
 // Each ark session has a unique session id which is used by the Positron frontend
@@ -39,12 +41,14 @@ impl ReticulateService {
     fn start(
         comm_id: String,
         comm_manager_tx: Sender<CommManagerEvent>,
+        iopub_tx: Sender<IOPubMessage>,
         input: Option<String>,
     ) -> anyhow::Result<()> {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
             String::from("positron.reticulate"),
+            iopub_tx,
         );
 
         {
@@ -131,7 +135,12 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     }
 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
-    ReticulateService::start(id, console.get_comm_manager_tx().clone(), input_code)?;
+    ReticulateService::start(
+        id,
+        console.get_comm_manager_tx().clone(),
+        console.get_iopub_tx().clone(),
+        input_code,
+    )?;
 
     Ok(R_NilValue)
 }

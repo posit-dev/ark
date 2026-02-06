@@ -1,7 +1,7 @@
 //
 // r-data-explorer.rs
 //
-// Copyright (C) 2023-2024 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 //
 
@@ -64,6 +64,7 @@ use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommManagerEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
@@ -187,6 +188,7 @@ impl RDataExplorer {
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
         comm_manager_tx: Sender<CommManagerEvent>,
+        iopub_tx: Sender<IOPubMessage>,
     ) -> harp::Result<String> {
         let id = Uuid::new_v4().to_string();
 
@@ -194,6 +196,7 @@ impl RDataExplorer {
             CommInitiator::BackEnd,
             id.clone(),
             String::from("positron.dataExplorer"),
+            iopub_tx,
         );
 
         // To be able to `Send` the `data` to the thread to be owned by the data
@@ -1323,7 +1326,9 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     let title = RObject::new(title);
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
-    let comm_manager_tx = Console::get().get_comm_manager_tx().clone();
+    let console = Console::get();
+    let comm_manager_tx = console.get_comm_manager_tx().clone();
+    let iopub_tx = console.get_iopub_tx().clone();
 
     // If an environment is provided, watch the variable in the environment
     let env_info = if env != R_NilValue {
@@ -1348,7 +1353,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         None
     };
 
-    RDataExplorer::start(title, x, env_info, comm_manager_tx)?;
+    RDataExplorer::start(title, x, env_info, comm_manager_tx, iopub_tx)?;
 
     Ok(R_NilValue)
 }

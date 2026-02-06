@@ -17,6 +17,7 @@ use std::sync::Mutex;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
+use amalthea::socket::comm::CommOutgoingTx;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
@@ -63,7 +64,7 @@ pub fn start_dap(
     server_start: ServerStartMessage,
     server_started_tx: Sender<ServerStartedMessage>,
     r_request_tx: Sender<RRequest>,
-    comm_tx: Sender<CommMsg>,
+    comm_tx: CommOutgoingTx,
 ) {
     let ip_address = server_start.ip_address();
 
@@ -227,7 +228,7 @@ pub struct DapServer<R: Read, W: Write> {
     pub output: Arc<Mutex<ServerOutput<W>>>,
     state: Arc<Mutex<Dap>>,
     r_request_tx: Sender<RRequest>,
-    comm_tx: Option<Sender<CommMsg>>,
+    comm_tx: Option<CommOutgoingTx>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
@@ -236,7 +237,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         writer: BufWriter<W>,
         state: Arc<Mutex<Dap>>,
         r_request_tx: Sender<RRequest>,
-        comm_tx: Sender<CommMsg>,
+        comm_tx: CommOutgoingTx,
     ) -> Self {
         let server = Server::new(reader, writer);
         let output = server.output.clone();
@@ -555,7 +556,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // frontend. Otherwise ignore it.
         if let Some(tx) = &self.comm_tx {
             let msg = amalthea::comm_rpc_message!("restart");
-            tx.send(msg).unwrap();
+            tx.send(msg).log_err();
         }
 
         let rsp = req.success(ResponseBody::Restart);
@@ -760,7 +761,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             // were sent by the user. This ensures prompts are updated.
             let msg = amalthea::comm_rpc_message!("execute", command = debug_request_command(cmd));
 
-            tx.send(msg).unwrap();
+            tx.send(msg).log_err();
         } else {
             // Otherwise, send command to R's `ReadConsole()` frontend method
             self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
