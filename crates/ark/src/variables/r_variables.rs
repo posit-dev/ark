@@ -509,7 +509,11 @@ impl RVariables {
                 // If we were given a request ID, send the response as an RPC;
                 // otherwise, send it as an event
                 let comm_msg = match request_id {
-                    Some(id) => CommMsg::Rpc(id, data),
+                    Some(id) => CommMsg::Rpc {
+                        id,
+                        parent_header: None,
+                        data,
+                    },
                     None => CommMsg::Data(data),
                 };
 

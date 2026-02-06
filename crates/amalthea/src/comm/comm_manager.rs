@@ -5,8 +5,6 @@
  *
  */
 
-use std::collections::HashMap;
-
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
@@ -26,13 +24,11 @@ use crate::socket::iopub::IOPubMessage;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
-use crate::wire::header::JupyterHeader;
 
 pub struct CommManager {
     open_comms: Vec<CommSocket>,
     iopub_tx: Sender<IOPubMessage>,
     comm_event_rx: Receiver<CommManagerEvent>,
-    pending_rpcs: HashMap<String, JupyterHeader>,
 }
 
 impl CommManager {
@@ -62,7 +58,6 @@ impl CommManager {
             iopub_tx,
             comm_event_rx,
             open_comms: Vec::<CommSocket>::new(),
-            pending_rpcs: HashMap::<String, JupyterHeader>::new(),
         }
     }
 
@@ -119,11 +114,6 @@ impl CommManager {
                         "Comm channel opened; there are now {} open comms",
                         self.open_comms.len()
                     );
-                },
-
-                // An RPC was received; add it to the map of pending RPCs
-                CommManagerEvent::PendingRpc(header) => {
-                    self.pending_rpcs.insert(header.msg_id.clone(), header);
                 },
 
                 // A message was received from the frontend
@@ -216,29 +206,24 @@ impl CommManager {
                     data,
                 }),
 
-                // The comm is replying to a message from the frontend; the
-                // first parameter names the ID of the message to which this is
-                // a reply.
-                CommMsg::Rpc(string, data) => {
+                // The comm is replying to a message from the frontend
+                CommMsg::Rpc {
+                    id: _,
+                    parent_header,
+                    data,
+                } => {
                     // Create the payload to send to the frontend
                     let payload = CommWireMsg {
                         comm_id: comm_socket.comm_id.clone(),
                         data,
                     };
 
-                    // Try to find the message ID in the map of pending RPCs.
-                    match self.pending_rpcs.remove(&string) {
-                        Some(header) => {
-                            // Found it; consume the pending RPC and convert the
-                            // message to a reply.
-                            IOPubMessage::CommMsgReply(header, payload)
-                        },
+                    // The header travels with the message for proper parenting
+                    match parent_header {
+                        Some(header) => IOPubMessage::CommMsgReply(header, payload),
                         None => {
-                            // Didn't find it; log a warning and treat it like
-                            // an event so that the frontend still gets the
-                            // data.
-                            log::warn!(
-                                "Received RPC response '{payload:?}' for unknown message ID {string}");
+                            // No header means this came from a test or other
+                            // context without a real Jupyter request
                             IOPubMessage::CommMsgEvent(payload)
                         },
                     }

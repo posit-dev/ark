@@ -309,13 +309,13 @@ impl Shell {
             // the Jupyter header
             let request_id = header.msg_id.clone();
 
-            // Store this message as a pending RPC request so that when the comm
-            // responds, we can match it up
-            self.comm_manager_tx
-                .send(CommManagerEvent::PendingRpc(header))
-                .unwrap();
-
-            CommMsg::Rpc(request_id, msg.data.clone())
+            // Include the header so it can be echoed back in the reply for
+            // proper message parenting
+            CommMsg::Rpc {
+                id: request_id,
+                parent_header: Some(header),
+                data: msg.data.clone(),
+            }
         } else {
             CommMsg::Data(msg.data.clone())
         };

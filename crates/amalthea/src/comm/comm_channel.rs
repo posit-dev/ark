@@ -1,7 +1,7 @@
 /*
  * comm_channel.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -9,6 +9,7 @@ use serde_json::Value;
 use strum_macros::EnumString;
 
 use super::ui_comm::UiFrontendRequest;
+use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::MessageType;
 
 #[derive(EnumString, PartialEq)]
@@ -41,11 +42,16 @@ pub enum Comm {
 
 #[derive(Clone, Debug)]
 pub enum CommMsg {
-    /// A message that is part of a Remote Procedure Call (RPC). The first value
-    /// is the unique ID of the RPC invocation (i.e. the Jupyter message ID),
-    /// and the second value is the data associated with the RPC (the request or
-    /// response).
-    Rpc(String, Value),
+    /// A message that is part of a Remote Procedure Call (RPC).
+    Rpc {
+        /// Unique ID of the RPC invocation (the Jupyter message ID)
+        id: String,
+        /// Parent header from the original request (Some for requests from
+        /// frontend, echoed back in replies for proper message parenting)
+        parent_header: Option<JupyterHeader>,
+        /// The data associated with the RPC (request or response)
+        data: Value,
+    },
 
     /// A message representing any other data sent on the comm channel; usually
     /// used for events.

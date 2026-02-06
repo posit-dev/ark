@@ -10,7 +10,6 @@ use serde_json::Value;
 
 use crate::comm::comm_channel::CommMsg;
 use crate::socket::comm::CommSocket;
-use crate::wire::header::JupyterHeader;
 
 /**
  * Enumeration of events that can be received by the comm manager.
@@ -22,9 +21,6 @@ pub enum CommManagerEvent {
     /// A message was received on a Comm; the first value is the comm ID, and the
     /// second value is the message.
     Message(String, CommMsg),
-
-    /// An RPC was received from the frontend
-    PendingRpc(JupyterHeader),
 
     /// A Comm was closed
     Closed(String),

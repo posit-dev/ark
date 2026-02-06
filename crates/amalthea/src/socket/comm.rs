@@ -117,8 +117,12 @@ impl CommSocket {
         Reqs: DeserializeOwned + std::fmt::Debug,
         Reps: Serialize,
     {
-        let (id, data) = match message {
-            CommMsg::Rpc(id, data) => (id, data),
+        let (id, parent_header, data) = match message {
+            CommMsg::Rpc {
+                id,
+                parent_header,
+                data,
+            } => (id, parent_header, data),
             _ => return false,
         };
 
@@ -159,7 +163,11 @@ impl CommSocket {
             },
         };
 
-        let response = CommMsg::Rpc(id, json);
+        let response = CommMsg::Rpc {
+            id,
+            parent_header,
+            data: json,
+        };
 
         self.outgoing_tx.send(response).unwrap();
         true

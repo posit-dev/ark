@@ -763,7 +763,11 @@ fn expect_column_profile_results(
     println!("--> {:?}", json);
 
     // Convert the request to a CommMsg and send it.
-    let msg = CommMsg::Rpc(id, json);
+    let msg = CommMsg::Rpc {
+        id,
+        parent_header: None,
+        data: json,
+    };
     socket.incoming_tx.send(msg).unwrap();
 
     let msg = socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap();
@@ -787,7 +791,7 @@ fn expect_column_profile_results(
     let msg = socket.outgoing_rx.recv_timeout(RECV_TIMEOUT).unwrap();
 
     let reply: DataExplorerBackendReply = match msg {
-        CommMsg::Rpc(_id, value) => {
+        CommMsg::Rpc { data: value, .. } => {
             println!("<-- {:?}", value);
             let reply = serde_json::from_value(value).unwrap();
             reply
