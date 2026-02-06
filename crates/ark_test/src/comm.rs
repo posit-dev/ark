@@ -10,6 +10,7 @@ use std::time::Duration;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::socket;
 use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::header::JupyterHeader;
 use crossbeam::channel::Receiver;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -26,6 +27,19 @@ pub trait IOPubReceiverExt {
     /// Receive a comm message with a timeout.
     /// Returns `None` if the timeout expires.
     fn recv_comm_msg_timeout(&self, timeout: Duration) -> Option<CommMsg>;
+}
+
+/// Create a dummy JupyterHeader for use in tests.
+///
+/// This allows tests to send `CommMsg::Rpc` with a proper header, matching
+/// production behavior where RPCs always have a parent header from the
+/// original request.
+pub fn dummy_jupyter_header() -> JupyterHeader {
+    JupyterHeader::create(
+        String::from("comm_msg"),
+        String::from("test-session"),
+        String::from("test-user"),
+    )
 }
 
 impl IOPubReceiverExt for Receiver<IOPubMessage> {
@@ -57,7 +71,7 @@ where
 
     let msg = CommMsg::Rpc {
         id,
-        parent_header: None,
+        parent_header: dummy_jupyter_header(),
         data: json,
     };
     socket.incoming_tx.send(msg).unwrap();

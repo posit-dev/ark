@@ -258,13 +258,11 @@ fn test_amalthea_comm_open_from_kernel() {
 
     let test_comm_id = String::from("test_comm_id_84e7fe");
     let test_comm_name = String::from("test_target");
-    // Create an unbounded iopub channel for the comm to send messages through
-    let (iopub_tx, _iopub_rx) = crossbeam::channel::unbounded();
     let test_comm = CommSocket::new(
         CommInitiator::BackEnd,
         test_comm_id.clone(),
         test_comm_name.clone(),
-        iopub_tx,
+        frontend.iopub_tx.clone(),
     );
 
     frontend

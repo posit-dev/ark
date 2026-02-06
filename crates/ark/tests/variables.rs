@@ -21,6 +21,7 @@ use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
 use ark::variables::r_variables::LastValue;
 use ark::variables::r_variables::RVariables;
+use ark_test::dummy_jupyter_header;
 use ark_test::r_test_lock;
 use ark_test::IOPubReceiverExt;
 use crossbeam::channel::bounded;
@@ -118,7 +119,7 @@ fn test_variables_list() {
     incoming_tx
         .send(CommMsg::Rpc {
             id: request_id.clone(),
-            parent_header: None,
+            parent_header: dummy_jupyter_header(),
             data,
         })
         .unwrap();
@@ -200,7 +201,7 @@ fn test_variables_list() {
     incoming_tx
         .send(CommMsg::Rpc {
             id: request_id.clone(),
-            parent_header: None,
+            parent_header: dummy_jupyter_header(),
             data,
         })
         .unwrap();
@@ -290,7 +291,7 @@ fn test_variables_list() {
     incoming_tx
         .send(CommMsg::Rpc {
             id: request_id.clone(),
-            parent_header: None,
+            parent_header: dummy_jupyter_header(),
             data,
         })
         .unwrap();
@@ -634,7 +635,7 @@ fn test_query_table_summary() {
     incoming_tx
         .send(CommMsg::Rpc {
             id: request_id.clone(),
-            parent_header: None,
+            parent_header: dummy_jupyter_header(),
             data,
         })
         .unwrap();
@@ -712,7 +713,7 @@ fn test_query_table_summary() {
     incoming_tx
         .send(CommMsg::Rpc {
             id: request_id.clone(),
-            parent_header: None,
+            parent_header: dummy_jupyter_header(),
             data,
         })
         .unwrap();
@@ -785,7 +786,7 @@ fn test_query_table_summary() {
     incoming_tx
         .send(CommMsg::Rpc {
             id: request_id.clone(),
-            parent_header: None,
+            parent_header: dummy_jupyter_header(),
             data,
         })
         .unwrap();

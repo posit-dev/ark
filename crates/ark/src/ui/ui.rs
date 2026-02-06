@@ -257,6 +257,7 @@ mod tests {
     use amalthea::socket::comm::CommSocket;
     use amalthea::socket::iopub::IOPubMessage;
     use amalthea::socket::stdin::StdInRequest;
+    use ark_test::dummy_jupyter_header;
     use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
     use harp::exec::RFunction;
@@ -311,7 +312,7 @@ mod tests {
             .incoming_tx
             .send(CommMsg::Rpc {
                 id,
-                parent_header: None,
+                parent_header: dummy_jupyter_header(),
                 data: serde_json::to_value(request).unwrap(),
             })
             .unwrap();
@@ -356,7 +357,7 @@ mod tests {
             .incoming_tx
             .send(CommMsg::Rpc {
                 id,
-                parent_header: None,
+                parent_header: dummy_jupyter_header(),
                 data: serde_json::to_value(request).unwrap(),
             })
             .unwrap();

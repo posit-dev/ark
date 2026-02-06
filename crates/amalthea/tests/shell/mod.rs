@@ -42,7 +42,6 @@ use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use log::warn;
 use serde_json::json;
-use stdext::result::ResultExt;
 
 pub struct Shell {
     iopub: Sender<IOPubMessage>,
@@ -261,22 +260,22 @@ impl ShellHandler for Shell {
                 CommMsg::Data(val) => {
                     // Echo back the data we received on the comm channel to the
                     // sender.
-                    comm.outgoing_tx.send(CommMsg::Data(val)).log_err();
+                    comm.outgoing_tx.send(CommMsg::Data(val)).unwrap();
                 },
                 CommMsg::Rpc {
                     id,
                     parent_header,
-                    data: val,
+                    data,
                 } => {
                     // Echo back the data we received on the comm channel to the
-                    // sender as the response to the RPC, using the same ID.
+                    // sender as the response to the RPC, using the same ID and header.
                     comm.outgoing_tx
                         .send(CommMsg::Rpc {
                             id,
                             parent_header,
-                            data: val,
+                            data,
                         })
-                        .log_err();
+                        .unwrap();
                 },
                 CommMsg::Close => {
                     // Close the channel and exit the thread.

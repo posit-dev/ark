@@ -11,7 +11,6 @@
 
 pub mod base_comm;
 pub mod comm_channel;
-pub mod comm_manager;
 #[rustfmt::skip]
 pub mod data_explorer_comm;
 pub mod event;
