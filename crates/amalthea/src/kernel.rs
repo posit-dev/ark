@@ -247,10 +247,12 @@ pub fn connect(
     // The notifier watches `outbound_rx` and forwards messages via `zmq_outbound_tx`.
     let (zmq_outbound_tx, zmq_outbound_rx) = unbounded::<OutboundMessage>();
 
-    // Forwarding thread that bridges 0MQ sockets and Amalthea
-    // channels. Currently only used by StdIn.
-    spawn!(format!("{name}-zmq-forwarding"), move || {
-        zmq_forwarding_thread(
+    // Socket bridge thread: owns the external ZMQ sockets (IOPub, StdIn) and
+    // bridges them to/from Amalthea channels. Potentially all the sockets
+    // could live there. That would allow consistent channel messaging
+    // throughout Amalthea.
+    spawn!(format!("{name}-socket-bridge"), move || {
+        socket_bridge_thread(
             outbound_notif_socket_rx,
             stdin_socket,
             stdin_inbound_tx,
@@ -260,15 +262,13 @@ pub fn connect(
         )
     });
 
-    // The notifier thread watches multiple Amalthea channels for readiness and
-    // notifies the appropriate threads via inproc sockets:
-    // - outbound_rx -> zmq_forwarding_thread (for IOPub/StdIn messages)
+    // Channel bridge thread: watches crossbeam channels and makes them pollable
+    // via inproc ZMQ sockets. This allows threads to use `zmq_poll()` to wait on
+    // both external ZMQ sockets and internal channel events.
+    // - outbound_rx -> socket_bridge_thread (for IOPub/StdIn messages)
     // - comm_manager_rx -> Shell (for comm events from backend)
-    // This bridges crossbeam channels to inproc ZMQ sockets, allowing threads
-    // to use `zmq_poll()` to wait on both external ZMQ sockets and internal
-    // channel events.
-    spawn!(format!("{name}-notifier"), move || {
-        notifier_thread(
+    spawn!(format!("{name}-channel-bridge"), move || {
+        channel_bridge_thread(
             outbound_notif_socket_tx,
             outbound_rx,
             zmq_outbound_tx,
@@ -432,16 +432,17 @@ fn stdin_thread(
     Ok(())
 }
 
-/// Forwards messages between ZMQ sockets and Amalthea channels.
+/// Socket bridge: owns external ZMQ sockets (IOPub, StdIn) and bridges them
+/// to/from Amalthea channels.
 ///
 /// This solves the problem of polling/selecting from ZMQ sockets and crossbeam
 /// channels at the same time. ZMQ sockets can only be owned by one thread, but
 /// we need to listen for multiple event sources. For example, with IOPub we need
 /// to both send messages to the frontend AND listen for subscription events.
 ///
-/// The solution: the notifier thread watches crossbeam channels and forwards
+/// The solution: the channel bridge thread watches crossbeam channels and forwards
 /// messages to this thread via `zmq_outbound_rx`, then sends a ZMQ notification.
-/// The forwarding thread below then uses `zmq_poll()` to wait on:
+/// This thread then uses `zmq_poll()` to wait on:
 /// - Outbound notification socket: wakes up when messages are ready to send
 /// - StdIn socket: receives replies from the frontend
 /// - IOPub socket: receives subscription events from the frontend
@@ -452,7 +453,7 @@ fn stdin_thread(
 /// Terminology:
 /// - Outbound: Amalthea channel -> ZMQ socket (e.g. IOPub messages to frontend)
 /// - Inbound: ZMQ socket -> Amalthea channel (e.g. StdIn replies from frontend)
-fn zmq_forwarding_thread(
+fn socket_bridge_thread(
     outbound_notif_socket: Socket,
     stdin_socket: Socket,
     stdin_inbound_tx: Sender<crate::Result<Message>>,
@@ -626,17 +627,17 @@ impl<T> Forwarder<T> {
     }
 }
 
-/// Notifier thread that watches multiple Amalthea channels for readiness
-/// and notifies the appropriate consumer threads via inproc sockets.
+/// Channel bridge: watches crossbeam channels and makes them pollable via
+/// inproc ZMQ sockets.
 ///
 /// This thread bridges crossbeam channels to ZMQ poll() by:
 /// 1. Watching `outbound_rx` for IOPub/StdIn messages -> forwards via `zmq_outbound_tx`
 /// 2. Watching `comm_manager_rx` for comm events -> forwards via `shell_comm_tx`
 ///
-/// Both use fire-and-forget notifications: the notifier consumes messages,
-/// forwards them through a channel, and sends a DONTWAIT notification.
-/// Consumer threads drain all pending messages when they wake up.
-fn notifier_thread(
+/// Both use fire-and-forget notifications: consumes messages, forwards them
+/// through a channel, and sends a DONTWAIT notification. Consumer threads
+/// drain all pending messages when they wake up.
+fn channel_bridge_thread(
     outbound_notif_socket: Socket,
     outbound_rx: Receiver<OutboundMessage>,
     zmq_outbound_tx: Sender<OutboundMessage>,
