@@ -87,13 +87,14 @@ fn test_execute_request_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // Printed output
-    frontend.recv_iopub_stream_stdout("[1] 1\n[1] 2\n");
-
     // In console mode, we get output for all intermediate results.  That's not
     // the case in notebook mode where only the final result is emitted. Note
     // that `print()` returns invisibly.
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
+
+    // Printed output
+    frontend.assert_stream_stdout_contains("[1] 1");
+    frontend.assert_stream_stdout_contains("[1] 2");
 
     frontend.recv_iopub_idle();
 

@@ -423,6 +423,7 @@ dependencies = [
  "dap",
  "harp",
  "log",
+ "regex",
  "serde",
  "serde_json",
  "stdext",

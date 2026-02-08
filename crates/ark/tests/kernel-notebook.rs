@@ -48,11 +48,11 @@ fn test_notebook_execute_request_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // Printed output
-    frontend.recv_iopub_stream_stdout("[1] 2\n");
-
     // Unlike console mode, we don't get intermediate results in notebooks
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
+
+    // Printed output
+    frontend.assert_stream_stdout_contains("[1] 2");
 
     frontend.recv_iopub_idle();
 

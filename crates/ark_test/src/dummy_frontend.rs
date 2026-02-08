@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::Seek;
 use std::io::Write;
 use std::ops::Deref;
@@ -6,6 +9,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
+use std::time::Duration;
+use std::time::Instant;
 
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
@@ -16,11 +21,14 @@ use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
 use amalthea::wire::jupyter_message::Message;
+use amalthea::wire::stream::Stream;
 use ark::console::SessionMode;
 use ark::repos::DefaultRepos;
 use ark::url::ExtUrl;
+use regex::Regex;
 use tempfile::NamedTempFile;
 
+use crate::comm::RECV_TIMEOUT;
 use crate::tracing::trace_iopub_msg;
 use crate::tracing::trace_separator;
 use crate::tracing::trace_shell_reply;
@@ -35,9 +43,40 @@ use crate::DapClient;
 // initialization in the future.
 static FRONTEND: OnceLock<Arc<Mutex<DummyFrontend>>> = OnceLock::new();
 
-/// Wrapper around `DummyFrontend` that checks sockets are empty on drop
+/// Wrapper around `DummyFrontend` that checks sockets are empty on drop.
+///
+/// This wrapper automatically buffers Stream messages when receiving from IOPub,
+/// allowing tests to assert on streams separately from the main message flow.
+/// This handles the non-deterministic interleaving of streams (due to arbitrary
+/// batching and splitting of messages by R) with other messages.
 pub struct DummyArkFrontend {
     guard: MutexGuard<'static, DummyFrontend>,
+    /// Accumulated stdout stream content
+    stream_stdout: RefCell<String>,
+    /// Accumulated stderr stream content
+    stream_stderr: RefCell<String>,
+    /// Put-back queue for non-stream messages encountered during stream assertions
+    pending_messages: RefCell<VecDeque<Message>>,
+    /// Tracks whether any stream assertion was made (for Drop validation).
+    /// If stream is emitted during a test, there must be at least one stream
+    /// assertion.
+    streams_handled: Cell<bool>,
+}
+
+/// Result of draining accumulated streams
+pub struct DrainedStreams {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+/// CI-aware timeout for draining streams.
+/// Shorter locally for fast iteration, longer on CI where things are slower.
+fn default_drain_timeout() -> Duration {
+    if std::env::var("CI").is_ok() {
+        Duration::from_millis(200)
+    } else {
+        Duration::from_millis(50)
+    }
 }
 
 struct DummyArkFrontendOptions {
@@ -75,6 +114,428 @@ impl DummyArkFrontend {
     pub fn lock() -> Self {
         Self {
             guard: Self::get_frontend().lock().unwrap(),
+            stream_stdout: RefCell::new(String::new()),
+            stream_stderr: RefCell::new(String::new()),
+            pending_messages: RefCell::new(VecDeque::new()),
+            streams_handled: Cell::new(false),
+        }
+    }
+
+    /// Buffer a stream message into the appropriate accumulator.
+    fn buffer_stream(&self, data: &amalthea::wire::stream::StreamOutput) {
+        match data.name {
+            Stream::Stdout => self.stream_stdout.borrow_mut().push_str(&data.text),
+            Stream::Stderr => self.stream_stderr.borrow_mut().push_str(&data.text),
+        }
+    }
+
+    /// Receive from IOPub with a timeout.
+    /// Returns `None` if the timeout expires before a message arrives.
+    fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
+        let timeout_ms = timeout.as_millis() as i64;
+        if self.guard.iopub_socket.poll_incoming(timeout_ms).unwrap() {
+            Some(Message::read_from_socket(&self.guard.iopub_socket).unwrap())
+        } else {
+            None
+        }
+    }
+
+    /// Core primitive: receive the next non-stream message from IOPub.
+    ///
+    /// This automatically buffers any Stream messages encountered while waiting
+    /// for a non-stream message. All `recv_iopub_*` methods for non-stream
+    /// messages should use this instead of calling `recv_iopub()` directly.
+    fn recv_iopub_next(&self) -> Message {
+        // Check put-back buffer first
+        if let Some(msg) = self.pending_messages.borrow_mut().pop_front() {
+            trace_iopub_msg(&msg);
+            return msg;
+        }
+        // Read from socket, auto-buffering any streams
+        loop {
+            let msg = self.recv_iopub();
+            trace_iopub_msg(&msg);
+            match msg {
+                Message::Stream(ref data) => {
+                    self.buffer_stream(&data.content);
+                },
+                other => return other,
+            }
+        }
+    }
+
+    /// Internal helper for stream assertions.
+    #[track_caller]
+    fn assert_stream_contains(&self, buffer: &RefCell<String>, stream_name: &str, expected: &str) {
+        self.streams_handled.set(true);
+        let deadline = Instant::now() + RECV_TIMEOUT;
+
+        loop {
+            // Check buffer
+            {
+                let mut buf = buffer.borrow_mut();
+                if let Some(pos) = buf.find(expected) {
+                    // Found it! Drain buffer up to the expected string
+                    buf.drain(..pos + expected.len());
+                    return;
+                }
+            }
+
+            // Timeout check
+            if Instant::now() >= deadline {
+                panic!(
+                    "Timeout waiting for {stream_name} containing {expected:?}\n\
+                     Accumulated stdout: {:?}\n\
+                     Accumulated stderr: {:?}",
+                    self.stream_stdout.borrow(),
+                    self.stream_stderr.borrow()
+                );
+            }
+
+            // Read more (with short timeout to allow checking deadline)
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let poll_timeout = remaining.min(Duration::from_millis(100));
+
+            if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
+                trace_iopub_msg(&msg);
+                match msg {
+                    Message::Stream(ref data) => self.buffer_stream(&data.content),
+                    other => self.pending_messages.borrow_mut().push_back(other),
+                }
+            }
+        }
+    }
+
+    /// Assert that stdout contains the expected text.
+    ///
+    /// This checks the accumulated stream buffer first. If the expected text
+    /// isn't found, it reads more messages from IOPub (buffering any non-stream
+    /// messages for later) until the text is found or a timeout occurs.
+    ///
+    /// The buffer is drained up to and including the match point; any content
+    /// after the match remains for future assertions. This means assertions are
+    /// order-sensitive: assert in the order you expect the text to appear.
+    #[track_caller]
+    pub fn assert_stream_stdout_contains(&self, expected: &str) {
+        self.assert_stream_contains(&self.stream_stdout, "stdout", expected);
+    }
+
+    /// Assert that stderr contains the expected text.
+    ///
+    /// This checks the accumulated stream buffer first. If the expected text
+    /// isn't found, it reads more messages from IOPub (buffering any non-stream
+    /// messages for later) until the text is found or a timeout occurs.
+    ///
+    /// The buffer is drained up to and including the match point; any content
+    /// after the match remains for future assertions. This means assertions are
+    /// order-sensitive: assert in the order you expect the text to appear.
+    #[track_caller]
+    pub fn assert_stream_stderr_contains(&self, expected: &str) {
+        self.assert_stream_contains(&self.stream_stderr, "stderr", expected);
+    }
+
+    /// Assert that stdout matches the given regex pattern.
+    ///
+    /// Like `assert_stream_stdout_contains`, but uses regex matching.
+    /// The buffer is drained up to and including the match.
+    #[track_caller]
+    pub fn assert_stream_stdout_matches(&self, pattern: &Regex) {
+        self.assert_stream_matches_re(&self.stream_stdout, "stdout", pattern);
+    }
+
+    /// Assert that stderr matches the given regex pattern.
+    ///
+    /// Like `assert_stream_stderr_contains`, but uses regex matching.
+    /// The buffer is drained up to and including the match.
+    #[track_caller]
+    pub fn assert_stream_stderr_matches(&self, pattern: &Regex) {
+        self.assert_stream_matches_re(&self.stream_stderr, "stderr", pattern);
+    }
+
+    /// Internal helper for regex stream assertions.
+    #[track_caller]
+    fn assert_stream_matches_re(
+        &self,
+        buffer: &RefCell<String>,
+        stream_name: &str,
+        pattern: &Regex,
+    ) {
+        self.streams_handled.set(true);
+        let deadline = Instant::now() + RECV_TIMEOUT;
+
+        loop {
+            // Check buffer
+            {
+                let mut buf = buffer.borrow_mut();
+                if let Some(m) = pattern.find(&buf) {
+                    // Found it! Drain buffer up to the end of the match
+                    let end = m.end();
+                    buf.drain(..end);
+                    return;
+                }
+            }
+
+            // Timeout check
+            if Instant::now() >= deadline {
+                panic!(
+                    "Timeout waiting for {stream_name} matching {pattern:?}\n\
+                     Accumulated stdout: {:?}\n\
+                     Accumulated stderr: {:?}",
+                    self.stream_stdout.borrow(),
+                    self.stream_stderr.borrow()
+                );
+            }
+
+            // Read more (with short timeout to allow checking deadline)
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let poll_timeout = remaining.min(Duration::from_millis(100));
+
+            if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
+                trace_iopub_msg(&msg);
+                match msg {
+                    Message::Stream(ref data) => self.buffer_stream(&data.content),
+                    other => self.pending_messages.borrow_mut().push_back(other),
+                }
+            }
+        }
+    }
+
+    /// Drain accumulated streams, waiting for any stragglers.
+    ///
+    /// Normally, streams are asserted with `assert_stream_*_contains()` and
+    /// flushed automatically at idle boundaries via `recv_iopub_idle()`.
+    /// Use this method only for edge cases like:
+    /// - Streams that may arrive during another operation's idle boundary (race conditions)
+    /// - Ordering assertions where you need to capture content at a specific point
+    ///
+    /// Returns the accumulated stdout and stderr content, clearing the buffers.
+    pub fn drain_streams(&self) -> DrainedStreams {
+        self.streams_handled.set(true);
+        self.drain_streams_internal()
+    }
+
+    /// Internal drain that doesn't set `streams_handled` (for use in Drop).
+    fn drain_streams_internal(&self) -> DrainedStreams {
+        let deadline = Instant::now() + default_drain_timeout();
+
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.recv_iopub_with_timeout(remaining) {
+                Some(msg) => match &msg {
+                    Message::Stream(data) => {
+                        trace_iopub_msg(&msg);
+                        self.buffer_stream(&data.content);
+                    },
+                    _ => {
+                        trace_iopub_msg(&msg);
+                        self.pending_messages.borrow_mut().push_back(msg);
+                        break;
+                    },
+                },
+                None => break,
+            }
+        }
+
+        DrainedStreams {
+            stdout: std::mem::take(&mut *self.stream_stdout.borrow_mut()),
+            stderr: std::mem::take(&mut *self.stream_stderr.borrow_mut()),
+        }
+    }
+
+    // Shadow DummyFrontend's stream methods to prevent bypassing the buffering layer.
+    // These methods read directly from the IOPub socket, which breaks the stream
+    // accumulation invariant. Use `assert_stream_*_contains()` instead.
+
+    #[deprecated = "Use assert_stream_stdout_contains() instead"]
+    #[allow(unused)]
+    pub fn recv_iopub_stream_stdout(&self, _expect: &str) {
+        panic!("Use assert_stream_stdout_contains() instead of recv_iopub_stream_stdout()");
+    }
+
+    #[deprecated = "Use assert_stream_stderr_contains() instead"]
+    #[allow(unused)]
+    pub fn recv_iopub_stream_stderr(&self, _expect: &str) {
+        panic!("Use assert_stream_stderr_contains() instead of recv_iopub_stream_stderr()");
+    }
+
+    #[deprecated = "Use assert_stream_stdout_contains() or assert_stream_stdout_matches() instead"]
+    #[allow(unused)]
+    pub fn recv_iopub_stream_stdout_with<F>(&self, _f: F)
+    where
+        F: FnMut(&str),
+    {
+        panic!(
+            "Use assert_stream_stdout_contains() or assert_stream_stdout_matches() \
+             instead of recv_iopub_stream_stdout_with()"
+        );
+    }
+
+    #[deprecated = "Use assert_stream_stderr_contains() or assert_stream_stderr_matches() instead"]
+    #[allow(unused)]
+    pub fn recv_iopub_stream_stderr_with<F>(&self, _f: F)
+    where
+        F: FnMut(&str),
+    {
+        panic!(
+            "Use assert_stream_stderr_contains() or assert_stream_stderr_matches() \
+             instead of recv_iopub_stream_stderr_with()"
+        );
+    }
+
+    // Overriding methods for base DummyFrontend's `recv_iopub_` methods. These
+    // use `recv_iopub_next()` to auto-skip streams. Question: Maybe this
+    // behaviour should live in the base dummy frontend? The stream issues are
+    // likely not R specific.
+
+    /// Receive from IOPub and assert Busy status.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_busy(&self) {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::Status(data) => {
+                assert_eq!(
+                    data.content.execution_state,
+                    amalthea::wire::status::ExecutionState::Busy,
+                    "Expected Busy status"
+                );
+            },
+            other => panic!("Expected Busy status, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert Idle status.
+    /// Automatically skips any Stream messages.
+    ///
+    /// This method acts as a synchronization point: after receiving Idle,
+    /// it flushes stream buffers and panics if streams were received but not
+    /// asserted. This enforces that stream assertions are made within their
+    /// busy/idle window.
+    #[track_caller]
+    pub fn recv_iopub_idle(&self) {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::Status(data) => {
+                assert_eq!(
+                    data.content.execution_state,
+                    amalthea::wire::status::ExecutionState::Idle,
+                    "Expected Idle status"
+                );
+            },
+            other => panic!("Expected Idle status, got {:?}", other),
+        }
+
+        self.flush_streams_at_boundary();
+    }
+
+    /// Flush stream buffers at an idle boundary.
+    ///
+    /// Panics if streams were received but not asserted since the last boundary.
+    /// After flushing, resets the `streams_handled` flag for the next busy/idle cycle.
+    #[track_caller]
+    fn flush_streams_at_boundary(&self) {
+        let has_streams =
+            !self.stream_stdout.borrow().is_empty() || !self.stream_stderr.borrow().is_empty();
+
+        if has_streams && !self.streams_handled.get() {
+            panic!(
+                "Streams were received but not asserted before idle boundary.\n\
+                 stdout: {:?}\n\
+                 stderr: {:?}",
+                self.stream_stdout.borrow(),
+                self.stream_stderr.borrow()
+            );
+        }
+
+        // Clear buffers and reset flag for next operation
+        self.stream_stdout.borrow_mut().clear();
+        self.stream_stderr.borrow_mut().clear();
+        self.streams_handled.set(false);
+    }
+
+    /// Receive from IOPub and assert ExecuteInput message.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_execute_input(&self) -> amalthea::wire::execute_input::ExecuteInput {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::ExecuteInput(data) => data.content,
+            other => panic!("Expected ExecuteInput, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert ExecuteResult message.
+    /// Automatically skips any Stream messages.
+    /// Returns the `text/plain` result.
+    #[track_caller]
+    pub fn recv_iopub_execute_result(&self) -> String {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::ExecuteResult(data) => match data.content.data {
+                serde_json::Value::Object(map) => match &map["text/plain"] {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => panic!("Expected text/plain to be String, got {:?}", other),
+                },
+                other => panic!("Expected ExecuteResult data to be Object, got {:?}", other),
+            },
+            other => panic!("Expected ExecuteResult, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert ExecuteError message.
+    /// Automatically skips any Stream messages.
+    /// Returns the `evalue` field.
+    #[track_caller]
+    pub fn recv_iopub_execute_error(&self) -> String {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::ExecuteError(data) => data.content.exception.evalue,
+            other => panic!("Expected ExecuteError, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert DisplayData message.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_display_data(&self) {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::DisplayData(_) => {},
+            other => panic!("Expected DisplayData, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert CommMsg message.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_comm_msg(&self) -> amalthea::wire::comm_msg::CommWireMsg {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::CommMsg(data) => data.content,
+            other => panic!("Expected CommMsg, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert CommOpen message.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_comm_open(&self) -> amalthea::wire::comm_open::CommOpen {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::CommOpen(data) => data.content,
+            other => panic!("Expected CommOpen, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert CommClose message.
+    /// Automatically skips any Stream messages.
+    /// Returns the comm_id.
+    #[track_caller]
+    pub fn recv_iopub_comm_close(&self) -> String {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::CommClose(data) => data.content.comm_id,
+            other => panic!("Expected CommClose, got {:?}", other),
         }
     }
 
@@ -124,7 +585,7 @@ impl DummyArkFrontend {
         let mut got_idle = false;
 
         while port.is_none() || !got_idle {
-            let msg = self.recv_iopub();
+            let msg = self.recv_iopub_next();
             match msg {
                 Message::CommMsg(data) => {
                     assert_eq!(data.content.comm_id, comm_id);
@@ -156,76 +617,11 @@ impl DummyArkFrontend {
         client
     }
 
-    /// Receive from IOPub, skipping any Stream messages, and assert Busy status.
-    ///
-    /// Use this when late-arriving Stream messages from previous operations
-    /// can interleave with the expected Busy message.
-    #[track_caller]
-    pub fn recv_iopub_busy_skip_streams(&self) {
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(_) => continue,
-                Message::Status(data) => {
-                    assert_eq!(
-                        data.content.execution_state,
-                        amalthea::wire::status::ExecutionState::Busy,
-                        "Expected Busy status"
-                    );
-                    return;
-                },
-                other => panic!("Expected Busy status, got {:?}", other),
-            }
-        }
-    }
-
-    /// Receive from IOPub, skipping any Stream messages, and assert ExecuteInput.
-    ///
-    /// Use this when late-arriving Stream messages from previous operations
-    /// can interleave with the expected ExecuteInput message.
-    #[track_caller]
-    pub fn recv_iopub_execute_input_skip_streams(&self) {
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(_) => continue,
-                Message::ExecuteInput(_) => return,
-                other => panic!("Expected ExecuteInput, got {:?}", other),
-            }
-        }
-    }
-
-    /// Receive from IOPub, skipping any Stream messages, and assert Idle status.
-    ///
-    /// Use this when late-arriving Stream messages from previous operations
-    /// can interleave with the expected Idle message.
-    #[track_caller]
-    pub fn recv_iopub_idle_skip_streams(&self) {
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(_) => continue,
-                Message::Status(data) => {
-                    assert_eq!(
-                        data.content.execution_state,
-                        amalthea::wire::status::ExecutionState::Idle,
-                        "Expected Idle status"
-                    );
-                    return;
-                },
-                other => panic!("Expected Idle status, got {:?}", other),
-            }
-        }
-    }
-
     /// Receive from IOPub and assert a `start_debug` comm message.
+    /// Automatically skips any Stream messages.
     #[track_caller]
     pub fn recv_iopub_start_debug(&self) {
-        let msg = self.recv_iopub();
-        trace_iopub_msg(&msg);
+        let msg = self.recv_iopub_next();
         match msg {
             Message::CommMsg(data) => {
                 let method = data.content.data.get("method").and_then(|v| v.as_str());
@@ -239,36 +635,11 @@ impl DummyArkFrontend {
         }
     }
 
-    /// Receive from IOPub, skipping any Stream messages, and assert a `start_debug` comm message.
-    ///
-    /// Use this when late-arriving Stream messages from previous operations
-    /// can interleave with the expected start_debug message.
-    #[track_caller]
-    pub fn recv_iopub_start_debug_skip_streams(&self) {
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(_) => continue,
-                Message::CommMsg(data) => {
-                    let method = data.content.data.get("method").and_then(|v| v.as_str());
-                    assert_eq!(
-                        method,
-                        Some("start_debug"),
-                        "Expected start_debug comm message"
-                    );
-                    return;
-                },
-                other => panic!("Expected CommMsg with start_debug, got {:?}", other),
-            }
-        }
-    }
-
     /// Receive from IOPub and assert a `stop_debug` comm message.
+    /// Automatically skips any Stream messages.
     #[track_caller]
     pub fn recv_iopub_stop_debug(&self) {
-        let msg = self.recv_iopub();
-        trace_iopub_msg(&msg);
+        let msg = self.recv_iopub_next();
         match msg {
             Message::CommMsg(data) => {
                 let method = data.content.data.get("method").and_then(|v| v.as_str());
@@ -279,97 +650,6 @@ impl DummyArkFrontend {
                 );
             },
             other => panic!("Expected CommMsg with stop_debug, got {:?}", other),
-        }
-    }
-
-    /// Receive from IOPub, skipping any Stream messages, and assert a `stop_debug` comm message.
-    ///
-    /// Use this when late-arriving Stream messages from previous operations
-    /// can interleave with the expected stop_debug message.
-    #[track_caller]
-    pub fn recv_iopub_stop_debug_skip_streams(&self) {
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(_) => continue,
-                Message::CommMsg(data) => {
-                    let method = data.content.data.get("method").and_then(|v| v.as_str());
-                    assert_eq!(
-                        method,
-                        Some("stop_debug"),
-                        "Expected stop_debug comm message"
-                    );
-                    return;
-                },
-                other => panic!("Expected CommMsg with stop_debug, got {:?}", other),
-            }
-        }
-    }
-
-    /// Receive stream messages until accumulated content contains the expected text.
-    ///
-    /// This handles stream fragmentation by accumulating output until the expected
-    /// substring is found. Panics if a non-stream message is received.
-    #[track_caller]
-    pub fn recv_iopub_stream_stdout_containing(&self, expected: &str) {
-        use amalthea::wire::stream::Stream;
-
-        let mut accumulated = String::new();
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(data) => {
-                    assert_eq!(
-                        data.content.name,
-                        Stream::Stdout,
-                        "Expected stdout stream, got {:?}",
-                        data.content.name
-                    );
-                    accumulated.push_str(&data.content.text);
-                    if accumulated.contains(expected) {
-                        return;
-                    }
-                },
-                other => panic!(
-                    "Expected Stream message containing {:?}, got {:?}",
-                    expected, other
-                ),
-            }
-        }
-    }
-
-    /// Receive stream messages until accumulated content contains the expected text (stderr).
-    ///
-    /// This handles stream fragmentation by accumulating output until the expected
-    /// substring is found. Panics if a non-stream message is received.
-    #[track_caller]
-    pub fn recv_iopub_stream_stderr_containing(&self, expected: &str) {
-        use amalthea::wire::stream::Stream;
-
-        let mut accumulated = String::new();
-        loop {
-            let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(data) => {
-                    assert_eq!(
-                        data.content.name,
-                        Stream::Stderr,
-                        "Expected stderr stream, got {:?}",
-                        data.content.name
-                    );
-                    accumulated.push_str(&data.content.text);
-                    if accumulated.contains(expected) {
-                        return;
-                    }
-                },
-                other => panic!(
-                    "Expected Stream message containing {:?}, got {:?}",
-                    expected, other
-                ),
-            }
         }
     }
 
@@ -461,50 +741,18 @@ impl DummyArkFrontend {
 
     /// Receive IOPub messages for a breakpoint hit with auto-stepping.
     ///
-    /// The message sequence is (in order):
-    /// 1. stream ("Called from:") - R's initial debug output
-    /// 2. start_debug (entering .ark_breakpoint wrapper)
-    /// 3. stop_debug (auto-stepping out of wrapper)
-    /// 4. stream ("debug at") - R's debug output at user expression
-    /// 5. start_debug (at user expression)
-    /// 6. idle
+    /// Non-stream message sequence: start_debug, stop_debug, start_debug, idle.
+    /// Stream assertions: "Called from:" and "debug at".
     #[track_caller]
     pub fn recv_iopub_breakpoint_hit(&self) {
-        // Use _skip_streams variants because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stream_stdout_containing("Called from:");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_stream_stdout_containing("debug at");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-    }
-
-    /// Receive IOPub messages for a breakpoint hit from a direct function call.
-    ///
-    /// This is similar to `recv_iopub_breakpoint_hit` but for direct function calls
-    /// (e.g., `foo()`) rather than `source()`. When the function has source references
-    /// (from a file created with `SourceFile::new()`), R will print `"debug at"`.
-    ///
-    /// The message sequence is (in order):
-    /// 1. stream ("Called from:") - R's initial debug output
-    /// 2. start_debug (entering .ark_breakpoint wrapper)
-    /// 3. stop_debug (auto-stepping out of wrapper)
-    /// 4. stream ("debug at") - R's debug output at user expression
-    /// 5. start_debug (at user expression)
-    /// 6. idle
-    #[track_caller]
-    pub fn recv_iopub_breakpoint_hit_direct(&self) {
-        trace_separator("recv_iopub_breakpoint_hit_direct START");
-        // Use _skip_streams variants because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stream_stdout_containing("Called from:");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_stream_stdout_containing("debug at");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-        trace_separator("recv_iopub_breakpoint_hit_direct END");
+        trace_separator("recv_iopub_breakpoint_hit START");
+        self.recv_iopub_start_debug();
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
+        self.assert_stream_stdout_contains("Called from:");
+        self.assert_stream_stdout_contains("debug at");
+        self.recv_iopub_idle();
+        trace_separator("recv_iopub_breakpoint_hit END");
     }
 
     /// Source a file that was created with `SourceFile::new()`.
@@ -512,10 +760,8 @@ impl DummyArkFrontend {
     /// The code must contain `browser()` or a breakpoint to enter debug mode.
     /// The caller must still receive the DAP `Stopped` event.
     ///
-    /// The message sequence is (in order):
-    /// 1. stream ("Called from:") - R's debug output
-    /// 2. start_debug (entering debug mode)
-    /// 3. idle
+    /// Non-stream message sequence: busy, execute_input, start_debug, idle, shell_reply.
+    /// Stream assertion: "Called from:".
     #[track_caller]
     pub fn source_debug_file(&self, file: &SourceFile) {
         trace_separator(&format!("source_debug({})", file.filename));
@@ -525,13 +771,9 @@ impl DummyArkFrontend {
         );
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-
-        // Use _skip_streams variant because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stream_stdout_containing("Called from:");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-
+        self.recv_iopub_start_debug();
+        self.assert_stream_stdout_contains("Called from:");
+        self.recv_iopub_idle();
         self.recv_shell_execute_reply();
     }
 
@@ -567,17 +809,9 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        // Message sequence (in order):
-        // 1. stream ("Called from:") - R's debug output
-        // 2. start_debug (entering debug mode)
-        // 3. idle
-        // Use _skip_streams variant because stream messages can be split across
-        // multiple fragments, and the stream containing "Called from:" may be
-        // followed by additional stream fragments.
-        self.recv_iopub_stream_stdout_containing("Called from:");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-
+        self.recv_iopub_start_debug();
+        self.assert_stream_stdout_contains("Called from:");
+        self.recv_iopub_idle();
         self.recv_shell_execute_reply();
 
         SourceFile {
@@ -606,12 +840,10 @@ impl DummyArkFrontend {
     pub fn debug_send_quit(&self) -> u32 {
         trace_separator("debug_send_quit START");
         self.send_execute_request("Q", ExecuteRequestOptions::default());
-        // Use stream-skipping variants because late-arriving debug output
-        // from previous operations can interleave here.
-        self.recv_iopub_busy_skip_streams();
-        self.recv_iopub_execute_input_skip_streams();
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_idle();
         let result = self.recv_shell_execute_reply();
         trace_separator("debug_send_quit END");
         result
@@ -622,24 +854,17 @@ impl DummyArkFrontend {
     /// When continuing from one browser() to another, R outputs "Called from:"
     /// instead of "debug at", so this needs a different message pattern.
     ///
-    /// The message sequence is (in order):
-    /// 1. stop_debug (leaving current location)
-    /// 2. stream ("Called from:") - R's debug output
-    /// 3. start_debug (at new breakpoint)
-    /// 4. idle
+    /// Non-stream message sequence: busy, execute_input, stop_debug, start_debug, idle, shell_reply.
+    /// Stream assertion: "Called from:".
     #[track_caller]
     pub fn debug_send_continue_to_breakpoint(&self) -> u32 {
         self.send_execute_request("c", ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-
-        // Use _skip_streams variants because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_stream_stdout_containing("Called from:");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
+        self.assert_stream_stdout_contains("Called from:");
+        self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
 
@@ -658,14 +883,10 @@ impl DummyArkFrontend {
         self.send_execute_request(expr, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-
-        // Use _skip_streams variants because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_start_debug_skip_streams();
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
         self.recv_iopub_execute_result();
-        self.recv_iopub_idle_skip_streams();
-
+        self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
 
@@ -688,14 +909,10 @@ impl DummyArkFrontend {
         self.send_execute_request(expr, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-
-        // Use _skip_streams variants because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stream_stderr_containing("Error");
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
+        self.assert_stream_stderr_contains("Error");
+        self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
 
@@ -708,25 +925,18 @@ impl DummyArkFrontend {
     /// This helper only consumes IOPub and shell messages. The caller must still
     /// consume DAP events separately.
     ///
-    /// The message sequence is (in order):
-    /// 1. stop_debug (leaving current location)
-    /// 2. stream ("debug at") - R's debug output
-    /// 3. start_debug (at new location)
-    /// 4. idle
+    /// Non-stream message sequence: busy, execute_input, stop_debug, start_debug, idle, shell_reply.
+    /// Stream assertion: "debug at".
     #[track_caller]
     pub fn debug_send_step_command(&self, cmd: &str) -> u32 {
         trace_separator(&format!("debug_step({})", cmd));
         self.send_execute_request(cmd, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-
-        // Use _skip_streams variants because stream messages can be split across
-        // multiple fragments, and streams may interleave with debug comm messages.
-        self.recv_iopub_stop_debug_skip_streams();
-        self.recv_iopub_stream_stdout_containing("debug at");
-        self.recv_iopub_start_debug_skip_streams();
-        self.recv_iopub_idle_skip_streams();
-
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
+        self.assert_stream_stdout_contains("debug at");
+        self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
 }
@@ -884,12 +1094,23 @@ impl Drop for DummyArkFrontend {
             return;
         }
 
-        // Drain any pending IOPub messages
-        let mut unexpected_messages: Vec<Message> = Vec::new();
-        while self.iopub_socket.has_incoming_data().unwrap() {
-            let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+        // Drain any straggler streams
+        let drained = self.drain_streams_internal();
+        let has_streams = !drained.stdout.is_empty() || !drained.stderr.is_empty();
 
-            let exempt = match &msg {
+        // Fail if streams were received but no stream assertions were made
+        if has_streams && !self.streams_handled.get() {
+            panic!(
+                "Test received stream output but made no stream assertions.\n\
+                 stdout: {:?}\n\
+                 stderr: {:?}",
+                drained.stdout, drained.stderr
+            );
+        }
+
+        // Helper to check if a message is exempt from "unexpected message" check
+        let is_exempt = |msg: &Message| -> bool {
+            match msg {
                 Message::Stream(_) => true,
                 Message::CommMsg(comm) => {
                     comm.content.data.get("method").and_then(|v| v.as_str()) == Some("execute") &&
@@ -901,9 +1122,20 @@ impl Drop for DummyArkFrontend {
                             Some("Q")
                 },
                 _ => false,
-            };
+            }
+        };
 
-            if !exempt {
+        // Drain any pending IOPub messages (including those in our put-back queue)
+        let mut unexpected_messages: Vec<Message> = self
+            .pending_messages
+            .borrow_mut()
+            .drain(..)
+            .filter(|msg| !is_exempt(msg))
+            .collect();
+
+        while self.iopub_socket.has_incoming_data().unwrap() {
+            let msg = Message::read_from_socket(&self.iopub_socket).unwrap();
+            if !is_exempt(&msg) {
                 unexpected_messages.push(msg);
             }
         }
@@ -981,16 +1213,16 @@ impl DummyArkFrontendNotebook {
 
 // Allow method calls to be forwarded to inner type
 impl Deref for DummyArkFrontendNotebook {
-    type Target = DummyFrontend;
+    type Target = DummyArkFrontend;
 
     fn deref(&self) -> &Self::Target {
-        Deref::deref(&self.inner)
+        &self.inner
     }
 }
 
 impl DerefMut for DummyArkFrontendNotebook {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        DerefMut::deref_mut(&mut self.inner)
+        &mut self.inner
     }
 }
 
@@ -1024,10 +1256,10 @@ impl DummyArkFrontendDefaultRepos {
 
 // Allow method calls to be forwarded to inner type
 impl Deref for DummyArkFrontendDefaultRepos {
-    type Target = DummyFrontend;
+    type Target = DummyArkFrontend;
 
     fn deref(&self) -> &Self::Target {
-        Deref::deref(&self.inner)
+        &self.inner
     }
 }
 impl DummyArkFrontendRprofile {
@@ -1063,16 +1295,16 @@ impl DummyArkFrontendRprofile {
 
 // Allow method calls to be forwarded to inner type
 impl Deref for DummyArkFrontendRprofile {
-    type Target = DummyFrontend;
+    type Target = DummyArkFrontend;
 
     fn deref(&self) -> &Self::Target {
-        Deref::deref(&self.inner)
+        &self.inner
     }
 }
 
 impl DerefMut for DummyArkFrontendRprofile {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        DerefMut::deref_mut(&mut self.inner)
+        &mut self.inner
     }
 }
 

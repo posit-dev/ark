@@ -112,8 +112,11 @@ fn test_shutdown_request_while_busy() {
     assert_eq!(reply.status, Status::Ok);
     assert_eq!(reply.restart, false);
 
-    // It seems this isn't emitted on older R versions
-    frontend.recv_iopub_stream_stderr("\n");
+    // Drain any streams from the interrupted Sys.sleep execution. The stream
+    // could arrive before or after the shutdown idle (race condition), so we
+    // drain here to prevent `recv_iopub_idle` from panicking if it arrives early.
+    frontend.drain_streams();
+
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
