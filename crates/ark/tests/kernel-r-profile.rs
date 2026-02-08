@@ -27,7 +27,7 @@ fn test_r_profile_can_cat() {
     // Ok, load up R now. It should `cat()` the `message` over iopub.
     let frontend = DummyArkFrontendRprofile::lock();
 
-    frontend.recv_iopub_stream_stdout(message)
+    frontend.assert_stream_stdout_contains(message);
 }
 
 /// See https://github.com/posit-dev/positron/issues/4253

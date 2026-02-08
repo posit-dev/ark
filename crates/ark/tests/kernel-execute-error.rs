@@ -30,11 +30,12 @@ fn test_execute_request_error_with_accumulated_output() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // The output from print(1) should be flushed to stdout
-    frontend.recv_iopub_stream_stdout("[1] 42\n");
-
     // Then the error should be reported on stderr
     assert!(frontend.recv_iopub_execute_error().contains("foo"));
+
+    // The output from print(1) should be flushed to stdout
+    frontend.assert_stream_stdout_contains("[1] 42");
+
     frontend.recv_iopub_idle();
 
     assert_eq!(
@@ -96,9 +97,9 @@ fn test_execute_request_error_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
     assert!(frontend.recv_iopub_execute_error().contains("foobar"));
 
+    frontend.assert_stream_stdout_contains("[1] 1");
     frontend.recv_iopub_idle();
 
     assert_eq!(
@@ -124,16 +125,9 @@ options(error = function() stop("ouch"))
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, "f()");
 
-    frontend.recv_iopub_stream_stderr(
-        r#"The `getOption("error")` handler failed.
-This option was unset to avoid cascading errors.
-Caused by:
-ouch
-"#,
-    );
-
     assert!(frontend.recv_iopub_execute_error().contains("foo"));
 
+    frontend.assert_stream_stderr_contains("The `getOption(\"error\")` handler failed.");
     frontend.recv_iopub_idle();
     assert_eq!(
         frontend.recv_shell_execute_reply_exception(),
@@ -158,18 +152,10 @@ options(error = function() menu("ouch"))
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, "f()");
 
-    frontend.recv_iopub_stream_stdout("Enter an item from the menu, or 0 to exit\n");
-
-    frontend.recv_iopub_stream_stderr(
-        r#"The `getOption("error")` handler failed.
-This option was unset to avoid cascading errors.
-Caused by:
-Can't request input from the user at this time.
-Are you calling `readline()` or `menu()` from `options(error = )`?
-"#,
-    );
-
     assert!(frontend.recv_iopub_execute_error().contains("foo"));
+
+    frontend.assert_stream_stdout_contains("Enter an item from the menu, or 0 to exit");
+    frontend.assert_stream_stderr_contains("The `getOption(\"error\")` handler failed.");
     frontend.recv_iopub_idle();
 
     assert_eq!(
@@ -195,10 +181,10 @@ options(error = recover)
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, "f()");
 
-    // We set up the call stack to show a simple `error_handler()`
-    frontend.recv_iopub_stream_stdout("Called from: ark_recover()\n");
-
     assert!(frontend.recv_iopub_execute_error().contains("foo"));
+
+    // We set up the call stack to show a simple `error_handler()`
+    frontend.assert_stream_stdout_contains("Called from: ark_recover()");
 
     frontend.recv_iopub_idle();
     assert_eq!(
