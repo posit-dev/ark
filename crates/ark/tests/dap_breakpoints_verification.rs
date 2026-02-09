@@ -310,7 +310,6 @@ foo()
     // hit the breakpoint and queued a Stopped event.
     frontend.recv_iopub_breakpoint_hit();
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // We're now stopped at BP1 (line 3: x <- 1)

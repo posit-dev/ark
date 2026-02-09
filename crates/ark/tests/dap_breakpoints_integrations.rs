@@ -60,7 +60,6 @@ foo <- function() {
     // the debug message flow
     frontend.recv_iopub_breakpoint_hit_direct();
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
@@ -140,7 +139,6 @@ c$increment()
     assert_eq!(bp.line, Some(6));
 
     // Auto-step through wrapper and stop at user expression
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the breakpoint inside the R6 method
@@ -284,7 +282,6 @@ greet('World')
     let bp = dap.recv_breakpoint_verified();
     assert_eq!(bp.id, bp_id);
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
@@ -300,7 +297,6 @@ greet('World')
     frontend.source_file_and_hit_breakpoint(&file);
 
     // No new verification event needed - breakpoint is already verified
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
