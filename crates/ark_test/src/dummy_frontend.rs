@@ -252,6 +252,16 @@ impl DummyArkFrontend {
         self.assert_stream_matches_re(&self.stream_stderr, "stderr", pattern);
     }
 
+    /// Assert that stdout contains a "debug at" message referencing the given file.
+    ///
+    /// R outputs "debug at <path>#<line>: <code>" when stepping through sourced files.
+    /// This helper checks both "debug at" and the filename appear in stdout.
+    #[track_caller]
+    pub fn assert_stream_debug_at(&self, file: &SourceFile) {
+        self.assert_stream_stdout_contains("debug at");
+        self.assert_stream_stdout_contains(&file.filename);
+    }
+
     /// Internal helper for regex stream assertions.
     #[track_caller]
     fn assert_stream_matches_re(
@@ -897,19 +907,15 @@ impl DummyArkFrontend {
     /// Note: In debug mode, errors are streamed on stderr (not as `ExecuteError`)
     /// and a regular execution reply is sent. That's a limitation of the R kernel.
     ///
-    /// The message sequence is (in order):
-    /// 1. stream (stderr with error message)
-    /// 2. stop_debug (leaving current location)
-    /// 3. start_debug (back at same location)
-    /// 4. idle
+    /// The `error_contains` parameter specifies what substring to expect in stderr.
     #[track_caller]
-    pub fn debug_send_error_expr(&self, expr: &str) -> u32 {
+    pub fn debug_send_error_expr(&self, expr: &str, error_contains: &str) -> u32 {
         self.send_execute_request(expr, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
         self.recv_iopub_stop_debug();
         self.recv_iopub_start_debug();
-        self.assert_stream_stderr_contains("Error");
+        self.assert_stream_stderr_contains(error_contains);
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
@@ -920,20 +926,19 @@ impl DummyArkFrontend {
     /// to virtual document context: a `stop_debug` comm (debug session ends briefly),
     /// and a `Stream` with "debug at" output from R.
     ///
-    /// This helper only consumes IOPub and shell messages. The caller must still
-    /// consume DAP events separately.
-    ///
-    /// Non-stream message sequence: busy, execute_input, stop_debug, start_debug, idle, shell_reply.
-    /// Stream assertion: "debug at".
+    /// The `file` parameter is used to assert that stdout contains "debug at {filename}".
+    /// The caller must still consume DAP events (recv_continued, recv_stopped).
     #[track_caller]
-    pub fn debug_send_step_command(&self, cmd: &str) -> u32 {
+    pub fn debug_send_step_command(&self, cmd: &str, file: &SourceFile) -> u32 {
         trace_separator(&format!("debug_step({})", cmd));
         self.send_execute_request(cmd, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
         self.recv_iopub_stop_debug();
         self.recv_iopub_start_debug();
+        // Check both "debug at" and the filename appear (filename may have full path before it)
         self.assert_stream_stdout_contains("debug at");
+        self.assert_stream_stdout_contains(&file.filename);
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
