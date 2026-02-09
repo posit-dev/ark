@@ -141,6 +141,7 @@ pub struct Dap {
 
     /// Channel for sending async responses to the DAP frontend.
     /// Used for operations like evaluate that run as idle tasks.
+    /// Recreated on each DAP connection.
     pub responses_tx: Option<Sender<Response>>,
 
     /// Current call stack

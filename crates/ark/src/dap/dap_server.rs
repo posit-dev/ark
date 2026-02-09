@@ -123,6 +123,7 @@ pub fn start_dap(
         let (backend_events_tx, backend_events_rx) = unbounded::<DapBackendEvent>();
         let (responses_tx, responses_rx) = unbounded::<Response>();
         let (done_tx, done_rx) = bounded::<bool>(0);
+        state.lock().unwrap().responses_tx = Some(responses_tx);
         let output_clone = server.output.clone();
 
         // We need a scope to let the borrow checker know that
@@ -134,11 +135,7 @@ pub fn start_dap(
             });
 
             // Connect the backend to the events thread
-            {
-                let mut state = state.lock().unwrap();
-                state.backend_events_tx = Some(backend_events_tx);
-                state.responses_tx = Some(responses_tx);
-            }
+            state.lock().unwrap().backend_events_tx = Some(backend_events_tx);
 
             loop {
                 // If disconnected, break and accept a new connection to create a new server
@@ -804,13 +801,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 Err(err) => req.error(&err),
             };
 
-            log::trace!("DAP: Sending async response: {rsp:?}");
             let state = state.lock().unwrap();
             if let Some(tx) = &state.responses_tx {
-                log::trace!("DAP: responses_tx channel exists, sending");
                 tx.send(rsp).log_err();
-            } else {
-                log::error!("DAP: responses_tx channel is None!");
             }
         });
 
