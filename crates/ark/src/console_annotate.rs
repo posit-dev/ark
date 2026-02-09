@@ -268,6 +268,14 @@ pub(crate) fn annotate_source(
 
     let transformed_code = transformed.to_string();
 
+    // Add initial #line directive right after opening brace to ensure
+    // all lines are correctly mapped to the original document from the start.
+    // Without this, code before the first injected breakpoint would have
+    // incorrect line numbers (off by 1 due to the wrapping `{`).
+    let initial_directive = format!("#line 1 \"{}\"", uri);
+    let transformed_code =
+        transformed_code.replacen("{\n", &format!("{{\n{}\n", initial_directive), 1);
+
     // Add a trailing verify call to handle any injected breakpoint in trailing
     // position. Normally we'd inject a verify call as well a line directive
     // that ensures source references remain correct after the verify call.

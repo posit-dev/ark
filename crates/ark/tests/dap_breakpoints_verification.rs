@@ -381,7 +381,7 @@ foo <- function() {
     assert!(breakpoints.is_empty());
 
     // Now enter debug mode via debug(foo); foo()
-    // This will stop at the first line of foo (line 3: x <- 1)
+    // This will stop at the function body (line 2: the `{` on the function definition line)
     // Note: Shell reply is delayed until debug mode exits.
     frontend.send_execute_request("debug(foo); foo()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -391,14 +391,29 @@ foo <- function() {
     frontend.assert_stream_stdout_contains("debugging in:");
     frontend.recv_iopub_idle();
 
-    // DAP: Stopped at first line of foo
+    // DAP: Stopped at function body
     dap.recv_stopped();
 
-    // Verify we're at line 3 (x <- 1)
+    // Verify we're at line 2 (the function body `{...}` which starts on the definition line)
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(2);
+
+    // Step to the first statement (line 3: x <- 1)
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("debug at");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+    dap.recv_stopped();
     dap.assert_top_frame_line(3);
 
-    // Step to the next line (line 4: y <- 2) - where the disabled breakpoint was.
+    // Step to line 4 (y <- 2) - where the disabled breakpoint was.
     // If the disabled breakpoint were incorrectly re-verified, we'd receive an
     // unexpected Breakpoint event here.
     frontend.send_execute_request("n", ExecuteRequestOptions::default());

@@ -201,18 +201,26 @@ foo()
     frontend.recv_shell_execute_reply();
     dap.recv_stopped();
 
-    // Verify we're stopped at browser() in foo (line 5)
+    // Verify we're stopped at browser() in foo
     dap.assert_top_frame("foo()");
-    dap.assert_top_frame_line(5);
+    dap.assert_top_frame_line(3);
 
     // Step with `n` to step over the inner {} block
     frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
-    // We're still in foo after stepping over the inner block (now at line 9)
+    // We're still in foo after stepping over the inner block (line 4: the `{` of inner block)
     dap.assert_top_frame("foo()");
-    dap.assert_top_frame_line(9);
+    dap.assert_top_frame_line(4);
+
+    // Continue to hit the breakpoint on line 5 (the `1` expression)
+    frontend.debug_send_step_command("c");
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(5);
 
     // Quit the debugger
     frontend.debug_send_quit();
