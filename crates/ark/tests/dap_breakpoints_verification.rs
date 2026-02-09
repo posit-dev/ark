@@ -314,6 +314,7 @@ foo()
 
     // We're now stopped at BP1 (line 3: x <- 1)
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
 
     // Now add BP2 (on line 4: y <- 2) while stopped.
     // BP2 was NOT injected into the code during parsing, so it should be unverified.
@@ -395,6 +396,7 @@ foo <- function() {
 
     // Verify we're at line 3 (x <- 1)
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
 
     // Step to the next line (line 4: y <- 2) - where the disabled breakpoint was.
     // If the disabled breakpoint were incorrectly re-verified, we'd receive an
@@ -414,8 +416,7 @@ foo <- function() {
     dap.recv_stopped();
 
     // Verify we're now at line 4 (y <- 2)
-    let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
+    dap.assert_top_frame_line(4);
 
     // Quit the debugger
     frontend.debug_send_quit();
