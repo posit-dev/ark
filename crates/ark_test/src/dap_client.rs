@@ -277,6 +277,13 @@ impl DapClient {
         assert_eq!(stack[0].name, expected_name);
     }
 
+    /// Assert that the top stack frame is at the expected line.
+    #[track_caller]
+    pub fn assert_top_frame_line(&mut self, expected_line: i64) {
+        let stack = self.stack_trace();
+        assert_eq!(stack[0].line, expected_line);
+    }
+
     /// Request scopes for a stack frame.
     #[track_caller]
     pub fn scopes(&mut self, frame_id: i64) -> Vec<Scope> {

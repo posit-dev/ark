@@ -52,6 +52,7 @@ foo()
 
     // Verify we're stopped at the right place
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
 
     // Quit the debugger to clean up
     frontend.debug_send_quit();
@@ -71,6 +72,7 @@ foo()
 
     dap.recv_stopped();
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
 
     // Quit and finish
     frontend.debug_send_quit();
@@ -199,15 +201,18 @@ foo()
     frontend.recv_shell_execute_reply();
     dap.recv_stopped();
 
+    // Verify we're stopped at browser() in foo (line 5)
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(5);
 
     // Step with `n` to step over the inner {} block
     frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
-    // We're still in foo after stepping over the inner block
+    // We're still in foo after stepping over the inner block (now at line 9)
     dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(9);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -286,9 +291,8 @@ foo()
     dap.recv_stopped();
 
     // Verify we're stopped at BP1 (line 3: x <- 1)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
 
     // Step with `n` to BP2 - this is the key part of the test.
     // When stepping onto an injected breakpoint, we go through:
@@ -317,9 +321,8 @@ foo()
     dap.recv_stopped(); // At BP2 user expression (y <- 2)
 
     // Verify we're stopped at BP2 (line 4: y <- 2)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(4);
 
     // Quit the debugger. This triggers the cleanup in r_read_console which
     // sends a Continued event via stop_debug().
@@ -378,9 +381,8 @@ foo()
     dap.recv_stopped();
 
     // Verify we're at the user expression (line 3), not inside any wrapper
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -437,10 +439,7 @@ lapply(1:3, function(x) {
     frontend.recv_iopub_breakpoint_hit();
     dap.recv_stopped();
     dap.assert_top_frame("FUN()");
-
-    // Verify we're stopped at the breakpoint
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame_line(3);
 
     // Continue to second iteration: x=2
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -458,9 +457,7 @@ lapply(1:3, function(x) {
     // DAP events: Continued from stop_debug, then auto-step through, then stopped
     dap.recv_continued();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame_line(3);
 
     // Continue to third iteration: x=3
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -476,9 +473,7 @@ lapply(1:3, function(x) {
 
     dap.recv_continued();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame_line(3);
 
     // Continue past the last iteration - execution completes normally
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -548,10 +543,7 @@ local({
     // Auto-step through wrapper and stop at user expression
     dap.recv_stopped();
     dap.assert_top_frame("inner_fn()");
-
-    // Verify we're stopped at the breakpoint (line 4: z <- 42)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame_line(4);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -602,9 +594,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
 
     // First iteration: i=1
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame_line(4);
 
     // Continue to second iteration: i=2
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -620,9 +610,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
 
     dap.recv_continued();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame_line(4);
 
     // Continue to third iteration: i=3
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -638,9 +626,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
 
     dap.recv_continued();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame_line(4);
 
     // Continue past the last iteration
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -705,9 +691,7 @@ result <- tryCatch({
     dap.recv_stopped();
 
     // Verify we're stopped at the breakpoint inside the error handler.
-    // We only check line number since anonymous function frame names vary.
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 5);
+    dap.assert_top_frame_line(5);
 
     // Quit the debugger
     frontend.debug_send_quit();
