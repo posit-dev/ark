@@ -201,15 +201,13 @@ fn test_dap_nested_browser() {
     frontend.recv_iopub_execute_input();
 
     frontend.recv_iopub_stop_debug();
-    frontend.recv_iopub_start_debug();
-    frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("debugging in:");
+    frontend.recv_iopub_start_debug();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // DAP: Continued, then two Stopped events (due to auto-stepping)
+    // DAP: Continued (exiting Browse[1]>), then Stopped (entering Browse[2]>)
     dap.recv_continued();
-    dap.recv_stopped();
     dap.recv_stopped();
 
     // Stack now shows 2 frames: identity() and the original browser frame
