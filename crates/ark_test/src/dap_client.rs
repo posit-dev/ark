@@ -270,6 +270,13 @@ impl DapClient {
         }
     }
 
+    /// Assert that the top stack frame has the expected name.
+    #[track_caller]
+    pub fn assert_top_frame(&mut self, expected_name: &str) {
+        let stack = self.stack_trace();
+        assert_eq!(stack[0].name, expected_name);
+    }
+
     /// Request scopes for a stack frame.
     #[track_caller]
     pub fn scopes(&mut self, frame_id: i64) -> Vec<Scope> {
