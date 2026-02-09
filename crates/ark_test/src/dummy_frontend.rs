@@ -131,12 +131,41 @@ impl DummyArkFrontend {
 
     /// Receive from IOPub with a timeout.
     /// Returns `None` if the timeout expires before a message arrives.
+    #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
     fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
         let timeout_ms = timeout.as_millis() as i64;
         if self.guard.iopub_socket.poll_incoming(timeout_ms).unwrap() {
             Some(Message::read_from_socket(&self.guard.iopub_socket).unwrap())
         } else {
             None
+        }
+    }
+
+    /// Receive from IOPub with a timeout.
+    /// Returns `None` if the timeout expires before a message arrives.
+    ///
+    /// On Windows ARM, ZMQ poll with timeout blocks forever instead of
+    /// respecting the timeout. Use non-blocking poll with manual timing.
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
+        let start = std::time::Instant::now();
+
+        loop {
+            if start.elapsed() >= timeout {
+                return None;
+            }
+
+            // Use non-blocking poll (timeout=0) to avoid ZMQ blocking forever
+            match self.guard.iopub_socket.poll_incoming(0) {
+                Ok(true) => {
+                    return Some(Message::read_from_socket(&self.guard.iopub_socket).unwrap());
+                },
+                Ok(false) => {
+                    // No message available, sleep briefly and try again
+                    std::thread::sleep(Duration::from_millis(10));
+                },
+                Err(_) => return None,
+            }
         }
     }
 
