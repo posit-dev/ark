@@ -15,6 +15,7 @@ use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
 use crossbeam::channel::Sender;
+use dap::responses::Response;
 use harp::object::RObject;
 use stdext::result::ResultExt;
 use stdext::spawn;
@@ -127,6 +128,10 @@ pub struct Dap {
     /// This always exists when `is_connected` is true.
     pub backend_events_tx: Option<Sender<DapBackendEvent>>,
 
+    /// Channel for sending async responses to the DAP frontend.
+    /// Used for operations like evaluate that run as idle tasks.
+    pub responses_tx: Option<Sender<Response>>,
+
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
 
@@ -180,6 +185,7 @@ impl Dap {
             is_debugging: false,
             is_connected: false,
             backend_events_tx: None,
+            responses_tx: None,
             stack: None,
             breakpoints: HashMap::new(),
             fallback_sources: HashMap::new(),
