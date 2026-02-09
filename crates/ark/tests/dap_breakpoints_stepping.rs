@@ -67,9 +67,8 @@ foo()
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Direct function call has a slightly different flow than source():
-    // No "debug at" stream message since we're not stepping through source
-    frontend.recv_iopub_breakpoint_hit_direct();
+    // Direct function call - recv_iopub_breakpoint_hit handles the debug message flow
+    frontend.recv_iopub_breakpoint_hit();
 
     dap.recv_stopped();
     dap.assert_top_frame("foo()");

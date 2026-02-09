@@ -56,9 +56,8 @@ foo <- function() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Direct function call - use recv_iopub_breakpoint_hit_direct which handles
-    // the debug message flow
-    frontend.recv_iopub_breakpoint_hit_direct();
+    // Direct function call - recv_iopub_breakpoint_hit handles the debug message flow
+    frontend.recv_iopub_breakpoint_hit();
 
     dap.recv_stopped();
 
