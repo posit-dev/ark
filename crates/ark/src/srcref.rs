@@ -18,7 +18,7 @@ use crate::variables::variable::plain_binding_force_with_rollback;
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn resource_namespaces(pkgs: Vec<String>) -> anyhow::Result<()> {
     // Generate only one task and loop inside it to preserve the order of `pkgs`
-    r_task::spawn_idle(|| async move {
+    r_task::spawn_idle(|_| async move {
         for pkg in pkgs.into_iter() {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcrefs for `{pkg}`: {err:?}");
