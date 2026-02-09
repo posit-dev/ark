@@ -609,20 +609,8 @@ impl<T> Forwarder<T> {
         }
 
         // Notify destination via inproc PAIR socket
-        match self
-            .notif_socket
-            .socket
-            .send(zmq::Message::new(), zmq::DONTWAIT)
-        {
-            Ok(()) => {},
-            Err(zmq::Error::EAGAIN) => {
-                // EAGAIN shouldn't happen because inproc sockets have unbounded
-                // queues (no high-water mark backpressure)
-                debug_panic!("Unexpected EAGAIN on {} inproc notification", self.name);
-            },
-            Err(err) => {
-                debug_panic!("Couldn't send {} notification: {err:?}", self.name);
-            },
+        if let Err(err) = self.notif_socket.socket.send(zmq::Message::new(), 0) {
+            debug_panic!("Couldn't send {} notification: {err:?}", self.name);
         }
     }
 }
