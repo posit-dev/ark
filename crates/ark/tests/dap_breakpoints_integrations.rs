@@ -63,9 +63,8 @@ foo <- function() {
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
+    dap.assert_top_frame("foo()");
     let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
-    assert_eq!(stack[0].name, "foo()");
     assert_eq!(stack[0].line, 3);
 
     // Quit the debugger
@@ -284,9 +283,9 @@ greet('World')
 
     dap.recv_stopped();
 
+    dap.assert_top_frame("greet()");
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 3);
-    assert_eq!(stack[0].name, "greet()");
 
     // Quit the debugger to complete first source
     frontend.debug_send_quit();
@@ -299,9 +298,9 @@ greet('World')
     // No new verification event needed - breakpoint is already verified
     dap.recv_stopped();
 
+    dap.assert_top_frame("greet()");
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 3);
-    assert_eq!(stack[0].name, "greet()");
 
     // Quit and finish
     frontend.debug_send_quit();

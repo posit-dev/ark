@@ -51,9 +51,7 @@ foo()
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
-    let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
-    assert_eq!(stack[0].name, "foo()");
+    dap.assert_top_frame("foo()");
 
     // Quit the debugger to clean up
     frontend.debug_send_quit();
@@ -72,6 +70,7 @@ foo()
     frontend.recv_iopub_breakpoint_hit_direct();
 
     dap.recv_stopped();
+    dap.assert_top_frame("foo()");
 
     // Quit and finish
     frontend.debug_send_quit();
@@ -195,23 +194,20 @@ foo()
 
     // Hit browser() and stop
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_stdout_contains("Called from: foo()");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
     dap.recv_stopped();
 
-    // Verify we're stopped at browser() in foo
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
+    dap.assert_top_frame("foo()");
 
     // Step with `n` to step over the inner {} block
     frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
-    // Verify we're still in foo after stepping over the inner block
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
+    // We're still in foo after stepping over the inner block
+    dap.assert_top_frame("foo()");
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -440,6 +436,7 @@ lapply(1:3, function(x) {
     // First iteration: hit breakpoint with x=1
     frontend.recv_iopub_breakpoint_hit();
     dap.recv_stopped();
+    dap.assert_top_frame("FUN()");
 
     // Verify we're stopped at the breakpoint
     let stack = dap.stack_trace();
@@ -550,11 +547,11 @@ local({
 
     // Auto-step through wrapper and stop at user expression
     dap.recv_stopped();
+    dap.assert_top_frame("inner_fn()");
 
     // Verify we're stopped at the breakpoint (line 4: z <- 42)
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 4);
-    assert_eq!(stack[0].name, "inner_fn()");
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -707,7 +704,8 @@ result <- tryCatch({
     // Auto-step through wrapper and stop at user expression
     dap.recv_stopped();
 
-    // Verify we're stopped at the breakpoint inside the error handler
+    // Verify we're stopped at the breakpoint inside the error handler.
+    // We only check line number since anonymous function frame names vary.
     let stack = dap.stack_trace();
     assert_eq!(stack[0].line, 5);
 
