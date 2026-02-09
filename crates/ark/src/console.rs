@@ -1008,12 +1008,19 @@ impl Console {
                 return result;
             }
 
+            // Similarly, if we have pending inputs, we're about to immediately
+            // continue with the next expression. Don't emit debug notifications
+            // for these intermediate browser prompts.
+            let has_pending = self.pending_inputs.as_ref().is_some_and(|p| !p.is_empty());
+
             // Only now that we know we're stopping for real, set state and
             // notify frontend. Note that for simplicity this state is reset on
             // exit via the cleanups registered in `r_read_console()`. Ideally
             // we'd clean from here for symmetry.
             self.debug_is_debugging = true;
-            self.debug_start(self.debug_preserve_focus);
+            if !has_pending {
+                self.debug_start(self.debug_preserve_focus);
+            }
         }
 
         if let Some(exception) = self.take_exception() {
