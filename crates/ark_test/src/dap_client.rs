@@ -541,20 +541,6 @@ impl DapClient {
         );
     }
 
-    /// Receive the DAP event sequence for auto-stepping through injected code.
-    ///
-    /// When R steps through injected breakpoint wrappers (`.ark_auto_step`,
-    /// `.ark_breakpoint`), it produces this sequence:
-    /// - Stopped (entering the wrapper)
-    /// - Continued (auto-step triggers next step)
-    /// - Continued (from stop_debug)
-    #[track_caller]
-    pub fn recv_auto_step_through(&mut self) {
-        self.recv_stopped();
-        self.recv_continued();
-        self.recv_continued();
-    }
-
     /// Receive and assert the next message is a Stopped event with default fields.
     #[track_caller]
     pub fn recv_stopped(&mut self) {

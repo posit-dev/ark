@@ -24,7 +24,6 @@ use url::Url;
 use crate::console::Console;
 use crate::console::DebugCallText;
 use crate::console::DebugCallTextKind;
-use crate::dap::dap::DapBackendEvent;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -112,13 +111,6 @@ impl Console {
 
         let mut dap = self.debug_dap.lock().unwrap();
         dap.stop_debug();
-    }
-
-    pub(crate) fn debug_send_dap(&self, event: DapBackendEvent) {
-        let dap = self.debug_dap.lock().unwrap();
-        if let Some(tx) = &dap.backend_events_tx {
-            tx.send(event).log_err();
-        }
     }
 
     pub(crate) fn debug_handle_read_console(&mut self) {

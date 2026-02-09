@@ -101,7 +101,6 @@ use uuid::Uuid;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::dap::dap::Breakpoint;
-use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
 use crate::help::message::HelpEvent;
@@ -1001,22 +1000,20 @@ impl Console {
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
         if matches!(info.kind, PromptKind::Browser) {
-            // Start or continue debugging with the `debug_preserve_focus` hint
-            // from the last expression we evaluated
-            self.debug_is_debugging = true;
-            self.debug_start(self.debug_preserve_focus);
-
-            // Note that for simplicity this state is reset on exit via the
-            // cleanups registered in `r_read_console()`. Ideally we'd clean
-            // from here for symmetry.
-
-            // Check for auto-stepping _before_ handling active request. If
-            // we're going to auto-step, we should not send the Shell reply yet
-            // since we've not fully finished executing the request. The reply
-            // will be sent when we reach a real user-visible stopping point.
+            // Check for auto-stepping first. If we're going to auto-step, don't
+            // emit start_debug/stop_debug messages and don't close active
+            // request. These intermediate steps are still part of the ongoing
+            // request.
             if let Some(result) = self.maybe_auto_step(buf, buflen) {
                 return result;
             }
+
+            // Only now that we know we're stopping for real, set state and
+            // notify frontend. Note that for simplicity this state is reset on
+            // exit via the cleanups registered in `r_read_console()`. Ideally
+            // we'd clean from here for symmetry.
+            self.debug_is_debugging = true;
+            self.debug_start(self.debug_preserve_focus);
         }
 
         if let Some(exception) = self.take_exception() {
@@ -2130,11 +2127,10 @@ impl Console {
     ///   of the `Debug at` output.
     ///
     /// Returns `Some(ConsoleResult::NewInput)` if auto-stepping, `None` otherwise.
+    ///
+    /// TODO: Should set a flag in the Console state to prevent WriteConsole
+    /// emission during these intermediate states.
     fn maybe_auto_step(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
-        if !self.debug_is_debugging {
-            return None;
-        }
-
         // Did we just step onto an injected call (breakpoint or verify)?
         let at_auto_step = matches!(
             &self.debug_call_text,
@@ -2150,7 +2146,6 @@ impl Console {
             log::trace!("Auto-step expression reached ({kind}), moving to next expression");
 
             self.debug_preserve_focus = false;
-            self.debug_send_dap(DapBackendEvent::Continued);
 
             Self::on_console_input(buf, buflen, String::from("n")).unwrap();
             return Some(ConsoleResult::NewInput);

@@ -741,13 +741,11 @@ impl DummyArkFrontend {
 
     /// Receive IOPub messages for a breakpoint hit with auto-stepping.
     ///
-    /// Non-stream message sequence: start_debug, stop_debug, start_debug, idle.
+    /// Non-stream message sequence: start_debug, idle.
     /// Stream assertions: "Called from:" and "debug at".
     #[track_caller]
     pub fn recv_iopub_breakpoint_hit(&self) {
         trace_separator("recv_iopub_breakpoint_hit START");
-        self.recv_iopub_start_debug();
-        self.recv_iopub_stop_debug();
         self.recv_iopub_start_debug();
         self.assert_stream_stdout_contains("Called from:");
         self.assert_stream_stdout_contains("debug at");
