@@ -77,9 +77,7 @@ where
     socket.incoming_tx.send(msg).unwrap();
 
     // Receive the response from IOPub
-    let iopub_msg = iopub_rx
-        .recv_timeout(std::time::Duration::from_secs(3))
-        .unwrap();
+    let iopub_msg = iopub_rx.recv_timeout(RECV_TIMEOUT).unwrap();
 
     match iopub_msg {
         IOPubMessage::CommOutgoing(_comm_id, CommMsg::Rpc { data: value, .. }) => {
