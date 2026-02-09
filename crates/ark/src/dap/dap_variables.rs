@@ -157,6 +157,12 @@ fn object_variable(name: String, x: SEXP) -> RVariable {
     }
 }
 
+/// Create an `RVariable` from an evaluated expression result.
+/// Used for watch expressions in the DAP evaluate request.
+pub(super) fn object_variable_from_value(x: SEXP) -> RVariable {
+    object_variable(String::new(), x)
+}
+
 fn object_variable_classed(name: String, x: SEXP) -> RVariable {
     match r_typeof(x) {
         VECSXP => classed_list_variable(name, x),
