@@ -129,7 +129,7 @@ fn test_dap_error_during_debug() {
     let mut dap = frontend.start_dap();
 
     // Code that will error after browser()
-    let _file = frontend.send_source(
+    let file = frontend.send_source(
         "
 {
   browser()
@@ -143,8 +143,8 @@ fn test_dap_error_during_debug() {
     let stack = dap.stack_trace();
     assert!(stack.len() >= 1, "Should have at least 1 frame");
 
-    // Step to the error - this should trigger an error and exit debug mode
-    frontend.debug_send_step_command("n");
+    // Step to the error line - this moves us TO stop() but doesn't execute it yet
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
 
     // After error in sourced code, R exits the debug session.
@@ -167,7 +167,7 @@ fn test_dap_error_in_eval() {
     // Evaluate an expression that causes an error.
     // Unlike stepping to an error (which exits debug), evaluating an error
     // from the console should keep us in debug mode.
-    frontend.debug_send_error_expr("stop('eval error')");
+    frontend.debug_send_error_expr("stop('eval error')", "eval error");
     dap.recv_continued();
     dap.recv_stopped();
 

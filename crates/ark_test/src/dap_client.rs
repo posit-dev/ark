@@ -284,6 +284,20 @@ impl DapClient {
         assert_eq!(stack[0].line, expected_line);
     }
 
+    /// Assert that the top stack frame's source file matches the expected filename.
+    #[track_caller]
+    pub fn assert_top_frame_file(&mut self, file: &crate::SourceFile) {
+        let stack = self.stack_trace();
+        let source = stack[0].source.as_ref().expect("Expected source");
+        let path = source.path.as_ref().expect("Expected path");
+        assert!(
+            path.contains(&file.filename),
+            "Expected path containing {}, got {}",
+            file.filename,
+            path
+        );
+    }
+
     /// Request scopes for a stack frame.
     #[track_caller]
     pub fn scopes(&mut self, frame_id: i64) -> Vec<Scope> {

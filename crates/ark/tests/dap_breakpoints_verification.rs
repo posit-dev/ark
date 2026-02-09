@@ -315,6 +315,7 @@ foo()
     // We're now stopped at BP1 (line 3: x <- 1)
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Now add BP2 (on line 4: y <- 2) while stopped.
     // BP2 was NOT injected into the code during parsing, so it should be unverified.
@@ -397,6 +398,7 @@ foo <- function() {
     // Verify we're at line 2 (the function body `{...}` which starts on the definition line)
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(2);
+    dap.assert_top_frame_file(&file);
 
     // Step to the first statement (line 3: x <- 1)
     frontend.send_execute_request("n", ExecuteRequestOptions::default());
@@ -405,7 +407,7 @@ foo <- function() {
 
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -422,7 +424,7 @@ foo <- function() {
 
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 

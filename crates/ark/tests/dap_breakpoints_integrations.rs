@@ -65,6 +65,7 @@ foo <- function() {
     // Verify we're stopped at the right place
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -141,6 +142,7 @@ c$increment()
 
     // Verify we're stopped at the breakpoint inside the R6 method
     dap.assert_top_frame_line(6);
+    dap.assert_top_frame_file(&file);
     let stack = dap.stack_trace();
     // The method name includes the class context
     assert!(
@@ -284,6 +286,7 @@ greet('World')
 
     dap.assert_top_frame("greet()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger to complete first source
     frontend.debug_send_quit();
@@ -298,6 +301,7 @@ greet('World')
 
     dap.assert_top_frame("greet()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit and finish
     frontend.debug_send_quit();

@@ -53,6 +53,7 @@ foo()
     // Verify we're stopped at the right place
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger to clean up
     frontend.debug_send_quit();
@@ -73,6 +74,7 @@ foo()
     dap.recv_stopped();
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit and finish
     frontend.debug_send_quit();
@@ -204,23 +206,26 @@ foo()
     // Verify we're stopped at browser() in foo
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Step with `n` to step over the inner {} block
-    frontend.debug_send_step_command("n");
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
     // We're still in foo after stepping over the inner block (line 4: the `{` of inner block)
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Continue to hit the breakpoint on line 5 (the `1` expression)
-    frontend.debug_send_step_command("c");
+    frontend.debug_send_step_command("c", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(5);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -301,6 +306,7 @@ foo()
     // Verify we're stopped at BP1 (line 3: x <- 1)
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Step with `n` to BP2 - this is the key part of the test.
     // When stepping onto an injected breakpoint, we go through:
@@ -331,6 +337,7 @@ foo()
     // Verify we're stopped at BP2 (line 4: y <- 2)
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger. This triggers the cleanup in r_read_console which
     // sends a Continued event via stop_debug().
@@ -391,6 +398,7 @@ foo()
     // Verify we're at the user expression (line 3), not inside any wrapper
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -448,6 +456,7 @@ lapply(1:3, function(x) {
     dap.recv_stopped();
     dap.assert_top_frame("FUN()");
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Continue to second iteration: x=2
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -458,7 +467,7 @@ lapply(1:3, function(x) {
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -466,6 +475,7 @@ lapply(1:3, function(x) {
     dap.recv_continued();
     dap.recv_stopped();
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Continue to third iteration: x=3
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -475,13 +485,14 @@ lapply(1:3, function(x) {
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
     dap.recv_stopped();
     dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Continue past the last iteration - execution completes normally
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -552,6 +563,7 @@ local({
     dap.recv_stopped();
     dap.assert_top_frame("inner_fn()");
     dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -603,6 +615,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
     // First iteration: i=1
     dap.recv_stopped();
     dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Continue to second iteration: i=2
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -612,13 +625,14 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
     dap.recv_stopped();
     dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Continue to third iteration: i=3
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -628,13 +642,14 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
     dap.recv_stopped();
     dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Continue past the last iteration
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
@@ -700,6 +715,7 @@ result <- tryCatch({
 
     // Verify we're stopped at the breakpoint inside the error handler.
     dap.assert_top_frame_line(5);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
