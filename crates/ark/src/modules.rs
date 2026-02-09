@@ -141,7 +141,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
-            crate::r_task::spawn_idle(move || async {
+            crate::r_task::spawn_idle(move |_| async {
                 log::info!("Watching R modules from sources via cargo manifest");
                 spawn_watcher_thread(root);
             });

@@ -69,6 +69,9 @@ tracing-appender = "0.2.3"
 rustc-hash = "2.1.1"
 tracing-error = "0.2.0"
 
+[features]
+testing = ["stdext/testing"]
+
 [dev-dependencies]
 ark_test = { path = "../ark_test" }
 insta = { version = "1.39.0" }

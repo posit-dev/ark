@@ -542,13 +542,13 @@ pub(crate) enum ConsoleResult {
 ///
 /// When created, this sets `Console::captured_output` to `Some` so that all
 /// `write_console` output goes there instead of IOPub.
-/// When dropped, it restores the previous state and takes the captured output.
+/// When dropped, it restores the previous state and logs any remaining output.
 ///
-/// Use `take()` to retrieve the captured output before drop, or let the guard
-/// log it automatically on drop.
+/// Use `take()` to retrieve captured output. Can be called multiple times to
+/// get output accumulated since the last take.
 pub struct ConsoleOutputCapture {
     was_capturing: bool,
-    taken: bool,
+    connected: bool,
 }
 
 impl ConsoleOutputCapture {
@@ -560,36 +560,42 @@ impl ConsoleOutputCapture {
 
         Self {
             was_capturing,
-            taken: false,
+            connected: true,
+        }
+    }
+
+    /// Create a dummy capture that doesn't interact with Console.
+    /// Used in test contexts where Console is not initialized.
+    pub(crate) fn dummy() -> Self {
+        Self {
+            was_capturing: false,
+            connected: false,
         }
     }
 
     /// Take the captured output so far, clearing the buffer.
+    /// Can be called multiple times; each call returns output accumulated since the last take.
     pub fn take(&mut self) -> String {
+        if !self.connected {
+            return String::new();
+        }
         let console = Console::get_mut();
-
-        let output = console.captured_output.take().unwrap_or_default();
-        console.captured_output = if self.was_capturing {
-            Some(String::new())
-        } else {
-            None
-        };
-
-        self.taken = true;
-        output
+        std::mem::take(console.captured_output.get_or_insert_with(String::new))
     }
 }
 
 impl Drop for ConsoleOutputCapture {
     fn drop(&mut self) {
+        if !self.connected {
+            return;
+        }
+
         let console = Console::get_mut();
 
-        // If output wasn't taken, take it now and log if non-empty
-        if !self.taken {
-            if let Some(output) = console.captured_output.take() {
-                if !output.trim().is_empty() {
-                    log::info!("[Captured idle output]\n{}", output.trim_end());
-                }
+        // Log any remaining output that wasn't taken
+        if let Some(output) = console.captured_output.take() {
+            if !output.trim().is_empty() {
+                log::info!("[Captured idle output]\n{}", output.trim_end());
             }
         }
 
@@ -3000,7 +3006,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn_idle(|| async move {
+        r_task::spawn_idle(|_| async move {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }

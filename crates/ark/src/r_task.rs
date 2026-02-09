@@ -19,6 +19,7 @@ use crossbeam::channel::Sender;
 use uuid::Uuid;
 
 use crate::console::Console;
+use crate::console::ConsoleOutputCapture;
 use crate::fixtures::r_test_init;
 
 /// Task channels for interrupt-time tasks
@@ -281,12 +282,36 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
+/// Spawn an async task that runs when R is at top-level idle prompt.
+///
+/// The closure receives a `ConsoleOutputCapture` that can be used to capture
+/// console output during the task. Call `take()` on it to retrieve output, which
+/// can be done multiple times. Any remaining output is logged when the capture is dropped.
 pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
-    F: FnOnce() -> Fut + 'static + Send,
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    spawn_ext(fun, true)
+    if stdext::IS_TESTING && !Console::is_initialized() {
+        let _lock = harp::fixtures::R_TEST_LOCK.lock();
+        futures::executor::block_on(fun(ConsoleOutputCapture::dummy()));
+        return;
+    }
+
+    let tasks_tx = IDLE_TASKS.tx();
+
+    let wrapper_fut = async move {
+        let capture = ConsoleOutputCapture::new();
+        fun(capture).await
+    };
+
+    let task = RTask::Async(RTaskAsync {
+        fut: Box::pin(wrapper_fut) as BoxFuture<'static, ()>,
+        tasks_tx: tasks_tx.clone(),
+        start_info: RTaskStartInfo::new(true),
+    });
+
+    tasks_tx.send(task).unwrap();
 }
 
 pub(crate) fn spawn_interrupt<F, Fut>(fun: F)
@@ -299,21 +324,30 @@ where
 
 /// Spawn an async task that runs when R is at any idle prompt (top-level or browser).
 /// Unlike `spawn_idle` which only runs at top-level, this also runs during debug sessions.
+///
+/// The closure receives a `ConsoleOutputCapture` that can be used to capture
+/// console output during the task. Call `take()` on it to retrieve output, which
+/// can be done multiple times. Any remaining output is logged when the capture is dropped.
 pub(crate) fn spawn_idle_any<F, Fut>(fun: F)
 where
-    F: FnOnce() -> Fut + 'static + Send,
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
     if stdext::IS_TESTING && !Console::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
-        futures::executor::block_on(fun());
+        futures::executor::block_on(fun(ConsoleOutputCapture::dummy()));
         return;
     }
 
     let tasks_tx = IDLE_ANY_TASKS.tx();
 
+    let wrapper_fut = async move {
+        let capture = ConsoleOutputCapture::new();
+        fun(capture).await
+    };
+
     let task = RTask::Async(RTaskAsync {
-        fut: Box::pin(fun()) as BoxFuture<'static, ()>,
+        fut: Box::pin(wrapper_fut) as BoxFuture<'static, ()>,
         tasks_tx: tasks_tx.clone(),
         start_info: RTaskStartInfo::new(true),
     });
