@@ -284,7 +284,6 @@ macro_rules! once {
 mod tests {
     use libr::*;
 
-    use super::*;
     use crate::object::RObject;
     use crate::protect::RProtect;
     use crate::utils::r_is_null;

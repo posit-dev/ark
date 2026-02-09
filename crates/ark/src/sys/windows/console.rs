@@ -27,12 +27,31 @@ use regex::bytes::Regex;
 
 use super::strings::code_page_to_utf8;
 use super::strings::get_system_code_page;
-use crate::console::r_busy;
-use crate::console::r_read_console;
-use crate::console::r_show_message;
-use crate::console::r_suicide;
-use crate::console::r_write_console;
 use crate::console::Console;
+
+// These functions are defined in `console.rs` with `#[no_mangle]` and `#[cfg(not(test))]`.
+// We declare them as extern so the linker resolves them from the library.
+// This avoids duplicate symbol errors when the test binary links against `libark`.
+extern "C-unwind" {
+    fn r_read_console(
+        prompt: *const c_char,
+        buf: *mut std::ffi::c_uchar,
+        buflen: std::ffi::c_int,
+        hist: std::ffi::c_int,
+    ) -> i32;
+    fn r_write_console(buf: *const c_char, buflen: i32, otype: i32);
+    fn r_show_message(buf: *const c_char);
+    fn r_busy(which: i32);
+    fn r_suicide(buf: *const c_char);
+}
+
+// In test mode, `r_callback` and `r_yes_no_cancel` are gated out of this file but exist in `libark`.
+// Declare them as extern so tests can reference them.
+#[cfg(test)]
+extern "C-unwind" {
+    fn r_callback();
+    fn r_yes_no_cancel(question: *const c_char) -> c_int;
+}
 use crate::sys::windows::strings::system_to_utf8;
 
 pub fn setup_r(args: &Vec<String>) {
@@ -209,11 +228,13 @@ fn get_user_home() -> String {
     path.to_string()
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 extern "C-unwind" fn r_callback() {
     // Do nothing!
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 extern "C-unwind" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     // This seems to only be used on Windows during R's default `CleanUp` when

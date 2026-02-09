@@ -31,13 +31,34 @@ use libr::R_running_as_main_program;
 use libr::R_wait_usec;
 use libr::Rf_initialize_R;
 
-use crate::console::r_busy;
-use crate::console::r_polled_events;
-use crate::console::r_read_console;
-use crate::console::r_show_message;
-use crate::console::r_suicide;
-use crate::console::r_write_console;
 use crate::console::Console;
+
+// These functions are defined in `console.rs` with `#[no_mangle]` and `#[cfg(not(test))]`.
+// We declare them as extern so the linker resolves them from the library.
+// This avoids duplicate symbol errors when the test binary links against `libark`.
+extern "C-unwind" {
+    fn r_read_console(
+        prompt: *const c_char,
+        buf: *mut std::ffi::c_uchar,
+        buflen: std::ffi::c_int,
+        hist: std::ffi::c_int,
+    ) -> i32;
+    fn r_write_console(buf: *const c_char, buflen: i32, otype: i32);
+    fn r_show_message(buf: *const c_char);
+    fn r_busy(which: i32);
+    fn r_suicide(buf: *const c_char);
+}
+
+unsafe extern "C-unwind" {
+    fn r_polled_events();
+}
+
+// In test mode, `r_cleanup_for_tests` is gated out of this file but exists in `libark`.
+// Declare it as extern so tests can reference it.
+#[cfg(test)]
+extern "C-unwind" {
+    fn r_cleanup_for_tests(save_act: i32, status: i32, run_last: i32);
+}
 use crate::signals::initialize_signal_handlers;
 
 // For shutdown signal in integration tests
@@ -136,6 +157,7 @@ pub fn run_activity_handlers() {
     }
 }
 
+#[cfg(not(test))]
 #[no_mangle]
 pub extern "C-unwind" fn r_cleanup_for_tests(_save_act: i32, _status: i32, _run_last: i32) {
     // Signal that cleanup has started
