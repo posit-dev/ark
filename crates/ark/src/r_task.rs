@@ -27,6 +27,9 @@ static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::
 /// Task channels for idle-time tasks
 static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
 
+/// Task channels for idle tasks that run at any idle prompt (top-level or browser)
+static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
 pub(crate) type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
@@ -58,11 +61,15 @@ impl TaskChannels {
     }
 }
 
-/// Returns receivers for both interrupt and idle tasks.
+/// Returns receivers for interrupt, idle, and debug-idle tasks.
 /// Initializes the task channels if they haven't been initialized yet.
 /// Can only be called once (intended for `Console` during init).
-pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>) {
-    (INTERRUPT_TASKS.take_rx(), IDLE_TASKS.take_rx())
+pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>, Receiver<RTask>) {
+    (
+        INTERRUPT_TASKS.take_rx(),
+        IDLE_TASKS.take_rx(),
+        IDLE_ANY_TASKS.take_rx(),
+    )
 }
 
 pub enum RTask {
@@ -288,6 +295,30 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     spawn_ext(fun, false)
+}
+
+/// Spawn an async task that runs when R is at any idle prompt (top-level or browser).
+/// Unlike `spawn_idle` which only runs at top-level, this also runs during debug sessions.
+pub(crate) fn spawn_idle_any<F, Fut>(fun: F)
+where
+    F: FnOnce() -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    if stdext::IS_TESTING && !Console::is_initialized() {
+        let _lock = harp::fixtures::R_TEST_LOCK.lock();
+        futures::executor::block_on(fun());
+        return;
+    }
+
+    let tasks_tx = IDLE_ANY_TASKS.tx();
+
+    let task = RTask::Async(RTaskAsync {
+        fut: Box::pin(fun()) as BoxFuture<'static, ()>,
+        tasks_tx: tasks_tx.clone(),
+        start_info: RTaskStartInfo::new(true),
+    });
+
+    tasks_tx.send(task).unwrap();
 }
 
 fn spawn_ext<F, Fut>(fun: F, only_idle: bool)

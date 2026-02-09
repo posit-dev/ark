@@ -45,7 +45,7 @@ use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
-use crate::r_task::spawn_idle;
+use crate::r_task::spawn_idle_any;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
@@ -774,8 +774,11 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let frame_id = args.frame_id;
         let state = self.state.clone();
 
-        spawn_idle(move || async move {
+        log::trace!("DAP: Spawning idle task for evaluate");
+        spawn_idle_any(move || async move {
+            log::trace!("DAP: Idle task started for evaluate");
             let result = evaluate_expression(&state, &expression, frame_id);
+            log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
 
             let rsp = match result {
                 Ok(variable) => {
@@ -800,9 +803,13 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 Err(err) => req.error(&err),
             };
 
+            log::trace!("DAP: Sending async response: {rsp:?}");
             let state = state.lock().unwrap();
             if let Some(tx) = &state.responses_tx {
+                log::trace!("DAP: responses_tx channel exists, sending");
                 tx.send(rsp).log_err();
+            } else {
+                log::error!("DAP: responses_tx channel is None!");
             }
         });
 

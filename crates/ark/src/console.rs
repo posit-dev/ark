@@ -247,6 +247,7 @@ pub struct Console {
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
+    tasks_idle_any_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
     /// Channel to communicate requests and events to the frontend
@@ -571,11 +572,12 @@ impl Console {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
+        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             tasks_interrupt_rx,
             tasks_idle_rx,
+            tasks_idle_any_rx,
             comm_event_tx,
             r_request_rx,
             stdin_request_tx,
@@ -810,6 +812,7 @@ impl Console {
     pub fn new(
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
+        tasks_idle_any_rx: Receiver<RTask>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -840,6 +843,7 @@ impl Console {
             debug_stopped_reason: None,
             tasks_interrupt_rx,
             tasks_idle_rx,
+            tasks_idle_any_rx,
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
@@ -1117,6 +1121,7 @@ impl Console {
         let kernel_request_rx = self.kernel_request_rx.clone();
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
+        let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
 
         // Process R's polled events regularly while waiting for console input.
         // We used to poll every 200ms but that lead to visible delays for the
@@ -1138,15 +1143,19 @@ impl Console {
 
         // Only process idle at top level. We currently don't want idle tasks
         // (e.g. for srcref generation) to run when the call stack is not empty.
-        // We could make this configurable though if needed, i.e. some idle
-        // tasks would be able to run in the browser. Those should be sent to a
-        // dedicated channel that would always be included in the set of recv
-        // channels.
         let tasks_idle_index = if matches!(info.kind, PromptKind::TopLevel) {
             Some(select.recv(&tasks_idle_rx))
         } else {
             None
         };
+
+        // "Idle any" tasks run at both top-level and browser prompts
+        let tasks_idle_any_index =
+            if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
+                Some(select.recv(&tasks_idle_any_rx))
+            } else {
+                None
+            };
 
         loop {
             // If an interrupt was signaled and we are in a user
@@ -1213,6 +1222,12 @@ impl Console {
                 // An idle task woke us up
                 i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
+                    self.handle_task(task);
+                },
+
+                // An "idle any" task woke us up
+                i if Some(i) == tasks_idle_any_index => {
+                    let task = oper.recv(&tasks_idle_any_rx).unwrap();
                     self.handle_task(task);
                 },
 
