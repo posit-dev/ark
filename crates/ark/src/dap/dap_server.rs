@@ -777,7 +777,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         log::trace!("DAP: Spawning idle task for evaluate");
         spawn_idle_any(move || async move {
             log::trace!("DAP: Idle task started for evaluate");
-            let result = evaluate_expression(&state, &expression, frame_id);
+            let result = debug_evaluate(&state, &expression, frame_id);
             log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
 
             let rsp = match result {
@@ -817,7 +817,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 }
 
-fn evaluate_expression(
+fn debug_evaluate(
     state: &Arc<Mutex<Dap>>,
     expression: &str,
     frame_id: Option<i64>,
