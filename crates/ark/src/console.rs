@@ -304,6 +304,11 @@ pub struct Console {
     /// Reset after `debug_stop()`, not between debug steps.
     pub(crate) debug_current_frame_id: i64,
 
+    /// The frame ID selected by the user in the debugger UI.
+    /// When set, console evaluations happen in this frame's environment instead of the current frame.
+    /// Resolved to an environment via `debug_dap` state when needed.
+    pub(crate) debug_selected_frame_id: Cell<Option<i64>>,
+
     /// Tracks how many nested `r_read_console()` calls are on the stack.
     /// Incremented when entering `r_read_console(),` decremented on exit.
     read_console_depth: Cell<usize>,
@@ -896,6 +901,7 @@ impl Console {
             debug_last_stack: vec![],
             debug_session_index: 1,
             debug_current_frame_id: 0,
+            debug_selected_frame_id: Cell::new(None),
             pending_inputs: None,
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
@@ -1666,7 +1672,18 @@ impl Console {
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
     unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
-        let frame = harp::r_current_frame();
+        // Use the debug-selected frame if one has been set, otherwise use current frame
+        let frame = match Console::get().debug_selected_frame_id.get() {
+            Some(frame_id) => {
+                let console = Console::get();
+                let state = console.debug_dap.lock().unwrap();
+                match crate::dap::dap_server::get_frame_env(&state, Some(frame_id)) {
+                    Ok(env) => harp::RObject::view(env),
+                    Err(_) => harp::r_current_frame(),
+                }
+            },
+            None => harp::r_current_frame(),
+        };
 
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
@@ -2614,6 +2631,14 @@ impl Console {
     #[cfg(not(test))] // Avoid warnings in unit test
     pub(crate) fn read_console_frame(&self) -> RObject {
         self.read_console_frame.borrow().clone()
+    }
+
+    pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
+        self.debug_selected_frame_id.set(frame_id);
+    }
+
+    pub(crate) fn clear_debug_selected_frame(&self) {
+        self.debug_selected_frame_id.set(None);
     }
 }
 
