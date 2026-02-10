@@ -272,6 +272,67 @@ fn test_dap_evaluate_no_frame_id() {
     dap.recv_continued();
 }
 
+/// Test that selecting a frame via `.positron_selected_frame` causes console
+/// evaluations to run in that frame's environment.
+#[test]
+fn test_dap_selected_frame_console_eval() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create a stack with variables in different frames
+    let _file = frontend.send_source(
+        "
+outer <- function() {
+  outer_var <- 'from_outer'
+  inner()
+}
+inner <- function() {
+  inner_var <- 'from_inner'
+  browser()
+}
+outer()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    assert!(stack.len() >= 2, "Expected at least 2 frames");
+
+    let inner_frame_id = stack[0].id;
+    let outer_frame_id = stack[1].id;
+
+    // Select the outer frame via the special DAP evaluate expression
+    dap.evaluate(".positron_selected_frame", Some(outer_frame_id));
+
+    // Now console eval should use the outer frame's environment.
+    // Evaluate outer_var which only exists in the outer frame.
+    // In debug mode, R prints to stdout instead of returning execute_result.
+    frontend.send_execute_request("outer_var", Default::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("from_outer");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_invalidated();
+
+    // Frame IDs should remain valid after transient eval - we can still
+    // select a different frame
+    dap.evaluate(".positron_selected_frame", Some(inner_frame_id));
+
+    // Console eval should now use the inner frame again
+    frontend.send_execute_request("inner_var", Default::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("from_inner");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_invalidated();
+
+    // Clean exit
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
 #[test]
 fn test_dap_evaluate_unknown_frame_id() {
     let frontend = DummyArkFrontend::lock();
