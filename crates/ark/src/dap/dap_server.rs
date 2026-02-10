@@ -31,6 +31,7 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
+use harp::R_ENVS;
 use stdext::result::ResultExt;
 use stdext::spawn;
 
@@ -820,23 +821,27 @@ fn debug_evaluate(
 
     let env = match frame_id {
         Some(frame_id) => {
-            let variables_reference = state
+            let Some(variables_reference) = state
                 .frame_id_to_variables_reference
                 .get(&frame_id)
-                .copied();
+                .copied()
+            else {
+                return Err(format!("Unknown `frame_id`: {frame_id}"));
+            };
 
-            match variables_reference {
-                Some(var_ref) => state
-                    .variables_reference_to_r_object
-                    .get(&var_ref)
-                    .map(|obj| obj.get().sexp),
-                None => None,
-            }
+            let Some(obj) = state
+                .variables_reference_to_r_object
+                .get(&variables_reference)
+            else {
+                return Err(format!(
+                    "Unknown `variables_reference`: {variables_reference}"
+                ));
+            };
+
+            obj.get().sexp
         },
-        None => None,
+        None => R_ENVS.global,
     };
-
-    let env = env.unwrap_or(unsafe { libr::R_GlobalEnv });
 
     match harp::parse_eval0(expression, harp::RObject::view(env)) {
         Ok(value) => {

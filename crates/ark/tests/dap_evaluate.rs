@@ -126,7 +126,14 @@ fn test_dap_evaluate_error() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    frontend.debug_send_browser();
+    let _file = frontend.send_source(
+        "
+local({
+  x <- 42
+  browser()
+})
+",
+    );
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
@@ -145,6 +152,17 @@ fn test_dap_evaluate_error() {
         err.contains("Incomplete"),
         "Expected incomplete code error, got: {err}"
     );
+
+    // Cause an R error during evaluation
+    let err = dap.evaluate_error("stop('intentional error')", Some(frame_id));
+    assert!(
+        err.contains("intentional error"),
+        "Expected error message, got: {err}"
+    );
+
+    // Debug session should still be alive and stopped after all these errors
+    let result = dap.evaluate("x", Some(frame_id));
+    assert_eq!(result, "42");
 
     frontend.debug_send_quit();
     dap.recv_continued();
@@ -169,6 +187,35 @@ fn test_dap_evaluate_no_frame_id() {
     // Evaluate without frame_id should use global environment
     let result = dap.evaluate("global_var", None);
     assert_eq!(result, "123");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_evaluate_unknown_frame_id() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+local({
+  browser()
+})
+",
+    );
+    dap.recv_stopped();
+
+    // Use a bogus frame_id that doesn't exist
+    let err = dap.evaluate_error("1 + 1", Some(999999));
+    assert!(
+        err.contains("Unknown frame_id"),
+        "Expected 'Unknown frame_id' error, got: {err}"
+    );
+
+    // Debug session should still be alive
+    let stack = dap.stack_trace();
+    assert!(!stack.is_empty(), "Stack should still be available");
 
     frontend.debug_send_quit();
     dap.recv_continued();
