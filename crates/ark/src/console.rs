@@ -317,6 +317,11 @@ pub struct Console {
     /// Reason for entering the debugger. Used to determine which DAP event to send.
     pub(crate) debug_stopped_reason: Option<DebugStoppedReason>,
 
+    /// The frame ID selected by the user in the debugger UI.
+    /// When set, console evaluations happen in this frame's environment instead of the current frame.
+    /// Resolved to an environment via `debug_dap` state when needed.
+    pub(crate) debug_selected_frame_id: Cell<Option<i64>>,
+
     /// Saved JIT compiler level, to restore after a step-into command.
     /// Step-into disables JIT to prevent stepping into `compiler` internals.
     pub(crate) debug_jit_level: Option<i32>,
@@ -912,6 +917,7 @@ impl Console {
             debug_last_stack: vec![],
             debug_session_index: 1,
             debug_current_frame_id: 0,
+            debug_selected_frame_id: Cell::new(None),
             debug_jit_level: None,
             pending_inputs: None,
             read_console_depth: Cell::new(0),
@@ -1715,7 +1721,18 @@ impl Console {
         buflen: c_int,
         is_debugging: bool,
     ) {
-        let frame = harp::r_current_frame();
+        // Use the debug-selected frame if one has been set, otherwise use current frame
+        let frame = match Console::get().debug_selected_frame_id.get() {
+            Some(frame_id) => {
+                let console = Console::get();
+                let state = console.debug_dap.lock().unwrap();
+                match state.frame_env(Some(frame_id)) {
+                    Ok(env) => harp::RObject::view(env),
+                    Err(_) => harp::r_current_frame(),
+                }
+            },
+            None => harp::r_current_frame(),
+        };
 
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
@@ -2685,6 +2702,14 @@ impl Console {
     #[cfg(not(test))] // Avoid warnings in unit test
     pub(crate) fn read_console_frame(&self) -> RObject {
         self.read_console_frame.borrow().clone()
+    }
+
+    pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
+        self.debug_selected_frame_id.set(frame_id);
+    }
+
+    pub(crate) fn clear_debug_selected_frame(&self) {
+        self.debug_selected_frame_id.set(None);
     }
 }
 

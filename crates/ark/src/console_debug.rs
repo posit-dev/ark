@@ -126,6 +126,7 @@ impl Console {
         self.debug_last_stack = vec![];
         self.clear_fallback_sources();
         self.debug_session_index += 1;
+        self.clear_debug_selected_frame();
 
         let mut dap = self.debug_dap.lock().unwrap();
         dap.stop_debug();

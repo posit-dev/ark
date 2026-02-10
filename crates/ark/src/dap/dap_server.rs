@@ -38,6 +38,7 @@ use super::dap::Breakpoint;
 use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::console::Console;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
@@ -777,10 +778,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let responses_tx = self.responses_tx.clone();
 
         log::trace!("DAP: Spawning idle task for evaluate");
-        spawn_idle_any_prompt(move |capture| async move {
+        spawn_idle_any_prompt(move |mut capture| async move {
             log::trace!("DAP: Idle task started for evaluate");
-            let result = evaluate_expression(&state, &expression, frame_id);
-            log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
 
             // If expression starts with "/print ", evaluate and print result
             let (expr, print) = match expression.strip_prefix("/print ") {
@@ -788,7 +787,18 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 None => (expression.as_str(), false),
             };
 
-            let rsp = {
+            let rsp = if expression == ".positron_selected_frame" {
+                Console::get().set_debug_selected_frame_id(frame_id);
+                req.success(ResponseBody::Evaluate(EvaluateResponse {
+                    result: String::new(),
+                    type_field: None,
+                    presentation_hint: None,
+                    variables_reference: 0,
+                    named_variables: None,
+                    indexed_variables: None,
+                    memory_reference: None,
+                }))
+            } else {
                 let capture = if print { Some(&mut capture) } else { None };
                 let result = state.lock().unwrap().evaluate(expr, frame_id, capture);
                 log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
@@ -807,7 +817,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         Ok(())
     }
+}
 
+impl<R: Read, W: Write> DapServer<R, W> {
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
         // Wait until we're in the `r_task()` to lock
         // See https://github.com/posit-dev/positron/issues/5024

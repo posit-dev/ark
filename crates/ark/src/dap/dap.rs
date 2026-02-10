@@ -442,7 +442,7 @@ impl Dap {
         }
     }
 
-    fn frame_env(&self, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
+    pub(crate) fn frame_env(&self, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
         let Some(frame_id) = frame_id else {
             return Ok(R_ENVS.global);
         };
