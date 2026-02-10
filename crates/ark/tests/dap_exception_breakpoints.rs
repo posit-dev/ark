@@ -351,10 +351,10 @@ fn test_dap_pause() {
     dap.recv_stopped();
 
     // Verify we're stopped inside looper()
-    // Stack has: interrupt handler, looper(), <global>
+    // Stack has: looper(), <global> (interrupt handler frame is excluded)
     let stack = dap.stack_trace();
-    assert_eq!(stack.len(), 3);
-    assert_eq!(stack[1].name, "looper()");
+    assert_eq!(stack.len(), 2);
+    assert_eq!(stack[0].name, "looper()");
 
     // The pause completed, receive idle before sending Q
     frontend.assert_stream_stdout_contains("Called from:");

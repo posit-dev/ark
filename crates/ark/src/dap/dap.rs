@@ -237,9 +237,13 @@ impl Dap {
         self.is_debugging = true;
         self.fallback_sources.extend(fallback_sources);
 
-        // Discard top frame when stopped due to exception breakpoint, it points
-        // to our global handler that calls `browser()`
-        if matches!(stopped_reason, DebugStoppedReason::Condition { .. }) && !stack.is_empty() {
+        // Discard top frame when stopped due to exception breakpoint or pause,
+        // it points to our global handler that calls `browser()`
+        if matches!(
+            stopped_reason,
+            DebugStoppedReason::Condition { .. } | DebugStoppedReason::Pause
+        ) && !stack.is_empty()
+        {
             stack.remove(0);
         }
 
@@ -256,7 +260,7 @@ impl Dap {
 
             if let Some(dap_tx) = &self.backend_events_tx {
                 let event = match stopped_reason {
-                    DebugStoppedReason::Step => {
+                    DebugStoppedReason::Step | DebugStoppedReason::Pause => {
                         DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus })
                     },
                     DebugStoppedReason::Condition { class, message } => {

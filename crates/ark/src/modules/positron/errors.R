@@ -103,9 +103,14 @@
 
 globalInterruptHandler <- function(cnd) {
     if (is_interrupting_for_debugger()) {
+        debug_set_stopped_reason_pause()
         browser()
         base::.tryResumeInterrupt()
     }
+}
+
+debug_set_stopped_reason_pause <- function() {
+    .ps.Call("ps_debug_set_stopped_reason_pause")
 }
 
 #' @export
