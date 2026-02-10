@@ -374,14 +374,6 @@ fn expand_range_across_semicolons(mut node: Node) -> tree_sitter::Range {
 }
 
 fn find_statement_range(root: &Node, row: usize) -> Option<tree_sitter::Range> {
-    // Refuse to provide a statement range in the face of parse errors, we are
-    // unlikely to be able to provide anything useful, and are more likely to provide
-    // something confusing. Instead, return `None` so that the frontend sends code to
-    // the console one line at a time (posit-dev/positron#5023).
-    if node_has_error_or_missing(root) {
-        return None;
-    }
-
     let mut cursor = root.walk();
 
     let children = root.children(&mut cursor);
@@ -389,6 +381,20 @@ fn find_statement_range(root: &Node, row: usize) -> Option<tree_sitter::Range> {
     let mut node = None;
 
     for child in children {
+        // Refuse to provide a statement range after detecting a top-level `child` with a
+        // parse error. We expect that everything before this top-level `child` has parsed
+        // correctly, so if the cursor was above this first parse error, we can execute
+        // that code fearlessly. After the first parse error, all bets are off. Even if
+        // tree-sitter manages to "recover" further down the page, this is highly
+        // unpredictable and is sensitive to minor changes in both tree-sitter-r and the
+        // user's precise document contents. Instead, we give up if the user's cursor is
+        // anywhere past the first parse error, returning `None`, so that the frontend
+        // sends code to the console one line at a time (posit-dev/positron#5023,
+        // posit-dev/positron#8350).
+        if node_has_error_or_missing(&child) {
+            return None;
+        }
+
         if row > child.end_position().row {
             // Find the first child who's end position row extends past or is
             // equal to the user selected `row`
@@ -700,8 +706,10 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
 mod tests {
     use tree_sitter::Parser;
     use tree_sitter::Point;
+    use tree_sitter::Range;
 
     use crate::fixtures::point_and_offset_from_cursor;
+    use crate::fixtures::point_from_cursor;
     use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
@@ -878,6 +886,23 @@ mod tests {
             sel_end.unwrap(),
             "Failed on test {original}"
         );
+    }
+
+    // Intended to ease statement range testing. Supply `x` as a string containing
+    // the expression to test along with:
+    // - `@` marking the cursor position
+    // Returns the statement range, if any. Useful for testing `None` cases.
+    fn statement_range_from_cursor(x: &str) -> Option<Range> {
+        let (contents, point) = point_from_cursor(x);
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_r::LANGUAGE.into())
+            .expect("Failed to create parser");
+        let ast = parser.parse(contents, None).unwrap();
+        let root = ast.root_node();
+
+        find_statement_range(&root, point.row)
     }
 
     #[test]
@@ -1699,19 +1724,116 @@ list({
     }
 
     #[test]
-    fn test_returns_none_with_parse_errors() {
-        let row = 2;
-        let contents = "
+    fn test_can_compute_top_level_statement_range_above_first_parse_error() {
+        statement_range_test(
+            "
+@
+<<1 + 1>>
+sum(
+",
+        );
+
+        statement_range_test(
+            "
+<<fn(@
+  a,
+  b
+)>>
+sum(
+",
+        );
+
+        // Before pipeline
+        statement_range_test(
+            "
+@
+<<mtcars |>
+  mutate()>>
+sum(
+",
+        );
+
+        // On start of pipeline
+        statement_range_test(
+            "
+<<mtcars |>@
+  mutate()>>
+sum(
+",
+        );
+
+        // On end of pipeline
+        statement_range_test(
+            "
+<<mtcars |>
+  mutate()>>@
+sum(
+",
+        );
+    }
+
+    #[test]
+    fn test_cant_compute_top_level_statement_range_below_first_parse_error() {
+        // Once we hit the very first top-level node containing a parse error, all bets
+        // are off. We give up on being able to correctly parse the rest of the file.
+        let range = statement_range_from_cursor(
+            "
+sum(
+
+1 + 1@
+",
+        );
+        assert!(range.is_none())
+    }
+
+    #[test]
+    fn test_cant_compute_top_level_statement_range_below_first_parse_error_even_if_tree_sitter_might_recover(
+    ) {
+        // Even though the tree-sitter error is somewhat locally contained to `fn` and
+        // `fn2` and often will recover before getting to `fn3`, we disallow execution on
+        // ANYTHING past the first top-level node containing a parse error for overall
+        // predictability of this feature. tree-sitter is just too sensitive to the exact
+        // tree-sitter-r grammar, and to the precise contents of the user's document, for
+        // post-error recovery to be very useful to us.
+        let range = statement_range_from_cursor(
+            "
+fn <- function) {} # Parse error here
+fn2 <- function() {}
+
+fn3 <- function() {@ # Can't execute this!
+  1 + 1
+}
+",
+        );
+        assert!(range.is_none())
+    }
+
+    #[test]
+    fn test_cant_compute_statement_range_in_child_node_when_parent_contains_any_parse_errors() {
+        // Even though `1 + 1` is ABOVE `sum(`, we still can't execute it.
+        // We detected that `fn` had at least 1 error node, and gave up at that point
+        // before recursing into it. We can't reliably trust tree-sitter enough here to
+        // recognize the `{`, step into that, and recurse over its children to recognize
+        // that `1 + 1` is above the parse error.
+        let range = statement_range_from_cursor(
+            "
+fn <- function() {
+    1 + 1@
+    sum(
+}
+",
+        );
+        assert!(range.is_none());
+
+        let range = statement_range_from_cursor(
+            "
 {
-    1 + 1
-";
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_r::LANGUAGE.into())
-            .expect("Failed to create parser");
-        let ast = parser.parse(contents, None).unwrap();
-        let root = ast.root_node();
-        assert_eq!(find_statement_range(&root, row), None);
+    1 + 1@
+    sum(
+}
+",
+        );
+        assert!(range.is_none());
     }
 
     fn get_text(range: tree_sitter::Range, contents: &str) -> String {
@@ -2102,7 +2224,59 @@ x %>%
     }
 
     #[test]
-    fn test_statement_range_roxygen_parse_errors_in_examples() {
+    fn test_statement_range_roxygen_can_compute_top_level_statement_range_above_first_parse_error()
+    {
+        // The function call is "above" the first parse error we get from `sum(`
+        let text = "
+#' Hi
+#' @param x foo
+#' @examples
+#' fn(
+#'   a,^
+#'   b
+#' )
+#' sum(
+#' @returns
+";
+        let (text, point) = statement_range_point_from_cursor(text);
+        let document = Document::new(&text, None);
+        let root = document.ast.root_node();
+        let contents = &document.contents;
+        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        assert_eq!(
+            get_text(range, contents),
+            String::from("#' fn(\n#'   a,\n#'   b\n#' )")
+        );
+        assert_eq!(code.unwrap(), String::from("fn(\n  a,\n  b\n)"))
+    }
+
+    #[test]
+    fn test_statement_range_roxygen_cant_compute_top_level_statement_range_below_first_parse_error()
+    {
+        // The function call is "below" the first parse error we get from `sum(`.
+        // We still send "just that line" as a comment to avoid jumping around.
+        let text = "
+#' Hi
+#' @param x foo
+#' @examples
+#' sum(
+#' fn(
+#'   a,^
+#'   b
+#' )
+#' @returns
+";
+        let (text, point) = statement_range_point_from_cursor(text);
+        let document = Document::new(&text, None);
+        let root = document.ast.root_node();
+        let contents = &document.contents;
+        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        assert_eq!(get_text(range, contents), String::from("#'   a,"));
+        assert!(code.is_none());
+    }
+
+    #[test]
+    fn test_statement_range_roxygen_cant_compute_statement_range_while_on_parse_error() {
         // Still sends "just that line" to avoid jumping around
         let text = "
 #' Hi
@@ -2121,8 +2295,9 @@ x %>%
     }
 
     #[test]
-    fn test_statement_range_roxygen_parse_errors_in_document() {
-        // Not contributing at all
+    fn test_statement_range_roxygen_parse_errors_in_parent_document() {
+        // If the parent document has parse errors, we don't even try.
+        // It's best if the user fixes that first.
         let text = "
 1 + / 1
 #' Hi
