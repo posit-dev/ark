@@ -175,6 +175,7 @@ pub enum DebugCallTextKind {
 #[derive(Debug, Clone)]
 pub enum DebugStoppedReason {
     Step,
+    Pause,
     Condition { class: String, message: String },
 }
 
