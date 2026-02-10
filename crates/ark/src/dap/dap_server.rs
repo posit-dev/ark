@@ -38,6 +38,7 @@ use super::dap::Breakpoint;
 use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::console::ConsoleOutputCapture;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
@@ -777,6 +778,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
         log::trace!("DAP: Spawning idle task for evaluate");
         spawn_idle_any(move || async move {
             log::trace!("DAP: Idle task started for evaluate");
+
+            // Capture any print output during evaluation. The guard logs
+            // untaken captured output on drop.
+            let _capture = ConsoleOutputCapture::new();
             let result = debug_evaluate(&state, &expression, frame_id);
             log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
 

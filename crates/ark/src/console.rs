@@ -17,8 +17,6 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::result::Result::Ok;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Poll;
@@ -138,7 +136,6 @@ use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 use crate::url::ExtUrl;
 
-pub static CAPTURE_CONSOLE_OUTPUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// All debug commands as documented in `?browser`
@@ -282,9 +279,8 @@ pub struct Console {
     /// Stored in `Console` to avoid memory leakage when `Rf_error()` jumps.
     r_error_buffer: Option<CString>,
 
-    /// `WriteConsole` output diverted from IOPub is stored here. This is only used
-    /// to return R output to the debugger.
-    pub(crate) captured_output: String,
+    /// When `Some`, console output is captured here instead of being sent to IOPub.
+    pub(crate) captured_output: Option<String>,
 
     /// Whether we should preserve focus when stopping in a debug session. We
     /// should only preserve focus if we're explicitly stepping through code as
@@ -540,6 +536,68 @@ pub(crate) enum ConsoleResult {
     Interrupt,
     Disconnected,
     Error(String),
+}
+
+/// Guard for capturing console output during idle tasks.
+///
+/// When created, this sets `Console::captured_output` to `Some` so that all
+/// `write_console` output goes there instead of IOPub.
+/// When dropped, it restores the previous state and takes the captured output.
+///
+/// Use `take()` to retrieve the captured output before drop, or let the guard
+/// log it automatically on drop.
+pub struct ConsoleOutputCapture {
+    was_capturing: bool,
+    taken: bool,
+}
+
+impl ConsoleOutputCapture {
+    pub fn new() -> Self {
+        let console = Console::get_mut();
+
+        let was_capturing = console.captured_output.is_some();
+        console.captured_output = Some(String::new());
+
+        Self {
+            was_capturing,
+            taken: false,
+        }
+    }
+
+    /// Take the captured output so far, clearing the buffer.
+    pub fn take(&mut self) -> String {
+        let console = Console::get_mut();
+
+        let output = console.captured_output.take().unwrap_or_default();
+        console.captured_output = if self.was_capturing {
+            Some(String::new())
+        } else {
+            None
+        };
+
+        self.taken = true;
+        output
+    }
+}
+
+impl Drop for ConsoleOutputCapture {
+    fn drop(&mut self) {
+        let console = Console::get_mut();
+
+        // If output wasn't taken, take it now and log if non-empty
+        if !self.taken {
+            if let Some(output) = console.captured_output.take() {
+                if !output.trim().is_empty() {
+                    log::info!("[Captured idle output]\n{}", output.trim_end());
+                }
+            }
+        }
+
+        // Restore previous state
+        if self.was_capturing {
+            console.captured_output = Some(String::new());
+        }
+    }
 }
 
 impl Console {
@@ -849,7 +907,7 @@ impl Console {
             positron_ns: None,
             banner: None,
             r_error_buffer: None,
-            captured_output: String::new(),
+            captured_output: None,
             debug_call_text: DebugCallText::None,
             debug_last_line: None,
             debug_preserve_focus: false,
@@ -2252,10 +2310,10 @@ impl Console {
 
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
-        if CAPTURE_CONSOLE_OUTPUT.load(Ordering::SeqCst) {
-            Console::get_mut()
-                .captured_output
-                .push_str(&console_to_utf8(buf).unwrap());
+        let console = Console::get_mut();
+
+        if let Some(captured) = &mut console.captured_output {
+            captured.push_str(&console_to_utf8(buf).unwrap());
             return;
         }
 
@@ -2263,8 +2321,6 @@ impl Console {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
-
-        let console = Console::get_mut();
 
         if !Console::is_initialized() {
             // During init, consider all output to be part of the startup banner
