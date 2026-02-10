@@ -73,7 +73,7 @@ impl From<&FrameInfo> for FrameInfoId {
 }
 
 impl Console {
-    pub(crate) fn debug_start(&mut self, debug_preserve_focus: bool) {
+    pub(crate) fn debug_start(&mut self, transient_eval: bool) {
         match self.debug_stack_info() {
             Ok(stack) => {
                 // Figure out whether we changed location since last time,
@@ -87,23 +87,44 @@ impl Console {
                 // context via condition catching and jumped back in the
                 // debugged function.
                 let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
-                let same_stack = stack_id == self.debug_last_stack;
+                let stack_changed = stack_id != self.debug_last_stack;
 
                 // Initialize fallback sources for this stack
                 let fallback_sources = self.load_fallback_sources(&stack);
 
                 self.debug_last_stack = stack_id;
 
-                let preserve_focus = same_stack && debug_preserve_focus;
-
                 let mut dap = self.debug_dap.lock().unwrap();
-                dap.start_debug(stack, preserve_focus, fallback_sources)
+
+                // During transient evals (same stack, no step gesture), skip
+                // `start_debug` and send an Invalidated event instead so the
+                // frontend refreshes variables while keeping its frame selection
+                // and existing frame IDs. If the stack changed (e.g. evaluation
+                // pushed a new debugger), we start a new debug session normally.
+                if transient_eval && !stack_changed {
+                    dap.send_invalidated();
+                } else {
+                    // If this was a transient eval but the stack changed (e.g. eval
+                    // pushed a new debugger), we skipped `debug_stop` earlier so we
+                    // need to send stop_debug + Continued now before starting the
+                    // new debug session.
+                    if transient_eval && stack_changed {
+                        dap.stop_debug();
+                    }
+
+                    dap.start_debug(stack, fallback_sources)
+                }
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
     }
 
     pub(crate) fn debug_stop(&mut self) {
+        // Preserve all state in case of transient eval
+        if self.debug_transient_eval {
+            return;
+        }
+
         self.debug_last_stack = vec![];
         self.clear_fallback_sources();
         self.debug_reset_frame_id();

@@ -40,12 +40,10 @@ fn test_dap_stopped_at_browser() {
     // line: 1, column: 10 corrsponds to `browser()`
     assert_vdoc_frame(&stack[0], "<global>", 1, 10);
 
-    // Execute an expression that doesn't advance the debugger
-    // FIXME: `preserve_focus_hint` should be false
-    // https://github.com/posit-dev/positron/issues/11604
+    // Execute an expression that doesn't advance the debugger.
+    // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.debug_send_expr("1");
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
 
     frontend.debug_send_quit();
     dap.recv_continued();
@@ -167,9 +165,9 @@ fn test_dap_error_in_eval() {
     // Evaluate an expression that causes an error.
     // Unlike stepping to an error (which exits debug), evaluating an error
     // from the console should keep us in debug mode.
+    // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.debug_send_error_expr("stop('eval error')", "eval error");
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
 
     // We should still be in debug mode with the same stack
     let stack = dap.stack_trace();
