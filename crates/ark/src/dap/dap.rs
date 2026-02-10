@@ -104,7 +104,11 @@ pub enum DapBackendEvent {
 
     /// Event sent when a browser prompt is emitted during an existing
     /// debugging session
-    Stopped(DapStoppedEvent),
+    Stopped,
+
+    /// Event sent after a console evaluation so the frontend refreshes
+    /// variables .
+    Invalidated,
 
     /// Event sent when a breakpoint state changes (verified, unverified, or invalid)
     /// The line is included so the frontend can update the breakpoint's position
@@ -119,11 +123,6 @@ pub enum DapBackendEvent {
 
     /// Event sent when an exception/error occurs
     Exception(DapExceptionEvent),
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct DapStoppedEvent {
-    pub preserve_focus: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -236,7 +235,6 @@ impl Dap {
     pub fn start_debug(
         &mut self,
         mut stack: Vec<FrameInfo>,
-        preserve_focus: bool,
         fallback_sources: HashMap<String, String>,
         stopped_reason: DebugStoppedReason,
     ) {
@@ -257,7 +255,7 @@ impl Dap {
             if let Some(dap_tx) = &self.backend_events_tx {
                 let event = match stopped_reason {
                     DebugStoppedReason::Step | DebugStoppedReason::Pause => {
-                        DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus })
+                        DapBackendEvent::Stopped
                     },
                     DebugStoppedReason::Condition { class, message } => {
                         DapBackendEvent::Exception(DapExceptionEvent {
@@ -308,6 +306,12 @@ impl Dap {
             // else: If not connected to a frontend, the DAP client should
             // have received a `Continued` event already, after a `n`
             // command or similar.
+        }
+    }
+
+    pub fn send_invalidated(&self) {
+        if let Some(tx) = &self.backend_events_tx {
+            tx.send(DapBackendEvent::Invalidated).log_err();
         }
     }
 

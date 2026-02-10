@@ -42,7 +42,6 @@ use crate::console::Console;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
-use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
@@ -185,12 +184,12 @@ fn listen_dap_events<W: Write>(
                         })
                     },
 
-                    DapBackendEvent::Stopped (DapStoppedEvent{ preserve_focus }) => {
+                    DapBackendEvent::Stopped => {
                         Event::Stopped(StoppedEventBody {
                             reason: StoppedEventReason::Step,
                             description: None,
                             thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(preserve_focus),
+                            preserve_focus_hint: Some(false),
                             text: None,
                             all_threads_stopped: Some(true),
                             hit_breakpoint_ids: None,
@@ -207,6 +206,14 @@ fn listen_dap_events<W: Write>(
                             text: Some(text),
                             all_threads_stopped: Some(true),
                             hit_breakpoint_ids: None,
+                        })
+                    },
+
+                    DapBackendEvent::Invalidated => {
+                        Event::Invalidated(InvalidatedEventBody {
+                            areas: Some(vec![types::InvalidatedAreas::Variables]),
+                            thread_id: Some(THREAD_ID),
+                            stack_frame_id: None,
                         })
                     },
 

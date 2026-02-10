@@ -685,6 +685,31 @@ impl DapClient {
         );
     }
 
+    /// Receive and assert the next message is an Invalidated event.
+    ///
+    /// This is sent after a transient evaluation in the debug console to signal
+    /// that variables should be refreshed without resetting the frame selection.
+    #[track_caller]
+    pub fn recv_invalidated(&mut self) {
+        let event = self.recv_event();
+        let Event::Invalidated(body) = &event else {
+            panic!("Expected Invalidated event, got {:?}", event);
+        };
+
+        // Verify that the event specifies Variables as the invalidated area
+        let areas = body
+            .areas
+            .as_ref()
+            .expect("Invalidated event should have areas");
+        assert!(
+            areas
+                .iter()
+                .any(|a| matches!(a, dap::types::InvalidatedAreas::Variables)),
+            "Expected Invalidated event with Variables area, got areas: {:?}",
+            areas
+        );
+    }
+
     /// Receive and assert the next message is a Stopped event with default fields.
     #[track_caller]
     pub fn recv_stopped(&mut self) {

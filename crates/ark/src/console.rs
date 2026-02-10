@@ -141,8 +141,8 @@ static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").
 /// All debug commands as documented in `?browser`
 const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
 
-// The subset of debug commands that continue execution
-const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+// The subset of debug commands that continue execution (and thus exit the current browser)
+const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone, Copy)]
@@ -283,11 +283,13 @@ pub struct Console {
     /// Interact with this via `ConsoleOutputCapture` from `start_capture()`.
     pub(crate) captured_output: Option<String>,
 
-    /// Whether we should preserve focus when stopping in a debug session. We
-    /// should only preserve focus if we're explicitly stepping through code as
-    /// opposed to evaluating an expression in the debugger console.
+    /// Whether the current evaluation is transient within the debug session.
+    /// When `true`, the debug session state is preserved: no Continued/Stopped
+    /// events are emitted, frame IDs remain valid, and only an Invalidated
+    /// event is sent to refresh variables. Set to `true` for console
+    /// evaluations (as opposed to step commands like `n`, `c`, `f`).
     /// See https://github.com/posit-dev/positron/issues/3151.
-    debug_preserve_focus: bool,
+    pub(crate) debug_transient_eval: bool,
 
     /// Underlying dap state. Shared with the DAP server thread.
     pub(crate) debug_dap: Arc<Mutex<Dap>>,
@@ -913,7 +915,7 @@ impl Console {
             captured_output: None,
             debug_call_text: DebugCallText::None,
             debug_last_line: None,
-            debug_preserve_focus: false,
+            debug_transient_eval: false,
             debug_last_stack: vec![],
             debug_session_index: 1,
             debug_current_frame_id: 0,
@@ -1117,7 +1119,7 @@ impl Console {
                     .debug_stopped_reason
                     .clone()
                     .unwrap_or(DebugStoppedReason::Step);
-                self.debug_start(self.debug_preserve_focus, reason);
+                self.debug_start(reason);
             }
         }
 
@@ -1631,7 +1633,7 @@ impl Console {
         // Default: preserve current focus for evaluated expressions.
         // This only has an effect if we're debugging.
         // https://github.com/posit-dev/positron/issues/3151
-        self.debug_preserve_focus = true;
+        self.debug_transient_eval = true;
 
         if self.debug_is_debugging {
             // Try to interpret this pending input as a symbol (debug commands
@@ -1687,7 +1689,7 @@ impl Console {
         if DEBUG_COMMANDS_CONTINUE.contains(&&cmd[..]) {
             // For continue-like commands, we do not preserve focus,
             // i.e. we let the cursor jump to the stopped position.
-            self.debug_preserve_focus = false;
+            self.debug_transient_eval = false;
         }
 
         // Forward the command to R's base REPL.
@@ -2325,7 +2327,7 @@ impl Console {
             let kind = if in_injected_breakpoint { "in" } else { "at" };
             log::trace!("Auto-step expression reached ({kind}), moving to next expression");
 
-            self.debug_preserve_focus = false;
+            self.debug_transient_eval = false;
 
             Self::on_console_input(buf, buflen, String::from("n")).unwrap();
             return Some(ConsoleResult::NewInput);

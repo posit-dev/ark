@@ -40,12 +40,10 @@ fn test_dap_stopped_at_browser() {
     // line: 1, column: 10 corrsponds to `browser()`
     assert_vdoc_frame(&stack[0], "<global>", 1, 10);
 
-    // Execute an expression that doesn't advance the debugger
-    // FIXME: `preserve_focus_hint` should be false
-    // https://github.com/posit-dev/positron/issues/11604
+    // Execute an expression that doesn't advance the debugger.
+    // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.debug_send_expr("1");
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
 
     frontend.debug_send_quit();
     dap.recv_continued();
@@ -245,14 +243,12 @@ fn test_dap_error_in_eval() {
     let stack = dap.stack_trace();
     assert_eq!(stack.len(), 1, "Should have 1 frame");
 
-    // Evaluate an expression that causes an error. Our local calling error
-    // handler ensures `globalErrorHandler` runs (for proper backtrace
-    // capturing), which exits the debugger and jumps to top level.
+    // Evaluate an expression that causes an error.
+    // Unlike stepping to an error (which exits debug), evaluating an error
+    // from the console should keep us in debug mode.
+    // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.send_execute_request("stop('eval error')", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_stop_debug();
-    dap.recv_continued();
+    dap.recv_invalidated();
 
     let evalue = frontend.recv_iopub_execute_error();
     assert!(evalue.contains("eval error"));
