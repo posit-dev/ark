@@ -568,11 +568,13 @@ mod tests {
     fn create_test_dap() -> (Dap, crossbeam::channel::Receiver<DapBackendEvent>) {
         let (backend_events_tx, backend_events_rx) = unbounded();
         let (r_request_tx, _r_request_rx) = unbounded();
+        let (responses_tx, _responses_rx) = unbounded();
 
         let dap = Dap {
             is_debugging: false,
             is_connected: true,
             backend_events_tx: Some(backend_events_tx),
+            responses_tx: Some(responses_tx),
             stack: None,
             breakpoints: HashMap::new(),
             exception_breakpoint_filters: Vec::new(),
@@ -680,10 +682,12 @@ mod tests {
     fn test_did_change_document_without_backend_tx_is_noop() {
         let (r_request_tx, _r_request_rx) = unbounded();
 
+        let (responses_tx, _responses_rx) = unbounded();
         let mut dap = Dap {
             is_debugging: false,
             is_connected: false,
             backend_events_tx: None,
+            responses_tx: Some(responses_tx),
             stack: None,
             breakpoints: HashMap::new(),
             exception_breakpoint_filters: Vec::new(),
