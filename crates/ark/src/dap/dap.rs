@@ -237,6 +237,12 @@ impl Dap {
         self.is_debugging = true;
         self.fallback_sources.extend(fallback_sources);
 
+        // Discard top frame when stopped due to exception breakpoint, it points
+        // to our global handler that calls `browser()`
+        if matches!(stopped_reason, DebugStoppedReason::Condition { .. }) && !stack.is_empty() {
+            stack.remove(0);
+        }
+
         self.load_variables_references(&mut stack);
         self.stack = Some(stack);
 
