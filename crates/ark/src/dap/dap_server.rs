@@ -39,6 +39,7 @@ use super::dap::Breakpoint;
 use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::console::ConsoleOutputCapture;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
@@ -773,33 +774,49 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let state = self.state.clone();
 
         log::trace!("DAP: Spawning idle task for evaluate");
-        spawn_idle_any(move |_| async move {
+        spawn_idle_any(move |mut capture| async move {
             log::trace!("DAP: Idle task started for evaluate");
 
-            let result = debug_evaluate(&state, &expression, frame_id);
-            log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
-
-            let rsp = match result {
-                Ok(variable) => {
-                    let variables_reference = match variable.variables_reference_object {
-                        Some(obj) => {
-                            let mut state = state.lock().unwrap();
-                            state.insert_variables_reference_object(obj)
-                        },
-                        None => 0,
-                    };
-
-                    req.success(ResponseBody::Evaluate(EvaluateResponse {
-                        result: variable.value,
-                        type_field: variable.type_field,
+            // If expression starts with "print ", evaluate and return captured output
+            let rsp = if let Some(expr) = expression.strip_prefix("print ") {
+                match debug_evaluate_print(&state, expr, frame_id, &mut capture) {
+                    Ok(output) => req.success(ResponseBody::Evaluate(EvaluateResponse {
+                        result: output,
+                        type_field: None,
                         presentation_hint: None,
-                        variables_reference,
+                        variables_reference: 0,
                         named_variables: None,
                         indexed_variables: None,
                         memory_reference: None,
-                    }))
-                },
-                Err(err) => req.error(&err),
+                    })),
+                    Err(err) => req.error(&err),
+                }
+            } else {
+                let result = debug_evaluate(&state, &expression, frame_id);
+                log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
+
+                match result {
+                    Ok(variable) => {
+                        let variables_reference = match variable.variables_reference_object {
+                            Some(obj) => {
+                                let mut state = state.lock().unwrap();
+                                state.insert_variables_reference_object(obj)
+                            },
+                            None => 0,
+                        };
+
+                        req.success(ResponseBody::Evaluate(EvaluateResponse {
+                            result: variable.value,
+                            type_field: variable.type_field,
+                            presentation_hint: None,
+                            variables_reference,
+                            named_variables: None,
+                            indexed_variables: None,
+                            memory_reference: None,
+                        }))
+                    },
+                    Err(err) => req.error(&err),
+                }
             };
 
             let state = state.lock().unwrap();
@@ -818,38 +835,57 @@ fn debug_evaluate(
     frame_id: Option<i64>,
 ) -> Result<RVariable, String> {
     let state = state.lock().unwrap();
+    let env = get_frame_env(&state, frame_id)?;
 
-    let env = match frame_id {
-        Some(frame_id) => {
-            let Some(variables_reference) = state
-                .frame_id_to_variables_reference
-                .get(&frame_id)
-                .copied()
-            else {
-                return Err(format!("Unknown `frame_id`: {frame_id}"));
-            };
+    match harp::parse_eval0(expression, harp::RObject::view(env)) {
+        Ok(value) => Ok(crate::dap::dap_variables::object_variable_from_value(
+            value.sexp,
+        )),
+        Err(err) => Err(format!("{err}")),
+    }
+}
 
-            let Some(obj) = state
-                .variables_reference_to_r_object
-                .get(&variables_reference)
-            else {
-                return Err(format!(
-                    "Unknown `variables_reference`: {variables_reference}"
-                ));
-            };
-
-            obj.get().sexp
-        },
-        None => R_ENVS.global,
-    };
+fn debug_evaluate_print(
+    state: &Arc<Mutex<Dap>>,
+    expression: &str,
+    frame_id: Option<i64>,
+    capture: &mut ConsoleOutputCapture,
+) -> Result<String, String> {
+    let state = state.lock().unwrap();
+    let env = get_frame_env(&state, frame_id)?;
 
     match harp::parse_eval0(expression, harp::RObject::view(env)) {
         Ok(value) => {
-            let variable = crate::dap::dap_variables::object_variable_from_value(value.sexp);
-            Ok(variable)
+            harp::utils::r_print(value.sexp);
+            Ok(capture.take().trim_end().to_string())
         },
         Err(err) => Err(format!("{err}")),
     }
+}
+
+fn get_frame_env(state: &Dap, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
+    let Some(frame_id) = frame_id else {
+        return Ok(R_ENVS.global);
+    };
+
+    let Some(variables_reference) = state
+        .frame_id_to_variables_reference
+        .get(&frame_id)
+        .copied()
+    else {
+        return Err(format!("Unknown `frame_id`: {frame_id}"));
+    };
+
+    let Some(obj) = state
+        .variables_reference_to_r_object
+        .get(&variables_reference)
+    else {
+        return Err(format!(
+            "Unknown `variables_reference`: {variables_reference}"
+        ));
+    };
+
+    Ok(obj.get().sexp)
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {

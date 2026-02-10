@@ -122,6 +122,50 @@ outer()
 }
 
 #[test]
+fn test_dap_evaluate_print() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+local({
+  x <- c(1, 2, 3)
+  df <- data.frame(a = 1:2, b = c('x', 'y'))
+  browser()
+})
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+
+    // Using "print " prefix returns printed output
+    let result = dap.evaluate("print x", Some(frame_id));
+    assert!(
+        result.contains("[1] 1 2 3"),
+        "Expected printed vector output, got: {result}"
+    );
+
+    // Print a data frame
+    let result = dap.evaluate("print df", Some(frame_id));
+    assert!(
+        result.contains("a") && result.contains("b"),
+        "Expected data frame output, got: {result}"
+    );
+
+    // Print an expression
+    let result = dap.evaluate("print sum(x)", Some(frame_id));
+    assert!(
+        result.contains("[1] 6"),
+        "Expected sum output, got: {result}"
+    );
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
 fn test_dap_evaluate_error() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
