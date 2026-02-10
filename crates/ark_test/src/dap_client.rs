@@ -25,9 +25,11 @@ use dap::requests::ContinueArguments;
 use dap::requests::DisconnectArguments;
 use dap::requests::InitializeArguments;
 use dap::requests::NextArguments;
+use dap::requests::PauseArguments;
 use dap::requests::Request;
 use dap::requests::ScopesArguments;
 use dap::requests::SetBreakpointsArguments;
+use dap::requests::SetExceptionBreakpointsArguments;
 use dap::requests::StackTraceArguments;
 use dap::requests::StepInArguments;
 use dap::requests::VariablesArguments;
@@ -248,6 +250,49 @@ impl DapClient {
             Some(ResponseBody::SetBreakpoints(sb)) => sb.breakpoints,
             other => panic!("Expected SetBreakpoints response body, got {:?}", other),
         }
+    }
+
+    /// Set exception breakpoints (break on errors/warnings).
+    ///
+    /// Takes a list of filter IDs to enable. Valid filters are "error" and "warning".
+    #[track_caller]
+    pub fn set_exception_breakpoints(&mut self, filters: &[&str]) {
+        let seq = self
+            .send(Command::SetExceptionBreakpoints(
+                SetExceptionBreakpointsArguments {
+                    filters: filters.iter().map(|s| s.to_string()).collect(),
+                    filter_options: None,
+                    exception_options: None,
+                },
+            ))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "SetExceptionBreakpoints request failed");
+        assert!(
+            matches!(
+                response.body,
+                Some(ResponseBody::SetExceptionBreakpoints(_))
+            ),
+            "Expected SetExceptionBreakpoints response body, got {:?}",
+            response.body
+        );
+    }
+
+    /// Send a pause request to break into the debugger.
+    #[track_caller]
+    pub fn pause(&mut self) {
+        let seq = self
+            .send(Command::Pause(PauseArguments { thread_id: -1 }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Pause request failed");
+        assert!(
+            matches!(response.body, Some(ResponseBody::Pause)),
+            "Expected Pause response body, got {:?}",
+            response.body
+        );
     }
 
     /// Request the current stack trace.
@@ -650,6 +695,29 @@ impl DapClient {
         assert_eq!(body.thread_id, Some(-1));
         assert_eq!(body.all_threads_stopped, Some(true));
         body.hit_breakpoint_ids.clone().unwrap_or_default()
+    }
+
+    /// Receive and assert the next message is a Stopped event with reason "exception".
+    ///
+    /// Returns the exception class and message.
+    #[track_caller]
+    pub fn recv_stopped_exception(&mut self) -> (String, String) {
+        let event = self.recv_event();
+        let Event::Stopped(body) = &event else {
+            panic!("Expected Stopped event, got {:?}", event);
+        };
+        assert!(
+            matches!(body.reason, StoppedEventReason::Exception),
+            "Expected Stopped reason 'exception', got {:?}",
+            body.reason
+        );
+        assert_eq!(body.thread_id, Some(-1));
+        assert_eq!(body.all_threads_stopped, Some(true));
+
+        let description = body.description.clone().unwrap_or_default();
+        let text = body.text.clone().unwrap_or_default();
+
+        (text, description)
     }
 
     /// Receive and assert the next message is a Breakpoint event with verified=true.

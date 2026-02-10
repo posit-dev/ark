@@ -307,6 +307,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::StepOut(args) => {
                 self.handle_step(req, args, DebugRequest::StepOut, ResponseBody::StepOut)
             },
+            Command::Pause(args) => self.handle_pause(req, args),
             _ => {
                 log::warn!("DAP: Unknown request");
                 let rsp = req.error("Ark DAP: Unknown request");
@@ -797,10 +798,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.respond(rsp)
     }
 
-    fn handle_pause(&mut self, req: Request, args: PauseArguments) {
+    fn handle_pause(&mut self, req: Request, args: PauseArguments) -> Result<(), ServerError> {
         if args.thread_id != THREAD_ID {
-            self.respond(req.error(&format!("Ark DAP: Unknown thread ID {}", args.thread_id)));
-            return;
+            return self
+                .respond(req.error(&format!("Ark DAP: Unknown thread ID {}", args.thread_id)));
         }
 
         self.state.lock().unwrap().is_interrupting_for_debugger = true;
@@ -809,7 +810,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         crate::sys::control::handle_interrupt_request();
 
         let rsp = req.success(ResponseBody::Pause);
-        self.respond(rsp);
+        self.respond(rsp)
     }
 
     fn send_command(&mut self, cmd: DebugRequest) {
