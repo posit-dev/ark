@@ -257,9 +257,9 @@ mod debug {
                 }
 
                 r_task(|| {
-                    let r_main = Console::get();
+                    let console = Console::get();
                     if let Err(err) =
-                        import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
+                        import_file(&path, *src, console.positron_ns.as_ref().unwrap().sexp)
                     {
                         log::error!("{err:?}");
                     }

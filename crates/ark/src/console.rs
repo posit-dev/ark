@@ -2249,10 +2249,9 @@ impl Console {
 
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
-        // TODO: Rename to `console`
-        let r_main = Console::get_mut();
+        let console = Console::get_mut();
 
-        if let Some(captured) = &mut r_main.captured_output {
+        if let Some(captured) = &mut console.captured_output {
             captured.push_str(&console_to_utf8(buf).unwrap());
             return;
         }
@@ -2264,16 +2263,16 @@ impl Console {
 
         if !Console::is_initialized() {
             // During init, consider all output to be part of the startup banner
-            match r_main.banner.as_mut() {
+            match console.banner.as_mut() {
                 Some(banner) => banner.push_str(&content),
-                None => r_main.banner = Some(content),
+                None => console.banner = Some(content),
             }
             return;
         }
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        r_main.debug_handle_write_console(&content);
+        console.debug_handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -2283,7 +2282,7 @@ impl Console {
 
         // If active execution request is silent don't broadcast
         // any output
-        if let Some(ref req) = r_main.active_request {
+        if let Some(ref req) = console.active_request {
             if req.request.silent {
                 return;
             }
@@ -2316,13 +2315,13 @@ impl Console {
             // https://github.com/posit-dev/positron/issues/1881
 
             // Handle last expression
-            if r_main.pending_inputs.is_none() {
-                r_main.autoprint_output.push_str(&content);
+            if console.pending_inputs.is_none() {
+                console.autoprint_output.push_str(&content);
                 return;
             }
 
             // In notebooks, we don't emit results of intermediate expressions
-            if r_main.session_mode == SessionMode::Notebook {
+            if console.session_mode == SessionMode::Notebook {
                 return;
             }
 
@@ -2336,7 +2335,7 @@ impl Console {
             name: stream,
             text: content,
         });
-        r_main.iopub_tx.send(message).unwrap();
+        console.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
