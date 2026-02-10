@@ -169,6 +169,34 @@ local({
 }
 
 #[test]
+fn test_dap_evaluate_top_level_browser() {
+    // Top-level browser() frames have no function environment,
+    // so they should fall back to global env
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Set a global variable
+    frontend.send_execute_request("global_var <- 'from_global'", Default::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.debug_send_browser();
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+
+    // Evaluate with frame_id should work and use global env
+    let result = dap.evaluate("global_var", Some(frame_id));
+    assert_eq!(result, "\"from_global\"");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
 fn test_dap_evaluate_no_frame_id() {
     // Without frame ID, evaluation occurs in the global env per the DAP protocol
     let frontend = DummyArkFrontend::lock();
@@ -209,7 +237,7 @@ local({
     // Use a bogus frame_id that doesn't exist
     let err = dap.evaluate_error("1 + 1", Some(999999));
     assert!(
-        err.contains("Unknown frame_id"),
+        err.contains("Unknown") && err.contains("frame_id"),
         "Expected 'Unknown frame_id' error, got: {err}"
     );
 

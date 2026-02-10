@@ -322,11 +322,11 @@ impl Dap {
         for frame in stack.iter_mut() {
             // Move the `environment` out of the `FrameInfo`, who's only
             // job is to get it here. We don't use it otherwise.
-            let environment = frame.environment.take();
-
-            let Some(environment) = environment else {
-                continue;
-            };
+            // If the frame has no environment (e.g. top-level browser), use global env.
+            let environment = frame
+                .environment
+                .take()
+                .unwrap_or_else(|| RThreadSafe::new(RObject::new(unsafe { libr::R_GlobalEnv })));
 
             // Map this frame's `id` to a unique `variables_reference`, and
             // then map that `variables_reference` to the R object we will
