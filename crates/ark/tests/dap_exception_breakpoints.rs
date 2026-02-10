@@ -102,6 +102,100 @@ f()
     dap.recv_continued();
 }
 
+/// Test that the global error handler frame is excluded from the stack trace
+#[test]
+fn test_dap_break_on_error_excludes_handler_frame() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["error"]);
+
+    frontend.send_source(
+        "
+f <- function() stop('test')
+f()
+",
+    );
+
+    dap.recv_stopped_exception();
+
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    // The global error handler frame (named "h()" by R's calling handler machinery)
+    // should be excluded from the stack
+    assert_ne!(
+        frame_names[0], "h()",
+        "Handler frame 'h()' should be excluded, got: {:?}",
+        frame_names
+    );
+
+    // But user frames should still be present
+    assert!(
+        frame_names.contains(&"f()"),
+        "Expected f() in stack, got: {:?}",
+        frame_names
+    );
+
+    // Continue out of debugger
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_error();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+
+    dap.recv_continued();
+}
+
+/// Test that the global warning handler frame is excluded from the stack trace
+#[test]
+fn test_dap_break_on_warning_excludes_handler_frame() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["warning"]);
+
+    frontend.send_source(
+        "
+f <- function() warning('test')
+f()
+",
+    );
+
+    dap.recv_stopped_exception();
+
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    // The global warning handler frame (an anonymous function) should be excluded
+    // from the stack
+    assert!(
+        !frame_names[0].starts_with("(function"),
+        "Handler frame should be excluded, got: {:?}",
+        frame_names
+    );
+
+    // User frames should still be present
+    assert!(
+        frame_names.contains(&"f()"),
+        "Expected f() in stack, got: {:?}",
+        frame_names
+    );
+
+    // Continue out of debugger
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.assert_stream_stderr_contains("test");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+}
+
 /// Test that a warning triggers the debugger when warning breakpoints are enabled
 #[test]
 fn test_dap_break_on_warning() {
