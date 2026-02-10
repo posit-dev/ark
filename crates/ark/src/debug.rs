@@ -1,13 +1,9 @@
 use std::ffi;
 use std::sync::atomic::Ordering;
 
-#[cfg(not(test))]
 use harp::exec::RFunction;
-#[cfg(not(test))]
 use harp::exec::RFunctionExt;
-#[cfg(not(test))]
 use harp::utils::r_str_to_owned_utf8_unchecked;
-#[cfg(not(test))]
 use harp::utils::r_typeof;
 
 use crate::console::Console;
@@ -37,8 +33,7 @@ static _ARK_DISPLAY_VALUE: unsafe extern "C" fn(x: libr::SEXP) -> *const ffi::c_
 
 // Implementations for entry points in `debug.c`.
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
         unsafe { libr::Rf_PrintValue(x) };
@@ -57,8 +52,7 @@ pub extern "C-unwind" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
 /// ```text
 /// settings set escape-non-printables false
 /// ```
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
         // TODO: Should use C callable when implemented as that would avoid
@@ -76,8 +70,7 @@ pub extern "C-unwind" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
 /// ```text
 /// settings set escape-non-printables false
 /// ```
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn ark_trace_back_rs() -> *const ffi::c_char {
     capture_console_output(|| {
         // https://github.com/r-lib/rlang/issues/1059
@@ -89,8 +82,7 @@ pub extern "C-unwind" fn ark_trace_back_rs() -> *const ffi::c_char {
     })
 }
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
     let value = unsafe {
         let kind = tidy_kind(r_typeof(x));

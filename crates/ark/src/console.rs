@@ -61,7 +61,6 @@ use harp::command::r_home_setup;
 use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
-#[cfg(not(test))]
 use harp::exec::exec_with_cleanup;
 use harp::exec::r_check_stack;
 use harp::exec::r_peek_error_buffer;
@@ -2545,8 +2544,7 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
 // These functions are hooked up as R frontend methods. They call into our
 // global `Console` singleton.
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
@@ -2750,35 +2748,30 @@ fn new_cstring(x: String) -> CString {
     CString::new(x).unwrap_or(CString::new("Can't create CString").unwrap())
 }
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_write_console(buf: *const c_char, buflen: i32, otype: i32) {
     if let Err(err) = r_sandbox(|| Console::write_console(buf, buflen, otype)) {
         panic!("Unexpected longjump while writing to console: {err:?}");
     };
 }
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_show_message(buf: *const c_char) {
     Console::get().show_message(buf);
 }
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_busy(which: i32) {
     Console::get_mut().busy(which);
 }
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
     let msg = unsafe { CStr::from_ptr(buf) };
     panic!("Suicide: {}", msg.to_str().unwrap());
 }
 
-#[cfg(not(test))]
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C-unwind" fn r_polled_events() {
     if let Err(err) = r_sandbox(|| Console::get_mut().polled_events()) {
         panic!("Unexpected longjump while polling events: {err:?}");
