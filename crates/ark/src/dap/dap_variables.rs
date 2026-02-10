@@ -157,8 +157,6 @@ fn object_variable(name: String, x: SEXP) -> RVariable {
 }
 
 fn object_variable_classed(name: String, x: SEXP) -> RVariable {
-    // TODO: Eventually add some support for classed values.
-    // Right now we just display the class name.
     let class = harp::format::s3_class_to_string(x);
 
     let (value, type_field) = match class {
@@ -169,10 +167,17 @@ fn object_variable_classed(name: String, x: SEXP) -> RVariable {
         },
     };
 
-    RVariableBuilder::new(name)
+    let mut builder = RVariableBuilder::new(name)
         .value(value)
-        .type_field(type_field)
-        .build()
+        .type_field(type_field);
+
+    // Allow drilling into classed lists
+    if r_typeof(x) == VECSXP {
+        let x = RThreadSafe::new(RObject::from(x));
+        builder = builder.variables_reference_object(x);
+    }
+
+    builder.build()
 }
 
 fn object_variable_bare(name: String, x: SEXP) -> RVariable {

@@ -108,12 +108,28 @@ local({
     let nested_var = nested_children.iter().find(|v| v.name == "nested").unwrap();
     assert_eq!(nested_var.value, "\"deep\"");
 
-    // Find my_df - data frames are classed objects, currently shown as class name
-    // but not expandable (this is current behavior)
+    // Find my_df - data frames are classed lists, shown with class name and expandable
     let df_var = variables.iter().find(|v| v.name == "my_df").unwrap();
     assert!(
         df_var.value.contains("data.frame"),
         "Data frame should show class name"
+    );
+    assert!(
+        df_var.variables_reference > 0,
+        "Data frame (classed list) should be expandable"
+    );
+
+    // Expand the data frame to see its columns
+    let df_children = dap.variables(df_var.variables_reference);
+    assert_eq!(df_children.len(), 2, "Data frame should have 2 columns");
+
+    let x_col = df_children.iter().find(|v| v.name == "x").unwrap();
+    assert!(x_col.value.contains("1") && x_col.value.contains("2") && x_col.value.contains("3"));
+
+    let y_col = df_children.iter().find(|v| v.name == "y").unwrap();
+    assert!(
+        y_col.value.contains("a") && y_col.value.contains("b") && y_col.value.contains("c"),
+        "y column should show character values"
     );
 
     frontend.debug_send_quit();
@@ -197,6 +213,69 @@ local({
         v.value.contains("environment"),
         "Environment should show type"
     );
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_variables_classed_list() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+local({
+  # Custom classed list
+  my_obj <- structure(list(field1 = 'value1', field2 = 42), class = 'my_class')
+
+  # POSIXlt is a classed list
+  my_time <- as.POSIXlt('2024-01-15 10:30:00')
+
+  browser()
+})
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+    let scopes = dap.scopes(frame_id);
+    let variables = dap.variables(scopes[0].variables_reference);
+
+    // Custom classed list should show class and be expandable
+    let obj_var = variables.iter().find(|v| v.name == "my_obj").unwrap();
+    assert!(obj_var.value.contains("my_class"));
+    assert!(
+        obj_var.variables_reference > 0,
+        "Classed list should be expandable"
+    );
+
+    // Expand to see children
+    let obj_children = dap.variables(obj_var.variables_reference);
+    assert_eq!(obj_children.len(), 2);
+
+    let field1 = obj_children.iter().find(|v| v.name == "field1").unwrap();
+    assert_eq!(field1.value, "\"value1\"");
+
+    let field2 = obj_children.iter().find(|v| v.name == "field2").unwrap();
+    assert_eq!(field2.value, "42");
+
+    // POSIXlt (classed list) should be expandable
+    let time_var = variables.iter().find(|v| v.name == "my_time").unwrap();
+    assert!(time_var.value.contains("POSIXlt"));
+    assert!(
+        time_var.variables_reference > 0,
+        "POSIXlt (classed list) should be expandable"
+    );
+
+    // Expand POSIXlt to see its components
+    let time_children = dap.variables(time_var.variables_reference);
+    assert!(!time_children.is_empty(), "POSIXlt should have children");
+
+    // POSIXlt has components like sec, min, hour, etc.
+    let sec = time_children.iter().find(|v| v.name == "sec");
+    assert!(sec.is_some(), "POSIXlt should have 'sec' component");
 
     frontend.debug_send_quit();
     dap.recv_continued();
