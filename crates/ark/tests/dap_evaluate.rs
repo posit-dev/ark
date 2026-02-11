@@ -140,22 +140,22 @@ local({
     let stack = dap.stack_trace();
     let frame_id = stack[0].id;
 
-    // Using "print " prefix returns printed output
-    let result = dap.evaluate("print x", Some(frame_id));
+    // Using "/print " prefix returns printed output
+    let result = dap.evaluate("/print x", Some(frame_id));
     assert!(
         result.contains("[1] 1 2 3"),
         "Expected printed vector output, got: {result}"
     );
 
     // Print a data frame
-    let result = dap.evaluate("print df", Some(frame_id));
+    let result = dap.evaluate("/print df", Some(frame_id));
     assert!(
         result.contains("a") && result.contains("b"),
         "Expected data frame output, got: {result}"
     );
 
     // Print an expression
-    let result = dap.evaluate("print sum(x)", Some(frame_id));
+    let result = dap.evaluate("/print sum(x)", Some(frame_id));
     assert!(
         result.contains("[1] 6"),
         "Expected sum output, got: {result}"
