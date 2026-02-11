@@ -777,8 +777,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
         spawn_idle_any(move |mut capture| async move {
             log::trace!("DAP: Idle task started for evaluate");
 
-            // If expression starts with "print ", evaluate and return captured output
-            let rsp = if let Some(expr) = expression.strip_prefix("print ") {
+            // If expression starts with "/print ", evaluate and return captured output
+            let rsp = if let Some(expr) = expression.strip_prefix("/print ") {
                 match debug_evaluate_print(&state, expr, frame_id, &mut capture) {
                     Ok(output) => req.success(ResponseBody::Evaluate(EvaluateResponse {
                         result: output,
