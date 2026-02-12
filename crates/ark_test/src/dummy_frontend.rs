@@ -382,8 +382,8 @@ impl DummyArkFrontend {
         }
 
         DrainedStreams {
-            stdout: std::mem::take(&mut *self.stream_stdout.borrow_mut()),
-            stderr: std::mem::take(&mut *self.stream_stderr.borrow_mut()),
+            stdout: std::mem::take(&mut self.stream_stdout.borrow_mut()),
+            stderr: std::mem::take(&mut self.stream_stderr.borrow_mut()),
         }
     }
 
@@ -391,19 +391,16 @@ impl DummyArkFrontend {
     // These methods read directly from the IOPub socket, which breaks the stream
     // accumulation invariant. Use `assert_stream_*_contains()` instead.
 
-    #[deprecated = "Use assert_stream_stdout_contains() instead"]
     #[allow(unused)]
     pub fn recv_iopub_stream_stdout(&self, _expect: &str) {
         panic!("Use assert_stream_stdout_contains() instead of recv_iopub_stream_stdout()");
     }
 
-    #[deprecated = "Use assert_stream_stderr_contains() instead"]
     #[allow(unused)]
     pub fn recv_iopub_stream_stderr(&self, _expect: &str) {
         panic!("Use assert_stream_stderr_contains() instead of recv_iopub_stream_stderr()");
     }
 
-    #[deprecated = "Use assert_stream_stdout_contains() or assert_stream_stdout_matches() instead"]
     #[allow(unused)]
     pub fn recv_iopub_stream_stdout_with<F>(&self, _f: F)
     where
@@ -415,7 +412,6 @@ impl DummyArkFrontend {
         );
     }
 
-    #[deprecated = "Use assert_stream_stderr_contains() or assert_stream_stderr_matches() instead"]
     #[allow(unused)]
     pub fn recv_iopub_stream_stderr_with<F>(&self, _f: F)
     where
