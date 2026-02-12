@@ -9,8 +9,8 @@ use std::time::Duration;
 
 use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
-use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
+use crossbeam::select;
 use stdext::result::ResultExt;
 
 use crate::comm::comm_channel::CommMsg;
@@ -103,13 +103,6 @@ pub struct Wait {
     pub wait_tx: Sender<()>,
 }
 
-/// Indexes into the Select for fixed channels.
-struct SelectIndex {
-    iopub_rx: usize,
-    inbound_rx: usize,
-    flush_tick: usize,
-}
-
 impl IOPub {
     /// Create a new IOPub socket wrapper.
     ///
@@ -148,51 +141,36 @@ impl IOPub {
         let flush_tick = tick(*StreamBuffer::interval());
 
         loop {
-            let mut sel = Select::new();
+            select! {
+                recv(self.rx) -> msg => {
+                    let msg = match msg {
+                        Ok(msg) => msg,
+                        Err(_) => panic!("IOPub message channel disconnected"),
+                    };
+                    if let Err(err) = self.process_iopub_message(msg) {
+                        log::warn!("Error processing IOPub message: {err:?}");
+                    }
+                },
 
-            // Fixed channels
-            let iopub_rx = sel.recv(&self.rx);
-            let inbound_rx = sel.recv(&self.inbound_rx);
-            let flush_tick_idx = sel.recv(&flush_tick);
+                recv(self.inbound_rx) -> msg => {
+                    match msg {
+                        Ok(Ok(msg)) => {
+                            if let Err(err) = self.process_subscription_message(msg) {
+                                log::warn!("Error processing subscription message: {err:?}");
+                            }
+                        },
+                        Ok(Err(err)) => {
+                            log::warn!("Failed to receive subscription message: {err:?}");
+                        },
+                        Err(err) => {
+                            log::warn!("Subscription channel closed: {err:?}");
+                        },
+                    }
+                },
 
-            let idx = SelectIndex {
-                iopub_rx,
-                inbound_rx,
-                flush_tick: flush_tick_idx,
-            };
-
-            // Block until something is ready
-            let oper = sel.select();
-            let selected_idx = oper.index();
-
-            // Each branch must consume `oper` by calling `oper.recv()` to release
-            // the borrows held by the Select, allowing us to call `&mut self` methods.
-            if selected_idx == idx.iopub_rx {
-                let msg = match oper.recv(&self.rx) {
-                    Ok(msg) => msg,
-                    Err(_) => panic!("IOPub message channel disconnected"),
-                };
-                if let Err(err) = self.process_iopub_message(msg) {
-                    log::warn!("Error processing IOPub message: {err:?}");
-                }
-            } else if selected_idx == idx.inbound_rx {
-                let msg = oper.recv(&self.inbound_rx);
-                match msg {
-                    Ok(Ok(msg)) => {
-                        if let Err(err) = self.process_subscription_message(msg) {
-                            log::warn!("Error processing subscription message: {err:?}");
-                        }
-                    },
-                    Ok(Err(err)) => {
-                        log::warn!("Failed to receive subscription message: {err:?}");
-                    },
-                    Err(err) => {
-                        log::warn!("Subscription channel closed: {err:?}");
-                    },
-                }
-            } else if selected_idx == idx.flush_tick {
-                let _ = oper.recv(&flush_tick);
-                self.flush_stream();
+                recv(flush_tick) -> _ => {
+                    self.flush_stream();
+                },
             }
         }
     }
