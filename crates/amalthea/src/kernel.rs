@@ -487,7 +487,7 @@ fn socket_bridge_thread(
     };
 
     // Drain all pending outbound messages and forward to ZMQ.
-    let drain_outbound = || {
+    let forward_outbound = || {
         while let Ok(outbound_msg) = zmq_outbound_rx.try_recv() {
             let result = match outbound_msg {
                 OutboundMessage::StdIn(msg) => msg.send(&stdin_socket),
@@ -536,7 +536,7 @@ fn socket_bridge_thread(
 
         for _ in 0..n {
             if consume_outbound_notification() {
-                drain_outbound();
+                forward_outbound();
                 continue;
             }
 
