@@ -226,9 +226,12 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                trace_iopub_msg(&msg);
                 match msg {
-                    Message::Stream(ref data) => self.buffer_stream(&data.content),
+                    Message::Stream(ref data) => {
+                        trace_iopub_msg(&msg);
+                        self.buffer_stream(&data.content);
+                    },
+                    // Don't trace here - will be traced when popped from pending queue
                     other => self.pending_iopub_messages.borrow_mut().push_back(other),
                 }
             }
@@ -330,9 +333,12 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                trace_iopub_msg(&msg);
                 match msg {
-                    Message::Stream(ref data) => self.buffer_stream(&data.content),
+                    Message::Stream(ref data) => {
+                        trace_iopub_msg(&msg);
+                        self.buffer_stream(&data.content);
+                    },
+                    // Don't trace here - will be traced when popped from pending queue
                     other => self.pending_iopub_messages.borrow_mut().push_back(other),
                 }
             }
@@ -365,8 +371,8 @@ impl DummyArkFrontend {
                         trace_iopub_msg(&msg);
                         self.buffer_stream(&data.content);
                     },
+                    // Don't trace here - will be traced when popped from pending queue
                     _ => {
-                        trace_iopub_msg(&msg);
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                         break;
                     },
