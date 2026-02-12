@@ -186,11 +186,13 @@ impl Shell {
                 // For backend-initiated comms, notify the frontend via IOPub
                 if comm_socket.initiator == CommInitiator::BackEnd {
                     self.iopub_tx
-                        .send(IOPubMessage::CommOpen(CommOpen {
-                            comm_id: comm_socket.comm_id.clone(),
-                            target_name: comm_socket.comm_name.clone(),
-                            data,
-                        }))
+                        .send(IOPubMessage::CommOutgoing(
+                            comm_socket.comm_id.clone(),
+                            CommMsg::Open {
+                                target_name: comm_socket.comm_name.clone(),
+                                data,
+                            },
+                        ))
                         .log_err();
                 }
 
@@ -434,10 +436,12 @@ impl Shell {
         // There is no error reply for a comm open request. Instead we must send
         // a `comm_close` message as soon as possible. The error is logged on our side.
         if let Err(err) = result {
-            let reply = IOPubMessage::CommClose(CommClose {
-                comm_id: msg.comm_id.clone(),
-            });
-            iopub_tx.send(reply).unwrap();
+            iopub_tx
+                .send(IOPubMessage::CommOutgoing(
+                    msg.comm_id.clone(),
+                    CommMsg::Close,
+                ))
+                .unwrap();
             log::warn!("Failed to open comm: {err:?}");
         }
 

@@ -89,8 +89,6 @@ pub enum IOPubMessage {
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
-    CommOpen(CommOpen),
-    CommClose(CommClose),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
     Wait(Wait),
@@ -253,12 +251,6 @@ impl IOPub {
                 self.message_with_context(content, IOPubContextChannel::Shell),
             )),
             IOPubMessage::Stream(content) => self.process_stream_message(content),
-            IOPubMessage::CommOpen(content) => {
-                self.forward(Message::CommOpen(self.message(content)))
-            },
-            IOPubMessage::CommClose(content) => {
-                self.forward(Message::CommClose(self.message(content)))
-            },
             IOPubMessage::DisplayData(content) => {
                 self.flush_stream();
                 self.forward(Message::DisplayData(
@@ -338,6 +330,15 @@ impl IOPub {
     /// Process an outgoing message from a comm channel.
     fn process_comm_outgoing(&mut self, comm_id: String, comm_msg: CommMsg) {
         let msg = match comm_msg {
+            CommMsg::Open { target_name, data } => {
+                // Backend-initiated comm open
+                Message::CommOpen(self.message(CommOpen {
+                    comm_id,
+                    target_name,
+                    data,
+                }))
+            },
+
             CommMsg::Data(data) => {
                 // Event: the comm is emitting data to the frontend without being asked
                 Message::CommMsg(self.message(CommWireMsg { comm_id, data }))

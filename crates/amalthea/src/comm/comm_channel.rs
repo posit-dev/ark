@@ -42,6 +42,15 @@ pub enum Comm {
 
 #[derive(Clone, Debug)]
 pub enum CommMsg {
+    /// A message indicating that the comm channel is being opened.
+    /// Used for backend-initiated comms to notify the frontend.
+    Open {
+        /// The target name (comm type identifier)
+        target_name: String,
+        /// Initial data to send with the open message
+        data: Value,
+    },
+
     /// A message that is part of a Remote Procedure Call (RPC).
     Rpc {
         /// Unique ID of the RPC invocation (the Jupyter message ID)
@@ -57,7 +66,7 @@ pub enum CommMsg {
     /// used for events.
     Data(Value),
 
-    // A message indicating that the comm channel should be closed.
+    /// A message indicating that the comm channel should be closed.
     Close,
 }
 

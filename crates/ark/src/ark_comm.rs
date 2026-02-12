@@ -100,6 +100,10 @@ impl ArkComm {
                     log::trace!("Ark Comm: Received a close message.");
                     break;
                 },
+
+                CommMsg::Open { .. } => {
+                    log::warn!("Ark Comm: Unexpected Open message received");
+                },
             }
         }
 

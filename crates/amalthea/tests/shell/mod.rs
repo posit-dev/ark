@@ -281,6 +281,9 @@ impl ShellHandler for Shell {
                     // Close the channel and exit the thread.
                     break;
                 },
+                CommMsg::Open { .. } => {
+                    // Open is only used for outgoing messages, not expected here
+                },
             }
         });
         Ok(true)
