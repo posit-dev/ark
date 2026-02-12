@@ -1043,6 +1043,8 @@ impl Console {
 
             // Reply to active request with error, then fall through to event loop
             self.handle_active_request(&info, ConsoleValue::Error(exception));
+
+            self.reset_global_env_rdebug();
         } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input from the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
@@ -1055,15 +1057,7 @@ impl Console {
             let result = self.take_result();
             self.handle_active_request(&info, ConsoleValue::Success(result));
 
-            // Reset debug flag on the global environment. This is a workaround
-            // for when a breakpoint was entered at top-level, in a `{}` block.
-            // In that case `browser()` marks the global environment as being
-            // debugged here: https://github.com/r-devel/r-svn/blob/476ffd4c/src/main/main.c#L1492-L1494.
-            // Only do it when the call stack is empty, as removing the flag
-            // prevents normal stepping with `source()`.
-            if harp::r_n_frame().unwrap_or(0) == 0 {
-                unsafe { libr::SET_RDEBUG(libr::R_GlobalEnv, 0) };
-            }
+            self.reset_global_env_rdebug();
         }
 
         // In the future we'll also send browser information, see
@@ -1294,6 +1288,21 @@ impl Console {
         }
 
         data
+    }
+
+    /// Reset debug flag on the global environment.
+    ///
+    /// This is a workaround for when a breakpoint was entered at top-level, in
+    /// a `{}` block. In that case `browser()` marks the global environment as
+    /// being debugged here:
+    /// https://github.com/r-devel/r-svn/blob/476ffd4c/src/main/main.c#L1492-L1494.
+    ///
+    /// Only do it when the call stack is empty, as removing the flag prevents
+    /// normal stepping with `source()`.
+    fn reset_global_env_rdebug(&self) {
+        if harp::r_n_frame().unwrap_or(0) == 0 {
+            unsafe { libr::SET_RDEBUG(libr::R_GlobalEnv, 0) };
+        }
     }
 
     fn take_exception(&mut self) -> Option<Exception> {

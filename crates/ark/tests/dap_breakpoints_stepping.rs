@@ -721,3 +721,95 @@ result <- tryCatch({
     dap.recv_continued();
     frontend.recv_shell_execute_reply();
 }
+
+/// Test that the RDEBUG flag on globalenv is reset after an error during debugging.
+///
+/// Regression test: When stepping through code with `n` and hitting an error,
+/// the RDEBUG flag on globalenv must be cleared. Otherwise, subsequent `{}`
+/// blocks will unexpectedly enter debug mode.
+///
+/// Scenario:
+/// 1. Source a file with two `{}` blocks, breakpoint in second block
+/// 2. Step with `n` twice to reach the error
+/// 3. Disable the breakpoint
+/// 4. Re-source - should error without stopping in the first `{}` block
+#[test]
+fn test_dap_rdebug_globalenv_reset_after_error() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Two braced blocks: first completes normally, second has an error.
+    // Line numbers (1-indexed):
+    // Line 1: {
+    // Line 2:   1
+    // Line 3:   2
+    // Line 4: }
+    // Line 5: (empty)
+    // Line 6: (empty)
+    // Line 7: {
+    // Line 8:   3           # BP here
+    // Line 9:   stop("foo")
+    // Line 10: }
+    let file = SourceFile::new(
+        "{
+  1
+  2
+}
+
+
+{
+  3
+  stop(\"foo\")
+}
+",
+    );
+
+    // Set breakpoint on line 8 (the `3` expression) BEFORE sourcing
+    let breakpoints = dap.set_breakpoints(&file.path, &[8]);
+    assert_eq!(breakpoints.len(), 1);
+    assert!(!breakpoints[0].verified);
+    let bp_id = breakpoints[0].id;
+
+    // Source the file and hit the breakpoint
+    frontend.source_file_and_hit_breakpoint(&file);
+
+    // Breakpoint becomes verified
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+    assert_eq!(bp.line, Some(8));
+
+    // Hit the breakpoint
+    dap.recv_stopped();
+    dap.assert_top_frame_line(8);
+    dap.assert_top_frame_file(&file);
+
+    // Step with `n` to move to stop("foo") line
+    frontend.debug_send_step_command("n", &file);
+    dap.recv_continued();
+    dap.recv_stopped();
+    dap.assert_top_frame_line(9);
+
+    // Step again with `n` to execute stop("foo") and trigger the error
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_error();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+
+    // Receive the shell reply for the original source() request
+    frontend.recv_shell_execute_reply_exception();
+
+    // Disable the breakpoint by clearing all breakpoints
+    let breakpoints = dap.set_breakpoints(&file.path, &[]);
+    assert!(breakpoints.is_empty());
+
+    // Re-run the file - should error WITHOUT entering debug mode in the first {} block.
+    // If RDEBUG was left set on globalenv, the first {} block would enter debug mode.
+    frontend.execute_request_error(&format!("source('{}')", file.path), |msg| {
+        assert!(msg.contains("foo"));
+    });
+}
