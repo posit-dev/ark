@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark::fixtures::DummyArkFrontendRprofile;
+use ark_test::DummyArkFrontendRprofile;
 
 // You must run these tests with `cargo nextest` because they initialise
 // incompatible process singletons

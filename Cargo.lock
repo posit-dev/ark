@@ -352,6 +352,7 @@ dependencies = [
  "air_r_syntax",
  "amalthea",
  "anyhow",
+ "ark_test",
  "assert_matches",
  "async-trait",
  "base64 0.21.0",
@@ -409,6 +410,24 @@ dependencies = [
  "winsafe",
  "xdg",
  "yaml-rust",
+]
+
+[[package]]
+name = "ark_test"
+version = "0.1.0"
+dependencies = [
+ "amalthea",
+ "anyhow",
+ "ark",
+ "dap",
+ "harp",
+ "log",
+ "serde",
+ "serde_json",
+ "stdext",
+ "tempfile",
+ "tree-sitter",
+ "uuid",
 ]
 
 [[package]]

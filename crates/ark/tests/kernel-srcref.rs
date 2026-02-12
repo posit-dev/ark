@@ -1,7 +1,7 @@
 use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
-use ark::fixtures::DummyArkFrontend;
+use ark_test::DummyArkFrontend;
 
 #[test]
 fn test_execute_request_srcref() {
