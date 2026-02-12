@@ -55,8 +55,8 @@ pub struct DummyArkFrontend {
     stream_stdout: RefCell<String>,
     /// Accumulated stderr stream content
     stream_stderr: RefCell<String>,
-    /// Put-back queue for non-stream messages encountered during stream assertions
-    pending_messages: RefCell<VecDeque<Message>>,
+    /// Put-back queue for non-stream IOPub messages encountered during stream assertions
+    pending_iopub_messages: RefCell<VecDeque<Message>>,
     /// Tracks whether any stream assertion was made (for Drop validation).
     /// If stream is emitted during a test, there must be at least one stream
     /// assertion.
@@ -116,7 +116,7 @@ impl DummyArkFrontend {
             guard: Self::get_frontend().lock().unwrap(),
             stream_stdout: RefCell::new(String::new()),
             stream_stderr: RefCell::new(String::new()),
-            pending_messages: RefCell::new(VecDeque::new()),
+            pending_iopub_messages: RefCell::new(VecDeque::new()),
             streams_handled: Cell::new(false),
         }
     }
@@ -176,7 +176,7 @@ impl DummyArkFrontend {
     /// messages should use this instead of calling `recv_iopub()` directly.
     fn recv_iopub_next(&self) -> Message {
         // Check put-back buffer first
-        if let Some(msg) = self.pending_messages.borrow_mut().pop_front() {
+        if let Some(msg) = self.pending_iopub_messages.borrow_mut().pop_front() {
             trace_iopub_msg(&msg);
             return msg;
         }
@@ -229,7 +229,7 @@ impl DummyArkFrontend {
                 trace_iopub_msg(&msg);
                 match msg {
                     Message::Stream(ref data) => self.buffer_stream(&data.content),
-                    other => self.pending_messages.borrow_mut().push_back(other),
+                    other => self.pending_iopub_messages.borrow_mut().push_back(other),
                 }
             }
         }
@@ -333,7 +333,7 @@ impl DummyArkFrontend {
                 trace_iopub_msg(&msg);
                 match msg {
                     Message::Stream(ref data) => self.buffer_stream(&data.content),
-                    other => self.pending_messages.borrow_mut().push_back(other),
+                    other => self.pending_iopub_messages.borrow_mut().push_back(other),
                 }
             }
         }
@@ -367,7 +367,7 @@ impl DummyArkFrontend {
                     },
                     _ => {
                         trace_iopub_msg(&msg);
-                        self.pending_messages.borrow_mut().push_back(msg);
+                        self.pending_iopub_messages.borrow_mut().push_back(msg);
                         break;
                     },
                 },
@@ -1159,7 +1159,7 @@ impl Drop for DummyArkFrontend {
 
         // Drain any pending IOPub messages (including those in our put-back queue)
         let mut unexpected_messages: Vec<Message> = self
-            .pending_messages
+            .pending_iopub_messages
             .borrow_mut()
             .drain(..)
             .filter(|msg| !is_exempt(msg))
