@@ -1,7 +1,7 @@
 //
 // ui.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 //
 
@@ -255,7 +255,10 @@ mod tests {
     use amalthea::comm::ui_comm::UiFrontendEvent;
     use amalthea::socket::comm::CommInitiator;
     use amalthea::socket::comm::CommSocket;
+    use amalthea::socket::iopub::IOPubMessage;
     use amalthea::socket::stdin::StdInRequest;
+    use ark_test::dummy_jupyter_header;
+    use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
@@ -269,11 +272,15 @@ mod tests {
 
     #[test]
     fn test_ui_comm() {
+        // Create a dummy iopub channel to receive responses.
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
         // Create a sender/receiver pair for the comm channel.
         let comm_socket = CommSocket::new(
             CommInitiator::FrontEnd,
             String::from("test-ui-comm-id"),
             String::from("positron.UI"),
+            iopub_tx,
         );
 
         // Communication channel between the main thread and the Amalthea
@@ -303,20 +310,19 @@ mod tests {
         });
         comm_socket
             .incoming_tx
-            .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
+            .send(CommMsg::Rpc {
+                id,
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(request).unwrap(),
+            })
             .unwrap();
 
-        // Wait for the reply; this should be a FrontendRpcResult. We don't wait
-        // more than a second since this should be quite fast and we don't want to
-        // hang the test suite if it doesn't return.
-        let response = comm_socket
-            .outgoing_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
+        // Wait for the reply; this should be a FrontendRpcResult.
+        let response = iopub_rx.recv_comm_msg();
         match response {
-            CommMsg::Rpc(id, result) => {
-                println!("Got RPC result: {:?}", result);
-                let result = serde_json::from_value::<UiBackendReply>(result).unwrap();
+            CommMsg::Rpc { id, data, .. } => {
+                println!("Got RPC result: {:?}", data);
+                let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
                 assert_eq!(id, "test-id-1");
                 // This RPC should return the old width
                 assert_eq!(
@@ -347,18 +353,19 @@ mod tests {
         });
         comm_socket
             .incoming_tx
-            .send(CommMsg::Rpc(id, serde_json::to_value(request).unwrap()))
+            .send(CommMsg::Rpc {
+                id,
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(request).unwrap(),
+            })
             .unwrap();
 
         // Wait for the reply
-        let response = comm_socket
-            .outgoing_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
+        let response = iopub_rx.recv_comm_msg();
         match response {
-            CommMsg::Rpc(id, result) => {
-                println!("Got RPC result: {:?}", result);
-                let _reply = serde_json::from_value::<JsonRpcError>(result).unwrap();
+            CommMsg::Rpc { id, data, .. } => {
+                println!("Got RPC result: {:?}", data);
+                let _reply = serde_json::from_value::<JsonRpcError>(data).unwrap();
                 // Ensure that the error code is -32601 (method not found)
                 assert_eq!(id, "test-id-2");
 

@@ -1,7 +1,7 @@
 //
 // connection.rs
 //
-// Copyright (C) 2023 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 
 use std::collections::HashMap;
@@ -19,9 +19,10 @@ use amalthea::comm::connections_comm::ListObjectsParams;
 use amalthea::comm::connections_comm::MetadataSchema;
 use amalthea::comm::connections_comm::ObjectSchema;
 use amalthea::comm::connections_comm::PreviewObjectParams;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -52,25 +53,27 @@ pub struct Metadata {
 pub struct RConnection {
     metadata: Metadata,
     comm: CommSocket,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
 }
 
 impl RConnection {
     pub fn start(
         metadata: Metadata,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
+        iopub_tx: Sender<IOPubMessage>,
         comm_id: String,
     ) -> Result<String, anyhow::Error> {
         let comm = CommSocket::new(
             CommInitiator::BackEnd,
             comm_id.clone(),
             String::from("positron.connection"),
+            iopub_tx,
         );
 
         let connection = Self {
             metadata,
             comm,
-            comm_manager_tx,
+            comm_event_tx,
         };
 
         log::info!("Connection Pane: Channel created id:{comm_id}");
@@ -89,8 +92,8 @@ impl RConnection {
         let comm_open_json = serde_json::to_value(self.metadata.clone())?;
 
         // Notify the frontend that a new connection has been opened.
-        let event = CommManagerEvent::Opened(self.comm.clone(), comm_open_json);
-        self.comm_manager_tx.send(event)?;
+        let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
+        self.comm_event_tx.send(event)?;
         Ok(())
     }
 
@@ -325,7 +328,12 @@ pub unsafe extern "C-unwind" fn ps_connection_opened(
         code: RObject::view(code).to::<Option<String>>().unwrap_or(None),
     };
 
-    if let Err(err) = RConnection::start(metadata, console.get_comm_manager_tx().clone(), id) {
+    if let Err(err) = RConnection::start(
+        metadata,
+        console.get_comm_event_tx().clone(),
+        console.get_iopub_tx().clone(),
+        id,
+    ) {
         log::error!("Connection Pane: Failed to start connection: {err:?}");
         return Err(err);
     }
@@ -338,8 +346,8 @@ pub unsafe extern "C-unwind" fn ps_connection_closed(id: SEXP) -> Result<SEXP, a
     let id = RObject::view(id).to::<String>()?;
 
     Console::get()
-        .get_comm_manager_tx()
-        .send(CommManagerEvent::Message(id, CommMsg::Close))?;
+        .get_comm_event_tx()
+        .send(CommEvent::Message(id, CommMsg::Close))?;
 
     Ok(R_NilValue)
 }
@@ -349,12 +357,10 @@ pub unsafe extern "C-unwind" fn ps_connection_updated(id: SEXP) -> Result<SEXP, 
     let comm_id: String = RObject::view(id).to::<String>()?;
     let event = ConnectionsFrontendEvent::Update;
 
-    Console::get()
-        .get_comm_manager_tx()
-        .send(CommManagerEvent::Message(
-            comm_id,
-            CommMsg::Data(serde_json::to_value(event)?),
-        ))?;
+    Console::get().get_comm_event_tx().send(CommEvent::Message(
+        comm_id,
+        CommMsg::Data(serde_json::to_value(event)?),
+    ))?;
 
     Ok(R_NilValue)
 }
@@ -368,12 +374,10 @@ pub unsafe extern "C-unwind" fn ps_connection_focus(id: SEXP) -> Result<SEXP, an
     let comm_id: String = RObject::view(id).to::<String>()?;
     let event = ConnectionsFrontendEvent::Focus;
 
-    Console::get()
-        .get_comm_manager_tx()
-        .send(CommManagerEvent::Message(
-            comm_id,
-            CommMsg::Data(serde_json::to_value(event)?),
-        ))?;
+    Console::get().get_comm_event_tx().send(CommEvent::Message(
+        comm_id,
+        CommMsg::Data(serde_json::to_value(event)?),
+    ))?;
 
     Ok(R_NilValue)
 }

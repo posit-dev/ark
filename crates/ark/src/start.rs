@@ -1,7 +1,7 @@
 //
 // start.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel;
 use amalthea::language::server_handler::ServerHandler;
@@ -47,7 +47,7 @@ pub fn start_kernel(
 
     // Create the pair of channels that will be used to relay messages from
     // the open comms
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
+    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(10);
 
     // A broadcast channel (bus) used to notify clients when the kernel
     // has finished initialization.
@@ -87,7 +87,7 @@ pub fn start_kernel(
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Box::new(Shell::new(
-        comm_manager_tx.clone(),
+        comm_event_tx.clone(),
         r_request_tx.clone(),
         stdin_request_tx.clone(),
         kernel_init_rx,
@@ -125,8 +125,7 @@ pub fn start_kernel(
         stream_behavior,
         iopub_tx.clone(),
         iopub_rx,
-        comm_manager_tx.clone(),
-        comm_manager_rx,
+        comm_event_rx,
         stdin_request_rx,
         stdin_reply_tx,
     );
@@ -144,7 +143,7 @@ pub fn start_kernel(
     crate::console::Console::start(
         r_args,
         startup_file,
-        comm_manager_tx,
+        comm_event_tx,
         r_request_rx,
         stdin_request_tx,
         stdin_reply_rx,

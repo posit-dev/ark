@@ -1,17 +1,17 @@
 /*
  * server_handler.rs
  *
- * Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 
-use crate::comm::comm_channel::CommMsg;
 use crate::comm::server_comm::ServerStartMessage;
 use crate::comm::server_comm::ServerStartedMessage;
 use crate::error::Error;
+use crate::socket::comm::CommOutgoingTx;
 
 /// A trait for handling LSP and DAP requests. Not all kernels will support
 /// these embedded servers that communicates over TCP, so this trait is an
@@ -24,6 +24,6 @@ pub trait ServerHandler: Send {
         &mut self,
         server_start: ServerStartMessage,
         server_started_tx: Sender<ServerStartedMessage>,
-        comm_tx: Sender<CommMsg>,
+        comm_tx: CommOutgoingTx,
     ) -> Result<(), Error>;
 }

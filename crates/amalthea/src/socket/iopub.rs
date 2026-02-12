@@ -1,7 +1,7 @@
 /*
  * iopub.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -11,7 +11,9 @@ use crossbeam::channel::tick;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use stdext::result::ResultExt;
 
+use crate::comm::comm_channel::CommMsg;
 use crate::session::Session;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
@@ -87,13 +89,11 @@ pub enum IOPubMessage {
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
     Stream(StreamOutput),
-    CommOpen(CommOpen),
-    CommMsgReply(JupyterHeader, CommWireMsg),
-    CommMsgEvent(CommWireMsg),
-    CommClose(CommClose),
     DisplayData(DisplayData),
     UpdateDisplayData(UpdateDisplayData),
     Wait(Wait),
+    /// Outgoing comm message from a backend. The String is the comm_id.
+    CommOutgoing(String, CommMsg),
 }
 
 /// A special IOPub message used to block the sender until the IOPub queue has
@@ -132,50 +132,54 @@ impl IOPub {
     }
 
     /// Listen for IOPub messages from other threads. Does not return.
+    ///
+    /// This unified event loop handles:
+    /// - IOPub messages from the kernel (status, streams, display data, etc.)
+    /// - Subscription messages from the ZMQ socket
+    /// - Periodic stream buffer flushing
     pub fn listen(&mut self) {
-        // Flush the active stream (either stdout or stderr) at regular
-        // intervals
-        let flush_interval = *StreamBuffer::interval();
-        let flush_interval = tick(flush_interval);
+        let flush_tick = tick(*StreamBuffer::interval());
 
         loop {
             select! {
-                recv(self.rx) -> message => {
-                    match message {
-                        Ok(message) => {
-                            if let Err(error) = self.process_outbound_message(message) {
-                                log::warn!("Error delivering outbound iopub message: {error:?}")
+                recv(self.rx) -> msg => {
+                    let msg = match msg {
+                        Ok(msg) => msg,
+                        Err(_) => panic!("IOPub message channel disconnected"),
+                    };
+                    if let Err(err) = self.process_iopub_message(msg) {
+                        log::warn!("Error processing IOPub message: {err:?}");
+                    }
+                },
+
+                recv(self.inbound_rx) -> msg => {
+                    match msg {
+                        Ok(Ok(msg)) => {
+                            if let Err(err) = self.process_subscription_message(msg) {
+                                log::warn!("Error processing subscription message: {err:?}");
                             }
                         },
-                        Err(error) => {
-                            log::warn!("Failed to receive outbound iopub message: {error:?}");
+                        Ok(Err(err)) => {
+                            log::warn!("Failed to receive subscription message: {err:?}");
+                        },
+                        Err(err) => {
+                            log::warn!("Subscription channel closed: {err:?}");
                         },
                     }
                 },
-                recv(self.inbound_rx) -> message => {
-                    match message.unwrap() {
-                        Ok(message) => {
-                            if let Err(error) = self.process_inbound_message(message) {
-                                log::warn!("Error processing inbound iopub message: {error:?}")
-                            }
-                        },
-                        Err(error) => {
-                            log::warn!("Failed to receive inbound iopub message: {error:?}");
-                        }
-                    }
+
+                recv(flush_tick) -> _ => {
+                    self.flush_stream();
                 },
-                recv(flush_interval) -> message => {
-                    match message {
-                        Ok(_) => self.flush_stream(),
-                        Err(_) => unreachable!()
-                    }
-                }
             }
         }
     }
 
-    /// Process an IOPub message from another thread.
-    fn process_outbound_message(&mut self, message: IOPubMessage) -> crate::Result<()> {
+    /// Process an outbound IOPub message received from another thread.
+    ///
+    /// These messages originate from Shell, Control, or comm handlers and are
+    /// forwarded to the frontend via the IOPub ZMQ socket.
+    fn process_iopub_message(&mut self, message: IOPubMessage) -> crate::Result<()> {
         match message {
             IOPubMessage::Status(context, context_channel, content) => {
                 // When we enter the Busy state as a result of a message, we
@@ -225,18 +229,6 @@ impl IOPub {
                 self.message_with_context(content, IOPubContextChannel::Shell),
             )),
             IOPubMessage::Stream(content) => self.process_stream_message(content),
-            IOPubMessage::CommOpen(content) => {
-                self.forward(Message::CommOpen(self.message(content)))
-            },
-            IOPubMessage::CommMsgEvent(content) => {
-                self.forward(Message::CommMsg(self.message(content)))
-            },
-            IOPubMessage::CommMsgReply(header, content) => {
-                self.forward(Message::CommMsg(self.message_with_header(header, content)))
-            },
-            IOPubMessage::CommClose(content) => {
-                self.forward(Message::CommClose(self.message(content)))
-            },
             IOPubMessage::DisplayData(content) => {
                 self.flush_stream();
                 self.forward(Message::DisplayData(
@@ -250,6 +242,11 @@ impl IOPub {
                 ))
             },
             IOPubMessage::Wait(content) => self.process_wait_request(content),
+            IOPubMessage::CommOutgoing(comm_id, comm_msg) => {
+                self.flush_stream();
+                self.process_comm_outgoing(comm_id, comm_msg);
+                Ok(())
+            },
         }
     }
 
@@ -260,7 +257,7 @@ impl IOPub {
     /// When we get a subscription notification, we forward along an IOPub
     /// `Welcome` message back to the SUB, in compliance with JEP 65. Clients
     /// that don't know how to process this `Welcome` message should just ignore it.
-    fn process_inbound_message(&mut self, message: SubscriptionMessage) -> crate::Result<()> {
+    fn process_subscription_message(&mut self, message: SubscriptionMessage) -> crate::Result<()> {
         let subscription = message.subscription;
 
         match message.kind {
@@ -306,6 +303,39 @@ impl IOPub {
         self.subscription_tx = None;
 
         Ok(())
+    }
+
+    /// Process an outgoing message from a comm channel.
+    fn process_comm_outgoing(&mut self, comm_id: String, comm_msg: CommMsg) {
+        let msg = match comm_msg {
+            CommMsg::Open { target_name, data } => {
+                // Backend-initiated comm open
+                Message::CommOpen(self.message(CommOpen {
+                    comm_id,
+                    target_name,
+                    data,
+                }))
+            },
+
+            CommMsg::Data(data) => {
+                // Event: the comm is emitting data to the frontend without being asked
+                Message::CommMsg(self.message(CommWireMsg { comm_id, data }))
+            },
+
+            CommMsg::Rpc {
+                id: _,
+                parent_header,
+                data,
+            } => {
+                // RPC reply: the comm is replying to a frontend request
+                let payload = CommWireMsg { comm_id, data };
+                Message::CommMsg(self.message_with_header(parent_header, payload))
+            },
+
+            CommMsg::Close => Message::CommClose(self.message(CommClose { comm_id })),
+        };
+
+        self.forward(msg).log_err();
     }
 
     /// Create a message using the underlying socket with the given content.
@@ -412,7 +442,7 @@ impl IOPub {
     /// different socket that is sent after waiting to still get processed by
     /// the frontend before the messages we cleared from the IOPub queue.
     fn process_wait_request(&mut self, message: Wait) -> crate::Result<()> {
-        message.wait_tx.send(()).unwrap();
+        message.wait_tx.send(()).log_err();
         Ok(())
     }
 }

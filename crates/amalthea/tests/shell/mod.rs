@@ -1,7 +1,7 @@
 /*
  * mod.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -262,14 +262,27 @@ impl ShellHandler for Shell {
                     // sender.
                     comm.outgoing_tx.send(CommMsg::Data(val)).unwrap();
                 },
-                CommMsg::Rpc(id, val) => {
+                CommMsg::Rpc {
+                    id,
+                    parent_header,
+                    data,
+                } => {
                     // Echo back the data we received on the comm channel to the
-                    // sender as the response to the RPC, using the same ID.
-                    comm.outgoing_tx.send(CommMsg::Rpc(id, val)).unwrap();
+                    // sender as the response to the RPC, using the same ID and header.
+                    comm.outgoing_tx
+                        .send(CommMsg::Rpc {
+                            id,
+                            parent_header,
+                            data,
+                        })
+                        .unwrap();
                 },
                 CommMsg::Close => {
                     // Close the channel and exit the thread.
                     break;
+                },
+                CommMsg::Open { .. } => {
+                    // Open is only used for outgoing messages, not expected here
                 },
             }
         });

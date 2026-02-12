@@ -1,7 +1,7 @@
 /*
  * dummy_frontend.rs
  *
- * Copyright (C) 2022-2024 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -282,12 +282,16 @@ impl DummyFrontend {
     where
         F: FnOnce(String),
     {
-        self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
-            positron: Some(ExecuteRequestPositron {
-                code_location: Some(code_location),
-            }),
-            ..Default::default()
-        })
+        self.execute_request_with_options(
+            code,
+            result_check,
+            ExecuteRequestOptions {
+                positron: Some(ExecuteRequestPositron {
+                    code_location: Some(code_location),
+                }),
+                ..Default::default()
+            },
+        )
     }
 
     #[track_caller]

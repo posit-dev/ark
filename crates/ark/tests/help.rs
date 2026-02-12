@@ -1,7 +1,7 @@
 //
 // help.rs
 //
-// Copyright (C) 2023 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -13,24 +13,34 @@ use amalthea::comm::help_comm::HelpBackendRequest;
 use amalthea::comm::help_comm::ShowHelpTopicParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use ark::help::message::HelpEvent;
 use ark::help::r_help::RHelp;
 use ark::help_proxy;
 use ark::r_task::r_task;
+use ark_test::dummy_jupyter_header;
+use ark_test::IOPubReceiverExt;
+use crossbeam::channel::bounded;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 
 struct TestRHelp {
     comm: CommSocket,
+    iopub_rx: Receiver<IOPubMessage>,
     _help_event_tx: Sender<HelpEvent>,
 }
 
 impl TestRHelp {
     fn new(comm_id: String) -> Self {
+        // Create a dummy iopub channel to receive responses.
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
         let comm = CommSocket::new(
             CommInitiator::FrontEnd,
             comm_id,
             String::from("positron.help"),
+            iopub_tx,
         );
         // Start the help comm. It's important to save the help event sender so
         // that the help comm doesn't exit before we're done with it; allowing the
@@ -41,6 +51,7 @@ impl TestRHelp {
 
         Self {
             comm,
+            iopub_rx,
             _help_event_tx,
         }
     }
@@ -54,14 +65,17 @@ impl TestRHelp {
         let request_id = String::from(id);
         self.comm
             .incoming_tx
-            .send(CommMsg::Rpc(request_id.clone(), data))
+            .send(CommMsg::Rpc {
+                id: request_id.clone(),
+                parent_header: dummy_jupyter_header(),
+                data,
+            })
             .unwrap();
 
-        // Wait for the response (up to 1 second; this should be fast!)
-        let duration = std::time::Duration::from_secs(1);
-        let response = self.comm.outgoing_rx.recv_timeout(duration).unwrap();
+        let response = self.iopub_rx.recv_comm_msg();
+
         match response {
-            CommMsg::Rpc(id, val) => {
+            CommMsg::Rpc { id, data: val, .. } => {
                 let response = serde_json::from_value::<HelpBackendReply>(val).unwrap();
                 match response {
                     HelpBackendReply::ShowHelpTopicReply(found) => {

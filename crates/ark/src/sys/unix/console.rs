@@ -136,7 +136,7 @@ pub fn run_activity_handlers() {
     }
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_cleanup_for_tests(_save_act: i32, _status: i32, _run_last: i32) {
     // Signal that cleanup has started
     let (lock, cvar) = &CLEANUP_SIGNAL;

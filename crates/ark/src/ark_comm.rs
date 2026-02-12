@@ -1,7 +1,7 @@
 //
 // test_handler.rs
 //
-// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2025-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -92,13 +92,17 @@ impl ArkComm {
                     }
                 },
 
-                CommMsg::Rpc(..) => {
+                CommMsg::Rpc { .. } => {
                     self.comm.handle_request(msg, |req| Self::handle_rpc(req));
                 },
 
                 CommMsg::Close => {
                     log::trace!("Ark Comm: Received a close message.");
                     break;
+                },
+
+                CommMsg::Open { .. } => {
+                    log::warn!("Ark Comm: Unexpected Open message received");
                 },
             }
         }

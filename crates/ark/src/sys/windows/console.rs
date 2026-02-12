@@ -209,12 +209,12 @@ fn get_user_home() -> String {
     path.to_string()
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 extern "C-unwind" fn r_callback() {
     // Do nothing!
 }
 
-#[no_mangle]
+#[cfg_attr(not(test), no_mangle)]
 extern "C-unwind" fn r_yes_no_cancel(question: *const c_char) -> c_int {
     // This seems to only be used on Windows during R's default `CleanUp` when
     // `SA_SAVEASK` is used. We should replace `Cleanup` with our own version

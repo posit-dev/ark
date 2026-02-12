@@ -1,12 +1,12 @@
 //
 // r_variables.rs
 //
-// Copyright (C) 2023-2025 by Posit Software, PBC
+// Copyright (C) 2023-2026 by Posit Software, PBC
 //
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::FormattedVariable;
 use amalthea::comm::variables_comm::InspectedVariable;
@@ -19,6 +19,7 @@ use amalthea::comm::variables_comm::VariablesBackendReply;
 use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
+use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
@@ -37,6 +38,7 @@ use harp::vector::Vector;
 use libr::R_GlobalEnv;
 use libr::Rf_ScalarLogical;
 use libr::ENVSXP;
+use stdext::result::ResultExt;
 use stdext::spawn;
 
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
@@ -66,7 +68,8 @@ pub enum LastValue {
  */
 pub struct RVariables {
     comm: CommSocket,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
+    iopub_tx: Sender<IOPubMessage>,
     pub env: RThreadSafe<RObject>,
     /// `Binding` does not currently protect anything, and therefore doesn't
     /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
@@ -101,9 +104,14 @@ impl RVariables {
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the frontend
      */
-    pub fn start(env: RObject, comm: CommSocket, comm_manager_tx: Sender<CommManagerEvent>) {
+    pub fn start(
+        env: RObject,
+        comm: CommSocket,
+        comm_event_tx: Sender<CommEvent>,
+        iopub_tx: Sender<IOPubMessage>,
+    ) {
         // Start with default settings
-        Self::start_with_config(env, comm, comm_manager_tx, LastValue::UseOption);
+        Self::start_with_config(env, comm, comm_event_tx, iopub_tx, LastValue::UseOption);
     }
 
     /**
@@ -116,7 +124,8 @@ impl RVariables {
     pub fn start_with_config(
         env: RObject,
         comm: CommSocket,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
+        iopub_tx: Sender<IOPubMessage>,
         show_last_value: LastValue,
     ) {
         // Validate that the RObject we were passed is actually an environment
@@ -138,7 +147,8 @@ impl RVariables {
             // call unprotects them
             let environment = Self {
                 comm,
-                comm_manager_tx,
+                comm_event_tx,
+                iopub_tx,
                 env,
                 current_bindings,
                 version: 0,
@@ -168,7 +178,7 @@ impl RVariables {
             length,
             version: self.version as i64,
         });
-        self.send_event(event, None);
+        self.send_event(event);
 
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the frontend is closed)
@@ -180,7 +190,7 @@ impl RVariables {
             select! {
                 recv(&prompt_signal_rx) -> msg => {
                     if let Ok(()) = msg {
-                        self.update(None);
+                        self.update();
                     }
                 },
 
@@ -273,7 +283,7 @@ impl RVariables {
             },
             VariablesBackendRequest::Clear(params) => {
                 self.clear(params.include_hidden_objects)?;
-                self.update(None);
+                self.update();
                 Ok(VariablesBackendReply::ClearReply())
             },
             VariablesBackendRequest::Delete(params) => {
@@ -403,7 +413,8 @@ impl RVariables {
                 name.clone(),
                 obj,
                 Some(binding),
-                self.comm_manager_tx.clone(),
+                self.comm_event_tx.clone(),
+                self.iopub_tx.clone(),
             )?;
             Ok(Some(viewer_id))
         })
@@ -501,19 +512,12 @@ impl RVariables {
         })
     }
 
-    fn send_event(&mut self, message: VariablesFrontendEvent, request_id: Option<String>) {
+    fn send_event(&mut self, message: VariablesFrontendEvent) {
         let data = serde_json::to_value(message);
 
         match data {
             Ok(data) => {
-                // If we were given a request ID, send the response as an RPC;
-                // otherwise, send it as an event
-                let comm_msg = match request_id {
-                    Some(id) => CommMsg::Rpc(id, data),
-                    None => CommMsg::Data(data),
-                };
-
-                self.comm.outgoing_tx.send(comm_msg).unwrap()
+                self.comm.outgoing_tx.send(CommMsg::Data(data)).log_err();
             },
             Err(err) => {
                 log::error!("Variables: Failed to serialize environment data: {err}");
@@ -561,7 +565,7 @@ impl RVariables {
     }
 
     #[tracing::instrument(level = "trace", skip_all)]
-    fn update(&mut self, request_id: Option<String>) {
+    fn update(&mut self) {
         let mut assigned: Vec<Variable> = vec![];
         let mut removed: Vec<String> = vec![];
 
@@ -646,15 +650,14 @@ impl RVariables {
             }
         });
 
-        if assigned.len() > 0 || removed.len() > 0 || request_id.is_some() {
-            // Send the message if anything changed or if this came from a request
+        if assigned.len() > 0 || removed.len() > 0 {
             let event = VariablesFrontendEvent::Update(UpdateParams {
                 assigned,
                 removed,
                 unevaluated: vec![],
                 version: self.version as i64,
             });
-            self.send_event(event, request_id);
+            self.send_event(event);
         }
     }
 
