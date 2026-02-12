@@ -73,8 +73,6 @@ fn test_stdin_followed_by_an_expression_on_the_next_line() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
-
     let prompt = frontend.recv_stdin_input_request();
     assert_eq!(prompt, String::from("prompt>"));
 
@@ -82,6 +80,7 @@ fn test_stdin_followed_by_an_expression_on_the_next_line() {
 
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] \"hi-there\"");
 
+    frontend.assert_stream_stdout_contains("[1] 1");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -103,8 +102,6 @@ fn test_stdin_single_line_buffer_overflow() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
-
     let prompt = frontend.recv_stdin_input_request();
     assert_eq!(prompt, String::from("prompt>"));
 
@@ -116,6 +113,7 @@ fn test_stdin_single_line_buffer_overflow() {
         .recv_iopub_execute_error()
         .contains("Can't pass console input on to R"));
 
+    frontend.assert_stream_stdout_contains("[1] 1");
     frontend.recv_iopub_idle();
 
     assert_eq!(
@@ -140,24 +138,17 @@ fn test_stdin_from_menu() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // R emits this before asking for your selection
-    frontend.recv_iopub_stream_stdout(
-        "
-1: a
-2: b
-
-",
-    );
-
     let prompt = frontend.recv_stdin_input_request();
     assert_eq!(prompt, String::from("Selection: "));
 
     frontend.send_stdin_input_reply(String::from("b"));
 
-    // Position of selection is returned
-    frontend.recv_iopub_stream_stdout("[1] 2\n");
-
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 3");
+
+    // R emits menu options before asking for selection, then the selection result
+    frontend.assert_stream_stdout_contains("1: a");
+    frontend.assert_stream_stdout_contains("2: b");
+    frontend.assert_stream_stdout_contains("[1] 2");
 
     frontend.recv_iopub_idle();
 

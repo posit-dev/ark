@@ -6,10 +6,6 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark_test::is_execute_result;
-use ark_test::is_idle;
-use ark_test::is_start_debug;
-use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 
@@ -52,13 +48,12 @@ foo()
     assert_eq!(bp.id, bp_id);
     assert_eq!(bp.line, Some(3));
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
-    let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
-    assert_eq!(stack[0].name, "foo()");
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger to clean up
     frontend.debug_send_quit();
@@ -72,12 +67,13 @@ foo()
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Direct function call has a slightly different flow than source():
-    // No "debug at" stream message since we're not stepping through source
-    frontend.recv_iopub_breakpoint_hit_direct();
+    // Direct function call - recv_iopub_breakpoint_hit handles the debug message flow
+    frontend.recv_iopub_breakpoint_hit();
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit and finish
     frontend.debug_send_quit();
@@ -116,7 +112,6 @@ fn test_dap_toplevel_braces_no_global_debug() {
     // Breakpoint becomes verified when the block is evaluated
     dap.recv_breakpoint_verified();
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Quit the debugger to exit cleanly
@@ -200,27 +195,36 @@ foo()
     assert_eq!(bp.id, bp_id);
     assert_eq!(bp.line, Some(5));
 
-    // Then we hit browser() and stop
-    frontend.recv_iopub_async(vec![
-        is_start_debug(),
-        stream_contains("Called from:"),
-        is_idle(),
-    ]);
+    // Hit browser() and stop
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("Called from: foo()");
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
     dap.recv_stopped();
 
     // Verify we're stopped at browser() in foo
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Step with `n` to step over the inner {} block
-    frontend.debug_send_step_command("n");
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
-    // Verify we're still in foo after stepping over the inner block
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
+    // We're still in foo after stepping over the inner block (line 4: the `{` of inner block)
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
+
+    // Continue to hit the breakpoint on line 5 (the `1` expression)
+    frontend.debug_send_step_command("c", &file);
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(5);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -292,60 +296,47 @@ foo()
     let bp = dap.recv_breakpoint_verified();
     assert_eq!(bp.id, bp2_id);
 
-    // Hit BP1: auto-stepping flow
+    // Hit BP1: auto-stepping is now transparent (no start_debug/stop_debug cycles)
     frontend.recv_iopub_breakpoint_hit();
 
-    // DAP events for hitting BP1: auto-step through .ark_breakpoint wrapper,
-    // then stop at user expression.
-    dap.recv_auto_step_through();
+    // DAP event: stopped at user expression (auto-stepping is transparent)
     dap.recv_stopped();
 
     // Verify we're stopped at BP1 (line 3: x <- 1)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Step with `n` to BP2 - this is the key part of the test.
     // When stepping onto an injected breakpoint, we go through:
     // 1. .ark_auto_step wrapper
     // 2. .ark_breakpoint function
     // 3. Actual user expression
-    // Use stream-skipping variants because late-arriving debug output
-    // from the previous breakpoint can interleave here.
     frontend.send_execute_request("n", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
 
-    // IOPub messages: stepping onto an adjacent breakpoint produces multiple
-    // start_debug/stop_debug cycles due to auto-stepping through the injected code.
-    // We expect 4 start_debug, 4 stop_debug, and idle (ordering not guaranteed).
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 4) &&
-            acc.has_comm_method_count("stop_debug", 4) &&
-            acc.saw_idle()
-    });
+    // Stepping from BP1 to BP2 exits the current browser and enters a new one
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+
+    // Drain the "debug at" stream output from auto-stepping
+    frontend.drain_streams();
+
+    frontend.recv_iopub_idle();
 
     frontend.recv_shell_execute_reply();
 
     // DAP events when stepping onto an adjacent breakpoint.
-    // When stepping with `n` from BP1 onto BP2's injected code, R steps through
-    // the .ark_auto_step and .ark_breakpoint wrappers with auto-stepping.
-    //
-    // Enable ARK_TEST_TRACE=all to see the actual message sequence:
-    //   ARK_TEST_TRACE=all cargo nextest run test_dap_step_to_adjacent_breakpoint --success-output=immediate
-    //
-    // The sequence is: Continued (step starts), then auto-step through 3 wrappers
-    // (.ark_auto_step, .ark_breakpoint, nested), then stop at BP2 user expression.
+    // Auto-stepping through injected code is now transparent - we only see
+    // the Continued when stepping starts and Stopped at the final destination.
     dap.recv_continued();
-    dap.recv_auto_step_through(); // .ark_auto_step wrapper
-    dap.recv_auto_step_through(); // .ark_breakpoint wrapper
-    dap.recv_auto_step_through(); // Nested wrapper
     dap.recv_stopped(); // At BP2 user expression (y <- 2)
 
     // Verify we're stopped at BP2 (line 4: y <- 2)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger. This triggers the cleanup in r_read_console which
     // sends a Continued event via stop_debug().
@@ -401,13 +392,12 @@ foo()
 
     // The auto-step mechanism transparently steps through the wrapper functions
     // (.ark_auto_step and .ark_breakpoint) and stops at the user expression
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're at the user expression (line 3), not inside any wrapper
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -462,68 +452,56 @@ lapply(1:3, function(x) {
 
     // First iteration: hit breakpoint with x=1
     frontend.recv_iopub_breakpoint_hit();
-    dap.recv_auto_step_through();
     dap.recv_stopped();
+    dap.assert_top_frame("FUN()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
-    // Verify we're stopped at the breakpoint
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
-
-    // Continue to second iteration: x=2.
-    // Send `c` via Shell to continue execution. R will hit the breakpoint again
-    // on the next iteration of lapply.
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous breakpoint hits can interleave here.
+    // Continue to second iteration: x=2
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
 
-    // When continuing from inside lapply, the breakpoint is hit again.
-    // The flow includes stop_debug (exiting current debug) and start_debug (new hit).
-    // Note: idle timing relative to stop_debug is not guaranteed.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    // Hit the breakpoint again on next iteration (auto-stepping is now transparent)
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_debug_at(&file);
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // DAP events: Continued from stop_debug, then auto-step through, then stopped
     dap.recv_continued();
-    dap.recv_auto_step_through();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Continue to third iteration: x=3
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Same pattern as second iteration
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_debug_at(&file);
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
-    dap.recv_auto_step_through();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Continue past the last iteration - execution completes normally
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
 
-    // R exits the debugger and completes lapply (returns list result).
-    // stop_debug is async, but execute_result must come before idle.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result(), is_idle()])
-    });
+    // R exits the debugger and completes lapply
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -581,13 +559,10 @@ local({
     assert_eq!(bp.line, Some(4));
 
     // Auto-step through wrapper and stop at user expression
-    dap.recv_auto_step_through();
     dap.recv_stopped();
-
-    // Verify we're stopped at the breakpoint (line 4: z <- 42)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
-    assert_eq!(stack[0].name, "inner_fn()");
+    dap.assert_top_frame("inner_fn()");
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -637,63 +612,52 @@ fn test_dap_breakpoint_for_loop_iteration() {
     assert_eq!(bp.line, Some(4));
 
     // First iteration: i=1
-    dap.recv_auto_step_through();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Continue to second iteration: i=2
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
-    // Note: idle timing relative to stop_debug is not guaranteed.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Hit the breakpoint again on next iteration (auto-stepping is now transparent)
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_debug_at(&file);
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
-    dap.recv_auto_step_through();
     dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
     // Continue to third iteration: i=3
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous iterations can interleave here.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method_count("start_debug", 2) &&
-            acc.has_comm_method_count("stop_debug", 2) &&
-            acc.saw_idle()
-    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Same pattern as second iteration
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_debug_at(&file);
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
-    dap.recv_auto_step_through();
     dap.recv_stopped();
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
 
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 4);
-
-    // Continue past the last iteration - execution completes.
-    // Use stream-skipping variants because late-arriving debug output
-    // from previous iterations can interleave here.
+    // Continue past the last iteration
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy_skip_streams();
-    frontend.recv_iopub_execute_input_skip_streams();
-    // stop_debug is async, but execute_result must come before idle.
-    frontend.recv_iopub_until(|acc| {
-        acc.has_comm_method("stop_debug") && acc.in_order(&[is_execute_result(), is_idle()])
-    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // R exits the debugger and completes the for loop
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
@@ -746,12 +710,11 @@ result <- tryCatch({
     assert_eq!(bp.line, Some(5));
 
     // Auto-step through wrapper and stop at user expression
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
-    // Verify we're stopped at the breakpoint inside the error handler
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 5);
+    // Verify we're stopped at the breakpoint inside the error handler.
+    dap.assert_top_frame_line(5);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();

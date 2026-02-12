@@ -131,7 +131,7 @@ fn test_execute_request_browser_nested() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stderr("Error: error in nested\n");
+    frontend.assert_stream_stderr_contains("Error: error in nested");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -150,7 +150,7 @@ fn test_execute_request_browser_nested() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stderr("Error: error in parent\n");
+    frontend.assert_stream_stderr_contains("Error: error in parent");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -179,7 +179,7 @@ fn test_execute_request_browser_error() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, "stop('foobar')");
 
-    frontend.recv_iopub_stream_stderr("Error: foobar\n");
+    frontend.assert_stream_stderr_contains("Error: foobar");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -207,7 +207,7 @@ fn test_execute_request_browser_incomplete() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stderr("Error: Can't parse incomplete input\n");
+    frontend.assert_stream_stderr_contains("Error: Can't parse incomplete input");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -244,7 +244,7 @@ fn()";
     assert_eq!(input.code, code);
 
     // We aren't at top level, so this comes as an iopub stream
-    frontend.recv_iopub_stream_stdout("Called from: fn()\n");
+    frontend.assert_stream_stdout_contains("Called from: fn()");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -259,7 +259,7 @@ fn()";
     assert_eq!(input.code, code);
 
     // Also received as iopub stream because we aren't at top level, we are in the debugger
-    frontend.recv_iopub_stream_stdout("[1] 2\n");
+    frontend.assert_stream_stdout_contains("[1] 2");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -310,9 +310,8 @@ fn test_execute_request_browser_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("Called from: top level \n");
-
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
+    frontend.assert_stream_stdout_contains("Called from: top level");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -325,9 +324,8 @@ fn test_execute_request_browser_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
-
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 2");
+    frontend.assert_stream_stdout_contains("[1] 1");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -340,9 +338,8 @@ fn test_execute_request_browser_multiple_expressions() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("Called from: top level \n");
-
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
+    frontend.assert_stream_stdout_contains("Called from: top level");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -370,10 +367,7 @@ fn test_execute_request_browser_local_variable() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout(
-        "Called from: eval(quote({\n    local_foo <- 1\n    browser()\n}), new.env())\n",
-    );
-
+    frontend.assert_stream_stdout_contains("Called from: eval(quote({");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -387,7 +381,7 @@ fn test_execute_request_browser_local_variable() {
 
     // Should ideally be `recv_iopub_execute_result()`, but auto-printing
     // detection currently does not work reliably in debug REPLs
-    frontend.recv_iopub_stream_stdout("[1] 1\n");
+    frontend.assert_stream_stdout_contains("[1] 1");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -408,8 +402,7 @@ fn test_browser_in_base_env() {
 
     // Inside `evalq()` we aren't at top level, so this comes as an iopub stream
     // and not an execute result
-    frontend.recv_iopub_stream_stdout("Called from: evalq(browser(), baseenv())\n");
-
+    frontend.assert_stream_stdout_contains("Called from: evalq(browser(), baseenv())");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -421,8 +414,7 @@ fn test_browser_in_base_env() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("[1] 2\n");
-
+    frontend.assert_stream_stdout_contains("[1] 2");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -475,8 +467,7 @@ evalq(base::browser(), env)";
 
     // Inside `evalq()` we aren't at top level, so this comes as an iopub stream
     // and not an execute result
-    frontend.recv_iopub_stream_stdout("Called from: evalq(base::browser(), env)\n");
-
+    frontend.assert_stream_stdout_contains("Called from: evalq(base::browser(), env)");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -489,8 +480,7 @@ evalq(base::browser(), env)";
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.recv_iopub_stream_stdout("function (...)  .Primitive(\"list\")\n");
-
+    frontend.assert_stream_stdout_contains("function (...)  .Primitive(\"list\")");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 

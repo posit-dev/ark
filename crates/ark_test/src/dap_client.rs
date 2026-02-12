@@ -270,6 +270,34 @@ impl DapClient {
         }
     }
 
+    /// Assert that the top stack frame has the expected name.
+    #[track_caller]
+    pub fn assert_top_frame(&mut self, expected_name: &str) {
+        let stack = self.stack_trace();
+        assert_eq!(stack[0].name, expected_name);
+    }
+
+    /// Assert that the top stack frame is at the expected line.
+    #[track_caller]
+    pub fn assert_top_frame_line(&mut self, expected_line: i64) {
+        let stack = self.stack_trace();
+        assert_eq!(stack[0].line, expected_line);
+    }
+
+    /// Assert that the top stack frame's source file matches the expected filename.
+    #[track_caller]
+    pub fn assert_top_frame_file(&mut self, file: &crate::SourceFile) {
+        let stack = self.stack_trace();
+        let source = stack[0].source.as_ref().expect("Expected source");
+        let path = source.path.as_ref().expect("Expected path");
+        assert!(
+            path.contains(&file.filename),
+            "Expected path containing {}, got {}",
+            file.filename,
+            path
+        );
+    }
+
     /// Request scopes for a stack frame.
     #[track_caller]
     pub fn scopes(&mut self, frame_id: i64) -> Vec<Scope> {
@@ -541,20 +569,6 @@ impl DapClient {
         );
     }
 
-    /// Receive the DAP event sequence for auto-stepping through injected code.
-    ///
-    /// When R steps through injected breakpoint wrappers (`.ark_auto_step`,
-    /// `.ark_breakpoint`), it produces this sequence:
-    /// - Stopped (entering the wrapper)
-    /// - Continued (auto-step triggers next step)
-    /// - Continued (from stop_debug)
-    #[track_caller]
-    pub fn recv_auto_step_through(&mut self) {
-        self.recv_stopped();
-        self.recv_continued();
-        self.recv_continued();
-    }
-
     /// Receive and assert the next message is a Stopped event with default fields.
     #[track_caller]
     pub fn recv_stopped(&mut self) {
@@ -660,8 +674,29 @@ impl Drop for DapClient {
     fn drop(&mut self) {
         // Don't try to disconnect if we're already panicking, as this could
         // obscure the original error
-        if !std::thread::panicking() {
-            self.disconnect();
+        if std::thread::panicking() {
+            return;
         }
+
+        // Check for unhandled messages using non-blocking mode.
+        // Must happen before disconnect() which drains events while waiting for response.
+        let _ = self.reader.get_ref().set_nonblocking(true);
+
+        let mut unexpected_messages: Vec<Sendable> = Vec::new();
+        while let Ok(msg) = self.recv() {
+            unexpected_messages.push(msg);
+        }
+
+        let _ = self.reader.get_ref().set_nonblocking(false);
+
+        if !unexpected_messages.is_empty() {
+            panic!(
+                "DAP socket has {} unexpected message(s) on exit:\n{:#?}",
+                unexpected_messages.len(),
+                unexpected_messages
+            );
+        }
+
+        self.disconnect();
     }
 }

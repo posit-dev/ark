@@ -56,18 +56,15 @@ foo <- function() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Direct function call - use recv_iopub_breakpoint_hit_direct which handles
-    // the debug message flow
-    frontend.recv_iopub_breakpoint_hit_direct();
+    // Direct function call - recv_iopub_breakpoint_hit handles the debug message flow
+    frontend.recv_iopub_breakpoint_hit();
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the right place
-    let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
-    assert_eq!(stack[0].name, "foo()");
-    assert_eq!(stack[0].line, 3);
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger
     frontend.debug_send_quit();
@@ -140,12 +137,12 @@ c$increment()
     assert_eq!(bp.line, Some(6));
 
     // Auto-step through wrapper and stop at user expression
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // Verify we're stopped at the breakpoint inside the R6 method
+    dap.assert_top_frame_line(6);
+    dap.assert_top_frame_file(&file);
     let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 6);
     // The method name includes the class context
     assert!(
         stack[0].name.contains("increment"),
@@ -284,12 +281,11 @@ greet('World')
     let bp = dap.recv_breakpoint_verified();
     assert_eq!(bp.id, bp_id);
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
-    assert_eq!(stack[0].name, "greet()");
+    dap.assert_top_frame("greet()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit the debugger to complete first source
     frontend.debug_send_quit();
@@ -300,12 +296,11 @@ greet('World')
     frontend.source_file_and_hit_breakpoint(&file);
 
     // No new verification event needed - breakpoint is already verified
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].line, 3);
-    assert_eq!(stack[0].name, "greet()");
+    dap.assert_top_frame("greet()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Quit and finish
     frontend.debug_send_quit();

@@ -67,7 +67,14 @@ Integration tests for the kernel and DAP server live in `crates/ark/tests/` and 
 
 - **`DapClient`**: A DAP client for testing the debugger. Obtained via `frontend.dap_client()` after starting the kernel.
 
-- **`MessageAccumulator`**: Collects IOPub messages and coalesces stream fragments, making tests immune to batching variations.
+**Stream handling:**
+
+All `recv_iopub_*` methods automatically skip and buffer stream messages. This means:
+- Non-stream assertions read cleanly without worrying about interleaved streams
+- Stream content is accumulated in internal buffers
+- Use `assert_stream_stdout_contains()` or `assert_stream_stderr_contains()` to check stream content
+- **Stream assertions must be placed BEFORE `recv_iopub_idle()`** within each busy/idle window
+- `recv_iopub_idle()` acts as a synchronization point that flushes stream buffers and panics if streams were received but not asserted
 
 **Common patterns:**
 
@@ -81,17 +88,20 @@ frontend.recv_iopub_execute_result();
 frontend.recv_iopub_idle();
 frontend.recv_shell_execute_reply();
 
-// For complex async message flows, use recv_iopub_until with MessageAccumulator
-frontend.recv_iopub_until(|acc| {
-    acc.has_comm_method("start_debug") &&
-    acc.streams_contain("debug at") &&
-    acc.saw_idle()
-});
+// For debug flows with streams, stream assertions MUST come before idle
+frontend.recv_iopub_start_debug();
+frontend.recv_iopub_stop_debug();
+frontend.recv_iopub_start_debug();
+frontend.assert_stream_stdout_contains("Called from:");
+frontend.assert_stream_stdout_contains("debug at");
+frontend.recv_iopub_idle();  // Flushes stream buffers, resets for next operation
+frontend.recv_shell_execute_reply();
 
-// Use in_order() to verify message ordering
-frontend.recv_iopub_until(|acc| {
-    acc.in_order(&[is_execute_result(), is_idle()])
-});
+// For ordering assertions, use drain_streams() at checkpoints
+frontend.recv_iopub_stop_debug();
+let after_stop = frontend.drain_streams();
+frontend.recv_iopub_start_debug();
+assert!(after_stop.stdout.contains("debugging in:"));
 ```
 
 **Debugging tests:**

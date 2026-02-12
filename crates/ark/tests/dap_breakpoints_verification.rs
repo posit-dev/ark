@@ -6,10 +6,6 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark_test::is_idle;
-use ark_test::is_start_debug;
-use ark_test::is_stop_debug;
-use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 
@@ -314,12 +310,12 @@ foo()
     // hit the breakpoint and queued a Stopped event.
     frontend.recv_iopub_breakpoint_hit();
 
-    dap.recv_auto_step_through();
     dap.recv_stopped();
 
     // We're now stopped at BP1 (line 3: x <- 1)
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+    dap.assert_top_frame_file(&file);
 
     // Now add BP2 (on line 4: y <- 2) while stopped.
     // BP2 was NOT injected into the code during parsing, so it should be unverified.
@@ -386,44 +382,50 @@ foo <- function() {
     assert!(breakpoints.is_empty());
 
     // Now enter debug mode via debug(foo); foo()
-    // This will stop at the first line of foo (line 3: x <- 1)
+    // This will stop at the function body (line 2: the `{` on the function definition line)
     // Note: Shell reply is delayed until debug mode exits.
     frontend.send_execute_request("debug(foo); foo()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // debug(foo); foo() produces:
-    // - start_debug (entering foo at first line)
-    // - Stream with "debugging in:"
-    // - Idle
-    frontend.recv_iopub_async(vec![
-        is_start_debug(),
-        stream_contains("debugging in:"),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("debugging in:");
+    frontend.recv_iopub_idle();
 
-    // DAP: Stopped at first line of foo
+    // DAP: Stopped at function body
     dap.recv_stopped();
 
-    // Verify we're at line 3 (x <- 1)
-    let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
-    assert_eq!(stack[0].name, "foo()");
+    // Verify we're at line 2 (the function body `{...}` which starts on the definition line)
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(2);
+    dap.assert_top_frame_file(&file);
 
-    // Step to the next line (line 4: y <- 2) - where the disabled breakpoint was.
+    // Step to the first statement (line 3: x <- 1)
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_debug_at(&file);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+    dap.recv_stopped();
+    dap.assert_top_frame_line(3);
+
+    // Step to line 4 (y <- 2) - where the disabled breakpoint was.
     // If the disabled breakpoint were incorrectly re-verified, we'd receive an
     // unexpected Breakpoint event here.
     frontend.send_execute_request("n", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Stepping produces: stop_debug, start_debug, Stream with "debug at", Idle
-    frontend.recv_iopub_async(vec![
-        is_stop_debug(),
-        is_start_debug(),
-        stream_contains("debug at"),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_debug_at(&file);
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // DAP: Only Continued then Stopped - no Breakpoint event
@@ -431,8 +433,7 @@ foo <- function() {
     dap.recv_stopped();
 
     // Verify we're now at line 4 (y <- 2)
-    let stack = dap.stack_trace();
-    assert!(!stack.is_empty());
+    dap.assert_top_frame_line(4);
 
     // Quit the debugger
     frontend.debug_send_quit();

@@ -32,7 +32,7 @@ fn test_dap_source_and_step() {
     assert!(stack.len() >= 1, "Expected at least 1 frame");
     assert_file_frame(&stack[0], &file.filename, 5, 12);
 
-    frontend.debug_send_step_command("n");
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -67,22 +67,21 @@ foo()
     dap.recv_stopped();
 
     // Check initial stack at browser() in foo
+    dap.assert_top_frame("foo()");
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame");
-    assert_eq!(stack[0].name, "foo()");
     assert_file_frame(&stack[0], &file.filename, 3, 12);
 
     // Step with `n` to the bar() call
-    frontend.debug_send_step_command("n");
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
+    dap.assert_top_frame("foo()");
     let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
     assert_file_frame(&stack[0], &file.filename, 4, 8);
 
     // Step with `s` into bar()
-    frontend.debug_send_step_command("s");
+    frontend.debug_send_step_command("s", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -93,13 +92,12 @@ foo()
     assert_eq!(stack[1].name, "foo()");
 
     // Step out with `f` (finish)
-    frontend.debug_send_step_command("f");
+    frontend.debug_send_step_command("f", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
     // Verify we're back in foo
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "foo()");
+    dap.assert_top_frame("foo()");
 
     frontend.debug_send_quit();
     dap.recv_continued();
@@ -163,18 +161,17 @@ outer()
     dap.recv_stopped();
 
     // Check initial stack at browser() in outer
+    dap.assert_top_frame("outer()");
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame");
-    assert_eq!(stack[0].name, "outer()");
     assert_file_frame(&stack[0], &file.filename, 3, 12);
 
     // Step with `n` to inner() call
-    frontend.debug_send_step_command("n");
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
     // Step into inner() with `s`
-    frontend.debug_send_step_command("s");
+    frontend.debug_send_step_command("s", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -185,13 +182,12 @@ outer()
     assert_eq!(stack[1].name, "outer()");
 
     // Step out with `f` (finish)
-    frontend.debug_send_step_command("f");
+    frontend.debug_send_step_command("f", &file);
     dap.recv_continued();
     dap.recv_stopped();
 
     // Verify we're back in outer, at the line after inner() call
-    let stack = dap.stack_trace();
-    assert_eq!(stack[0].name, "outer()");
+    dap.assert_top_frame("outer()");
 
     frontend.debug_send_quit();
     dap.recv_continued();

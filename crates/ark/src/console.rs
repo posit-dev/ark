@@ -101,7 +101,6 @@ use uuid::Uuid;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::dap::dap::Breakpoint;
-use crate::dap::dap::DapBackendEvent;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
 use crate::help::message::HelpEvent;
@@ -1001,14 +1000,27 @@ impl Console {
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
         if matches!(info.kind, PromptKind::Browser) {
-            // Start or continue debugging with the `debug_preserve_focus` hint
-            // from the last expression we evaluated
-            self.debug_is_debugging = true;
-            self.debug_start(self.debug_preserve_focus);
+            // Check for auto-stepping first. If we're going to auto-step, don't
+            // emit start_debug/stop_debug messages and don't close active
+            // request. These intermediate steps are still part of the ongoing
+            // request.
+            if let Some(result) = self.maybe_auto_step(buf, buflen) {
+                return result;
+            }
 
-            // Note that for simplicity this state is reset on exit via the
-            // cleanups registered in `r_read_console()`. Ideally we'd clean
-            // from here for symmetry.
+            // Similarly, if we have pending inputs, we're about to immediately
+            // continue with the next expression. Don't emit debug notifications
+            // for these intermediate browser prompts.
+            let has_pending = self.pending_inputs.as_ref().is_some_and(|p| !p.is_empty());
+
+            // Only now that we know we're stopping for real, set state and
+            // notify frontend. Note that for simplicity this state is reset on
+            // exit via the cleanups registered in `r_read_console()`. Ideally
+            // we'd clean from here for symmetry.
+            self.debug_is_debugging = true;
+            if !has_pending {
+                self.debug_start(self.debug_preserve_focus);
+            }
         }
 
         if let Some(exception) = self.take_exception() {
@@ -1051,38 +1063,6 @@ impl Console {
             // prevents normal stepping with `source()`.
             if harp::r_n_frame().unwrap_or(0) == 0 {
                 unsafe { libr::SET_RDEBUG(libr::R_GlobalEnv, 0) };
-            }
-        }
-
-        // If debugger is active, to prevent injected expressions from
-        // interfering with debug-stepping, we might need to automatically step
-        // over to the next statement by returning `n` to R. Two cases:
-        // - We've just stopped due to an injected breakpoint. In this case
-        //   we're in the `.ark_breakpoint()` function and can look at the current
-        //   `sys.function()` to detect this.
-        // - We've just stepped to another injected breakpoint. In this case we
-        //   look whether our sentinel `.ark_auto_step()` was emitted by R as part
-        //   of the `Debug at` output.
-        if self.debug_is_debugging {
-            // Did we just step onto an injected call (breakpoint or verify)?
-            let at_auto_step = matches!(
-                &self.debug_call_text,
-                DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
-                    if text.trim_start().starts_with("base::.ark_auto_step")
-            );
-
-            // Are we stopped by an injected breakpoint
-            let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
-
-            if in_injected_breakpoint || at_auto_step {
-                let kind = if in_injected_breakpoint { "in" } else { "at" };
-                log::trace!("Auto-step expression reached ({kind}), moving to next expression");
-
-                self.debug_preserve_focus = false;
-                self.debug_send_dap(DapBackendEvent::Continued);
-
-                Self::on_console_input(buf, buflen, String::from("n")).unwrap();
-                return ConsoleResult::NewInput;
             }
         }
 
@@ -2139,6 +2119,46 @@ impl Console {
             })),
             Err(err) => panic!("Could not send input request: {}", err)
         )
+    }
+
+    /// Check if we need to auto-step through injected code.
+    ///
+    /// If debugger is active, to prevent injected expressions from
+    /// interfering with debug-stepping, we might need to automatically step
+    /// over to the next statement by returning `n` to R. Two cases:
+    /// - We've just stopped due to an injected breakpoint. In this case
+    ///   we're in the `.ark_breakpoint()` function and can look at the current
+    ///   `sys.function()` to detect this.
+    /// - We've just stepped to another injected breakpoint. In this case we
+    ///   look whether our sentinel `.ark_auto_step()` was emitted by R as part
+    ///   of the `Debug at` output.
+    ///
+    /// Returns `Some(ConsoleResult::NewInput)` if auto-stepping, `None` otherwise.
+    ///
+    /// TODO: Should set a flag in the Console state to prevent WriteConsole
+    /// emission during these intermediate states.
+    fn maybe_auto_step(&mut self, buf: *mut c_uchar, buflen: c_int) -> Option<ConsoleResult> {
+        // Did we just step onto an injected call (breakpoint or verify)?
+        let at_auto_step = matches!(
+            &self.debug_call_text,
+            DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
+                if text.trim_start().starts_with("base::.ark_auto_step")
+        );
+
+        // Are we stopped by an injected breakpoint
+        let in_injected_breakpoint = harp::r_current_function().inherits("ark_breakpoint");
+
+        if in_injected_breakpoint || at_auto_step {
+            let kind = if in_injected_breakpoint { "in" } else { "at" };
+            log::trace!("Auto-step expression reached ({kind}), moving to next expression");
+
+            self.debug_preserve_focus = false;
+
+            Self::on_console_input(buf, buflen, String::from("n")).unwrap();
+            return Some(ConsoleResult::NewInput);
+        }
+
+        None
     }
 
     /// Invoked by R to write output to the console.

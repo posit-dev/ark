@@ -8,11 +8,6 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
-use ark_test::is_execute_result;
-use ark_test::is_idle;
-use ark_test::is_start_debug;
-use ark_test::is_stop_debug;
-use ark_test::stream_contains;
 use ark_test::DummyArkFrontend;
 use dap::types::Thread;
 
@@ -134,7 +129,7 @@ fn test_dap_error_during_debug() {
     let mut dap = frontend.start_dap();
 
     // Code that will error after browser()
-    let _file = frontend.send_source(
+    let file = frontend.send_source(
         "
 {
   browser()
@@ -148,13 +143,13 @@ fn test_dap_error_during_debug() {
     let stack = dap.stack_trace();
     assert!(stack.len() >= 1, "Should have at least 1 frame");
 
-    // Step to the error - this should trigger an error and exit debug mode
-    frontend.debug_send_step_command("n");
+    // Step to execute the error
+    frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
+    dap.recv_stopped();
 
-    // After error in sourced code, R exits the debug session.
-    // We received Continued but no subsequent Stopped event - the debug session ended.
-    // The DapClient::drop() will verify no unexpected messages remain.
+    frontend.debug_send_quit();
+    dap.recv_continued();
 }
 
 #[test]
@@ -172,7 +167,7 @@ fn test_dap_error_in_eval() {
     // Evaluate an expression that causes an error.
     // Unlike stepping to an error (which exits debug), evaluating an error
     // from the console should keep us in debug mode.
-    frontend.debug_send_error_expr("stop('eval error')");
+    frontend.debug_send_error_expr("stop('eval error')", "eval error");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -205,23 +200,14 @@ fn test_dap_nested_browser() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Entering nested debug via debugonce produces:
-    // - stop_debug (leaving Browse[1]>)
-    // - start_debug (twice due to auto-stepping behavior)
-    // - Stream with "debugging in:"
-    // - Idle
-    frontend.recv_iopub_async(vec![
-        is_stop_debug(),
-        is_start_debug(),
-        is_start_debug(),
-        stream_contains("debugging in:"),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stop_debug();
+    frontend.assert_stream_stdout_contains("debugging in:");
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // DAP: Continued, then two Stopped events (due to auto-stepping)
+    // DAP: Continued (exiting Browse[1]>), then Stopped (entering Browse[2]>)
     dap.recv_continued();
-    dap.recv_stopped();
     dap.recv_stopped();
 
     // Stack now shows 2 frames: identity() and the original browser frame
@@ -234,17 +220,10 @@ fn test_dap_nested_browser() {
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Stepping back to parent browser produces:
-    // - stop_debug (leaving identity)
-    // - ExecuteResult with "exiting from:" message
-    // - start_debug (back at parent browser)
-    // - Idle
-    frontend.recv_iopub_async(vec![
-        is_stop_debug(),
-        is_execute_result(),
-        is_start_debug(),
-        is_idle(),
-    ]);
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     // DAP: Continued (left identity) then Stopped (back at parent browser)
