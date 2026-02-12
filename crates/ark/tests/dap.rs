@@ -143,13 +143,13 @@ fn test_dap_error_during_debug() {
     let stack = dap.stack_trace();
     assert!(stack.len() >= 1, "Should have at least 1 frame");
 
-    // Step to the error line - this moves us TO stop() but doesn't execute it yet
+    // Step to execute the error
     frontend.debug_send_step_command("n", &file);
     dap.recv_continued();
+    dap.recv_stopped();
 
-    // After error in sourced code, R exits the debug session.
-    // We received Continued but no subsequent Stopped event - the debug session ended.
-    // The DapClient::drop() will verify no unexpected messages remain.
+    frontend.debug_send_quit();
+    dap.recv_continued();
 }
 
 #[test]

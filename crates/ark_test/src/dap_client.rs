@@ -674,8 +674,29 @@ impl Drop for DapClient {
     fn drop(&mut self) {
         // Don't try to disconnect if we're already panicking, as this could
         // obscure the original error
-        if !std::thread::panicking() {
-            self.disconnect();
+        if std::thread::panicking() {
+            return;
         }
+
+        // Check for unhandled messages using non-blocking mode.
+        // Must happen before disconnect() which drains events while waiting for response.
+        let _ = self.reader.get_ref().set_nonblocking(true);
+
+        let mut unexpected_messages: Vec<Sendable> = Vec::new();
+        while let Ok(msg) = self.recv() {
+            unexpected_messages.push(msg);
+        }
+
+        let _ = self.reader.get_ref().set_nonblocking(false);
+
+        if !unexpected_messages.is_empty() {
+            panic!(
+                "DAP socket has {} unexpected message(s) on exit:\n{:#?}",
+                unexpected_messages.len(),
+                unexpected_messages
+            );
+        }
+
+        self.disconnect();
     }
 }
