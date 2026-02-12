@@ -25,7 +25,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use amalthea::comm::base_comm::JsonRpcReply;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::comm::ui_comm::ui_frontend_reply_from_value;
 use amalthea::comm::ui_comm::BusyParams;
 use amalthea::comm::ui_comm::ShowMessageParams;
@@ -209,7 +209,7 @@ pub struct Console {
     session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
 
     /// Execution requests from the frontend. Processed from `ReadConsole()`.
     /// Requests for code execution provide input to that method.
@@ -534,7 +534,7 @@ impl Console {
     pub(crate) fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
@@ -562,7 +562,7 @@ impl Console {
         CONSOLE.set(UnsafeCell::new(Console::new(
             tasks_interrupt_rx,
             tasks_idle_rx,
-            comm_manager_tx,
+            comm_event_tx,
             r_request_rx,
             stdin_request_tx,
             stdin_reply_rx,
@@ -705,7 +705,7 @@ impl Console {
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
         graphics_device::init_graphics_device(
-            console.get_comm_manager_tx().clone(),
+            console.get_comm_event_tx().clone(),
             console.get_iopub_tx().clone(),
             graphics_device_rx,
         );
@@ -796,7 +796,7 @@ impl Console {
     pub fn new(
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         stdin_reply_rx: Receiver<amalthea::Result<InputReply>>,
@@ -807,7 +807,7 @@ impl Console {
     ) -> Self {
         Self {
             r_request_rx,
-            comm_manager_tx,
+            comm_event_tx,
             stdin_request_tx,
             stdin_reply_rx,
             iopub_tx,
@@ -2322,9 +2322,8 @@ impl Console {
         graphics_device::on_process_idle_events();
     }
 
-    pub fn get_comm_manager_tx(&self) -> &Sender<CommManagerEvent> {
-        // Read only access to `comm_manager_tx`
-        &self.comm_manager_tx
+    pub fn get_comm_event_tx(&self) -> &Sender<CommEvent> {
+        &self.comm_event_tx
     }
 
     pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {

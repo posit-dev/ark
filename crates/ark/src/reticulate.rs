@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::comm_rpc_message;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommOutgoingTx;
@@ -34,13 +34,13 @@ static RETICULATE_ID: LazyLock<String> =
 #[derive(Clone)]
 pub struct ReticulateService {
     comm: CommSocket,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
 }
 
 impl ReticulateService {
     fn start(
         comm_id: String,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
         input: Option<String>,
     ) -> anyhow::Result<()> {
@@ -58,17 +58,17 @@ impl ReticulateService {
 
         let service = Self {
             comm,
-            comm_manager_tx,
+            comm_event_tx,
         };
 
-        let event = CommManagerEvent::Opened(
+        let event = CommEvent::Opened(
             service.comm.clone(),
             json!({
                 "input": input,
                 "reticulate_id": (*RETICULATE_ID).clone(),
             }),
         );
-        service.comm_manager_tx.send(event).log_err();
+        service.comm_event_tx.send(event).log_err();
 
         spawn!(format!("ark-reticulate-{}", comm_id), move || {
             service
@@ -137,7 +137,7 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
     ReticulateService::start(
         id,
-        console.get_comm_manager_tx().clone(),
+        console.get_comm_event_tx().clone(),
         console.get_iopub_tx().clone(),
         input_code,
     )?;

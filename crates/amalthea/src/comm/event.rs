@@ -10,10 +10,8 @@ use serde_json::Value;
 use crate::comm::comm_channel::CommMsg;
 use crate::socket::comm::CommSocket;
 
-/**
- * Enumeration of events that can be received by the comm manager.
- */
-pub enum CommManagerEvent {
+/// Comm events sent to the frontend via Shell.
+pub enum CommEvent {
     /// A new Comm was opened
     Opened(CommSocket, Value),
 

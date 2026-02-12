@@ -6,7 +6,7 @@
 //
 
 use amalthea::comm::comm_channel::Comm;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -54,7 +54,7 @@ use crate::ui::UiComm;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
     r_request_tx: Sender<RRequest>,
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
@@ -72,7 +72,7 @@ pub enum REvent {
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub(crate) fn new(
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         r_request_tx: Sender<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
@@ -81,7 +81,7 @@ impl Shell {
         console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
         Self {
-            comm_manager_tx,
+            comm_event_tx,
             r_request_tx,
             stdin_request_tx,
             kernel_request_tx,
@@ -235,7 +235,7 @@ impl ShellHandler for Shell {
         match target {
             Comm::Variables => {
                 let iopub_tx = comm.outgoing_tx.iopub_tx().clone();
-                handle_comm_open_variables(comm, self.comm_manager_tx.clone(), iopub_tx)
+                handle_comm_open_variables(comm, self.comm_event_tx.clone(), iopub_tx)
             },
             Comm::Ui => handle_comm_open_ui(
                 comm,
@@ -253,12 +253,12 @@ impl ShellHandler for Shell {
 
 fn handle_comm_open_variables(
     comm: CommSocket,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
 ) -> amalthea::Result<bool> {
     r_task(|| {
         let global_env = RObject::view(R_ENVS.global);
-        RVariables::start(global_env, comm, comm_manager_tx, iopub_tx);
+        RVariables::start(global_env, comm, comm_event_tx, iopub_tx);
         Ok(true)
     })
 }

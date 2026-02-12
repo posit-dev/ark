@@ -15,7 +15,7 @@ use std::io::BufReader;
 use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
@@ -70,11 +70,11 @@ const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
 // Expose thread initialization via function so we can keep the structs private.
 // Must be called from the main R thread.
 pub(crate) fn init_graphics_device(
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
     graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
 ) {
-    DEVICE_CONTEXT.set(DeviceContext::new(comm_manager_tx, iopub_tx));
+    DEVICE_CONTEXT.set(DeviceContext::new(comm_event_tx, iopub_tx));
 
     // Declare our graphics device as interactive
     if let Err(err) = RFunction::from(".ps.graphics.register_as_interactive").call() {
@@ -123,8 +123,8 @@ struct WrappedDeviceCallbacks {
 struct PlotId(String);
 
 struct DeviceContext {
-    /// Channel for sending [CommManagerEvent]s to Positron when plot events occur
-    comm_manager_tx: Sender<CommManagerEvent>,
+    /// Channel for sending [CommEvent]s to Positron when plot events occur
+    comm_event_tx: Sender<CommEvent>,
 
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
@@ -191,9 +191,9 @@ struct DeviceContext {
 }
 
 impl DeviceContext {
-    fn new(comm_manager_tx: Sender<CommManagerEvent>, iopub_tx: Sender<IOPubMessage>) -> Self {
+    fn new(comm_event_tx: Sender<CommEvent>, iopub_tx: Sender<IOPubMessage>) -> Self {
         Self {
-            comm_manager_tx,
+            comm_event_tx,
             iopub_tx,
             has_changes: Cell::new(false),
             is_new_page: Cell::new(true),
@@ -654,8 +654,8 @@ impl DeviceContext {
             },
         };
 
-        let event = CommManagerEvent::Opened(socket.clone(), data);
-        if let Err(error) = self.comm_manager_tx.send(event) {
+        let event = CommEvent::Opened(socket.clone(), data);
+        if let Err(error) = self.comm_event_tx.send(event) {
             log::error!("{error:?}");
         }
 

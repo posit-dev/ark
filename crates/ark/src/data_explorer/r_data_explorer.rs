@@ -61,7 +61,7 @@ use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableShape;
 use amalthea::comm::data_explorer_comm::TextSearchType;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -167,8 +167,8 @@ pub struct RDataExplorer {
     /// The communication socket for the data viewer.
     comm: CommSocket,
 
-    /// A channel to send messages to the CommManager.
-    comm_manager_tx: Sender<CommManagerEvent>,
+    /// A channel to send comm lifecycle events.
+    comm_event_tx: Sender<CommEvent>,
 }
 #[derive(Deserialize, Serialize)]
 struct Metadata {
@@ -187,7 +187,7 @@ impl RDataExplorer {
         title: String,
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
     ) -> harp::Result<String> {
         let id = Uuid::new_v4().to_string();
@@ -222,7 +222,7 @@ impl RDataExplorer {
                         row_filters: vec![],
                         col_filters: vec![],
                         comm,
-                        comm_manager_tx,
+                        comm_event_tx,
                     };
 
                     // Start the data viewer's execution thread
@@ -238,8 +238,8 @@ impl RDataExplorer {
 
                     // Close the comm immediately since we can't proceed without
                     // the schema
-                    comm_manager_tx
-                        .send(CommManagerEvent::Closed(comm.comm_id))
+                    comm_event_tx
+                        .send(CommEvent::Closed(comm.comm_id))
                         .log_err();
                 },
             }
@@ -265,8 +265,8 @@ impl RDataExplorer {
             };
             let comm_open_json = serde_json::to_value(metadata)?;
             // Notify frontend that the data viewer comm is open
-            let event = CommManagerEvent::Opened(self.comm.clone(), comm_open_json);
-            self.comm_manager_tx.send(event)?;
+            let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
+            self.comm_event_tx.send(event)?;
             Ok(())
         };
 
@@ -1327,7 +1327,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
     let console = Console::get();
-    let comm_manager_tx = console.get_comm_manager_tx().clone();
+    let comm_event_tx = console.get_comm_event_tx().clone();
     let iopub_tx = console.get_iopub_tx().clone();
 
     // If an environment is provided, watch the variable in the environment
@@ -1353,7 +1353,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         None
     };
 
-    RDataExplorer::start(title, x, env_info, comm_manager_tx, iopub_tx)?;
+    RDataExplorer::start(title, x, env_info, comm_event_tx, iopub_tx)?;
 
     Ok(R_NilValue)
 }

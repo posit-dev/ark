@@ -17,7 +17,7 @@ use stdext::debug_panic;
 use stdext::spawn;
 use stdext::unwrap;
 
-use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommEvent;
 use crate::connection_file::ConnectionFile;
 use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
@@ -62,7 +62,7 @@ pub fn connect(
     stream_behavior: StreamBehavior,
     iopub_tx: Sender<IOPubMessage>,
     iopub_rx: Receiver<IOPubMessage>,
-    comm_manager_rx: Receiver<CommManagerEvent>,
+    comm_event_rx: Receiver<CommEvent>,
     // Receiver channel for the stdin socket; when input is needed, the
     // language runtime can request it by sending an StdInRequest::Input to
     // this channel. The frontend will prompt the user for input and
@@ -115,7 +115,7 @@ pub fn connect(
 
     // Channel for comm events flowing from notifier thread to Shell. The
     // notifier watches `comm_manager_rx` and forwards events via `shell_comm_tx`.
-    let (shell_comm_tx, shell_comm_rx) = unbounded::<CommManagerEvent>();
+    let (shell_comm_tx, shell_comm_rx) = unbounded::<CommEvent>();
 
     let iopub_tx_clone = iopub_tx.clone();
     spawn!(format!("{name}-shell"), move || {
@@ -266,14 +266,14 @@ pub fn connect(
     // via inproc ZMQ sockets. This allows threads to use `zmq_poll()` to wait on
     // both external ZMQ sockets and internal channel events.
     // - outbound_rx -> socket_bridge_thread (for IOPub/StdIn messages)
-    // - comm_manager_rx -> Shell (for comm events from backend)
+    // - comm_event_rx -> Shell (for comm events from backend)
     spawn!(format!("{name}-channel-bridge"), move || {
         channel_bridge_thread(
             outbound_notif_socket_tx,
             outbound_rx,
             zmq_outbound_tx,
             shell_comm_notif_socket_tx,
-            comm_manager_rx,
+            comm_event_rx,
             shell_comm_tx,
         )
     });
@@ -382,7 +382,7 @@ fn shell_thread(
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
     comm_notif_socket: Socket,
-    comm_manager_rx: Receiver<CommManagerEvent>,
+    comm_event_rx: Receiver<CommEvent>,
     shell_handler: Box<dyn ShellHandler>,
     server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 ) -> Result<(), Error> {
@@ -390,7 +390,7 @@ fn shell_thread(
         socket,
         iopub_tx.clone(),
         comm_notif_socket,
-        comm_manager_rx,
+        comm_event_rx,
         shell_handler,
         server_handlers,
     );
@@ -630,8 +630,8 @@ fn channel_bridge_thread(
     outbound_rx: Receiver<OutboundMessage>,
     zmq_outbound_tx: Sender<OutboundMessage>,
     shell_comm_notif_socket: Socket,
-    comm_manager_rx: Receiver<CommManagerEvent>,
-    shell_comm_tx: Sender<CommManagerEvent>,
+    comm_event_rx: Receiver<CommEvent>,
+    shell_comm_tx: Sender<CommEvent>,
 ) {
     use crossbeam::channel::Select;
 
@@ -643,7 +643,7 @@ fn channel_bridge_thread(
     );
     let mut comm = Forwarder::new(
         "comm",
-        comm_manager_rx,
+        comm_event_rx,
         shell_comm_tx,
         shell_comm_notif_socket,
     );

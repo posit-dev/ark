@@ -10,7 +10,7 @@ mod dummy_frontend;
 mod shell;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::wire::comm_close::CommClose;
@@ -266,8 +266,8 @@ fn test_amalthea_comm_open_from_kernel() {
     );
 
     frontend
-        .comm_manager_tx
-        .send(CommManagerEvent::Opened(
+        .comm_event_tx
+        .send(CommEvent::Opened(
             test_comm.clone(),
             serde_json::Value::Null,
         ))

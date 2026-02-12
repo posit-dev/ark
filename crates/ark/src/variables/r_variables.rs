@@ -6,7 +6,7 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::FormattedVariable;
 use amalthea::comm::variables_comm::InspectedVariable;
@@ -68,7 +68,7 @@ pub enum LastValue {
  */
 pub struct RVariables {
     comm: CommSocket,
-    comm_manager_tx: Sender<CommManagerEvent>,
+    comm_event_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
     pub env: RThreadSafe<RObject>,
     /// `Binding` does not currently protect anything, and therefore doesn't
@@ -107,11 +107,11 @@ impl RVariables {
     pub fn start(
         env: RObject,
         comm: CommSocket,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
     ) {
         // Start with default settings
-        Self::start_with_config(env, comm, comm_manager_tx, iopub_tx, LastValue::UseOption);
+        Self::start_with_config(env, comm, comm_event_tx, iopub_tx, LastValue::UseOption);
     }
 
     /**
@@ -124,7 +124,7 @@ impl RVariables {
     pub fn start_with_config(
         env: RObject,
         comm: CommSocket,
-        comm_manager_tx: Sender<CommManagerEvent>,
+        comm_event_tx: Sender<CommEvent>,
         iopub_tx: Sender<IOPubMessage>,
         show_last_value: LastValue,
     ) {
@@ -147,7 +147,7 @@ impl RVariables {
             // call unprotects them
             let environment = Self {
                 comm,
-                comm_manager_tx,
+                comm_event_tx,
                 iopub_tx,
                 env,
                 current_bindings,
@@ -413,7 +413,7 @@ impl RVariables {
                 name.clone(),
                 obj,
                 Some(binding),
-                self.comm_manager_tx.clone(),
+                self.comm_event_tx.clone(),
                 self.iopub_tx.clone(),
             )?;
             Ok(Some(viewer_id))

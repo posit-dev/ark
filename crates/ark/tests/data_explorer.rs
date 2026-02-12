@@ -59,7 +59,7 @@ use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket;
 use amalthea::socket::iopub::IOPubMessage;
 use ark::data_explorer::format::format_column;
@@ -94,20 +94,20 @@ use stdext::assert_match;
 /// Returns a TestSetup that can be used to communicate with the data explorer.
 fn open_data_explorer(dataset: String) -> TestSetup {
     // Create a dummy comm manager channel.
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
     // Create a dummy iopub channel to receive responses.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
     // Force the dataset to be loaded into the R environment.
     r_task(|| unsafe {
         let data = { RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv)) };
-        RDataExplorer::start(dataset, data, None, comm_manager_tx, iopub_tx).unwrap();
+        RDataExplorer::start(dataset, data, None, comm_event_tx, iopub_tx).unwrap();
     });
 
     // Wait for the new comm to show up.
-    let msg = comm_manager_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    let msg = comm_event_rx.recv_timeout(RECV_TIMEOUT).unwrap();
     match msg {
-        CommManagerEvent::Opened(socket, _value) => {
+        CommEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
             TestSetup { socket, iopub_rx }
         },
@@ -116,7 +116,7 @@ fn open_data_explorer(dataset: String) -> TestSetup {
 }
 
 fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<TestSetup> {
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
     r_task(|| -> anyhow::Result<()> {
@@ -133,7 +133,7 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
             String::from("obj"),
             object,
             binding,
-            comm_manager_tx,
+            comm_event_tx,
             iopub_tx,
         )
         .unwrap();
@@ -141,10 +141,10 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
     })?;
 
     // Release the R lock and wait for the new comm to show up.
-    let msg = comm_manager_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    let msg = comm_event_rx.recv_timeout(RECV_TIMEOUT).unwrap();
 
     match msg {
-        CommManagerEvent::Opened(socket, _value) => {
+        CommEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.dataExplorer");
             Ok(TestSetup { socket, iopub_rx })
         },

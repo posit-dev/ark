@@ -18,7 +18,7 @@ use stdext::result::ResultExt;
 use crate::comm::comm_channel::comm_rpc_message;
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
-use crate::comm::event::CommManagerEvent;
+use crate::comm::event::CommEvent;
 use crate::comm::server_comm::ServerComm;
 use crate::comm::server_comm::ServerStartedMessage;
 use crate::error::Error;
@@ -75,7 +75,7 @@ pub struct Shell {
     comm_notif_socket: Socket,
 
     /// Channel to receive comm registration events from backend-initiated comms
-    comm_manager_rx: Receiver<CommManagerEvent>,
+    comm_event_rx: Receiver<CommEvent>,
 
     /// The set of currently open comm channels
     open_comms: Vec<CommSocket>,
@@ -87,14 +87,14 @@ impl Shell {
     /// * `socket` - The underlying ZeroMQ Shell socket
     /// * `iopub_tx` - A channel that delivers messages to the IOPub socket
     /// * `comm_notif_socket` - Socket to receive notifications when comm events arrive
-    /// * `comm_manager_rx` - A channel that receives comm registration events from backend comms
+    /// * `comm_event_rx` - A channel that receives comm registration events from backend comms
     /// * `shell_handler` - The language's shell channel handler
     /// * `server_handlers` - A map of server handler target names to their handlers
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
         comm_notif_socket: Socket,
-        comm_manager_rx: Receiver<CommManagerEvent>,
+        comm_event_rx: Receiver<CommEvent>,
         shell_handler: Box<dyn ShellHandler>,
         server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
     ) -> Self {
@@ -104,7 +104,7 @@ impl Shell {
             shell_handler,
             server_handlers,
             comm_notif_socket,
-            comm_manager_rx,
+            comm_event_rx,
             open_comms: Vec::new(),
         }
     }
@@ -174,15 +174,15 @@ impl Shell {
         }
 
         // Drain all pending comm events
-        while let Ok(event) = self.comm_manager_rx.try_recv() {
+        while let Ok(event) = self.comm_event_rx.try_recv() {
             self.process_comm_event(event);
         }
     }
 
-    /// Process a comm lifecycle event from `comm_manager_rx`.
-    fn process_comm_event(&mut self, event: CommManagerEvent) {
+    /// Process a comm lifecycle event from `comm_event_rx`.
+    fn process_comm_event(&mut self, event: CommEvent) {
         match event {
-            CommManagerEvent::Opened(comm_socket, data) => {
+            CommEvent::Opened(comm_socket, data) => {
                 // For backend-initiated comms, notify the frontend via IOPub
                 if comm_socket.initiator == CommInitiator::BackEnd {
                     self.iopub_tx
@@ -203,7 +203,7 @@ impl Shell {
                 );
             },
 
-            CommManagerEvent::Message(comm_id, msg) => {
+            CommEvent::Message(comm_id, msg) => {
                 let Some(comm) = self.open_comms.iter().find(|c| c.comm_id == comm_id) else {
                     log::warn!("Received message for unknown comm channel {comm_id}: {msg:?}");
                     return;
@@ -213,7 +213,7 @@ impl Shell {
                 comm.incoming_tx.send(msg).log_err();
             },
 
-            CommManagerEvent::Closed(comm_id) => {
+            CommEvent::Closed(comm_id) => {
                 let Some(idx) = self.open_comms.iter().position(|c| c.comm_id == comm_id) else {
                     log::warn!("Received close message for unknown comm channel {comm_id}");
                     return;

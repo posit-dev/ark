@@ -8,7 +8,7 @@ use amalthea::comm::connections_comm::GetIconParams;
 use amalthea::comm::connections_comm::ListFieldsParams;
 use amalthea::comm::connections_comm::ListObjectsParams;
 use amalthea::comm::connections_comm::ObjectSchema;
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket;
 use amalthea::socket::iopub::IOPubMessage;
 use ark::connections::r_connection::Metadata;
@@ -25,7 +25,7 @@ use stdext::assert_match;
 fn open_dummy_connection() -> (socket::comm::CommSocket, Receiver<IOPubMessage>) {
     print!("testing!\n");
 
-    let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(0);
+    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
     // Create a dummy iopub channel to receive responses.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
@@ -52,17 +52,17 @@ fn open_dummy_connection() -> (socket::comm::CommSocket, Receiver<IOPubMessage>)
                 language_id: String::from("r"),
             };
 
-            RConnection::start(metadata, comm_manager_tx, iopub_tx, id)
+            RConnection::start(metadata, comm_event_tx, iopub_tx, id)
         }
     });
 
     // Wait for the new comm to show up.
-    let msg = comm_manager_rx
+    let msg = comm_event_rx
         .recv_timeout(std::time::Duration::from_secs(1))
         .unwrap();
 
     match msg {
-        CommManagerEvent::Opened(socket, _value) => {
+        CommEvent::Opened(socket, _value) => {
             assert_eq!(socket.comm_name, "positron.connection");
             assert_eq!(socket.comm_id, comm_id);
             (socket, iopub_rx)

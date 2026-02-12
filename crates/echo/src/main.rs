@@ -14,7 +14,7 @@ use std::io::stdin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::connection_file::ConnectionFile;
 use amalthea::kernel;
 use amalthea::kernel::StreamBehavior;
@@ -31,7 +31,7 @@ use crate::shell::Shell;
 fn start_kernel(connection_file: ConnectionFile, registration_file: Option<RegistrationFile>) {
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    let (_comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
+    let (_comm_event_tx, comm_event_rx) = bounded::<CommEvent>(10);
 
     // Communication channel with StdIn
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
@@ -59,7 +59,7 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
         StreamBehavior::None,
         iopub_tx,
         iopub_rx,
-        comm_manager_rx,
+        comm_event_rx,
         stdin_request_rx,
         stdin_reply_tx,
     ) {

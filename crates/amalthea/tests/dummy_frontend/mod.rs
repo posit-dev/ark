@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use std::sync::MutexGuard;
 use std::sync::OnceLock;
 
-use amalthea::comm::event::CommManagerEvent;
+use amalthea::comm::event::CommEvent;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::kernel;
@@ -28,62 +28,40 @@ use super::control;
 use super::shell;
 
 static AMALTHEA_FRONTEND: OnceLock<
-    Arc<
-        Mutex<(
-            DummyFrontend,
-            Sender<CommManagerEvent>,
-            Sender<IOPubMessage>,
-        )>,
-    >,
+    Arc<Mutex<(DummyFrontend, Sender<CommEvent>, Sender<IOPubMessage>)>>,
 > = OnceLock::new();
 
 /// Wrapper around `DummyFrontend` that checks sockets are empty on drop
 pub struct DummyAmaltheaFrontend {
-    pub comm_manager_tx: Sender<CommManagerEvent>,
+    pub comm_event_tx: Sender<CommEvent>,
     pub iopub_tx: Sender<IOPubMessage>,
-    guard: MutexGuard<
-        'static,
-        (
-            DummyFrontend,
-            Sender<CommManagerEvent>,
-            Sender<IOPubMessage>,
-        ),
-    >,
+    guard: MutexGuard<'static, (DummyFrontend, Sender<CommEvent>, Sender<IOPubMessage>)>,
 }
 
 impl DummyAmaltheaFrontend {
     pub fn lock() -> Self {
         let guard = Self::get_frontend().lock().unwrap();
-        let comm_manager_tx = guard.1.clone();
+        let comm_event_tx = guard.1.clone();
         let iopub_tx = guard.2.clone();
         Self {
             guard,
-            comm_manager_tx,
+            comm_event_tx,
             iopub_tx,
         }
     }
 
-    fn get_frontend() -> &'static Arc<
-        Mutex<(
-            DummyFrontend,
-            Sender<CommManagerEvent>,
-            Sender<IOPubMessage>,
-        )>,
-    > {
+    fn get_frontend(
+    ) -> &'static Arc<Mutex<(DummyFrontend, Sender<CommEvent>, Sender<IOPubMessage>)>> {
         AMALTHEA_FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyAmaltheaFrontend::init())))
     }
 
-    fn init() -> (
-        DummyFrontend,
-        Sender<CommManagerEvent>,
-        Sender<IOPubMessage>,
-    ) {
+    fn init() -> (DummyFrontend, Sender<CommEvent>, Sender<IOPubMessage>) {
         let connection = DummyConnection::new();
         let (connection_file, registration_file) = connection.get_connection_files();
 
         let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-        let (comm_manager_tx, comm_manager_rx) = bounded::<CommManagerEvent>(10);
+        let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(10);
 
         let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
         let (stdin_reply_tx, stdin_reply_rx) = unbounded();
@@ -114,7 +92,7 @@ impl DummyAmaltheaFrontend {
                     StreamBehavior::None,
                     iopub_tx,
                     iopub_rx,
-                    comm_manager_rx,
+                    comm_event_rx,
                     stdin_request_rx,
                     stdin_reply_tx,
                 ) {
@@ -124,7 +102,7 @@ impl DummyAmaltheaFrontend {
         });
 
         let frontend = DummyFrontend::from_connection(connection);
-        (frontend, comm_manager_tx, iopub_tx)
+        (frontend, comm_event_tx, iopub_tx)
     }
 }
 
