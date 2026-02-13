@@ -44,6 +44,7 @@ use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
 use crate::dap::dap::DapStoppedEvent;
+use crate::dap::dap_variables::object_variable_from_value;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
@@ -777,22 +778,15 @@ impl<R: Read, W: Write> DapServer<R, W> {
         spawn_idle_any_prompt(move |mut capture| async move {
             log::trace!("DAP: Idle task started for evaluate");
 
-            // If expression starts with "/print ", evaluate and return captured output
-            let rsp = if let Some(expr) = expression.strip_prefix("/print ") {
-                match debug_evaluate_print(&state, expr, frame_id, &mut capture) {
-                    Ok(output) => req.success(ResponseBody::Evaluate(EvaluateResponse {
-                        result: output,
-                        type_field: None,
-                        presentation_hint: None,
-                        variables_reference: 0,
-                        named_variables: None,
-                        indexed_variables: None,
-                        memory_reference: None,
-                    })),
-                    Err(err) => req.error(&err),
-                }
-            } else {
-                let result = debug_evaluate(&state, &expression, frame_id);
+            // If expression starts with "/print ", evaluate and print result
+            let (expr, print) = match expression.strip_prefix("/print ") {
+                Some(expr) => (expr, true),
+                None => (expression.as_str(), false),
+            };
+
+            let rsp = {
+                let capture = if print { Some(&mut capture) } else { None };
+                let result = debug_evaluate(&state, expr, frame_id, capture);
                 log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
 
                 match result {
@@ -833,31 +827,24 @@ fn debug_evaluate(
     state: &Arc<Mutex<Dap>>,
     expression: &str,
     frame_id: Option<i64>,
+    capture: Option<&mut ConsoleOutputCapture>,
 ) -> Result<RVariable, String> {
     let state = state.lock().unwrap();
     let env = get_frame_env(&state, frame_id)?;
 
     match harp::parse_eval0(expression, harp::RObject::view(env)) {
-        Ok(value) => Ok(crate::dap::dap_variables::object_variable_from_value(
-            value.sexp,
-        )),
-        Err(err) => Err(format!("{err}")),
-    }
-}
-
-fn debug_evaluate_print(
-    state: &Arc<Mutex<Dap>>,
-    expression: &str,
-    frame_id: Option<i64>,
-    capture: &mut ConsoleOutputCapture,
-) -> Result<String, String> {
-    let state = state.lock().unwrap();
-    let env = get_frame_env(&state, frame_id)?;
-
-    match harp::parse_eval0(expression, harp::RObject::view(env)) {
         Ok(value) => {
-            harp::utils::r_print(value.sexp);
-            Ok(capture.take().trim_end().to_string())
+            if let Some(capture) = capture {
+                harp::utils::r_print(value.sexp);
+                Ok(RVariable {
+                    name: String::new(),
+                    value: capture.take().trim_end().to_string(),
+                    type_field: None,
+                    variables_reference_object: None,
+                })
+            } else {
+                Ok(object_variable_from_value(value.sexp))
+            }
         },
         Err(err) => Err(format!("{err}")),
     }
