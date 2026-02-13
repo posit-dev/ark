@@ -1043,8 +1043,6 @@ impl Console {
 
             // Reply to active request with error, then fall through to event loop
             self.handle_active_request(&info, ConsoleValue::Error(exception));
-
-            self.reset_global_env_rdebug();
         } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input from the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
@@ -1056,8 +1054,6 @@ impl Console {
             // fall through to event loop
             let result = self.take_result();
             self.handle_active_request(&info, ConsoleValue::Success(result));
-
-            self.reset_global_env_rdebug();
         }
 
         // In the future we'll also send browser information, see
@@ -1354,6 +1350,8 @@ impl Console {
     }
 
     fn handle_active_request(&mut self, info: &PromptInfo, value: ConsoleValue) {
+        self.reset_global_env_rdebug();
+
         // If we get here we finished evaluating all pending inputs. Check if we
         // have an active request from a previous `read_console()` iteration. If
         // so, we `take()` and clear the `active_request` as we're about to
