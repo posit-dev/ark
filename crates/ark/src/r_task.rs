@@ -301,7 +301,7 @@ where
     let tasks_tx = IDLE_TASKS.tx();
 
     let wrapper_fut = async move {
-        let capture = ConsoleOutputCapture::new();
+        let capture = Console::get_mut().start_capture();
         fun(capture).await
     };
 
@@ -342,7 +342,7 @@ where
     let tasks_tx = IDLE_ANY_TASKS.tx();
 
     let wrapper_fut = async move {
-        let capture = ConsoleOutputCapture::new();
+        let capture = Console::get_mut().start_capture();
         fun(capture).await
     };
 

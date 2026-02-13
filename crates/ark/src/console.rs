@@ -540,9 +540,9 @@ pub(crate) enum ConsoleResult {
 
 /// Guard for capturing console output during idle tasks.
 ///
-/// When created, this sets `Console::captured_output` to `Some` so that all
-/// `write_console` output goes there instead of IOPub.
-/// When dropped, it restores the previous state and logs any remaining output.
+/// Created via `Console::start_capture()`, which sets `Console::captured_output`
+/// to `Some` so that all `write_console` output goes there instead of IOPub.
+/// When dropped, restores the previous state and logs any remaining output.
 ///
 /// Use `take()` to retrieve captured output. Can be called multiple times to
 /// get output accumulated since the last take.
@@ -552,18 +552,6 @@ pub struct ConsoleOutputCapture {
 }
 
 impl ConsoleOutputCapture {
-    pub fn new() -> Self {
-        let console = Console::get_mut();
-
-        let was_capturing = console.captured_output.is_some();
-        console.captured_output = Some(String::new());
-
-        Self {
-            was_capturing,
-            connected: true,
-        }
-    }
-
     /// Create a dummy capture that doesn't interact with Console.
     /// Used in test contexts where Console is not initialized.
     pub(crate) fn dummy() -> Self {
@@ -985,6 +973,18 @@ impl Console {
     /// Provides read-only access to `iopub_tx`
     pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
+    }
+
+    /// Start capturing console output.
+    /// Returns a guard that restores the previous state on drop.
+    pub(crate) fn start_capture(&mut self) -> ConsoleOutputCapture {
+        let was_capturing = self.captured_output.is_some();
+        self.captured_output = Some(String::new());
+
+        ConsoleOutputCapture {
+            was_capturing,
+            connected: true,
+        }
     }
 
     /// Get the current execution context if an active request exists.
