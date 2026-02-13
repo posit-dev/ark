@@ -183,6 +183,47 @@ fn test_dap_break_on_error_excludes_handle_simple_error_frame() {
     dap.recv_continued();
 }
 
+/// Test that warning machinery frames are excluded from the stack trace
+#[test]
+fn test_dap_break_on_warning_excludes_signal_simple_warning_frames() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["warning"]);
+
+    frontend.send_source("warning('test')");
+
+    dap.recv_stopped_exception();
+
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    // The warning machinery frames should be excluded from the stack
+    let warning_frames = [
+        "doWithOneRestart()",
+        "withOneRestart()",
+        "withRestarts()",
+        ".signalSimpleWarning",
+    ];
+    for frame in warning_frames {
+        assert!(
+            !frame_names.iter().any(|f| f.starts_with(frame)),
+            "Frame '{frame}' should be excluded, got: {frame_names:?}",
+        );
+    }
+
+    // Continue out of debugger
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.assert_stream_stderr_contains("test");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+}
+
 /// Test that the global warning handler frame is excluded from the stack trace
 #[test]
 fn test_dap_break_on_warning_excludes_handler_frame() {
