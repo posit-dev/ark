@@ -88,20 +88,21 @@ frontend.recv_iopub_execute_result();
 frontend.recv_iopub_idle();
 frontend.recv_shell_execute_reply();
 
-// For debug flows with streams, stream assertions MUST come before idle
+// For debug flows, debug messages like "Called from:", "debug at", "debugging in:",
+// and "exiting from:" are filtered from console output. Use drain_streams() to
+// handle any other output that appears during debug operations.
 frontend.recv_iopub_start_debug();
 frontend.recv_iopub_stop_debug();
 frontend.recv_iopub_start_debug();
-frontend.assert_stream_stdout_contains("Called from:");
-frontend.assert_stream_stdout_contains("debug at");
+frontend.assert_stream_stdout_contains("My output");
 frontend.recv_iopub_idle();  // Flushes stream buffers, resets for next operation
 frontend.recv_shell_execute_reply();
 
-// For ordering assertions, use drain_streams() at checkpoints
+// For ordering assertions on non-debug output, use drain_streams() at checkpoints
 frontend.recv_iopub_stop_debug();
 let after_stop = frontend.drain_streams();
 frontend.recv_iopub_start_debug();
-assert!(after_stop.stdout.contains("debugging in:"));
+// Note: debug messages won't appear here, only regular R output
 ```
 
 **Debugging tests:**

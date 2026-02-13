@@ -99,6 +99,7 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
+use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
@@ -357,6 +358,10 @@ pub struct Console {
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
     pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
+
+    /// Filter for debug console output. Removes R's internal debug messages
+    /// from user-visible console output.
+    filter: ConsoleFilter,
 }
 
 /// Stack of pending inputs
@@ -948,6 +953,7 @@ impl Console {
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
             read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
+            filter: ConsoleFilter::new(),
         }
     }
 
@@ -1105,7 +1111,10 @@ impl Console {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        self.debug_handle_read_console();
+        // Flush the stream filter and finalize any pending debug capture
+        if let Some(update) = self.filter.on_read_console() {
+            self.debug_handle_call_text_update(update);
+        }
 
         // State machine part of ReadConsole
 
@@ -2397,10 +2406,6 @@ impl Console {
             return;
         }
 
-        // To capture the current `debug: <call>` output, for use in the debugger's
-        // match based fallback
-        console.debug_handle_write_console(&content);
-
         let stream = if otype == 0 {
             Stream::Stdout
         } else {
@@ -2441,9 +2446,19 @@ impl Console {
             // differentiate, but that could change in the future:
             // https://github.com/posit-dev/positron/issues/1881
 
-            // Handle last expression
+            // Handle last expression - filter debug messages but accumulate in autoprint_output
             if console.pending_inputs.is_none() {
-                console.autoprint_output.push_str(&content);
+                // Feed through stream filter to remove debug messages
+                let (actions, debug_update) = console.filter.feed(&content, stream);
+
+                if let Some(update) = debug_update {
+                    console.debug_handle_call_text_update(update);
+                }
+
+                // Accumulate filtered output in autoprint_output instead of emitting to IOPub
+                for (text, _) in actions {
+                    console.autoprint_output.push_str(&text);
+                }
                 return;
             }
 
@@ -2457,12 +2472,19 @@ impl Console {
             // IOPub.
         }
 
-        // Stream output via the IOPub channel.
-        let message = IOPubMessage::Stream(StreamOutput {
-            name: stream,
-            text: content,
-        });
-        console.iopub_tx.send(message).unwrap();
+        // Feed content through the stream filter to remove debug messages
+        let (actions, debug_update) = console.filter.feed(&content, stream);
+
+        // Apply any debug state update from the filter
+        if let Some(update) = debug_update {
+            console.debug_handle_call_text_update(update);
+        }
+
+        // Process filter actions
+        for (text, stream) in actions {
+            let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
+            console.iopub_tx.send(message).unwrap();
+        }
     }
 
     /// Invoked by R to change busy state
@@ -2516,6 +2538,11 @@ impl Console {
         // and Linux have 8MB).
         if let Err(_) = r_check_stack(Some(128 * 1024)) {
             return;
+        }
+
+        // Check stream filter timeout to handle long computations between WriteConsole calls
+        if let Some(update) = self.filter.check_timeout() {
+            self.debug_handle_call_text_update(update);
         }
 
         // Coalesce up to three concurrent tasks in case the R event loop is
@@ -2748,6 +2775,13 @@ impl Console {
     }
 
     fn read_console_enter(&mut self, env: RObject) {
+        // Restore JIT level after a step-into command
+        if let Some(level) = self.debug_jit_level.take() {
+            if let Err(err) = harp::parse_eval_base(&format!("compiler::enableJIT({level}L)")) {
+                log::error!("Failed to restore JIT level: {err:?}");
+            }
+        }
+
         // Track nesting depth of ReadConsole REPLs
         self.read_console_depth
             .set(self.read_console_depth.get() + 1);

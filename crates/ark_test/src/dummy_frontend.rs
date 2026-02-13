@@ -454,11 +454,10 @@ impl DummyArkFrontend {
     /// Assert that stdout contains a "debug at" message referencing the given file.
     ///
     /// R outputs "debug at <path>#<line>: <code>" when stepping through sourced files.
-    /// This helper checks both "debug at" and the filename appear in stdout.
+    /// Note: "debug at" messages are now filtered from console output, so this is a no-op.
     #[track_caller]
-    pub fn assert_stream_debug_at(&self, file: &SourceFile) {
-        self.assert_stream_stdout_contains("debug at");
-        self.assert_stream_stdout_contains(&file.filename);
+    pub fn assert_stream_debug_at(&self, _file: &SourceFile) {
+        // "debug at" messages are filtered from console output
     }
 
     /// Internal helper for regex stream assertions.
@@ -1203,13 +1202,13 @@ impl DummyArkFrontend {
     /// Receive IOPub messages for a breakpoint hit with auto-stepping.
     ///
     /// Non-stream message sequence: start_debug, idle.
-    /// Stream assertions: "Called from:" and "debug at".
+    /// Note: "Called from:" and "debug at" messages are filtered from console output.
     #[track_caller]
     pub fn recv_iopub_breakpoint_hit(&self) {
         trace_separator("recv_iopub_breakpoint_hit START");
         self.recv_iopub_start_debug();
-        self.assert_stream_stdout_contains("Called from:");
-        self.assert_stream_stdout_contains("debug at");
+        // "Called from:" and "debug at" are filtered from console output, drain any other streams
+        self.drain_streams();
         self.recv_iopub_idle();
         trace_separator("recv_iopub_breakpoint_hit END");
     }
@@ -1220,7 +1219,7 @@ impl DummyArkFrontend {
     /// The caller must still receive the DAP `Stopped` event.
     ///
     /// Non-stream message sequence: busy, execute_input, start_debug, idle, shell_reply.
-    /// Stream assertion: "Called from:".
+    /// Note: "Called from:" is filtered from console output.
     #[track_caller]
     pub fn source_debug_file(&self, file: &SourceFile) {
         trace_separator(&format!("source_debug({})", file.filename));
@@ -1231,7 +1230,8 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
         self.recv_iopub_start_debug();
-        self.assert_stream_stdout_contains("Called from:");
+        // "Called from:" is filtered from console output, drain any other streams
+        self.drain_streams();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply();
     }
@@ -1269,7 +1269,8 @@ impl DummyArkFrontend {
         self.recv_iopub_execute_input();
 
         self.recv_iopub_start_debug();
-        self.assert_stream_stdout_contains("Called from:");
+        // "Called from:" is filtered from console output, drain any other streams
+        self.drain_streams();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply();
 
@@ -1283,13 +1284,15 @@ impl DummyArkFrontend {
     }
 
     /// Execute `browser()` and receive all expected messages.
+    /// Note: "Called from:" is filtered from console output, so there's no execute_result.
     #[track_caller]
     pub fn debug_send_browser(&self) -> u32 {
         self.send_execute_request("browser()", ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
         self.recv_iopub_start_debug();
-        self.recv_iopub_execute_result();
+        // "Called from:" is filtered from console output
+        self.drain_streams();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
@@ -1314,7 +1317,7 @@ impl DummyArkFrontend {
     /// instead of "debug at", so this needs a different message pattern.
     ///
     /// Non-stream message sequence: busy, execute_input, stop_debug, start_debug, idle, shell_reply.
-    /// Stream assertion: "Called from:".
+    /// Note: "Called from:" is filtered from console output.
     #[track_caller]
     pub fn debug_send_continue_to_breakpoint(&self) -> u32 {
         self.send_execute_request("c", ExecuteRequestOptions::default());
@@ -1322,7 +1325,8 @@ impl DummyArkFrontend {
         self.recv_iopub_execute_input();
         self.recv_iopub_stop_debug();
         self.recv_iopub_start_debug();
-        self.assert_stream_stdout_contains("Called from:");
+        // "Called from:" is filtered from console output, drain any other streams
+        self.drain_streams();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }
@@ -1376,16 +1380,16 @@ impl DummyArkFrontend {
     /// The `file` parameter is used to assert that stdout contains "debug at {filename}".
     /// The caller must still consume DAP events (recv_continued, recv_stopped).
     #[track_caller]
-    pub fn debug_send_step_command(&self, cmd: &str, file: &SourceFile) -> u32 {
+    pub fn debug_send_step_command(&self, cmd: &str, _file: &SourceFile) -> u32 {
         trace_separator(&format!("debug_step({})", cmd));
         self.send_execute_request(cmd, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
         self.recv_iopub_stop_debug();
         self.recv_iopub_start_debug();
-        // Check both "debug at" and the filename appear (filename may have full path before it)
-        self.assert_stream_stdout_contains("debug at");
-        self.assert_stream_stdout_contains(&file.filename);
+        // "debug at" is filtered from console output, drain any other streams
+        // (e.g., function return values) that we don't need to assert on
+        self.drain_streams();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
     }

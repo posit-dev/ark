@@ -279,7 +279,7 @@ fn test_dap_nested_browser() {
     frontend.recv_iopub_execute_input();
 
     frontend.recv_iopub_stop_debug();
-    frontend.assert_stream_stdout_contains("debugging in:");
+    // "debugging in:" is filtered from console output
     frontend.recv_iopub_start_debug();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();

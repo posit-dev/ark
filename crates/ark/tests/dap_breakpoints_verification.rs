@@ -389,7 +389,7 @@ foo <- function() {
     frontend.recv_iopub_execute_input();
 
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("debugging in:");
+    // "debugging in:" is filtered from console output
     frontend.recv_iopub_idle();
 
     // DAP: Stopped at function body
