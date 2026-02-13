@@ -196,8 +196,8 @@ foo()
     assert_eq!(bp.line, Some(5));
 
     // Hit browser() and stop
+    // "Called from:" is filtered from console output
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("Called from: foo()");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
     dap.recv_stopped();
@@ -465,8 +465,7 @@ lapply(1:3, function(x) {
     // Hit the breakpoint again on next iteration (auto-stepping is now transparent)
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_debug_at(&file);
+    // "Called from:" and "debug at" are filtered from console output
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -483,8 +482,7 @@ lapply(1:3, function(x) {
     // Same pattern as second iteration
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_debug_at(&file);
+    // "Called from:" and "debug at" are filtered from console output
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -623,8 +621,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
     // Hit the breakpoint again on next iteration (auto-stepping is now transparent)
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_debug_at(&file);
+    // "Called from:" and "debug at" are filtered from console output
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -640,8 +637,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
     // Same pattern as second iteration
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_debug_at(&file);
+    // "Called from:" and "debug at" are filtered from console output
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 

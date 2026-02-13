@@ -24,6 +24,7 @@ use crate::console::Console;
 use crate::console::DebugCallText;
 use crate::console::DebugCallTextKind;
 use crate::console::DebugStoppedReason;
+use crate::console_filter::DebugCallTextUpdate;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -149,60 +150,12 @@ impl Console {
         dap.stop_debug();
     }
 
-    pub(crate) fn debug_handle_read_console(&mut self) {
-        // Upon entering read-console, finalize any debug call text that we were capturing.
-        // At this point, the user can either advance the debugger, causing us to capture
-        // a new expression, or execute arbitrary code, where we will reuse a finalized
-        // debug call text to maintain the debug state.
-        match &self.debug_call_text {
-            // If not debugging, nothing to do.
-            DebugCallText::None => (),
-            // If already finalized, keep what we have.
-            DebugCallText::Finalized(_, _) => (),
-            // If capturing, transition to finalized.
-            DebugCallText::Capturing(call_text, kind) => {
-                self.debug_call_text = DebugCallText::Finalized(call_text.clone(), *kind)
-            },
-        }
-
-        // Restore JIT level after a step-into command
-        if let Some(level) = self.debug_jit_level.take() {
-            if let Err(err) = harp::parse_eval_base(&format!("compiler::enableJIT({level}L)")) {
-                log::error!("Failed to restore JIT level: {err:?}");
-            }
-        }
-    }
-
-    pub(crate) fn debug_handle_write_console(&mut self, content: &str) {
-        if let DebugCallText::Capturing(ref mut call_text, _) = self.debug_call_text {
-            // Append to current expression if we are currently capturing stdout
-            call_text.push_str(content);
-            return;
-        }
-
-        // `debug: ` is emitted by R (if no srcrefs are available!) right before it emits
-        // the current expression we are debugging, so we use that as a signal to begin
-        // capturing.
-        if content == "debug: " {
-            self.debug_call_text =
-                DebugCallText::Capturing(String::new(), DebugCallTextKind::Debug);
-            return;
-        }
-
-        // `debug at *PATH*: *EXPR*` is emitted by R when stepping through
-        // blocks that have srcrefs. We use this to detect that we've just
-        // stepped to an injected breakpoint and need to move on automatically.
-        if content.starts_with("debug at ") {
-            self.debug_call_text =
-                DebugCallText::Capturing(String::new(), DebugCallTextKind::DebugAt);
-            return;
-        }
-
-        // Entering or exiting a closure, reset the debug start line state and call text
-        if content == "debugging in: " || content == "exiting from: " {
+    /// Apply a debug call text update from the stream filter
+    pub(crate) fn debug_handle_call_text_update(&mut self, update: DebugCallTextUpdate) {
+        let (new_call_text, reset_last_line) = update.apply();
+        self.debug_call_text = new_call_text;
+        if reset_last_line {
             self.debug_last_line = None;
-            self.debug_call_text = DebugCallText::None;
-            return;
         }
     }
 
