@@ -328,7 +328,7 @@ where
 /// The closure receives a `ConsoleOutputCapture` that can be used to capture
 /// console output during the task. Call `take()` on it to retrieve output, which
 /// can be done multiple times. Any remaining output is logged when the capture is dropped.
-pub(crate) fn spawn_idle_any<F, Fut>(fun: F)
+pub(crate) fn spawn_idle_any_prompt<F, Fut>(fun: F)
 where
     F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
