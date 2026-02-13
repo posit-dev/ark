@@ -5,6 +5,8 @@
 //
 //
 
+use std::borrow::Cow;
+
 use anyhow::bail;
 use anyhow::Result;
 use once_cell::sync::Lazy;
@@ -12,12 +14,14 @@ use regex::Regex;
 use serde::Deserialize;
 use serde::Serialize;
 use stdext::unwrap;
+use tower_lsp::jsonrpc;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::Position;
 use tower_lsp::lsp_types::VersionedTextDocumentIdentifier;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::lsp::backend::LspError;
 use crate::lsp::backend::LspResult;
 use crate::lsp::document::Document;
 use crate::lsp::traits::cursor::TreeCursorExt;
@@ -47,6 +51,49 @@ pub struct StatementRangeResponse {
     pub code: Option<String>,
 }
 
+#[derive(Debug)]
+enum StatementRangeErrorCode {
+    Parse = 1,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum StatementRangeError {
+    Parse(StatementRangeParseError),
+}
+
+#[derive(Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StatementRangeParseError {
+    pub line: u32,
+}
+
+impl From<StatementRangeError> for LspError {
+    fn from(error: StatementRangeError) -> Self {
+        match error {
+            StatementRangeError::Parse(error) => {
+                // Serialize `StatementRangeParseError` into arbitrary `data` field
+                let data = match serde_json::to_value(error) {
+                    Ok(data) => data,
+                    Err(error) => {
+                        return LspError::Anyhow(anyhow::anyhow!(
+                            "Failed to serialize parse error: {error:?}"
+                        ))
+                    },
+                };
+                LspError::JsonRpc(jsonrpc::Error {
+                    code: jsonrpc::ErrorCode::ServerError(StatementRangeErrorCode::Parse as i64),
+                    message: Cow::Owned(String::from(
+                        "Can't compute statement range due to parse error.",
+                    )),
+                    data: Some(data),
+                })
+            },
+        }
+    }
+}
+
+type StatementRangeResult<T> = std::result::Result<T, StatementRangeError>;
+
 // `Regex::new()` is fairly slow to compile.
 // roxygen2 comments can contain 1 or more leading `#` before the `'`.
 static RE_ROXYGEN2_COMMENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"^#+'").unwrap());
@@ -62,11 +109,11 @@ pub(crate) fn statement_range(
     // subdocument containing the `@examples` or `@examplesIf` section and locate a
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
-    if let Some((range, code)) = find_roxygen_statement_range(&root, contents, point) {
+    if let Some((range, code)) = find_roxygen_statement_range(&root, contents, point)? {
         return Ok(Some(new_statement_range_response(range, document, code)?));
     }
 
-    if let Some(range) = find_statement_range(&root, point.row) {
+    if let Some(range) = find_statement_range(&root, point.row)? {
         return Ok(Some(new_statement_range_response(range, document, None)?));
     };
 
@@ -90,17 +137,17 @@ fn find_roxygen_statement_range(
     root: &Node,
     contents: &str,
     point: Point,
-) -> Option<(tree_sitter::Range, Option<String>)> {
+) -> StatementRangeResult<Option<(tree_sitter::Range, Option<String>)>> {
     // Refuse to look for roxygen comments in the face of parse errors
     // (posit-dev/positron#5023)
     if node_has_error_or_missing(root) {
-        return None;
+        return Ok(None);
     }
 
     // Find first node that is at or extends past the `point`
     let mut cursor = root.walk();
     if !cursor.goto_first_child_for_point_patched(point) {
-        return None;
+        return Ok(None);
     }
     let node = cursor.node();
 
@@ -108,8 +155,8 @@ fn find_roxygen_statement_range(
     // full examples section
     if let Some(range) = find_roxygen_examples_section(node, contents) {
         // Then narrow in on the exact range of code that the user's cursor covers
-        if let Some((range, code)) = find_roxygen_examples_range(root, range, contents, point) {
-            return Some((range, Some(code)));
+        if let Some((range, code)) = find_roxygen_examples_range(root, range, contents, point)? {
+            return Ok(Some((range, Some(code))));
         };
     }
 
@@ -118,11 +165,11 @@ fn find_roxygen_statement_range(
     // kind. If so, we send just the current comment line to prevent "jumping" past the
     // entire roxygen block if you misplace your cursor and `Cmd + Enter`.
     if as_roxygen_comment_text(&node, contents).is_some() {
-        return Some((node.range(), None));
+        return Ok(Some((node.range(), None)));
     }
 
     // Otherwise we let someone else handle the statement range
-    None
+    Ok(None)
 }
 
 fn as_roxygen_comment_text(node: &Node, contents: &str) -> Option<String> {
@@ -248,13 +295,13 @@ fn find_roxygen_examples_range(
     range: tree_sitter::Range,
     contents: &str,
     point: Point,
-) -> Option<(tree_sitter::Range, String)> {
+) -> StatementRangeResult<Option<(tree_sitter::Range, String)>> {
     // Anchor row that we adjust relative to
     let row_adjustment = range.start_point.row;
 
     // Slice out the `@examples` or `@examplesIf` code block (with leading roxygen comments)
     let Some(slice) = contents.get(range.start_byte..range.end_byte) else {
-        return None;
+        return Ok(None);
     };
 
     // Trim out leading roxygen comments so we are left with a subdocument of actual code
@@ -281,9 +328,20 @@ fn find_roxygen_examples_range(
     // start our search from within the subdocument
     let subdocument_row = point.row - row_adjustment;
 
-    let Some(subdocument_range) = find_statement_range(&subdocument_root, subdocument_row) else {
-        // Subdocument could have parse errors or we could just not have anything to execute
-        return None;
+    let subdocument_range = match find_statement_range(&subdocument_root, subdocument_row) {
+        Ok(subdocument_range) => match subdocument_range {
+            Some(subdocument_range) => subdocument_range,
+            None => {
+                // Subdocument may not have anything for us to execute.
+                return Ok(None);
+            },
+        },
+        Err(error) => {
+            // Adjust line number of the parse error to reflect original document
+            let StatementRangeError::Parse(mut error) = error;
+            error.line = error.line + row_adjustment as u32;
+            return Err(StatementRangeError::Parse(error));
+        },
     };
 
     // Slice out code to execute from the subdocument
@@ -291,7 +349,7 @@ fn find_roxygen_examples_range(
         .contents
         .get(subdocument_range.start_byte..subdocument_range.end_byte)
     else {
-        return None;
+        return Ok(None);
     };
     let code = slice.to_string();
 
@@ -307,7 +365,7 @@ fn find_roxygen_examples_range(
     };
     let mut cursor = root.walk();
     if !cursor.goto_first_child_for_point_patched(start_point) {
-        return None;
+        return Ok(None);
     }
     let start_node = cursor.node();
 
@@ -317,7 +375,7 @@ fn find_roxygen_examples_range(
     };
     let mut cursor = root.walk();
     if !cursor.goto_first_child_for_point_patched(end_point) {
-        return None;
+        return Ok(None);
     }
     let end_node = cursor.node();
 
@@ -328,7 +386,7 @@ fn find_roxygen_examples_range(
         end_point: end_node.end_position(),
     };
 
-    Some((range, code))
+    Ok(Some((range, code)))
 }
 
 /// Assuming `node` is the first node on a line, `expand_across_semicolons()`
@@ -374,7 +432,10 @@ fn expand_range_across_semicolons(mut node: Node) -> tree_sitter::Range {
     }
 }
 
-fn find_statement_range(root: &Node, row: usize) -> Option<tree_sitter::Range> {
+fn find_statement_range(
+    root: &Node,
+    row: usize,
+) -> StatementRangeResult<Option<tree_sitter::Range>> {
     let mut cursor = root.walk();
 
     let children = root.children(&mut cursor);
@@ -389,11 +450,14 @@ fn find_statement_range(root: &Node, row: usize) -> Option<tree_sitter::Range> {
         // tree-sitter manages to "recover" further down the page, this is highly
         // unpredictable and is sensitive to minor changes in both tree-sitter-r and the
         // user's precise document contents. Instead, we give up if the user's cursor is
-        // anywhere past the first parse error, returning `None`, so that the frontend
-        // sends code to the console one line at a time (posit-dev/positron#5023,
-        // posit-dev/positron#8350).
+        // anywhere past the first parse error, returning a parse error that points to the
+        // first line in this child node, which the frontend will show the user
+        // (posit-dev/positron#5023, posit-dev/positron#8350).
         if node_has_error_or_missing(&child) {
-            return None;
+            let line = child.start_position().row as u32;
+            return Err(StatementRangeError::Parse(StatementRangeParseError {
+                line,
+            }));
         }
 
         if row > child.end_position().row {
@@ -422,10 +486,10 @@ fn find_statement_range(root: &Node, row: usize) -> Option<tree_sitter::Range> {
 
     let Some(node) = node else {
         // No statement range node found, possibly no children or some other issue
-        return None;
+        return Ok(None);
     };
 
-    Some(expand_range_across_semicolons(node))
+    Ok(Some(expand_range_across_semicolons(node)))
 }
 
 fn recurse(node: Node, row: usize) -> Result<Option<Node>> {
@@ -705,15 +769,17 @@ fn contains_row_at_different_start_position(node: Node, row: usize) -> Option<No
 
 #[cfg(test)]
 mod tests {
+    use tree_sitter::Node;
     use tree_sitter::Parser;
     use tree_sitter::Point;
-    use tree_sitter::Range;
 
     use crate::fixtures::point_and_offset_from_cursor;
     use crate::fixtures::point_from_cursor;
     use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
+    use crate::lsp::statement_range::StatementRangeError;
+    use crate::lsp::statement_range::StatementRangeParseError;
 
     // Intended to ease statement range testing. Supply `x` as a string containing
     // the expression to test along with:
@@ -723,6 +789,7 @@ mod tests {
     // These characters will be replaced with the empty string before being parsed
     // by tree-sitter. It is generally best to left align the string against the
     // far left margin to avoid unexpected whitespace and mimic real life.
+    #[track_caller]
     fn statement_range_test(x: &str) {
         let original = x;
 
@@ -875,7 +942,13 @@ mod tests {
 
         let root = ast.root_node();
 
-        let range = find_statement_range(&root, cursor.unwrap().row).unwrap();
+        let range = match find_statement_range(&root, cursor.unwrap().row) {
+            Ok(range) => match range {
+                Some(range) => range,
+                None => panic!("Unexpected `None` range"),
+            },
+            Err(error) => panic!("Unexpected statement range error: {error:?}"),
+        };
 
         assert_eq!(
             range.start_point,
@@ -889,11 +962,11 @@ mod tests {
         );
     }
 
-    // Intended to ease statement range testing. Supply `x` as a string containing
+    // Intended to ease statement range error testing. Supply `x` as a string containing
     // the expression to test along with:
     // - `@` marking the cursor position
-    // Returns the statement range, if any. Useful for testing `None` cases.
-    fn statement_range_from_cursor(x: &str) -> Option<Range> {
+    // Returns a statement range error.
+    fn statement_range_error_from_cursor(x: &str) -> StatementRangeError {
         let (contents, point) = point_from_cursor(x);
 
         let mut parser = Parser::new();
@@ -903,7 +976,10 @@ mod tests {
         let ast = parser.parse(contents, None).unwrap();
         let root = ast.root_node();
 
-        find_statement_range(&root, point.row)
+        match find_statement_range(&root, point.row) {
+            Ok(range) => panic!("Unexpected statement range result: {range:?}"),
+            Err(error) => error,
+        }
     }
 
     #[test]
@@ -1702,7 +1778,7 @@ list({
             .expect("Failed to create parser");
         let ast = parser.parse(contents, None).unwrap();
         let root = ast.root_node();
-        assert_eq!(find_statement_range(&root, row), None);
+        assert_eq!(find_statement_range(&root, row), Ok(None));
     }
 
     #[test]
@@ -1721,7 +1797,7 @@ list({
             .expect("Failed to create parser");
         let ast = parser.parse(contents, None).unwrap();
         let root = ast.root_node();
-        assert_eq!(find_statement_range(&root, row), None);
+        assert_eq!(find_statement_range(&root, row), Ok(None));
     }
 
     #[test]
@@ -1777,14 +1853,17 @@ sum(
     fn test_cant_compute_top_level_statement_range_below_first_parse_error() {
         // Once we hit the very first top-level node containing a parse error, all bets
         // are off. We give up on being able to correctly parse the rest of the file.
-        let range = statement_range_from_cursor(
+        let error = statement_range_error_from_cursor(
             "
 sum(
 
 1 + 1@
 ",
         );
-        assert!(range.is_none())
+        assert_matches::assert_matches!(
+            error,
+            StatementRangeError::Parse(StatementRangeParseError { line: 1 })
+        );
     }
 
     #[test]
@@ -1796,7 +1875,7 @@ sum(
         // predictability of this feature. tree-sitter is just too sensitive to the exact
         // tree-sitter-r grammar, and to the precise contents of the user's document, for
         // post-error recovery to be very useful to us.
-        let range = statement_range_from_cursor(
+        let error = statement_range_error_from_cursor(
             "
 fn <- function) {} # Parse error here
 fn2 <- function() {}
@@ -1806,7 +1885,10 @@ fn3 <- function() {@ # Can't execute this!
 }
 ",
         );
-        assert!(range.is_none())
+        assert_matches::assert_matches!(
+            error,
+            StatementRangeError::Parse(StatementRangeParseError { line: 1 })
+        );
     }
 
     #[test]
@@ -1816,7 +1898,7 @@ fn3 <- function() {@ # Can't execute this!
         // before recursing into it. We can't reliably trust tree-sitter enough here to
         // recognize the `{`, step into that, and recurse over its children to recognize
         // that `1 + 1` is above the parse error.
-        let range = statement_range_from_cursor(
+        let error = statement_range_error_from_cursor(
             "
 fn <- function() {
     1 + 1@
@@ -1824,9 +1906,12 @@ fn <- function() {
 }
 ",
         );
-        assert!(range.is_none());
+        assert_matches::assert_matches!(
+            error,
+            StatementRangeError::Parse(StatementRangeParseError { line: 1 })
+        );
 
-        let range = statement_range_from_cursor(
+        let error = statement_range_error_from_cursor(
             "
 {
     1 + 1@
@@ -1834,7 +1919,10 @@ fn <- function() {
 }
 ",
         );
-        assert!(range.is_none());
+        assert_matches::assert_matches!(
+            error,
+            StatementRangeError::Parse(StatementRangeParseError { line: 1 })
+        );
     }
 
     fn get_text(range: tree_sitter::Range, contents: &str) -> String {
@@ -1848,6 +1936,42 @@ fn <- function() {
     fn statement_range_point_from_cursor(x: &str) -> (String, Point) {
         let (text, point, _offset) = point_and_offset_from_cursor(x, b'^');
         (text, point)
+    }
+
+    // We typically want the `.unwrap().unwrap()` behavior during tests because we are
+    // testing the actual range and code returned
+    fn find_roxygen_statement_range_unsafe(
+        root: &Node,
+        contents: &str,
+        point: Point,
+    ) -> (tree_sitter::Range, Option<String>) {
+        let result = find_roxygen_statement_range(root, contents, point);
+
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => panic!("Unexpected statement range error: {error:?}"),
+        };
+
+        let result = match result {
+            Some(result) => result,
+            None => panic!("Unexpected `None` in statement range"),
+        };
+
+        result
+    }
+
+    // Useful when testing the error case
+    fn find_roxygen_statement_range_error(
+        root: &Node,
+        contents: &str,
+        point: Point,
+    ) -> StatementRangeError {
+        let result = find_roxygen_statement_range(root, contents, point);
+
+        match result {
+            Ok(result) => panic!("Unexpected statement range result: {result:?}"),
+            Err(error) => error,
+        }
     }
 
     #[test]
@@ -1865,7 +1989,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' Hi"));
         assert!(code.is_none());
     }
@@ -1882,7 +2006,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' @examples"));
         assert!(code.is_none());
     }
@@ -1899,7 +2023,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' @examplesIf"));
         assert!(code.is_none());
     }
@@ -1917,7 +2041,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' 1 + 1"));
         assert_eq!(code.unwrap(), String::from("1 + 1"));
     }
@@ -1934,7 +2058,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#'"));
         assert!(code.is_none());
     }
@@ -1951,7 +2075,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' @returns"));
         assert!(code.is_none());
     }
@@ -1974,7 +2098,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(
             get_text(range, contents),
             String::from(
@@ -2017,7 +2141,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(
             get_text(range, contents),
             String::from(
@@ -2059,7 +2183,7 @@ NULL
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(
             get_text(range, contents),
             String::from(
@@ -2100,7 +2224,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' 2 + 2"));
         assert_eq!(code.unwrap(), String::from("2 + 2"));
     }
@@ -2119,7 +2243,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#'2 + 2"));
         assert_eq!(code.unwrap(), String::from("2 + 2"));
     }
@@ -2138,7 +2262,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' @returns"));
         assert!(code.is_none());
     }
@@ -2157,7 +2281,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("##' 1 + 1"));
         assert_eq!(code.unwrap(), String::from("1 + 1"));
     }
@@ -2177,7 +2301,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(
             get_text(range, contents),
             String::from("##' 1 +\n###' 2 +\n##' 3")
@@ -2200,7 +2324,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("##' @param x foo"));
         assert!(code.is_none());
     }
@@ -2219,7 +2343,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' 1 + 1"));
         assert_eq!(code.unwrap(), String::from("1 + 1"));
     }
@@ -2243,7 +2367,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(
             get_text(range, contents),
             String::from("#' fn(\n#'   a,\n#'   b\n#' )")
@@ -2255,7 +2379,7 @@ x %>%
     fn test_statement_range_roxygen_cant_compute_top_level_statement_range_below_first_parse_error()
     {
         // The function call is "below" the first parse error we get from `sum(`.
-        // We still send "just that line" as a comment to avoid jumping around.
+        // Error line is adjusted to correspond to original document!
         let text = "
 #' Hi
 #' @param x foo
@@ -2271,14 +2395,15 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
-        assert_eq!(get_text(range, contents), String::from("#'   a,"));
-        assert!(code.is_none());
+        let error = find_roxygen_statement_range_error(&root, contents, point);
+        assert_matches::assert_matches!(
+            error,
+            StatementRangeError::Parse(StatementRangeParseError { line: 4 })
+        );
     }
 
     #[test]
     fn test_statement_range_roxygen_cant_compute_statement_range_while_on_parse_error() {
-        // Still sends "just that line" to avoid jumping around
         let text = "
 #' Hi
 #' @param x foo
@@ -2290,15 +2415,18 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
-        assert_eq!(get_text(range, contents), String::from("#' 1 + / 1"));
-        assert!(code.is_none());
+        let error = find_roxygen_statement_range_error(&root, contents, point);
+        assert_matches::assert_matches!(
+            error,
+            StatementRangeError::Parse(StatementRangeParseError { line: 4 })
+        );
     }
 
     #[test]
     fn test_statement_range_roxygen_parse_errors_in_parent_document() {
         // If the parent document has parse errors, we don't even try.
         // It's best if the user fixes that first.
+        // It's not the job of `find_roxygen_statement_range()` to report anything here.
         let text = "
 1 + / 1
 #' Hi
@@ -2312,7 +2440,9 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        assert!(find_roxygen_statement_range(&root, contents, point).is_none())
+        assert!(find_roxygen_statement_range(&root, contents, point)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -2328,7 +2458,7 @@ NULL
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' 1 + 1"));
         assert_eq!(code.unwrap(), String::from("1 + 1"));
     }
@@ -2347,7 +2477,7 @@ NULL
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let (range, code) = find_roxygen_statement_range(&root, contents, point).unwrap();
+        let (range, code) = find_roxygen_statement_range_unsafe(&root, contents, point);
         assert_eq!(get_text(range, contents), String::from("#' 1 +\n#'   1"));
         assert_eq!(code.unwrap(), String::from("1 +\n  1"));
     }
