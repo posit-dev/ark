@@ -798,12 +798,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.respond(rsp)
     }
 
-    fn handle_pause(&mut self, req: Request, args: PauseArguments) -> Result<(), ServerError> {
-        if args.thread_id != THREAD_ID {
-            return self
-                .respond(req.error(&format!("Ark DAP: Unknown thread ID {}", args.thread_id)));
-        }
-
+    fn handle_pause(&mut self, req: Request, _args: PauseArguments) -> Result<(), ServerError> {
         self.state.lock().unwrap().is_interrupting_for_debugger = true;
 
         log::info!("DAP: Received request to pause R, sending interrupt");
