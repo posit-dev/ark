@@ -565,14 +565,15 @@ pub unsafe extern "C-unwind" fn ps_debug_set_stopped_reason(
     let class: String = RObject::view(class).try_into()?;
     let message: String = RObject::view(message).try_into()?;
 
-    Console::get_mut().debug_stopped_reason = DebugStoppedReason::Condition { class, message };
+    Console::get_mut().debug_stopped_reason =
+        Some(DebugStoppedReason::Condition { class, message });
 
     Ok(libr::R_NilValue)
 }
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_debug_set_stopped_reason_pause() -> anyhow::Result<SEXP> {
-    Console::get_mut().debug_stopped_reason = DebugStoppedReason::Pause;
+    Console::get_mut().debug_stopped_reason = Some(DebugStoppedReason::Pause);
     Ok(libr::R_NilValue)
 }
 
