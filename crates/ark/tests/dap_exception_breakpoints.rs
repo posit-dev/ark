@@ -149,6 +149,40 @@ f()
     dap.recv_continued();
 }
 
+/// Test that `.handleSimpleError()` frame is excluded from the stack trace
+#[test]
+fn test_dap_break_on_error_excludes_handle_simple_error_frame() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["error"]);
+
+    frontend.send_source("stop('test')");
+
+    dap.recv_stopped_exception();
+
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    // The `.handleSimpleError()` frame should be excluded from the stack
+    assert_ne!(
+        frame_names[0], ".handleSimpleError()",
+        "Handler frame '.handleSimpleError()' should be excluded, got: {:?}",
+        frame_names
+    );
+
+    // Continue out of debugger
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_error();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+
+    dap.recv_continued();
+}
+
 /// Test that the global warning handler frame is excluded from the stack trace
 #[test]
 fn test_dap_break_on_warning_excludes_handler_frame() {
