@@ -565,13 +565,27 @@ fn remove_condition_handling_frames(
         stack.remove(0);
     }
 
-    // Then discard base R's own condition handling frames, if any
+    // Then discard base R's own condition handling/emitting frames, if any
+    remove_frame_prefix(stack, &[".handleSimpleError()"]);
+    remove_frame_prefix(stack, &[
+        "doWithOneRestart()",
+        "withOneRestart()",
+        "withRestarts()",
+        ".signalSimpleWarning",
+    ]);
+}
 
-    if stack
-        .first()
-        .is_some_and(|frame| frame.frame_name == ".handleSimpleError()")
-    {
-        stack.remove(0);
+/// Remove frames from the top of the stack that match the given prefixes in order.
+fn remove_frame_prefix(stack: &mut Vec<FrameInfo>, prefixes: &[&str]) {
+    for prefix in prefixes {
+        if stack
+            .first()
+            .is_some_and(|frame| frame.frame_name.starts_with(prefix))
+        {
+            stack.remove(0);
+        } else {
+            break;
+        }
     }
 }
 
