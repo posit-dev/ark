@@ -2,7 +2,7 @@
 source: crates/ark/src/console_annotate.rs
 expression: result
 ---
-{
+base::list({
 #line 1 "file:///test.R"
 base::.ark_auto_step(base::.ark_breakpoint(browser(), "file:///test.R", "1"))
 #line 1 "file:///test.R"
@@ -18,5 +18,4 @@ base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 5
 
 #line 6 "file:///test.R"
 2
-}
-base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 7L))
+}, base::.ark_auto_step(base::.ark_verify_breakpoints_range("file:///test.R", 1L, 7L)))[[1]]
