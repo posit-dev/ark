@@ -277,29 +277,32 @@ pub(crate) fn annotate_source(
         transformed_code.replacen("{\n", &format!("{{\n{}\n", initial_directive), 1);
 
     // Add a trailing verify call to handle any injected breakpoint in trailing
-    // position. Normally we'd inject a verify call as well a line directive
+    // position. Normally we'd inject a verify call as well as a line directive
     // that ensures source references remain correct after the verify call.
     // But for the last expression in a list, there is no sibling node to attach
     // the line directive trivia to. So, instead of adding a verify call, we
     // rely on verification in a parent list instead. If trailing, there won't
-    // be any verification calls at all though, so we manually add one there:
+    // be any verification calls at all though, so we manually add one here.
     //
-    // ```r
-    // {
-    //    foo({
-    //      .ark_auto_step(.breakpoint(...))
-    //      #line ...
-    //      expr
-    //    })
-    // }
-    // .ark_auto_step(.ark_verify_breakpoints(...))   # <- Manual injection
-    // ```
+    // Wrap in `base::list({...}, verify_call)[[1]]` to:
+    // 1. Execute the code block (first element)
+    // 2. Execute the trailing verify call (second element)
+    // 3. Return only the code block's result via `[[1]]`
     //
-    // This is unconditional for simplicity.
+    // This ensures breakpoints in the last expression get verified while
+    // preserving the return value for callers that depend on it.
+    // Note: visibility is not preserved (invisible results become visible), but
+    // this is acceptable since `source()` always returns invisibly, and
+    // `load_all()` doesn't look at return values at all, and `runApp()` doesn't
+    // return the result to the user. If visibility is important, wrap your code
+    // in a `withVisible()` before annotating with Ark.
     let last_line = code.lines().count() as u32;
     let trailing_verify = format_verify_call(uri, &(0..last_line));
 
-    Ok(format!("{}\n{trailing_verify}\n", transformed_code.trim()))
+    Ok(format!(
+        "base::list({}, {trailing_verify})[[1]]",
+        transformed_code.trim()
+    ))
 }
 
 /// Rewriter that handles all code annotation inside braced expression lists:

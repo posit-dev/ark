@@ -133,12 +133,13 @@ make_ark_source <- function(original_source) {
         parsed <- parse(text = annotated, keep.source = TRUE)
 
         if (length(parsed) != 1) {
-            log_trace("`source()`: Expected a single `{}` expression")
+            log_trace("`source()`: Expected a single `list()[[1]]` expression")
         }
 
         # `eval()` loops over the expression vector, handling gracefully
-        # unexpected lengths (0 or >1)
-        eval(parsed, env)
+        # unexpected lengths (0 or >1). Return withVisible() result to match
+        # base::source() structure.
+        invisible(withVisible(eval(parsed, env)))
     }
 }
 
