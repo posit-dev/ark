@@ -53,6 +53,11 @@ use crate::url::ExtUrl;
 
 const THREAD_ID: i64 = -1;
 
+/// Sentinel expression sent by the frontend to notify the kernel that the user
+/// selected a different stack frame in the debugger UI. Subsequent console
+/// evaluations will run in that frame's environment.
+const SELECTED_FRAME_EXPRESSION: &str = ".positron_selected_frame";
+
 // TODO: Handle comm close to shut down the DAP server thread.
 //
 // The DAP comm is allowed to persist across TCP sessions. This supports session
@@ -794,7 +799,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 None => (expression.as_str(), false),
             };
 
-            let rsp = if expression == ".positron_selected_frame" {
+            let rsp = if expression == SELECTED_FRAME_EXPRESSION {
                 Console::get().set_debug_selected_frame_id(frame_id);
                 req.success(ResponseBody::Evaluate(EvaluateResponse {
                     result: String::new(),
