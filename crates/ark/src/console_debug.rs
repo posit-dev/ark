@@ -129,7 +129,7 @@ impl Console {
         self.clear_fallback_sources();
         self.debug_reset_frame_id();
         self.debug_session_index += 1;
-        self.clear_debug_selected_frame();
+        self.set_debug_selected_frame_id(None);
 
         let mut dap = self.debug_dap.lock().unwrap();
         dap.stop_debug();

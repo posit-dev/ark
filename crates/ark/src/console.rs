@@ -1617,8 +1617,7 @@ impl Console {
 
         if self.debug_is_debugging {
             // Try to interpret this pending input as a symbol (debug commands
-            // are entered as symbols). Whether or not it parses as a symbol,
-            // if we're currently debugging we must set `debug_preserve_focus`.
+            // are entered as symbols).
             if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
                 let sym = String::from(sym);
 
@@ -1644,8 +1643,7 @@ impl Console {
         );
 
         if DEBUG_COMMANDS_CONTINUE.contains(&&cmd[..]) {
-            // For continue-like commands, we do not preserve focus,
-            // i.e. we let the cursor jump to the stopped position.
+            // Navigation commands are not transient evals.
             self.debug_transient_eval = false;
         }
 
@@ -2643,10 +2641,6 @@ impl Console {
 
     pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
         self.debug_selected_frame_id.set(frame_id);
-    }
-
-    pub(crate) fn clear_debug_selected_frame(&self) {
-        self.debug_selected_frame_id.set(None);
     }
 }
 
