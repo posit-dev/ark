@@ -141,7 +141,9 @@ static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").
 /// All debug commands as documented in `?browser`
 const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
 
-// The subset of debug commands that continue execution (and thus exit the current browser)
+// Debug commands that exit the current browser: `n`, `f`, `c`, `cont` continue
+// execution past the current prompt, `Q` exits all nested browsers entirely.
+// These are not transient evals: they represent deliberate debugger navigation.
 const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
 
 /// An enum representing the different modes in which the R session can run.
