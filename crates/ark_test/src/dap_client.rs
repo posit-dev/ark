@@ -33,6 +33,7 @@ use dap::requests::StepInArguments;
 use dap::requests::VariablesArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
+use dap::responses::StackTraceResponse;
 use dap::types::Breakpoint;
 use dap::types::Capabilities;
 use dap::types::Scope;
@@ -266,6 +267,32 @@ impl DapClient {
 
         match response.body {
             Some(ResponseBody::StackTrace(st)) => st.stack_frames,
+            other => panic!("Expected StackTrace response body, got {:?}", other),
+        }
+    }
+
+    /// Request a page of the stack trace, returning the full response
+    /// including `total_frames`.
+    #[track_caller]
+    pub fn stack_trace_paged(
+        &mut self,
+        start_frame: i64,
+        levels: i64,
+    ) -> StackTraceResponse {
+        let seq = self
+            .send(Command::StackTrace(StackTraceArguments {
+                thread_id: -1,
+                start_frame: Some(start_frame),
+                levels: Some(levels),
+                format: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "StackTrace request failed");
+
+        match response.body {
+            Some(ResponseBody::StackTrace(st)) => st,
             other => panic!("Expected StackTrace response body, got {:?}", other),
         }
     }
