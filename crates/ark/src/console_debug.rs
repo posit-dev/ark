@@ -266,6 +266,10 @@ impl Console {
 
             log::trace!("DAP: Current call stack:\n{out:#?}");
 
+            if !harp::get_option_bool("ark.debugger.show_hidden_frames") {
+                filter_hidden_frames(&mut out);
+            }
+
             Ok(out)
         }
     }
@@ -334,6 +338,44 @@ impl Console {
 
         let mut dap = self.debug_dap.lock().unwrap();
         dap.verify_breakpoints(&uri, srcref.line_virtual.start, srcref.line_virtual.end);
+    }
+}
+
+/// Removes frames fenced between `..stacktraceon..` and `..stacktraceoff..`
+/// markers (used by Shiny to hide internal frames).
+///
+/// Since the stack is innermost-first, the sentinel semantics are inverted
+/// from Shiny's outermost perspective: `..stacktraceon..` *enters* a hidden
+/// region (going outward) and `..stacktraceoff..` *exits* it.
+///
+/// The topmost frame (index 0) is never filtered out so the user always
+/// sees where they are stopped.
+fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
+    let mut hidden = false;
+    let mut first = true;
+
+    // `Vec::retain` iterates front-to-back (guaranteed by std)
+    frames.retain(|frame| {
+        if first {
+            first = false;
+            return true;
+        }
+        // Frame names are formatted as `fn_name()`, match on the prefix
+        if frame.frame_name.starts_with("..stacktraceon..") {
+            hidden = true;
+            return false;
+        }
+        if frame.frame_name.starts_with("..stacktraceoff..") {
+            hidden = false;
+            return false;
+        }
+        !hidden
+    });
+
+    if hidden {
+        log::warn!(
+            "Unmatched `..stacktraceon..` without closing `..stacktraceoff..` in call stack"
+        );
     }
 }
 
@@ -473,4 +515,135 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     dap.verify_breakpoints(&uri, start_line as u32, end_line as u32);
 
     Ok(libr::R_NilValue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(name: &str) -> FrameInfo {
+        FrameInfo {
+            id: 0,
+            source_name: String::new(),
+            frame_name: name.to_string(),
+            source: FrameSource::Text(String::new()),
+            environment: None,
+            start_line: 0,
+            start_column: 0,
+            end_line: 0,
+            end_column: 0,
+        }
+    }
+
+    fn names(frames: &[FrameInfo]) -> Vec<&str> {
+        frames.iter().map(|f| f.frame_name.as_str()).collect()
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_empty() {
+        let mut frames = vec![];
+        filter_hidden_frames(&mut frames);
+        assert!(frames.is_empty());
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_no_sentinels() {
+        let mut frames = vec![frame("a()"), frame("b()"), frame("c()")];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec!["a()", "b()", "c()"]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_basic_region() {
+        let mut frames = vec![
+            frame("user_code()"),
+            frame("..stacktraceon..()"),
+            frame("shiny_internal()"),
+            frame("..stacktraceoff..()"),
+            frame("outer()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec!["user_code()", "outer()"]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_sequential_regions() {
+        let mut frames = vec![
+            frame("user_code()"),
+            frame("..stacktraceon..()"),
+            frame("inner_on()"),
+            frame("internal_a()"),
+            frame("..stacktraceoff..()"),
+            frame("inner_off()"),
+            frame("middle_user()"),
+            frame("..stacktraceon..()"),
+            frame("outer_on()"),
+            frame("internal_b()"),
+            frame("..stacktraceoff..()"),
+            frame("outer_off()"),
+            frame("top()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec![
+            "user_code()",
+            "inner_off()",
+            "middle_user()",
+            "outer_off()",
+            "top()"
+        ]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_only_sentinels() {
+        let mut frames = vec![frame("..stacktraceon..()"), frame("..stacktraceoff..()")];
+        filter_hidden_frames(&mut frames);
+        // The first frame is always kept, even if it's a sentinel
+        assert_eq!(names(&frames), vec!["..stacktraceon..()"]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_lone_traceoff() {
+        // A lone `..stacktraceoff..` is a no-op: it exits a hidden region
+        // that was never entered, so all other frames remain visible.
+        let mut frames = vec![
+            frame("user_code()"),
+            frame("..stacktraceoff..()"),
+            frame("wrapper()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec!["user_code()", "wrapper()"]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_topmost_preserved_when_unmatched() {
+        // `..stacktraceon..` (not off) is correct here: in our innermost-first
+        // scan it enters the hidden region, so a missing `..stacktraceoff..`
+        // leaves everything above it hidden.
+        let mut frames = vec![
+            frame("user_code()"),
+            frame("..stacktraceon..()"),
+            frame("wrapper()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec!["user_code()"]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_first_frame_is_sentinel() {
+        // The topmost frame is always kept, even if it's a sentinel
+        let mut frames = vec![
+            frame("..stacktraceon..()"),
+            frame("internal()"),
+            frame("..stacktraceoff..()"),
+            frame("outer()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        // The sentinel at index 0 is kept without triggering hidden state,
+        // so `internal()` between on/off is also visible
+        assert_eq!(names(&frames), vec![
+            "..stacktraceon..()",
+            "internal()",
+            "outer()"
+        ]);
+    }
 }
