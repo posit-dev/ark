@@ -297,6 +297,7 @@ outer_user()
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
+    assert!(stack.len() >= 3);
     assert_eq!(stack[0].name, "user_code()");
     assert_eq!(stack[1].name, "shiny_wrapper()");
     assert_eq!(stack[2].name, "outer_user()");
@@ -351,6 +352,7 @@ outer_user()
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
+    assert!(stack.len() >= 6);
     assert_eq!(stack[0].name, "user_code()");
     assert_eq!(stack[1].name, "..stacktraceon..()");
     assert_eq!(stack[2].name, "shiny_internal()");
@@ -386,6 +388,7 @@ top()
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
+    assert!(stack.len() >= 5);
     assert_eq!(stack[0].name, "user_code()");
     assert_eq!(stack[1].name, "inner_off()");
     assert_eq!(stack[2].name, "middle_user()");
@@ -416,10 +419,8 @@ wrapper()
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
+    assert_eq!(stack.len(), 1);
     assert_eq!(stack[0].name, "user_code()");
-    // `wrapper()` is hidden by the unmatched `..stacktraceon..`
-    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
-    assert!(!frame_names.contains(&"wrapper()"));
 
     frontend.debug_send_quit();
     dap.recv_continued();
