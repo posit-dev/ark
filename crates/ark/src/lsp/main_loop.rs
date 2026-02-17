@@ -45,6 +45,7 @@ use crate::lsp::inputs::library::Library;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
+use crate::url::ExtUrl;
 
 pub(crate) type TokioUnboundedSender<T> = tokio::sync::mpsc::UnboundedSender<T>;
 pub(crate) type TokioUnboundedReceiver<T> = tokio::sync::mpsc::UnboundedReceiver<T>;
@@ -948,6 +949,10 @@ pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
 
 pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
     for uri in uris {
+        if !is_indexable(&uri) {
+            continue;
+        }
+
         let document = match state.get_document(&uri) {
             Ok(doc) => doc.clone(),
             Err(err) => {
@@ -1003,6 +1008,10 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
     );
 
     for (uri, _document) in state.documents.iter() {
+        if !is_indexable(uri) {
+            continue;
+        }
+
         INDEXER_QUEUE
             .send(IndexerQueueTask::Diagnostics(RefreshDiagnosticsTask {
                 uri: uri.clone(),
@@ -1010,4 +1019,10 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
+}
+
+/// Virtual documents (e.g. `ark://` debugger vdocs) should not be indexed
+/// or diagnosed since they show foreign code the user can't edit.
+fn is_indexable(uri: &Url) -> bool {
+    ExtUrl::is_local(uri)
 }

@@ -52,6 +52,11 @@ impl ExtUrl {
         Ok(Self::normalize(url))
     }
 
+    /// Whether this URI points to a local file (as opposed to a virtual document).
+    pub fn is_local(uri: &Url) -> bool {
+        uri.scheme() == "file"
+    }
+
     /// Normalize a file URI for consistent comparison.
     ///
     /// On Windows, Positron sends URIs like `file:///c%3A/...` (URL-encoded
@@ -121,6 +126,24 @@ mod tests {
     fn test_ext_url_parse_non_file() {
         let uri = ExtUrl::parse("ark://namespace/test.R").unwrap();
         assert_eq!(uri.as_str(), "ark://namespace/test.R");
+    }
+
+    #[test]
+    fn test_is_local_file_uri() {
+        let uri = Url::parse("file:///home/user/test.R").unwrap();
+        assert!(ExtUrl::is_local(&uri));
+    }
+
+    #[test]
+    fn test_is_local_ark_uri() {
+        let uri = Url::parse("ark://namespace/test.R").unwrap();
+        assert!(!ExtUrl::is_local(&uri));
+    }
+
+    #[test]
+    fn test_is_local_inmemory_uri() {
+        let uri = Url::parse("inmemory://console/input.R").unwrap();
+        assert!(!ExtUrl::is_local(&uri));
     }
 
     #[test]
