@@ -23,6 +23,7 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use dap::base_message::Sendable;
 use dap::errors::ServerError;
 use dap::events::*;
 use dap::prelude::*;
@@ -30,6 +31,7 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
+use harp::R_ENVS;
 use stdext::result::ResultExt;
 use stdext::spawn;
 
@@ -37,12 +39,15 @@ use super::dap::Breakpoint;
 use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::console::ConsoleOutputCapture;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapStoppedEvent;
+use crate::dap::dap_variables::object_variable_from_value;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
+use crate::r_task::spawn_idle_any_prompt;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
@@ -118,7 +123,9 @@ pub fn start_dap(
         );
 
         let (backend_events_tx, backend_events_rx) = unbounded::<DapBackendEvent>();
+        let (responses_tx, responses_rx) = unbounded::<Response>();
         let (done_tx, done_rx) = bounded::<bool>(0);
+        server.responses_tx = Some(responses_tx);
         let output_clone = server.output.clone();
 
         // We need a scope to let the borrow checker know that
@@ -126,14 +133,11 @@ pub fn start_dap(
         // to the stack variable `stream` through `server`)
         let _ = crossbeam::thread::scope(|scope| {
             spawn!(scope, "ark-dap-events", {
-                move |_| listen_dap_events(output_clone, backend_events_rx, done_rx)
+                move |_| listen_dap_events(output_clone, backend_events_rx, responses_rx, done_rx)
             });
 
             // Connect the backend to the events thread
-            {
-                let mut state = state.lock().unwrap();
-                state.backend_events_tx = Some(backend_events_tx);
-            }
+            state.lock().unwrap().backend_events_tx = Some(backend_events_tx);
 
             loop {
                 // If disconnected, break and accept a new connection to create a new server
@@ -156,6 +160,7 @@ pub fn start_dap(
 fn listen_dap_events<W: Write>(
     output: Arc<Mutex<ServerOutput<W>>>,
     backend_events_rx: Receiver<DapBackendEvent>,
+    responses_rx: Receiver<Response>,
     done_rx: Receiver<bool>,
 ) {
     loop {
@@ -217,6 +222,24 @@ fn listen_dap_events<W: Write>(
                 }
             },
 
+            recv(responses_rx) -> response => {
+                let response = match response {
+                    Ok(response) => response,
+                    Err(err) => {
+                        log::info!("DAP: Responses channel closed: {err:?}");
+                        return;
+                    },
+                };
+
+                log::trace!("DAP: Sending async response: {:?}", response);
+
+                let mut output = output.lock().unwrap();
+                if let Err(err) = output.send(Sendable::Response(response)) {
+                    log::warn!("DAP: Failed to send response, closing: {err:?}");
+                    return;
+                }
+            },
+
             // Break the loop and terminate the thread
             recv(done_rx) -> _ => { return; },
         )
@@ -229,6 +252,7 @@ pub struct DapServer<R: Read, W: Write> {
     state: Arc<Mutex<Dap>>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Option<CommOutgoingTx>,
+    responses_tx: Option<Sender<Response>>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
@@ -247,6 +271,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             state,
             r_request_tx,
             comm_tx: Some(comm_tx),
+            responses_tx: None,
         }
     }
 
@@ -278,6 +303,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::Source(args) => self.handle_source(req, args),
             Command::Scopes(args) => self.handle_scopes(req, args),
             Command::Variables(args) => self.handle_variables(req, args),
+            Command::Evaluate(args) => self.handle_evaluate(req, args),
             Command::Continue(args) => {
                 let resp = ResponseBody::Continue(ContinueResponse {
                     all_threads_continued: Some(true),
@@ -325,6 +351,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Result<(), ServerError> {
         let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
             supports_restart_request: Some(true),
+            supports_evaluate_for_hovers: Some(true),
             ..Default::default()
         }));
         self.respond(rsp)?;
@@ -681,6 +708,66 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.respond(rsp)
     }
 
+    fn handle_evaluate(
+        &mut self,
+        req: Request,
+        args: EvaluateArguments,
+    ) -> Result<(), ServerError> {
+        let expression = args.expression;
+        let frame_id = args.frame_id;
+        let state = self.state.clone();
+
+        let Some(responses_tx) = self.responses_tx.clone() else {
+            let rsp = req.error("DAP: No responses channel for `evaluate`");
+            self.respond(rsp)?;
+            return Ok(());
+        };
+
+        log::trace!("DAP: Spawning idle task for evaluate");
+        spawn_idle_any_prompt(move |mut capture| async move {
+            log::trace!("DAP: Idle task started for evaluate");
+
+            // If expression starts with "/print ", evaluate and print result
+            let (expr, print) = match expression.strip_prefix("/print ") {
+                Some(expr) => (expr, true),
+                None => (expression.as_str(), false),
+            };
+
+            let rsp = {
+                let capture = if print { Some(&mut capture) } else { None };
+                let result = debug_evaluate(&state, expr, frame_id, capture);
+                log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
+
+                match result {
+                    Ok(variable) => {
+                        let variables_reference = match variable.variables_reference_object {
+                            Some(obj) => {
+                                let mut state = state.lock().unwrap();
+                                state.insert_variables_reference_object(obj)
+                            },
+                            None => 0,
+                        };
+
+                        req.success(ResponseBody::Evaluate(EvaluateResponse {
+                            result: variable.value,
+                            type_field: variable.type_field,
+                            presentation_hint: None,
+                            variables_reference,
+                            named_variables: None,
+                            indexed_variables: None,
+                            memory_reference: None,
+                        }))
+                    },
+                    Err(err) => req.error(&err),
+                }
+            };
+
+            responses_tx.send(rsp).log_err();
+        });
+
+        Ok(())
+    }
+
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
         // Wait until we're in the `r_task()` to lock
         // See https://github.com/posit-dev/positron/issues/5024
@@ -767,6 +854,58 @@ impl<R: Read, W: Write> DapServer<R, W> {
             self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
         }
     }
+}
+
+fn debug_evaluate(
+    state: &Arc<Mutex<Dap>>,
+    expression: &str,
+    frame_id: Option<i64>,
+    capture: Option<&mut ConsoleOutputCapture>,
+) -> Result<RVariable, String> {
+    let state = state.lock().unwrap();
+    let env = get_frame_env(&state, frame_id)?;
+
+    match harp::parse_eval0(expression, harp::RObject::view(env)) {
+        Ok(value) => {
+            if let Some(capture) = capture {
+                harp::utils::r_print(value.sexp);
+                Ok(RVariable {
+                    name: String::new(),
+                    value: capture.take().trim_end().to_string(),
+                    type_field: None,
+                    variables_reference_object: None,
+                })
+            } else {
+                Ok(object_variable_from_value(value.sexp))
+            }
+        },
+        Err(err) => Err(format!("{err}")),
+    }
+}
+
+fn get_frame_env(state: &Dap, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
+    let Some(frame_id) = frame_id else {
+        return Ok(R_ENVS.global);
+    };
+
+    let Some(variables_reference) = state
+        .frame_id_to_variables_reference
+        .get(&frame_id)
+        .copied()
+    else {
+        return Err(format!("Unknown `frame_id`: {frame_id}"));
+    };
+
+    let Some(obj) = state
+        .variables_reference_to_r_object
+        .get(&variables_reference)
+    else {
+        return Err(format!(
+            "Unknown `variables_reference`: {variables_reference}"
+        ));
+    };
+
+    Ok(obj.get().sexp)
 }
 
 fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, String>) -> StackFrame {

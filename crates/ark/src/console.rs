@@ -17,8 +17,6 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::result::Result::Ok;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Poll;
@@ -137,7 +135,6 @@ use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 use crate::url::ExtUrl;
 
-pub static CAPTURE_CONSOLE_OUTPUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// All debug commands as documented in `?browser`
@@ -239,6 +236,7 @@ pub struct Console {
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
+    tasks_idle_any_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
     /// Channel to communicate requests and events to the frontend
@@ -273,9 +271,8 @@ pub struct Console {
     /// Stored in `Console` to avoid memory leakage when `Rf_error()` jumps.
     r_error_buffer: Option<CString>,
 
-    /// `WriteConsole` output diverted from IOPub is stored here. This is only used
-    /// to return R output to the debugger.
-    pub(crate) captured_output: String,
+    /// When `Some`, console output is captured here instead of being sent to IOPub.
+    pub(crate) captured_output: Option<String>,
 
     /// Whether we should preserve focus when stopping in a debug session. We
     /// should only preserve focus if we're explicitly stepping through code as
@@ -526,6 +523,66 @@ pub(crate) enum ConsoleResult {
     Error(String),
 }
 
+/// Guard for capturing console output during idle tasks.
+///
+/// Created via `Console::start_capture()`, which sets `Console::captured_output`
+/// to `Some` so that all `write_console` output goes there instead of IOPub.
+/// When dropped, restores the previous state and logs any remaining output.
+///
+/// Use `take()` to retrieve captured output. Can be called multiple times to
+/// get output accumulated since the last take.
+pub struct ConsoleOutputCapture {
+    was_capturing: bool,
+    connected: bool,
+}
+
+impl ConsoleOutputCapture {
+    /// Create a dummy capture that doesn't interact with Console.
+    /// Used in test contexts where Console is not initialized.
+    pub(crate) fn dummy() -> Self {
+        Self {
+            was_capturing: false,
+            connected: false,
+        }
+    }
+
+    /// Take the captured output so far, clearing the buffer.
+    /// Can be called multiple times; each call returns output accumulated since the last take.
+    pub fn take(&mut self) -> String {
+        if !self.connected {
+            return String::new();
+        }
+
+        if let Some(captured) = Console::get_mut().captured_output.as_mut() {
+            return std::mem::take(captured);
+        }
+
+        String::new()
+    }
+}
+
+impl Drop for ConsoleOutputCapture {
+    fn drop(&mut self) {
+        if !self.connected {
+            return;
+        }
+
+        let console = Console::get_mut();
+
+        // Log any remaining output that wasn't taken
+        if let Some(output) = console.captured_output.take() {
+            if !output.trim().is_empty() {
+                log::info!("[Captured idle output]\n{}", output.trim_end());
+            }
+        }
+
+        // Restore previous state
+        if self.was_capturing {
+            console.captured_output = Some(String::new());
+        }
+    }
+}
+
 impl Console {
     /// Sets up the main R thread, initializes the `CONSOLE` singleton,
     /// and starts R. Does not return!
@@ -556,11 +613,12 @@ impl Console {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
+        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             tasks_interrupt_rx,
             tasks_idle_rx,
+            tasks_idle_any_rx,
             comm_event_tx,
             r_request_rx,
             stdin_request_tx,
@@ -795,6 +853,7 @@ impl Console {
     pub fn new(
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
+        tasks_idle_any_rx: Receiver<RTask>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -824,12 +883,13 @@ impl Console {
             debug_is_debugging: false,
             tasks_interrupt_rx,
             tasks_idle_rx,
+            tasks_idle_any_rx,
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
             banner: None,
             r_error_buffer: None,
-            captured_output: String::new(),
+            captured_output: None,
             debug_call_text: DebugCallText::None,
             debug_last_line: None,
             debug_preserve_focus: false,
@@ -900,6 +960,18 @@ impl Console {
     /// Provides read-only access to `iopub_tx`
     pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
+    }
+
+    /// Start capturing console output.
+    /// Returns a guard that restores the previous state on drop.
+    pub(crate) fn start_capture(&mut self) -> ConsoleOutputCapture {
+        let was_capturing = self.captured_output.is_some();
+        self.captured_output = Some(String::new());
+
+        ConsoleOutputCapture {
+            was_capturing,
+            connected: true,
+        }
     }
 
     /// Get the current execution context if an active request exists.
@@ -1096,6 +1168,7 @@ impl Console {
         let kernel_request_rx = self.kernel_request_rx.clone();
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
+        let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
 
         // Process R's polled events regularly while waiting for console input.
         // We used to poll every 200ms but that lead to visible delays for the
@@ -1117,15 +1190,19 @@ impl Console {
 
         // Only process idle at top level. We currently don't want idle tasks
         // (e.g. for srcref generation) to run when the call stack is not empty.
-        // We could make this configurable though if needed, i.e. some idle
-        // tasks would be able to run in the browser. Those should be sent to a
-        // dedicated channel that would always be included in the set of recv
-        // channels.
         let tasks_idle_index = if matches!(info.kind, PromptKind::TopLevel) {
             Some(select.recv(&tasks_idle_rx))
         } else {
             None
         };
+
+        // "Idle any" tasks run at both top-level and browser prompts
+        let tasks_idle_any_index =
+            if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
+                Some(select.recv(&tasks_idle_any_rx))
+            } else {
+                None
+            };
 
         loop {
             // If an interrupt was signaled and we are in a user
@@ -1192,6 +1269,12 @@ impl Console {
                 // An idle task woke us up
                 i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
+                    self.handle_task(task);
+                },
+
+                // An "idle any" task woke us up
+                i if Some(i) == tasks_idle_any_index => {
+                    let task = oper.recv(&tasks_idle_any_rx).unwrap();
                     self.handle_task(task);
                 },
 
@@ -2170,10 +2253,10 @@ impl Console {
 
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
-        if CAPTURE_CONSOLE_OUTPUT.load(Ordering::SeqCst) {
-            Console::get_mut()
-                .captured_output
-                .push_str(&console_to_utf8(buf).unwrap());
+        let console = Console::get_mut();
+
+        if let Some(captured) = &mut console.captured_output {
+            captured.push_str(&console_to_utf8(buf).unwrap());
             return;
         }
 
@@ -2182,20 +2265,18 @@ impl Console {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
-        let r_main = Console::get_mut();
-
         if !Console::is_initialized() {
             // During init, consider all output to be part of the startup banner
-            match r_main.banner.as_mut() {
+            match console.banner.as_mut() {
                 Some(banner) => banner.push_str(&content),
-                None => r_main.banner = Some(content),
+                None => console.banner = Some(content),
             }
             return;
         }
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        r_main.debug_handle_write_console(&content);
+        console.debug_handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -2205,7 +2286,7 @@ impl Console {
 
         // If active execution request is silent don't broadcast
         // any output
-        if let Some(ref req) = r_main.active_request {
+        if let Some(ref req) = console.active_request {
             if req.request.silent {
                 return;
             }
@@ -2238,13 +2319,13 @@ impl Console {
             // https://github.com/posit-dev/positron/issues/1881
 
             // Handle last expression
-            if r_main.pending_inputs.is_none() {
-                r_main.autoprint_output.push_str(&content);
+            if console.pending_inputs.is_none() {
+                console.autoprint_output.push_str(&content);
                 return;
             }
 
             // In notebooks, we don't emit results of intermediate expressions
-            if r_main.session_mode == SessionMode::Notebook {
+            if console.session_mode == SessionMode::Notebook {
                 return;
             }
 
@@ -2258,7 +2339,7 @@ impl Console {
             name: stream,
             text: content,
         });
-        r_main.iopub_tx.send(message).unwrap();
+        console.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -2817,7 +2898,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn_idle(|| async move {
+        r_task::spawn_idle(|_| async move {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }
