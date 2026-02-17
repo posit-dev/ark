@@ -292,26 +292,7 @@ where
     F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    if stdext::IS_TESTING && !Console::is_initialized() {
-        let _lock = harp::fixtures::R_TEST_LOCK.lock();
-        futures::executor::block_on(fun(ConsoleOutputCapture::dummy()));
-        return;
-    }
-
-    let tasks_tx = IDLE_TASKS.tx();
-
-    let wrapper_fut = async move {
-        let capture = Console::get_mut().start_capture();
-        fun(capture).await
-    };
-
-    let task = RTask::Async(RTaskAsync {
-        fut: Box::pin(wrapper_fut) as BoxFuture<'static, ()>,
-        tasks_tx: tasks_tx.clone(),
-        start_info: RTaskStartInfo::new(true),
-    });
-
-    tasks_tx.send(task).unwrap();
+    spawn_idle_to(&IDLE_TASKS, fun)
 }
 
 pub(crate) fn spawn_interrupt<F, Fut>(fun: F)
@@ -333,13 +314,21 @@ where
     F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
+    spawn_idle_to(&IDLE_ANY_TASKS, fun)
+}
+
+fn spawn_idle_to<F, Fut>(channels: &LazyLock<TaskChannels>, fun: F)
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
     if stdext::IS_TESTING && !Console::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fun(ConsoleOutputCapture::dummy()));
         return;
     }
 
-    let tasks_tx = IDLE_ANY_TASKS.tx();
+    let tasks_tx = channels.tx();
 
     let wrapper_fut = async move {
         let capture = Console::get_mut().start_capture();
