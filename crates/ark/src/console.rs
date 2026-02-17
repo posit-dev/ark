@@ -307,6 +307,10 @@ pub struct Console {
     /// Reset after `debug_stop()`, not between debug steps.
     pub(crate) debug_current_frame_id: i64,
 
+    /// Saved JIT compiler level, to restore after a step-into command.
+    /// Step-into disables JIT to prevent stepping into `compiler` internals.
+    pub(crate) debug_jit_level: Option<i32>,
+
     /// Tracks how many nested `r_read_console()` calls are on the stack.
     /// Incremented when entering `r_read_console(),` decremented on exit.
     read_console_depth: Cell<usize>,
@@ -836,6 +840,7 @@ impl Console {
             debug_last_stack: vec![],
             debug_session_index: 1,
             debug_current_frame_id: 0,
+            debug_jit_level: None,
             pending_inputs: None,
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
@@ -1551,6 +1556,16 @@ impl Console {
             DEBUG_COMMANDS.contains(&&cmd[..]),
             "Expected a debug command, got: {cmd}"
         );
+
+        if cmd == "s" {
+            // Disable JIT before stepping in to prevent the confusing
+            // experience of stepping into `compiler` internals.
+            // https://github.com/posit-dev/positron/issues/11890
+            match harp::parse_eval_base("compiler::enableJIT(0L)").and_then(i32::try_from) {
+                Ok(old) => self.debug_jit_level = Some(old),
+                Err(err) => log::error!("Failed to disable JIT: {err:?}"),
+            }
+        }
 
         if DEBUG_COMMANDS_CONTINUE.contains(&&cmd[..]) {
             // For continue-like commands, we do not preserve focus,
