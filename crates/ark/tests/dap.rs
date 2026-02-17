@@ -170,6 +170,41 @@ factorial(3)
 }
 
 #[test]
+fn test_dap_stack_trace_total_frames() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Recursive function that creates a deep call stack
+    let _file = frontend.send_source(
+        "
+recurse <- function(n) {
+  if (n <= 1) {
+    browser()
+    return(1)
+  }
+  recurse(n - 1)
+}
+recurse(10)
+",
+    );
+    dap.recv_stopped();
+
+    // Get the full stack to know the total size
+    let full_stack = dap.stack_trace();
+    let total = full_stack.len() as i64;
+    assert!(total >= 10);
+
+    // Request only the first 3 frames. `total_frames` must still
+    // report the full stack size so the frontend knows to page.
+    let page = dap.stack_trace_paged(0, 3);
+    assert_eq!(page.stack_frames.len(), 3);
+    assert_eq!(page.total_frames, Some(total));
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
 fn test_dap_error_during_debug() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
