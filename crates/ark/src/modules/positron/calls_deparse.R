@@ -28,7 +28,7 @@ as_label <- function(x) {
 }
 
 is_simple_call <- function(x) {
-    call_print_type(x) == "call"
+    call_print_type(x) == "prefix"
 }
 
 # From https://github.com/r-lib/rlang/blob/main/R/call.R
