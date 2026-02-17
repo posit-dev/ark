@@ -821,61 +821,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         Ok(())
     }
-}
 
-fn debug_evaluate(
-    state: &Arc<Mutex<Dap>>,
-    expression: &str,
-    frame_id: Option<i64>,
-    capture: Option<&mut ConsoleOutputCapture>,
-) -> Result<RVariable, String> {
-    let state = state.lock().unwrap();
-    let env = get_frame_env(&state, frame_id)?;
-
-    match harp::parse_eval0(expression, harp::RObject::view(env)) {
-        Ok(value) => {
-            if let Some(capture) = capture {
-                harp::utils::r_print(value.sexp);
-                Ok(RVariable {
-                    name: String::new(),
-                    value: capture.take().trim_end().to_string(),
-                    type_field: None,
-                    variables_reference_object: None,
-                })
-            } else {
-                Ok(object_variable_from_value(value.sexp))
-            }
-        },
-        Err(err) => Err(format!("{err}")),
-    }
-}
-
-fn get_frame_env(state: &Dap, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
-    let Some(frame_id) = frame_id else {
-        return Ok(R_ENVS.global);
-    };
-
-    let Some(variables_reference) = state
-        .frame_id_to_variables_reference
-        .get(&frame_id)
-        .copied()
-    else {
-        return Err(format!("Unknown `frame_id`: {frame_id}"));
-    };
-
-    let Some(obj) = state
-        .variables_reference_to_r_object
-        .get(&variables_reference)
-    else {
-        return Err(format!(
-            "Unknown `variables_reference`: {variables_reference}"
-        ));
-    };
-
-    Ok(obj.get().sexp)
-}
-
-impl<R: Read, W: Write> DapServer<R, W> {
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
         // Wait until we're in the `r_task()` to lock
         // See https://github.com/posit-dev/positron/issues/5024
@@ -972,6 +918,58 @@ impl<R: Read, W: Write> DapServer<R, W> {
             self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
         }
     }
+}
+
+fn debug_evaluate(
+    state: &Arc<Mutex<Dap>>,
+    expression: &str,
+    frame_id: Option<i64>,
+    capture: Option<&mut ConsoleOutputCapture>,
+) -> Result<RVariable, String> {
+    let state = state.lock().unwrap();
+    let env = get_frame_env(&state, frame_id)?;
+
+    match harp::parse_eval0(expression, harp::RObject::view(env)) {
+        Ok(value) => {
+            if let Some(capture) = capture {
+                harp::utils::r_print(value.sexp);
+                Ok(RVariable {
+                    name: String::new(),
+                    value: capture.take().trim_end().to_string(),
+                    type_field: None,
+                    variables_reference_object: None,
+                })
+            } else {
+                Ok(object_variable_from_value(value.sexp))
+            }
+        },
+        Err(err) => Err(format!("{err}")),
+    }
+}
+
+fn get_frame_env(state: &Dap, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
+    let Some(frame_id) = frame_id else {
+        return Ok(R_ENVS.global);
+    };
+
+    let Some(variables_reference) = state
+        .frame_id_to_variables_reference
+        .get(&frame_id)
+        .copied()
+    else {
+        return Err(format!("Unknown `frame_id`: {frame_id}"));
+    };
+
+    let Some(obj) = state
+        .variables_reference_to_r_object
+        .get(&variables_reference)
+    else {
+        return Err(format!(
+            "Unknown `variables_reference`: {variables_reference}"
+        ));
+    };
+
+    Ok(obj.get().sexp)
 }
 
 fn into_dap_frame(frame: &FrameInfo, fallback_sources: &HashMap<String, String>) -> StackFrame {
