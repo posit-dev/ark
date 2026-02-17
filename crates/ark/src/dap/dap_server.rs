@@ -824,9 +824,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         Ok(())
     }
-}
 
-impl<R: Read, W: Write> DapServer<R, W> {
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
         // Wait until we're in the `r_task()` to lock
         // See https://github.com/posit-dev/positron/issues/5024

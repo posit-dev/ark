@@ -108,7 +108,7 @@ pub enum DapBackendEvent {
     Stopped,
 
     /// Event sent after a console evaluation so the frontend refreshes
-    /// variables .
+    /// variables.
     Invalidated,
 
     /// Event sent when a breakpoint state changes (verified, unverified, or invalid)

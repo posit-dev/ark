@@ -296,7 +296,7 @@ outer()
     dap.recv_stopped();
 
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 2, "Expected at least 2 frames");
+    assert!(stack.len() >= 2);
 
     let inner_frame_id = stack[0].id;
     let outer_frame_id = stack[1].id;
