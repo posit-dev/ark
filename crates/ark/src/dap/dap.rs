@@ -14,11 +14,12 @@ use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
+use anyhow::anyhow;
 use crossbeam::channel::Sender;
 use dap::responses::EvaluateResponse;
 use dap::types::Variable;
+use harp::environment::R_ENVS;
 use harp::object::RObject;
-use harp::R_ENVS;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use url::Url;
@@ -129,7 +130,6 @@ pub enum DapBackendEvent {
 pub struct DapExceptionEvent {
     pub class: String,
     pub message: String,
-    pub preserve_focus: bool,
 }
 
 pub struct Dap {
@@ -258,11 +258,7 @@ impl Dap {
                         DapBackendEvent::Stopped
                     },
                     DebugStoppedReason::Condition { class, message } => {
-                        DapBackendEvent::Exception(DapExceptionEvent {
-                            class,
-                            message,
-                            preserve_focus,
-                        })
+                        DapBackendEvent::Exception(DapExceptionEvent { class, message })
                     },
                 };
                 dap_tx.send(event).log_err();
@@ -620,6 +616,29 @@ impl Dap {
                     BreakpointState::Verified | BreakpointState::Unverified
                 )
         })
+    }
+
+    pub fn get_frame_env(&self, frame_id: Option<i64>) -> anyhow::Result<libr::SEXP> {
+        let Some(frame_id) = frame_id else {
+            return Ok(R_ENVS.global);
+        };
+
+        let Some(variables_reference) =
+            self.frame_id_to_variables_reference.get(&frame_id).copied()
+        else {
+            return Err(anyhow!("Unknown `frame_id`: {frame_id}"));
+        };
+
+        let Some(obj) = self
+            .variables_reference_to_r_object
+            .get(&variables_reference)
+        else {
+            return Err(anyhow!(
+                "Unknown `variables_reference`: {variables_reference}"
+            ));
+        };
+
+        Ok(obj.get().sexp)
     }
 }
 

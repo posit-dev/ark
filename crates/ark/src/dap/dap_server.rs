@@ -196,13 +196,13 @@ fn listen_dap_events<W: Write>(
                         })
                     },
 
-                    DapBackendEvent::Exception(DapExceptionEvent { class, message, preserve_focus }) => {
+                    DapBackendEvent::Exception(DapExceptionEvent { class, message }) => {
                         let text = format!("<{class}>\n{message}");
                         Event::Stopped(StoppedEventBody {
                             reason: StoppedEventReason::Exception,
                             description: Some(message),
                             thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(preserve_focus),
+                            preserve_focus_hint: Some(false),
                             text: Some(text),
                             all_threads_stopped: Some(true),
                             hit_breakpoint_ids: None,
@@ -815,7 +815,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         let response = state.lock().unwrap().into_evaluate_response(variable);
                         req.success(ResponseBody::Evaluate(response))
                     },
-                    Err(err) => req.error(&err),
+                    Err(err) => req.error(&format!("Can't evaluate variable: {err:?}")),
                 }
             };
 

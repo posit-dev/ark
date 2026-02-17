@@ -1119,7 +1119,7 @@ impl Console {
                     .debug_stopped_reason
                     .clone()
                     .unwrap_or(DebugStoppedReason::Step);
-                self.debug_start(reason);
+                self.debug_start(self.debug_transient_eval, reason);
             }
         }
 
@@ -1717,24 +1717,14 @@ impl Console {
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
     unsafe fn eval(
+        &self,
         expr: libr::SEXP,
         srcref: libr::SEXP,
         buf: *mut c_uchar,
         buflen: c_int,
         is_debugging: bool,
     ) {
-        // Use the debug-selected frame if one has been set, otherwise use current frame
-        let frame = match Console::get().debug_selected_frame_id.get() {
-            Some(frame_id) => {
-                let console = Console::get();
-                let state = console.debug_dap.lock().unwrap();
-                match state.frame_env(Some(frame_id)) {
-                    Ok(env) => harp::RObject::view(env),
-                    Err(_) => harp::r_current_frame(),
-                }
-            },
-            None => harp::r_current_frame(),
-        };
+        let frame = self.eval_frame();
 
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
@@ -1790,6 +1780,23 @@ impl Console {
 
         // Unwrap safety: The input always fits in the buffer
         Self::on_console_input(buf, buflen, code).unwrap();
+    }
+
+    /// Resolve the frame in which to evaluate the current expression.
+    /// Uses the debug-selected frame if one has been set, otherwise the current frame.
+    fn eval_frame(&self) -> harp::RObject {
+        let Some(frame_id) = self.debug_selected_frame_id.get() else {
+            return harp::r_current_frame();
+        };
+
+        let state = self.debug_dap.lock().unwrap();
+        match state.frame_env(Some(frame_id)) {
+            Ok(env) => harp::RObject::view(env),
+            Err(err) => {
+                log::warn!("Failed to resolve selected frame {frame_id}: {err}");
+                harp::r_current_frame()
+            },
+        }
     }
 
     /// Handle an `input_request` received outside of an `execute_request` context
@@ -2929,7 +2936,7 @@ fn r_read_console_impl(
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
-                Console::eval(expr, srcref, buf, buflen, console.debug_is_debugging);
+                console.eval(expr, srcref, buf, buflen, console.debug_is_debugging);
 
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning
