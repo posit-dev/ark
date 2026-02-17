@@ -31,7 +31,6 @@ use dap::requests::*;
 use dap::responses::*;
 use dap::server::ServerOutput;
 use dap::types::*;
-use harp::R_ENVS;
 use stdext::result::ResultExt;
 use stdext::spawn;
 
@@ -777,7 +776,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                             memory_reference: None,
                         }))
                     },
-                    Err(err) => req.error(&err),
+                    Err(err) => req.error(&format!("Can't evaluate variable: {err:?}")),
                 }
             };
 
@@ -882,51 +881,23 @@ fn debug_evaluate(
     expression: &str,
     frame_id: Option<i64>,
     capture: Option<&mut ConsoleOutputCapture>,
-) -> Result<RVariable, String> {
+) -> anyhow::Result<RVariable> {
     let state = state.lock().unwrap();
-    let env = get_frame_env(&state, frame_id)?;
 
-    match harp::parse_eval0(expression, harp::RObject::view(env)) {
-        Ok(value) => {
-            if let Some(capture) = capture {
-                harp::utils::r_print(value.sexp);
-                Ok(RVariable {
-                    name: String::new(),
-                    value: capture.take().trim_end().to_string(),
-                    type_field: None,
-                    variables_reference_object: None,
-                })
-            } else {
-                Ok(object_variable_from_value(value.sexp))
-            }
-        },
-        Err(err) => Err(format!("{err}")),
+    let env = state.get_frame_env(frame_id)?;
+    let value = harp::parse_eval0(expression, harp::RObject::view(env))?;
+
+    if let Some(capture) = capture {
+        harp::utils::r_print(value.sexp);
+        Ok(RVariable {
+            name: String::new(),
+            value: capture.take().trim_end().to_string(),
+            type_field: None,
+            variables_reference_object: None,
+        })
+    } else {
+        Ok(object_variable_from_value(value.sexp))
     }
-}
-
-pub fn get_frame_env(state: &Dap, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
-    let Some(frame_id) = frame_id else {
-        return Ok(R_ENVS.global);
-    };
-
-    let Some(variables_reference) = state
-        .frame_id_to_variables_reference
-        .get(&frame_id)
-        .copied()
-    else {
-        return Err(format!("Unknown `frame_id`: {frame_id}"));
-    };
-
-    let Some(obj) = state
-        .variables_reference_to_r_object
-        .get(&variables_reference)
-    else {
-        return Err(format!(
-            "Unknown `variables_reference`: {variables_reference}"
-        ));
-    };
-
-    Ok(obj.get().sexp)
 }
 
 fn set_selected_frame(frame_id: Option<i64>) {

@@ -14,7 +14,9 @@ use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
+use anyhow::anyhow;
 use crossbeam::channel::Sender;
+use harp::environment::R_ENVS;
 use harp::object::RObject;
 use stdext::result::ResultExt;
 use stdext::spawn;
@@ -474,6 +476,29 @@ impl Dap {
                     BreakpointState::Verified | BreakpointState::Unverified
                 )
         })
+    }
+
+    pub fn get_frame_env(&self, frame_id: Option<i64>) -> anyhow::Result<libr::SEXP> {
+        let Some(frame_id) = frame_id else {
+            return Ok(R_ENVS.global);
+        };
+
+        let Some(variables_reference) =
+            self.frame_id_to_variables_reference.get(&frame_id).copied()
+        else {
+            return Err(anyhow!("Unknown `frame_id`: {frame_id}"));
+        };
+
+        let Some(obj) = self
+            .variables_reference_to_r_object
+            .get(&variables_reference)
+        else {
+            return Err(anyhow!(
+                "Unknown `variables_reference`: {variables_reference}"
+            ));
+        };
+
+        Ok(obj.get().sexp)
     }
 }
 
