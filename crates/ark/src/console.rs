@@ -567,8 +567,12 @@ impl ConsoleOutputCapture {
         if !self.connected {
             return String::new();
         }
-        let console = Console::get_mut();
-        std::mem::take(console.captured_output.get_or_insert_with(String::new))
+
+        if let Some(captured) = Console::get_mut().captured_output.as_mut() {
+            return std::mem::take(captured);
+        }
+
+        String::new()
     }
 }
 
