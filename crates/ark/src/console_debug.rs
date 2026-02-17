@@ -93,10 +93,25 @@ impl Console {
                 let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
                 let stack_changed = stack_id != self.debug_last_stack;
 
+                self.debug_last_stack = stack_id;
+
+                // Transient eval with unchanged stack: just refresh variables
+                if transient_eval && !stack_changed {
+                    let dap = self.debug_dap.lock().unwrap();
+                    dap.send_invalidated();
+                    return;
+                }
+
+                // If we skipped `debug_stop` during a transient eval but the
+                // stack changed, clean up Console-level state now.
+                if transient_eval {
+                    self.clear_fallback_sources();
+                    self.debug_session_index += 1;
+                    self.set_debug_selected_frame_id(None);
+                }
+
                 // Initialize fallback sources for this stack
                 let fallback_sources = self.load_fallback_sources(&stack);
-
-                self.debug_last_stack = stack_id;
 
                 let show = get_show_hidden_frames();
                 if !show.internal {
@@ -108,24 +123,12 @@ impl Console {
 
                 let mut dap = self.debug_dap.lock().unwrap();
 
-                // During transient evals (same stack, no step gesture), skip
-                // `start_debug` and send an Invalidated event instead so the
-                // frontend refreshes variables while keeping its frame selection
-                // and existing frame IDs. If the stack changed (e.g. evaluation
-                // pushed a new debugger), we start a new debug session normally.
-                if transient_eval && !stack_changed {
-                    dap.send_invalidated();
-                } else {
-                    // If this was a transient eval but the stack changed (e.g. eval
-                    // pushed a new debugger), we skipped `debug_stop` earlier so we
-                    // need to send stop_debug + Continued now before starting the
-                    // new debug session.
-                    if transient_eval && stack_changed {
-                        dap.stop_debug();
-                    }
-
-                    dap.start_debug(stack, fallback_sources, debug_stopped_reason)
+                // Send Continued so the frontend knows the previous session ended.
+                if transient_eval {
+                    dap.stop_debug();
                 }
+
+                dap.start_debug(stack, fallback_sources, debug_stopped_reason)
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
