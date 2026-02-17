@@ -158,12 +158,24 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 - Avoid `.unwrap()` and `.expect()`. For truly unrecoverable errors, use an explicit match with a `panic!` branch. For recoverable errors, use `.log_err()` or propagate with `?`.
 
+- Avoid unnecessary `.clone()`. Prefer returning `&str` over `String` from accessors so callers only allocate when they need to. Reorder operations to avoid cloning (e.g., build a response before consuming the source data). For `Arc`, use `Arc::clone(&x)` instead of `x.clone()` to make the cheap clone obvious.
+
+- Keep `Cargo.toml` dependencies in alphabetical order.
+
 - When writing tests, prefer simple assertion macros without custom error messages:
     - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
     - Use `assert!(condition);` instead of `assert!(condition, "custom message");`
+
+- In tests, prefer exact assertions over fuzzy ones. Use `assert_eq!(stack[0].name, "foo()")` rather than `assert!(names.contains(&"foo()"))` when ordering and completeness matter.
+
+- In tests, if you set global state (R options, env vars), clean it up _before_ assertions so it doesn't leak when a test fails.
 
 - When you extract code in a function (or move things around) that function goes _below_ the calling function. A general goal is to be able to read linearly from top to bottom with the relevant context and main logic first. The code should be organised like a call stack. Of course that's not always possible, use best judgement to produce the clearest code organization.
 
 - Keep the main logic as unnested as possible. Favour Rust's `let ... else` syntax to return early or continue a loop in the `else` clause, over `if let`.
 
 - Always prefer importing with `use` instead of qualifying with `::`, unless specifically requested in these instructions or by the user, or you see existing `::` usages in the file you're editing.
+
+- When two code paths do analogous things, make them structurally parallel so the symmetry is visible.
+
+- Don't let comments drift from the code. If behaviour changes, update nearby comments. If a file is renamed, update its header comment.
