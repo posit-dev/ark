@@ -60,12 +60,12 @@ pub struct StatementRangeSuccess {
 #[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "rejectionKind")]
 pub enum StatementRangeRejection {
-    Parse(StatementRangeParseRejection),
+    Syntax(StatementRangeSyntaxRejection),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StatementRangeParseRejection {
+pub struct StatementRangeSyntaxRejection {
     line: Option<u32>,
 }
 
@@ -86,11 +86,11 @@ struct ArkStatementRangeSuccess {
 
 #[derive(Debug, Eq, PartialEq)]
 enum ArkStatementRangeRejection {
-    Parse(ArkStatementRangeParseRejection),
+    Syntax(ArkStatementRangeSyntaxRejection),
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct ArkStatementRangeParseRejection {
+struct ArkStatementRangeSyntaxRejection {
     line: u32,
 }
 
@@ -112,8 +112,8 @@ fn statement_range_response_from_ark_statement_range_response(
             }))
         },
         ArkStatementRangeResponse::Rejection(rejection) => match rejection {
-            ArkStatementRangeRejection::Parse(rejection) => Ok(StatementRangeResponse::Rejection(
-                StatementRangeRejection::Parse(StatementRangeParseRejection {
+            ArkStatementRangeRejection::Syntax(rejection) => Ok(StatementRangeResponse::Rejection(
+                StatementRangeRejection::Syntax(StatementRangeSyntaxRejection {
                     line: Some(rejection.line),
                 }),
             )),
@@ -437,10 +437,10 @@ fn adjust_roxygen_examples_rejection(
     row_adjustment: usize,
 ) -> Option<ArkStatementRangeRejection> {
     match subdocument_rejection {
-        ArkStatementRangeRejection::Parse(subdocument_rejection) => {
-            // Adjust line number of the parse rejection to reflect original document
-            Some(ArkStatementRangeRejection::Parse(
-                ArkStatementRangeParseRejection {
+        ArkStatementRangeRejection::Syntax(subdocument_rejection) => {
+            // Adjust line number of the syntax rejection to reflect original document
+            Some(ArkStatementRangeRejection::Syntax(
+                ArkStatementRangeSyntaxRejection {
                     line: subdocument_rejection.line + row_adjustment as u32,
                 },
             ))
@@ -506,13 +506,13 @@ fn find_statement_range(root: &Node, row: usize) -> LspResult<Option<ArkStatemen
         // tree-sitter manages to "recover" further down the page, this is highly
         // unpredictable and is sensitive to minor changes in both tree-sitter-r and the
         // user's precise document contents. Instead, we give up if the user's cursor is
-        // anywhere past the first parse error, returning a parse rejection that points to
-        // the first line in this child node, which the frontend will show the user
+        // anywhere past the first parse error, returning a syntax rejection that points
+        // to the first line in this child node, which the frontend will show the user
         // (posit-dev/positron#5023, posit-dev/positron#8350).
         if node_has_error_or_missing(&child) {
             let line = child.start_position().row as u32;
             return Ok(Some(ArkStatementRangeResponse::Rejection(
-                ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line }),
+                ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line }),
             )));
         }
 
@@ -841,14 +841,14 @@ mod tests {
     use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
-    use crate::lsp::statement_range::ArkStatementRangeParseRejection;
     use crate::lsp::statement_range::ArkStatementRangeRejection;
     use crate::lsp::statement_range::ArkStatementRangeResponse;
     use crate::lsp::statement_range::ArkStatementRangeSuccess;
-    use crate::lsp::statement_range::StatementRangeParseRejection;
+    use crate::lsp::statement_range::ArkStatementRangeSyntaxRejection;
     use crate::lsp::statement_range::StatementRangeRejection;
     use crate::lsp::statement_range::StatementRangeResponse;
     use crate::lsp::statement_range::StatementRangeSuccess;
+    use crate::lsp::statement_range::StatementRangeSyntaxRejection;
 
     // Intended to ease statement range testing. Supply `x` as a string containing
     // the expression to test along with:
@@ -1948,7 +1948,7 @@ sum(
         );
         assert_matches::assert_matches!(
             rejection,
-            ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line: 1 })
+            ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line: 1 })
         );
     }
 
@@ -1973,7 +1973,7 @@ fn3 <- function() {@ # Can't execute this!
         );
         assert_matches::assert_matches!(
             rejection,
-            ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line: 1 })
+            ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line: 1 })
         );
     }
 
@@ -1994,7 +1994,7 @@ fn <- function() {
         );
         assert_matches::assert_matches!(
             rejection,
-            ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line: 1 })
+            ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line: 1 })
         );
 
         let rejection = statement_range_rejection_from_cursor(
@@ -2007,7 +2007,7 @@ fn <- function() {
         );
         assert_matches::assert_matches!(
             rejection,
-            ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line: 1 })
+            ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line: 1 })
         );
     }
 
@@ -2544,7 +2544,7 @@ x %>%
         let rejection = find_roxygen_statement_range_rejection(&root, contents, point);
         assert_matches::assert_matches!(
             rejection,
-            ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line: 4 })
+            ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line: 4 })
         );
     }
 
@@ -2564,7 +2564,7 @@ x %>%
         let rejection = find_roxygen_statement_range_rejection(&root, contents, point);
         assert_matches::assert_matches!(
             rejection,
-            ArkStatementRangeRejection::Parse(ArkStatementRangeParseRejection { line: 4 })
+            ArkStatementRangeRejection::Syntax(ArkStatementRangeSyntaxRejection { line: 4 })
         );
     }
 
@@ -2672,14 +2672,14 @@ NULL
     #[test]
     fn test_statement_range_serde_json_rejection() {
         // Without `line`
-        let rejection = StatementRangeResponse::Rejection(StatementRangeRejection::Parse(
-            StatementRangeParseRejection { line: None },
+        let rejection = StatementRangeResponse::Rejection(StatementRangeRejection::Syntax(
+            StatementRangeSyntaxRejection { line: None },
         ));
         assert_snapshot!(serde_json::to_string_pretty(&rejection).unwrap());
 
         // With `line`
-        let rejection = StatementRangeResponse::Rejection(StatementRangeRejection::Parse(
-            StatementRangeParseRejection { line: Some(12) },
+        let rejection = StatementRangeResponse::Rejection(StatementRangeRejection::Syntax(
+            StatementRangeSyntaxRejection { line: Some(12) },
         ));
         assert_snapshot!(serde_json::to_string_pretty(&rejection).unwrap());
     }
