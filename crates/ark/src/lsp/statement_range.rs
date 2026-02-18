@@ -43,13 +43,13 @@ pub struct StatementRangeParams {
 #[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum StatementRangeResponse {
-    Success(StatementRange),
+    Success(StatementRangeSuccess),
     Rejection(StatementRangeRejection),
 }
 
 #[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct StatementRange {
+pub struct StatementRangeSuccess {
     /// The document range the statement covers.
     range: lsp_types::Range,
     /// Optionally, code to be executed for this `range` if it differs from
@@ -74,12 +74,12 @@ pub struct StatementRangeParseRejection {
 
 #[derive(Debug, Eq, PartialEq)]
 enum ArkStatementRangeResponse {
-    Success(ArkStatementRange),
+    Success(ArkStatementRangeSuccess),
     Rejection(ArkStatementRangeRejection),
 }
 
 #[derive(Debug, Eq, PartialEq)]
-struct ArkStatementRange {
+struct ArkStatementRangeSuccess {
     range: tree_sitter::Range,
     code: Option<String>,
 }
@@ -106,7 +106,7 @@ fn statement_range_response_from_ark_statement_range_response(
             let start = document.lsp_position_from_tree_sitter_point(response.range.start_point)?;
             let end = document.lsp_position_from_tree_sitter_point(response.range.end_point)?;
             let range = lsp_types::Range { start, end };
-            Ok(StatementRangeResponse::Success(StatementRange {
+            Ok(StatementRangeResponse::Success(StatementRangeSuccess {
                 range,
                 code: response.code,
             }))
@@ -186,7 +186,7 @@ fn find_roxygen_statement_range(
     // entire roxygen block if you misplace your cursor and `Cmd + Enter`.
     if as_roxygen_comment_text(&node, contents).is_some() {
         return Ok(Some(ArkStatementRangeResponse::Success(
-            ArkStatementRange {
+            ArkStatementRangeSuccess {
                 range: node.range(),
                 code: None,
             },
@@ -378,11 +378,11 @@ fn find_roxygen_examples_range(
 }
 
 fn adjust_roxygen_examples_success(
-    subdocument_statement_range: ArkStatementRange,
+    subdocument_statement_range: ArkStatementRangeSuccess,
     subdocument: &Document,
     root: &Node,
     row_adjustment: usize,
-) -> Option<ArkStatementRange> {
+) -> Option<ArkStatementRangeSuccess> {
     let subdocument_range = subdocument_statement_range.range;
 
     // Slice out code to execute from the subdocument
@@ -429,7 +429,7 @@ fn adjust_roxygen_examples_success(
 
     let code = Some(subdocument_code);
 
-    Some(ArkStatementRange { range, code })
+    Some(ArkStatementRangeSuccess { range, code })
 }
 
 fn adjust_roxygen_examples_rejection(
@@ -549,7 +549,7 @@ fn find_statement_range(root: &Node, row: usize) -> LspResult<Option<ArkStatemen
     let code = None;
 
     Ok(Some(ArkStatementRangeResponse::Success(
-        ArkStatementRange { range, code },
+        ArkStatementRangeSuccess { range, code },
     )))
 }
 
@@ -841,14 +841,14 @@ mod tests {
     use crate::lsp::document::Document;
     use crate::lsp::statement_range::find_roxygen_statement_range;
     use crate::lsp::statement_range::find_statement_range;
-    use crate::lsp::statement_range::ArkStatementRange;
     use crate::lsp::statement_range::ArkStatementRangeParseRejection;
     use crate::lsp::statement_range::ArkStatementRangeRejection;
     use crate::lsp::statement_range::ArkStatementRangeResponse;
-    use crate::lsp::statement_range::StatementRange;
+    use crate::lsp::statement_range::ArkStatementRangeSuccess;
     use crate::lsp::statement_range::StatementRangeParseRejection;
     use crate::lsp::statement_range::StatementRangeRejection;
     use crate::lsp::statement_range::StatementRangeResponse;
+    use crate::lsp::statement_range::StatementRangeSuccess;
 
     // Intended to ease statement range testing. Supply `x` as a string containing
     // the expression to test along with:
@@ -2030,7 +2030,7 @@ fn <- function() {
         root: &Node,
         contents: &str,
         point: Point,
-    ) -> ArkStatementRange {
+    ) -> ArkStatementRangeSuccess {
         let response = find_roxygen_statement_range(root, contents, point);
 
         let response = match response {
@@ -2637,7 +2637,7 @@ NULL
     #[test]
     fn test_statement_range_serde_json_success() {
         // No code
-        let success = StatementRangeResponse::Success(StatementRange {
+        let success = StatementRangeResponse::Success(StatementRangeSuccess {
             range: lsp_types::Range {
                 start: lsp_types::Position {
                     line: 5,
@@ -2653,7 +2653,7 @@ NULL
         assert_snapshot!(serde_json::to_string_pretty(&success).unwrap());
 
         // With code
-        let success = StatementRangeResponse::Success(StatementRange {
+        let success = StatementRangeResponse::Success(StatementRangeSuccess {
             range: lsp_types::Range {
                 start: lsp_types::Position {
                     line: 5,
