@@ -305,3 +305,65 @@ call_parse_type <- function(call) {
 
     ""
 }
+
+backtick <- function(x) {
+    if (needs_backticks(x)) {
+        paste0("`", x, "`")
+    } else {
+        x
+    }
+}
+
+needs_backticks <- function(str) {
+    stopifnot(is_string(str))
+
+    n <- nchar(str)
+    if (!n) {
+        return(FALSE)
+    }
+
+    if (str %in% .reserved_words) {
+        return(TRUE)
+    }
+
+    start <- substr(str, 1, 1)
+    if (!grepl("[[:alpha:].]", start)) {
+        return(TRUE)
+    }
+
+    if (n == 1) {
+        return(FALSE)
+    }
+
+    remaining <- substr(str, 2, n)
+
+    # .0 double literals
+    if (start == "." && grepl("^[[:digit:]]", remaining)) {
+        return(TRUE)
+    }
+
+    grepl("[^[:alnum:]_.]", remaining)
+}
+
+# From gram.y
+.reserved_words <- c(
+    "NULL",
+    "NA",
+    "TRUE",
+    "FALSE",
+    "Inf",
+    "NaN",
+    "NA_integer_",
+    "NA_real_",
+    "NA_character_",
+    "NA_complex_",
+    "function",
+    "while",
+    "repeat",
+    "for",
+    "if",
+    "in",
+    "else",
+    "next",
+    "break"
+)
