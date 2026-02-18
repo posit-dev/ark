@@ -5,5 +5,5 @@ expression: "serde_json::to_string_pretty(&rejection).unwrap()"
 {
   "kind": "rejection",
   "rejectionKind": "parse",
-  "line": null
+  "line": 12
 }

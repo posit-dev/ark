@@ -66,7 +66,7 @@ pub enum StatementRangeRejection {
 #[derive(Debug, Eq, PartialEq, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StatementRangeParseRejection {
-    line: u32,
+    line: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -114,7 +114,7 @@ fn statement_range_response_from_ark_statement_range_response(
         ArkStatementRangeResponse::Rejection(rejection) => match rejection {
             ArkStatementRangeRejection::Parse(rejection) => Ok(StatementRangeResponse::Rejection(
                 StatementRangeRejection::Parse(StatementRangeParseRejection {
-                    line: rejection.line,
+                    line: Some(rejection.line),
                 }),
             )),
         },
@@ -2671,8 +2671,15 @@ NULL
 
     #[test]
     fn test_statement_range_serde_json_rejection() {
+        // Without `line`
         let rejection = StatementRangeResponse::Rejection(StatementRangeRejection::Parse(
-            StatementRangeParseRejection { line: 12 },
+            StatementRangeParseRejection { line: None },
+        ));
+        assert_snapshot!(serde_json::to_string_pretty(&rejection).unwrap());
+
+        // With `line`
+        let rejection = StatementRangeResponse::Rejection(StatementRangeRejection::Parse(
+            StatementRangeParseRejection { line: Some(12) },
         ));
         assert_snapshot!(serde_json::to_string_pretty(&rejection).unwrap());
     }
