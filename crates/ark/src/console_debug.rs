@@ -368,6 +368,7 @@ fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
 
     // `Vec::retain` iterates front-to-back (guaranteed by std)
     frames.retain(|frame| {
+        // Always preserve the topmost frame so the user sees where they're stopped
         if first {
             first = false;
             return true;
@@ -378,6 +379,11 @@ fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
             return false;
         }
         if frame.frame_name.starts_with("..stacktraceoff..") {
+            if hidden_depth == 0 {
+                log::trace!(
+                    "Unbalanced `..stacktraceoff..` without prior `..stacktraceon..` in call stack"
+                );
+            }
             hidden_depth = hidden_depth.saturating_sub(1);
             return false;
         }
