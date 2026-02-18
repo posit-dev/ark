@@ -174,7 +174,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         deparse_string(call)
     })
     frame_names <- lapply(frame_calls, function(call) as_label(call))
-    fn_names <- lapply(frame_calls, call_fn_name)
+    fn_names <- lapply(frame_calls, function(call) call_fn_name(call))
 
     # Currently only tracked for the context frame, as that is where it is most useful,
     # since that is where the user is actively stepping.
@@ -203,25 +203,6 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
     }
 
     out
-}
-
-call_fn_name <- function(call) {
-    fn <- call[[1]]
-
-    if (is.symbol(fn)) {
-        return(deparse(fn, backtick = TRUE))
-    }
-
-    # `pkg::fun()` or `pkg:::fun()`: use the RHS
-    if (
-        is.call(fn) &&
-            is.symbol(fn[[1]]) &&
-            deparse(fn[[1]]) %in% c("::", ":::")
-    ) {
-        return(deparse(fn[[3]], backtick = TRUE))
-    }
-
-    NULL
 }
 
 frame_info <- function(
