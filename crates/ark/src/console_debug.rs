@@ -342,16 +342,28 @@ impl Console {
 }
 
 /// Removes frames fenced between `..stacktraceon..` and `..stacktraceoff..`
-/// markers (used by Shiny to hide internal frames).
+/// markers (used by Shiny to hide internal frames from error stack traces).
 ///
-/// Since the stack is innermost-first, the sentinel semantics are inverted
-/// from Shiny's outermost perspective: `..stacktraceon..` *enters* a hidden
-/// region (going outward) and `..stacktraceoff..` *exits* it.
+/// Shiny's filtering uses a score-based system (see `stripOneStackTrace` in
+/// Shiny's R/conditions.R): score starts at 1, `..stacktraceon..` adds 1,
+/// `..stacktraceoff..` subtracts 1, and frames with score < 1 are hidden.
+/// Sentinels are expected to be properly nested like parentheses.
+///
+/// Since our stack is innermost-first (opposite to Shiny's traversal), the
+/// semantics invert: `..stacktraceon..` *enters* a hidden region (going
+/// outward) and `..stacktraceoff..` *exits* it. We use `hidden_depth` as an
+/// equivalent to Shiny's score, where `depth == 0` means visible.
+///
+/// Note: Shiny also uses `..stacktracefloor..` to truncate stacks entirely
+/// below that point. We don't handle this since showing the full context
+/// (e.g. `shiny::runApp()`) is useful in a debugger. Shiny's
+/// `shiny.fullstacktrace` option disables filtering; our equivalent is
+/// `ark.debugger.show_hidden_frames`.
 ///
 /// The topmost frame (index 0) is never filtered out so the user always
 /// sees where they are stopped.
 fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
-    let mut hidden = false;
+    let mut hidden_depth: u32 = 0;
     let mut first = true;
 
     // `Vec::retain` iterates front-to-back (guaranteed by std)
@@ -362,17 +374,17 @@ fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
         }
         // Frame names are formatted as `fn_name()`, match on the prefix
         if frame.frame_name.starts_with("..stacktraceon..") {
-            hidden = true;
+            hidden_depth += 1;
             return false;
         }
         if frame.frame_name.starts_with("..stacktraceoff..") {
-            hidden = false;
+            hidden_depth = hidden_depth.saturating_sub(1);
             return false;
         }
-        !hidden
+        hidden_depth == 0
     });
 
-    if hidden {
+    if hidden_depth > 0 {
         log::warn!(
             "Unmatched `..stacktraceon..` without closing `..stacktraceoff..` in call stack"
         );
@@ -591,6 +603,55 @@ mod tests {
             "outer_off()",
             "top()"
         ]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_nested_regions() {
+        // Shiny nests sentinel pairs. Inner `..stacktraceon..` increases depth,
+        // and we only exit hidden mode when depth returns to 0.
+        let mut frames = vec![
+            frame("renderPlot()"),
+            frame("..stacktraceon..(renderPlot())"),
+            frame("func()"),
+            frame("..stacktraceon..(<reactive:plotObj>)"),
+            frame("internal_deep()"),
+            frame("..stacktraceoff..(self$.updateValue())"),
+            frame("still_hidden()"),
+            frame("..stacktraceoff..(renderFunc)"),
+            frame("output$distPlot()"),
+            frame("..stacktraceon..(output$distPlot)"),
+            frame("more_internal()"),
+            frame("..stacktraceoff..(captureStackTraces)"),
+            frame("shiny::runApp()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec![
+            "renderPlot()",
+            "output$distPlot()",
+            "shiny::runApp()"
+        ]);
+    }
+
+    #[test]
+    fn test_filter_hidden_frames_deeply_nested() {
+        // Multiple levels of nesting
+        let mut frames = vec![
+            frame("user()"),
+            frame("..stacktraceon..()"),
+            frame("a()"),
+            frame("..stacktraceon..()"),
+            frame("b()"),
+            frame("..stacktraceon..()"),
+            frame("c()"),
+            frame("..stacktraceoff..()"),
+            frame("d()"),
+            frame("..stacktraceoff..()"),
+            frame("e()"),
+            frame("..stacktraceoff..()"),
+            frame("visible()"),
+        ];
+        filter_hidden_frames(&mut frames);
+        assert_eq!(names(&frames), vec!["user()", "visible()"]);
     }
 
     #[test]
