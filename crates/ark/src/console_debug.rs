@@ -208,7 +208,16 @@ impl Console {
         unsafe {
             let mut protect = RProtect::new();
 
-            let context_srcref = libr::get(libr::R_Srcref);
+            // R_Srcref can be a C NULL pointer (0x0) in certain contexts, such
+            // as when `browser()` is called inside `dplyr::mutate()`. Convert
+            // NULL pointers to R_NilValue to avoid the crash. See
+            // https://github.com/posit-dev/positron/issues/8979
+            let srcref = libr::get(libr::R_Srcref);
+            let context_srcref = if srcref.is_null() {
+                libr::R_NilValue
+            } else {
+                srcref
+            };
             protect.add(context_srcref);
 
             let context_call_text = match context_call_text {
@@ -240,8 +249,8 @@ impl Console {
                 .add(context_last_start_line)
                 .add(context_srcref)
                 .add(functions)
-                .add(environments)
-                .add(calls)
+                .add(environments.sexp)
+                .add(calls.sexp)
                 .call_in(ARK_ENVS.positron_ns)?;
 
             let n: isize = libr::Rf_xlength(info.sexp);
