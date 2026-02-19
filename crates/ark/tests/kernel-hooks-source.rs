@@ -115,6 +115,47 @@ x + 41
 }
 
 #[test]
+fn test_source_returns_invisible_value_with_visible_false() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create a file where the last expression is invisible.
+    // The withVisible() value should be FALSE.
+    let file = SourceFile::new(
+        "
+foo <- function() {
+    1
+}
+invisible(42)
+",
+    );
+
+    // Set a breakpoint to trigger the annotation code path.
+    // Without a breakpoint, the hook falls back to base::source().
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+
+    // Source the file. The hooked source() returns invisibly.
+    frontend.source_file(&file);
+    dap.recv_breakpoint_verified();
+
+    // Verify the return value structure matches base::source():
+    // list(value = <last_expr>, visible = <TRUE/FALSE>)
+    // When the last expression is invisible(42), visible should be FALSE.
+    let code = format!(r#"(source("{}"))"#, file.path);
+    frontend.execute_request(&code, |result| {
+        assert!(result.contains("$value"), "Expected $value in result");
+        assert!(result.contains("[1] 42"), "Expected value to be 42");
+        assert!(result.contains("$visible"), "Expected $visible in result");
+        assert!(
+            result.contains("[1] FALSE"),
+            "Expected visible to be FALSE for invisible() result, got: {}",
+            result
+        );
+    });
+}
+
+#[test]
 fn test_ark_annotate_source_returns_null_without_breakpoints() {
     let frontend = DummyArkFrontend::lock();
     let _dap = frontend.start_dap();
