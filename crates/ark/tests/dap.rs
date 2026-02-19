@@ -10,7 +10,6 @@ use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
 use ark_test::DummyArkFrontend;
 use dap::types::Thread;
-
 #[test]
 fn test_dap_initialize_and_disconnect() {
     let frontend = DummyArkFrontend::lock();
@@ -666,4 +665,99 @@ outer_user()
     assert_eq!(stack[0].name, "user_code()");
     assert_eq!(stack[1].name, "shiny_wrapper()");
     assert_eq!(stack[2].name, "outer_user()");
+}
+
+/// https://github.com/posit-dev/positron/issues/11780
+/// `browser()` inside `tryCatch()` must evaluate in the function's environment,
+/// not a parent one.
+#[test]
+fn test_dap_browser_in_trycatch() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+f <- function(my_var) {
+  tryCatch(
+    {
+      browser()
+      my_var
+    }
+  )
+}
+f(1)
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+    let scopes = dap.scopes(frame_id);
+    let variables = dap.variables(scopes[0].variables_reference);
+
+    let var = variables.iter().find(|v| v.name == "my_var").unwrap();
+    assert_eq!(var.value, "1");
+
+    // Evaluate `my_var` from the console: must resolve to the argument
+    frontend.send_execute_request("my_var", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("[1] 1");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+/// Same as above but with `withCallingHandlers()`.
+#[test]
+fn test_dap_browser_in_withcallinghandlers() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+f <- function(my_var) {
+  withCallingHandlers(
+    {
+      browser()
+      my_var
+    },
+    warning = function(w) invokeRestart('muffleWarning')
+  )
+}
+f(99)
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+    let scopes = dap.scopes(frame_id);
+    let variables = dap.variables(scopes[0].variables_reference);
+
+    let var = variables.iter().find(|v| v.name == "my_var").unwrap();
+    assert_eq!(var.value, "99");
+
+    // Evaluate `my_var` from the console: must resolve to the argument
+    frontend.send_execute_request("my_var", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("[1] 99");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
 }
