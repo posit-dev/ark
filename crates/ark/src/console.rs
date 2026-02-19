@@ -884,11 +884,11 @@ impl Console {
     /// soundness by yourself.
     pub fn get_mut() -> &'static mut Self {
         CONSOLE.with_borrow_mut(|cell| {
-            let main_ref = cell.get_mut();
+            let console_ref = cell.get_mut();
 
             // We extend the lifetime to `'static` as `CONSOLE` is effectively static once initialized.
             // This allows us to return a `&mut` from the unsafe cell to the caller.
-            unsafe { std::mem::transmute::<&mut Console, &'static mut Console>(main_ref) }
+            unsafe { std::mem::transmute::<&mut Console, &'static mut Console>(console_ref) }
         })
     }
 
@@ -2182,20 +2182,20 @@ impl Console {
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
 
-        let r_main = Console::get_mut();
+        let console = Console::get_mut();
 
         if !Console::is_initialized() {
             // During init, consider all output to be part of the startup banner
-            match r_main.banner.as_mut() {
+            match console.banner.as_mut() {
                 Some(banner) => banner.push_str(&content),
-                None => r_main.banner = Some(content),
+                None => console.banner = Some(content),
             }
             return;
         }
 
         // To capture the current `debug: <call>` output, for use in the debugger's
         // match based fallback
-        r_main.debug_handle_write_console(&content);
+        console.debug_handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -2205,7 +2205,7 @@ impl Console {
 
         // If active execution request is silent don't broadcast
         // any output
-        if let Some(ref req) = r_main.active_request {
+        if let Some(ref req) = console.active_request {
             if req.request.silent {
                 return;
             }
@@ -2238,13 +2238,13 @@ impl Console {
             // https://github.com/posit-dev/positron/issues/1881
 
             // Handle last expression
-            if r_main.pending_inputs.is_none() {
-                r_main.autoprint_output.push_str(&content);
+            if console.pending_inputs.is_none() {
+                console.autoprint_output.push_str(&content);
                 return;
             }
 
             // In notebooks, we don't emit results of intermediate expressions
-            if r_main.session_mode == SessionMode::Notebook {
+            if console.session_mode == SessionMode::Notebook {
                 return;
             }
 
@@ -2258,7 +2258,7 @@ impl Console {
             name: stream,
             text: content,
         });
-        r_main.iopub_tx.send(message).unwrap();
+        console.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -2685,13 +2685,13 @@ pub extern "C-unwind" fn r_read_console(
 }
 
 fn r_read_console_impl(
-    main: &mut Console,
+    console: &mut Console,
     prompt: *const c_char,
     buf: *mut c_uchar,
     buflen: c_int,
     hist: c_int,
 ) -> i32 {
-    let result = r_sandbox(|| main.read_console(prompt, buf, buflen, hist));
+    let result = r_sandbox(|| console.read_console(prompt, buf, buflen, hist));
 
     let result = unwrap!(result, Err(err) => {
         panic!("Unexpected longjump while reading from console: {err:?}");
@@ -2716,9 +2716,10 @@ fn r_read_console_impl(
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning
                 // a dummy value causing a `PARSE_NULL` event.
-                if main.read_console_nested_return.get() {
+                if console.read_console_nested_return.get() {
                     let next_input = Console::console_input(buf, buflen);
-                    main.read_console_nested_return_next_input
+                    console
+                        .read_console_nested_return_next_input
                         .set(Some(next_input));
 
                     // Evaluating a space causes a `PARSE_NULL` event. Don't
@@ -2726,12 +2727,12 @@ fn r_read_console_impl(
                     // to interpret it as `n`, causing it to exit instead of
                     // being a no-op.
                     Console::on_console_input(buf, buflen, String::from(" ")).unwrap();
-                    main.read_console_nested_return.set(false);
+                    console.read_console_nested_return.set(false);
                 }
 
                 // We verify breakpoints _after_ evaluation is complete. An
                 // error will prevent verification.
-                main.verify_breakpoints(RObject::from(srcref));
+                console.verify_breakpoints(RObject::from(srcref));
 
                 libr::Rf_unprotect(2);
                 return 1;
@@ -2744,7 +2745,7 @@ fn r_read_console_impl(
 
         ConsoleResult::Disconnected => {
             // Cause parent consoles to shutdown too
-            main.read_console_shutdown.set(true);
+            console.read_console_shutdown.set(true);
             return 0;
         },
 
@@ -2764,8 +2765,8 @@ fn r_read_console_impl(
             // `Rf_error()` jumps. Some gymnastics are required to deal with the
             // possibility of `CString` conversion failure since the error
             // message comes from the frontend and might be corrupted.
-            main.r_error_buffer = Some(new_cstring(message));
-            unsafe { Rf_error(main.r_error_buffer.as_ref().unwrap().as_ptr()) }
+            console.r_error_buffer = Some(new_cstring(message));
+            unsafe { Rf_error(console.r_error_buffer.as_ref().unwrap().as_ptr()) }
         },
     };
 }
