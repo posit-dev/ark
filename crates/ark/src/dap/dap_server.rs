@@ -800,6 +800,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             };
 
             let rsp = if expression == SELECTED_FRAME_EXPRESSION {
+                log::trace!("DAP: Received frame selection sentinel, frame_id: {frame_id:?}");
                 Console::get().set_debug_selected_frame_id(frame_id);
                 req.success(ResponseBody::Evaluate(EvaluateResponse {
                     result: String::new(),
