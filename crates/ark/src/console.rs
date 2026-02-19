@@ -2731,8 +2731,7 @@ impl Console {
             .unwrap_or_else(|| R_ENVS.global.into())
     }
 
-    /// Entry bookkeeping for `r_read_console()`.
-    fn do_read_console_enter(&mut self, env: RObject) {
+    fn read_console_enter(&mut self, env: RObject) {
         // Track nesting depth of ReadConsole REPLs
         self.read_console_depth
             .set(self.read_console_depth.get() + 1);
@@ -2748,8 +2747,7 @@ impl Console {
         self.read_console_env_stack.borrow_mut().push(env);
     }
 
-    /// Exit bookkeeping for `r_read_console()`.
-    fn do_read_console_exit(&mut self) {
+    fn read_console_exit(&mut self) {
         // We're exiting, decrease depth of nested consoles
         self.read_console_depth
             .set(self.read_console_depth.get() - 1);
@@ -2963,7 +2961,7 @@ pub extern "C-unwind" fn r_read_console(
 
     // Entry bookkeeping: increment depth, set flags, push frame.
     // Cleanup happens in the exit branch of `exec_with_cleanup()`.
-    console.do_read_console_entry(env);
+    console.read_console_enter(env);
 
     exec_with_cleanup(
         || {
@@ -2976,7 +2974,7 @@ pub extern "C-unwind" fn r_read_console(
             result
         },
         || {
-            Console::get_mut().do_read_console_exit();
+            Console::get_mut().read_console_exit();
         },
     )
 }
