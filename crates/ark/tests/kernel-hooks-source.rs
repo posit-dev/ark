@@ -1,5 +1,6 @@
 use std::io::Write;
 
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 
@@ -153,6 +154,44 @@ invisible(42)
             result
         );
     });
+}
+
+#[test]
+fn test_source_error_propagates_correctly() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Create a file that will error when sourced.
+    let file = SourceFile::new(
+        "
+foo <- function() {
+    1
+}
+1 + 'x'
+",
+    );
+
+    // Set a breakpoint inside the function (never called) to trigger annotation.
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+
+    // Source the file - should error.
+    let code = format!(r#"source("{}")"#, file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    dap.recv_breakpoint_verified();
+
+    // The error should propagate correctly through the list() wrapper.
+    let error = frontend.recv_iopub_execute_error();
+    assert!(
+        error.contains("non-numeric argument"),
+        "Expected type error, got: {}",
+        error
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
 }
 
 #[test]
