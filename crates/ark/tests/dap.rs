@@ -10,6 +10,7 @@ use ark_test::assert_file_frame;
 use ark_test::assert_vdoc_frame;
 use ark_test::DummyArkFrontend;
 use dap::types::Thread;
+
 #[test]
 fn test_dap_initialize_and_disconnect() {
     let frontend = DummyArkFrontend::lock();
