@@ -2909,7 +2909,20 @@ pub extern "C-unwind" fn r_read_console(
             // We just evaluated `.ark_capture_top_level_environment()`.
             // Retrieve the captured environment from base namespace for entry
             // bookkeeping below.
-            unsafe { libr::CDR(r_symbol!(".ark_top_level_env")) }.into()
+            unsafe {
+                let sym = r_symbol!(".ark_top_level_env");
+                let env: RObject = libr::CDR(sym).into();
+
+                // Allow R to GC the environment again
+                libr::SETCDR(sym, libr::R_NilValue);
+
+                if r_typeof(env.sexp) == libr::ENVSXP {
+                    env
+                } else {
+                    log::warn!("Failed to capture browser environment, falling back");
+                    harp::r_current_frame()
+                }
+            }
         },
     };
 
