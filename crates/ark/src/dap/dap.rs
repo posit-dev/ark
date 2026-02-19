@@ -14,7 +14,9 @@ use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
+use anyhow::anyhow;
 use crossbeam::channel::Sender;
+use harp::environment::R_ENVS;
 use harp::object::RObject;
 use stdext::result::ResultExt;
 use stdext::spawn;
@@ -97,7 +99,11 @@ pub enum DapBackendEvent {
 
     /// Event sent when a browser prompt is emitted during an existing
     /// debugging session
-    Stopped(DapStoppedEvent),
+    Stopped,
+
+    /// Event sent after a console evaluation so the frontend refreshes
+    /// variables.
+    Invalidated,
 
     /// Event sent when a breakpoint state changes (verified, unverified, or invalid)
     /// The line is included so the frontend can update the breakpoint's position
@@ -109,11 +115,6 @@ pub enum DapBackendEvent {
         verified: bool,
         message: Option<String>,
     },
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct DapStoppedEvent {
-    pub preserve_focus: bool,
 }
 
 pub struct Dap {
@@ -211,7 +212,6 @@ impl Dap {
     pub fn start_debug(
         &mut self,
         mut stack: Vec<FrameInfo>,
-        preserve_focus: bool,
         fallback_sources: HashMap<String, String>,
     ) {
         self.is_debugging = true;
@@ -229,9 +229,7 @@ impl Dap {
                 .log_err();
 
             if let Some(dap_tx) = &self.backend_events_tx {
-                dap_tx
-                    .send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus }))
-                    .log_err();
+                dap_tx.send(DapBackendEvent::Stopped).log_err();
             }
         }
     }
@@ -267,6 +265,12 @@ impl Dap {
             // else: If not connected to a frontend, the DAP client should
             // have received a `Continued` event already, after a `n`
             // command or similar.
+        }
+    }
+
+    pub fn send_invalidated(&self) {
+        if let Some(tx) = &self.backend_events_tx {
+            tx.send(DapBackendEvent::Invalidated).log_err();
         }
     }
 
@@ -472,6 +476,29 @@ impl Dap {
                     BreakpointState::Verified | BreakpointState::Unverified
                 )
         })
+    }
+
+    pub fn get_frame_env(&self, frame_id: Option<i64>) -> anyhow::Result<libr::SEXP> {
+        let Some(frame_id) = frame_id else {
+            return Ok(R_ENVS.global);
+        };
+
+        let Some(variables_reference) =
+            self.frame_id_to_variables_reference.get(&frame_id).copied()
+        else {
+            return Err(anyhow!("Unknown `frame_id`: {frame_id}"));
+        };
+
+        let Some(obj) = self
+            .variables_reference_to_r_object
+            .get(&variables_reference)
+        else {
+            return Err(anyhow!(
+                "Unknown `variables_reference`: {variables_reference}"
+            ));
+        };
+
+        Ok(obj.get().sexp)
     }
 }
 

@@ -140,8 +140,10 @@ static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").
 /// All debug commands as documented in `?browser`
 const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
 
-// The subset of debug commands that continue execution
-const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+// Debug commands that exit the current browser: `n`, `f`, `c`, `cont` continue
+// execution past the current prompt, `Q` exits all nested browsers entirely.
+// These are not transient evals: they represent deliberate debugger navigation.
+const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone, Copy)]
@@ -274,11 +276,13 @@ pub struct Console {
     /// When `Some`, console output is captured here instead of being sent to IOPub.
     pub(crate) captured_output: Option<String>,
 
-    /// Whether we should preserve focus when stopping in a debug session. We
-    /// should only preserve focus if we're explicitly stepping through code as
-    /// opposed to evaluating an expression in the debugger console.
+    /// Whether the current evaluation is transient within the debug session.
+    /// When `true`, the debug session state is preserved: no Continued/Stopped
+    /// events are emitted, frame IDs remain valid, and only an Invalidated
+    /// event is sent to refresh variables. Set to `true` for console
+    /// evaluations (as opposed to step commands like `n`, `c`, `f`).
     /// See https://github.com/posit-dev/positron/issues/3151.
-    debug_preserve_focus: bool,
+    pub(crate) debug_transient_eval: bool,
 
     /// Underlying dap state. Shared with the DAP server thread.
     pub(crate) debug_dap: Arc<Mutex<Dap>>,
@@ -303,6 +307,11 @@ pub struct Console {
     /// The current frame `id`. Unique across all frames within a single debug session.
     /// Reset after `debug_stop()`, not between debug steps.
     pub(crate) debug_current_frame_id: i64,
+
+    /// The frame ID selected by the user in the debugger UI.
+    /// When set, console evaluations happen in this frame's environment instead of the current frame.
+    /// Resolved to an environment via `debug_dap` state when needed.
+    pub(crate) debug_selected_frame_id: Cell<Option<i64>>,
 
     /// Tracks how many nested `r_read_console()` calls are on the stack.
     /// Incremented when entering `r_read_console(),` decremented on exit.
@@ -892,10 +901,11 @@ impl Console {
             captured_output: None,
             debug_call_text: DebugCallText::None,
             debug_last_line: None,
-            debug_preserve_focus: false,
+            debug_transient_eval: false,
             debug_last_stack: vec![],
             debug_session_index: 1,
             debug_current_frame_id: 0,
+            debug_selected_frame_id: Cell::new(None),
             pending_inputs: None,
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
@@ -1091,7 +1101,7 @@ impl Console {
             // we'd clean from here for symmetry.
             self.debug_is_debugging = true;
             if !has_pending {
-                self.debug_start(self.debug_preserve_focus);
+                self.debug_start(self.debug_transient_eval);
             }
         }
 
@@ -1605,12 +1615,11 @@ impl Console {
         // Default: preserve current focus for evaluated expressions.
         // This only has an effect if we're debugging.
         // https://github.com/posit-dev/positron/issues/3151
-        self.debug_preserve_focus = true;
+        self.debug_transient_eval = true;
 
         if self.debug_is_debugging {
             // Try to interpret this pending input as a symbol (debug commands
-            // are entered as symbols). Whether or not it parses as a symbol,
-            // if we're currently debugging we must set `debug_preserve_focus`.
+            // are entered as symbols).
             if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
                 let sym = String::from(sym);
 
@@ -1636,9 +1645,8 @@ impl Console {
         );
 
         if DEBUG_COMMANDS_CONTINUE.contains(&&cmd[..]) {
-            // For continue-like commands, we do not preserve focus,
-            // i.e. we let the cursor jump to the stopped position.
-            self.debug_preserve_focus = false;
+            // Navigation commands are not transient evals.
+            self.debug_transient_eval = false;
         }
 
         // Forward the command to R's base REPL.
@@ -1665,8 +1673,8 @@ impl Console {
     }
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
-    unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
-        let frame = harp::r_current_frame();
+    unsafe fn eval(&self, expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
+        let frame = self.eval_frame();
 
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
@@ -1705,6 +1713,23 @@ impl Console {
 
         // Unwrap safety: The input always fits in the buffer
         Self::on_console_input(buf, buflen, code).unwrap();
+    }
+
+    /// Resolve the frame in which to evaluate the current expression.
+    /// Uses the debug-selected frame if one has been set, otherwise the current frame.
+    fn eval_frame(&self) -> harp::RObject {
+        let Some(frame_id) = self.debug_selected_frame_id.get() else {
+            return harp::r_current_frame();
+        };
+
+        let state = self.debug_dap.lock().unwrap();
+        match state.get_frame_env(Some(frame_id)) {
+            Ok(env) => harp::RObject::view(env),
+            Err(err) => {
+                log::warn!("Failed to resolve selected frame {frame_id}: {err}");
+                harp::r_current_frame()
+            },
+        }
     }
 
     /// Handle an `input_request` received outside of an `execute_request` context
@@ -2242,7 +2267,7 @@ impl Console {
             let kind = if in_injected_breakpoint { "in" } else { "at" };
             log::trace!("Auto-step expression reached ({kind}), moving to next expression");
 
-            self.debug_preserve_focus = false;
+            self.debug_transient_eval = false;
 
             Self::on_console_input(buf, buflen, String::from("n")).unwrap();
             return Some(ConsoleResult::NewInput);
@@ -2615,6 +2640,10 @@ impl Console {
     pub(crate) fn read_console_frame(&self) -> RObject {
         self.read_console_frame.borrow().clone()
     }
+
+    pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
+        self.debug_selected_frame_id.set(frame_id);
+    }
 }
 
 /// Converts a data frame to HTML
@@ -2792,7 +2821,7 @@ fn r_read_console_impl(
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
-                Console::eval(expr, srcref, buf, buflen);
+                main.eval(expr, srcref, buf, buflen);
 
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning
