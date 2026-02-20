@@ -12,6 +12,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+use amalthea::comm::variables_comm::RefreshParams;
+use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
@@ -64,6 +66,10 @@ pub struct DummyArkFrontend {
     streams_handled: Cell<bool>,
     /// Whether we're currently in a debug context (between start_debug and stop_debug)
     in_debug: Cell<bool>,
+    /// Comm ID of the open variables comm, if any.
+    variables_comm_id: RefCell<Option<String>>,
+    /// Buffered variables comm events, auto-collected by `recv_iopub_next()`.
+    variables_events: RefCell<VecDeque<VariablesFrontendEvent>>,
 }
 
 /// Result of draining accumulated streams
@@ -122,6 +128,8 @@ impl DummyArkFrontend {
             pending_iopub_messages: RefCell::new(VecDeque::new()),
             streams_handled: Cell::new(false),
             in_debug: Cell::new(false),
+            variables_comm_id: RefCell::new(None),
+            variables_events: RefCell::new(VecDeque::new()),
         }
     }
 
@@ -173,18 +181,20 @@ impl DummyArkFrontend {
         }
     }
 
-    /// Core primitive: receive the next non-stream message from IOPub.
+    /// Core primitive: receive the next non-stream, non-variables-comm message
+    /// from IOPub.
     ///
-    /// This automatically buffers any Stream messages encountered while waiting
-    /// for a non-stream message. All `recv_iopub_*` methods for non-stream
-    /// messages should use this instead of calling `recv_iopub()` directly.
+    /// This automatically buffers any Stream messages and variables comm
+    /// messages encountered while waiting. All `recv_iopub_*` methods for
+    /// non-stream messages should use this instead of calling `recv_iopub()`
+    /// directly.
     fn recv_iopub_next(&self) -> Message {
         // Check put-back buffer first
         if let Some(msg) = self.pending_iopub_messages.borrow_mut().pop_front() {
             trace_iopub_msg(&msg);
             return msg;
         }
-        // Read from socket, auto-buffering any streams
+        // Read from socket, auto-buffering streams and variables comm messages
         loop {
             let msg = self.recv_iopub();
             trace_iopub_msg(&msg);
@@ -192,9 +202,24 @@ impl DummyArkFrontend {
                 Message::Stream(ref data) => {
                     self.buffer_stream(&data.content);
                 },
+                Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
+                    self.buffer_variables_event(&data.content.data);
+                },
                 other => return other,
             }
         }
+    }
+
+    fn is_variables_comm(&self, comm_id: &str) -> bool {
+        self.variables_comm_id
+            .borrow()
+            .as_deref()
+            .is_some_and(|id| id == comm_id)
+    }
+
+    fn buffer_variables_event(&self, data: &serde_json::Value) {
+        let event: VariablesFrontendEvent = serde_json::from_value(data.clone()).unwrap();
+        self.variables_events.borrow_mut().push_back(event);
     }
 
     /// Internal helper for stream assertions.
@@ -230,13 +255,17 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match msg {
+                match &msg {
                     Message::Stream(ref data) => {
                         trace_iopub_msg(&msg);
                         self.buffer_stream(&data.content);
                     },
+                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
+                        trace_iopub_msg(&msg);
+                        self.buffer_variables_event(&data.content.data);
+                    },
                     // Don't trace here - will be traced when popped from pending queue
-                    other => self.pending_iopub_messages.borrow_mut().push_back(other),
+                    _ => self.pending_iopub_messages.borrow_mut().push_back(msg),
                 }
             }
         }
@@ -658,6 +687,82 @@ impl DummyArkFrontend {
         self.recv_iopub_idle();
 
         port
+    }
+
+    /// Open a `positron.variables` comm via the Shell socket.
+    ///
+    /// Returns the initial `RefreshParams` from the variables pane.
+    /// After this call, variables comm messages are automatically buffered
+    /// by `recv_iopub_next()` (parallel to how Stream messages are handled).
+    #[track_caller]
+    pub fn open_variables_comm(&self) -> RefreshParams {
+        debug_assert!(
+            self.variables_comm_id.borrow().is_none(),
+            "Variables comm already open"
+        );
+
+        let comm_id = uuid::Uuid::new_v4().to_string();
+        *self.variables_comm_id.borrow_mut() = Some(comm_id.clone());
+
+        self.send_shell(CommOpen {
+            comm_id: comm_id.clone(),
+            target_name: String::from("positron.variables"),
+            data: serde_json::json!({}),
+        });
+
+        // Busy + Idle from the comm_open handler. The initial Refresh from
+        // the variables thread may arrive interleaved or shortly after;
+        // `recv_iopub_next()` auto-buffers it.
+        self.recv_iopub_busy();
+        self.recv_iopub_idle();
+
+        // The initial Refresh may already be buffered, or we need to wait.
+        self.recv_variables_refresh()
+    }
+
+    /// Wait for the next variables `Refresh` event.
+    ///
+    /// Checks the internal buffer first (populated by `recv_iopub_next()`),
+    /// then reads more IOPub messages if needed.
+    #[track_caller]
+    pub fn recv_variables_refresh(&self) -> RefreshParams {
+        match self.recv_variables_event() {
+            VariablesFrontendEvent::Refresh(params) => params,
+            other => panic!("Expected variables Refresh, got {other:?}"),
+        }
+    }
+
+    /// Wait for the next variables comm event (Refresh or Update).
+    #[track_caller]
+    fn recv_variables_event(&self) -> VariablesFrontendEvent {
+        // Check buffer first
+        if let Some(event) = self.variables_events.borrow_mut().pop_front() {
+            return event;
+        }
+
+        // Read more IOPub messages until we get a variables event
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        loop {
+            if Instant::now() >= deadline {
+                panic!("Timeout waiting for variables comm event");
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let poll_timeout = remaining.min(Duration::from_millis(100));
+
+            if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
+                match &msg {
+                    Message::Stream(ref data) => {
+                        self.buffer_stream(&data.content);
+                    },
+                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
+                        self.buffer_variables_event(&data.content.data);
+                        return self.variables_events.borrow_mut().pop_front().unwrap();
+                    },
+                    _ => self.pending_iopub_messages.borrow_mut().push_back(msg),
+                }
+            }
+        }
     }
 
     /// Receive from IOPub and assert a `start_debug` comm message.
@@ -1255,10 +1360,15 @@ impl Drop for DummyArkFrontend {
         }
 
         // Helper to check if a message is exempt from "unexpected message" check
+        let variables_comm_id = self.variables_comm_id.borrow().clone();
         let is_exempt = |msg: &Message| -> bool {
             match msg {
                 Message::Stream(_) => true,
                 Message::CommMsg(comm) => {
+                    // Variables comm events arrive asynchronously
+                    if variables_comm_id.as_deref() == Some(&comm.content.comm_id) {
+                        return true;
+                    }
                     comm.content.data.get("method").and_then(|v| v.as_str()) == Some("execute") &&
                         comm.content
                             .data
