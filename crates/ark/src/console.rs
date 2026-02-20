@@ -2723,7 +2723,7 @@ impl Console {
         }
     }
 
-    pub(crate) fn read_console_env(&self) -> RObject {
+    pub(crate) fn eval_env(&self) -> RObject {
         self.read_console_env_stack
             .borrow()
             .last()
@@ -2857,6 +2857,13 @@ unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_v
 // global `Console` singleton.
 
 #[cfg_attr(not(test), no_mangle)]
+pub(crate) fn eval_env() -> RObject {
+    if !Console::is_initialized() {
+        return R_ENVS.global.into();
+    }
+    Console::get().eval_env()
+}
+
 pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,

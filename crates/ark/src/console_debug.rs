@@ -284,7 +284,7 @@ impl Console {
             // `sys.frame(sys.nframe())` when evaluating in a promise
             // environment. Pass it so we can add a synthetic frame to the
             // stack.
-            let top_env = self.read_console_env();
+            let top_env = self.eval_env();
 
             let info = RFunction::new("", "debugger_stack_info")
                 .add(context_call_text)
