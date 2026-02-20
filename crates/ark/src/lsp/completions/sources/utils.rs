@@ -1,7 +1,7 @@
 //
 // utils.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -16,6 +16,7 @@ use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 use tree_sitter::Point;
 
+use crate::console;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::traits::node::NodeExt;
@@ -195,7 +196,7 @@ pub(super) fn completions_from_evaluated_object_names(
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
-        ..Default::default()
+        env: console::eval_env(),
     };
 
     // Try to evaluate the object
@@ -292,8 +293,8 @@ mod tests {
     use crate::lsp::completions::sources::utils::call_node_position_type;
     use crate::lsp::completions::sources::utils::completions_from_evaluated_object_names;
     use crate::lsp::completions::sources::utils::CallNodePositionType;
-    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document::Document;
+    use crate::lsp::document_context::DocumentContext;
     use crate::r_task;
     use crate::treesitter::NodeType;
     use crate::treesitter::NodeTypeExt;

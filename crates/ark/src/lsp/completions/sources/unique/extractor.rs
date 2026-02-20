@@ -1,7 +1,7 @@
 //
 // extractor.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -16,6 +16,7 @@ use libr::STRSXP;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_data_variable;
 use crate::lsp::completions::sources::utils::set_sort_text_by_first_appearance;
@@ -151,7 +152,7 @@ fn completions_from_extractor_object(text: &str, fun: &str) -> anyhow::Result<Ve
 
         let options = RParseEvalOptions {
             forbid_function_calls: true,
-            ..Default::default()
+            env: console::eval_env(),
         };
 
         let object = match harp::parse_eval(text, options) {
@@ -207,8 +208,8 @@ mod tests {
     use crate::fixtures::package_is_installed;
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::extractor::completions_from_dollar;
-    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document::Document;
+    use crate::lsp::document_context::DocumentContext;
     use crate::r_task;
 
     #[test]
