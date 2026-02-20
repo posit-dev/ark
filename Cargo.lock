@@ -428,6 +428,7 @@ dependencies = [
  "serde_json",
  "stdext",
  "tempfile",
+ "tower-lsp",
  "tree-sitter",
  "uuid",
 ]
