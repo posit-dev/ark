@@ -1600,7 +1600,7 @@ impl Console {
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
     unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
-        let env = Console::get().read_console_env();
+        let env = eval_env();
 
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
@@ -2547,7 +2547,7 @@ impl Console {
         }
     }
 
-    pub(crate) fn read_console_env(&self) -> RObject {
+    pub(crate) fn eval_env(&self) -> RObject {
         self.read_console_env_stack
             .borrow()
             .last()
@@ -2633,6 +2633,13 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
 // global `Console` singleton.
 
 #[cfg_attr(not(test), no_mangle)]
+pub(crate) fn eval_env() -> RObject {
+    if !Console::is_initialized() {
+        return R_ENVS.global.into();
+    }
+    Console::get().eval_env()
+}
+
 pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
