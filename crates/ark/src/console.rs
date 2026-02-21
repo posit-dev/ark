@@ -2628,10 +2628,6 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
     })
 }
 
-// --- Frontend methods ---
-// These functions are hooked up as R frontend methods. They call into our
-// global `Console` singleton.
-
 #[cfg_attr(not(test), no_mangle)]
 pub(crate) fn eval_env() -> RObject {
     if !Console::is_initialized() {
@@ -2639,6 +2635,10 @@ pub(crate) fn eval_env() -> RObject {
     }
     Console::get().eval_env()
 }
+
+// --- Frontend methods ---
+// These functions are hooked up as R frontend methods. They call into our
+// global `Console` singleton.
 
 pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
