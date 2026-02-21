@@ -1,9 +1,11 @@
 //
 // thread.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
+
+use stdext::debug_panic;
 
 use crate::console::Console;
 use crate::r_task;
@@ -57,14 +59,14 @@ pub struct RThreadSafe<T: 'static> {
 
 impl<T> RThreadSafe<T> {
     pub fn new(object: T) -> Self {
-        check_on_main_r_thread("new");
+        check_on_console_thread("new");
         let shelter = RShelter { object };
         let shelter = Some(shelter);
         Self { shelter }
     }
 
     pub fn get(&self) -> &T {
-        check_on_main_r_thread("get");
+        check_on_console_thread("get");
         let shelter: &RShelter<T> = self.shelter.as_ref().unwrap();
         let object: &T = &shelter.object;
         object
@@ -94,15 +96,10 @@ impl<T> Drop for RThreadSafe<T> {
     }
 }
 
-fn check_on_main_r_thread(f: &str) {
+fn check_on_console_thread(f: &str) {
     if !Console::on_main_thread() && !stdext::IS_TESTING {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
-        let message =
-            format!("Must call `RThreadSafe::{f}()` on the main R thread, not thread '{name}'.");
-        #[cfg(debug_assertions)]
-        panic!("{message}");
-        #[cfg(not(debug_assertions))]
-        log::error!("{message}");
+        debug_panic!("Must call `RThreadSafe::{f}()` on the main R thread, not thread '{name}'.");
     }
 }
