@@ -45,6 +45,7 @@ use url::Url;
 
 use crate::console::ConsoleNotification;
 use crate::lsp;
+use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::config::indent_style_from_lsp;
 use crate::lsp::config::DOCUMENT_SETTINGS;
@@ -83,7 +84,7 @@ pub(crate) fn initialize(
     params: InitializeParams,
     lsp_state: &mut LspState,
     state: &mut WorldState,
-) -> anyhow::Result<InitializeResult> {
+) -> LspResult<InitializeResult> {
     lsp_state.capabilities = Capabilities::new(params.capabilities);
 
     // Initialize the workspace folders

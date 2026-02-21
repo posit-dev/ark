@@ -65,8 +65,8 @@ use crate::r_task;
 // would flood the LSP logs with irrelevant backtraces.
 pub(crate) enum RequestResponse {
     Disabled,
-    Crashed(anyhow::Result<LspResponse>),
-    Result(anyhow::Result<LspResponse>),
+    Crashed(anyhow::Error),
+    Result(LspResult<LspResponse>),
 }
 
 // Based on https://stackoverflow.com/a/69324393/1725177
@@ -74,7 +74,13 @@ macro_rules! cast_response {
     ($self:expr, $target:expr, $pat:path) => {{
         match $target {
             RequestResponse::Result(Ok($pat(resp))) => Ok(resp),
-            RequestResponse::Result(Err(err)) => Err(new_jsonrpc_error(format!("{err:?}"))),
+            RequestResponse::Result(Ok(_)) => {
+                panic!("Unexpected variant while casting to {}", stringify!($pat))
+            },
+            RequestResponse::Result(Err(err)) => match err {
+                LspError::JsonRpc(err) => Err(err),
+                LspError::Anyhow(err) => Err(new_jsonrpc_error(format!("{err:?}"))),
+            },
             RequestResponse::Crashed(err) => {
                 // Notify user that the LSP has crashed and is no longer active
                 report_crash();
@@ -87,7 +93,6 @@ macro_rules! cast_response {
             RequestResponse::Disabled => Err(new_jsonrpc_error(String::from(
                 "The LSP server has crashed and is now shut down!",
             ))),
-            _ => panic!("Unexpected variant while casting to {}", stringify!($pat)),
         }
     }};
 }
@@ -176,6 +181,39 @@ pub(crate) enum LspResponse {
     CodeAction(Option<CodeActionResponse>),
     VirtualDocument(VirtualDocumentResponse),
     InputBoundaries(InputBoundariesResponse),
+}
+
+pub(crate) type LspResult<T> = std::result::Result<T, LspError>;
+
+#[derive(Debug)]
+pub(crate) enum LspError {
+    JsonRpc(jsonrpc::Error),
+    Anyhow(anyhow::Error),
+}
+
+impl std::error::Error for LspError {}
+
+impl std::fmt::Display for LspError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LspError::JsonRpc(error) => write!(f, "{error:?}"),
+            LspError::Anyhow(error) => write!(f, "{error:?}"),
+        }
+    }
+}
+
+// For the ability to `?` a `jsonrpc::Error` into an `LspError`
+impl From<jsonrpc::Error> for LspError {
+    fn from(error: jsonrpc::Error) -> Self {
+        Self::JsonRpc(error)
+    }
+}
+
+// For the ability to `?` an `anyhow::Error` into an `LspError`
+impl From<anyhow::Error> for LspError {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Anyhow(error)
+    }
 }
 
 #[derive(Debug)]
