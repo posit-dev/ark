@@ -168,8 +168,6 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 - In tests, prefer exact assertions over fuzzy ones. Use `assert_eq!(stack[0].name, "foo()")` rather than `assert!(names.contains(&"foo()"))` when ordering and completeness matter.
 
-- In tests, if you set global state (R options, env vars), clean it up _before_ assertions so it doesn't leak when a test fails.
-
 - When you extract code in a function (or move things around) that function goes _below_ the calling function. A general goal is to be able to read linearly from top to bottom with the relevant context and main logic first. The code should be organised like a call stack. Of course that's not always possible, use best judgement to produce the clearest code organization.
 
 - Keep the main logic as unnested as possible. Favour Rust's `let ... else` syntax to return early or continue a loop in the `else` clause, over `if let`.
