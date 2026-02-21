@@ -27,6 +27,16 @@ simple_call_name <- function(x) {
     }
 }
 
+call_fn_name <- function(x) {
+    name <- simple_call_name(x)
+
+    if (is.null(name)) {
+        return(NULL)
+    }
+
+    backtick(name)
+}
+
 call_type <- function(x) {
     stopifnot(typeof(x) == "language")
 
