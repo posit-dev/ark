@@ -69,6 +69,10 @@ pub struct DummyArkFrontend {
     /// Comm ID of the open variables comm, if any.
     variables_comm_id: RefCell<Option<String>>,
     /// Buffered variables comm events, auto-collected by `recv_iopub_next()`.
+    /// Buffering is needed because variables events can race with Idle on
+    /// IOPub. Once https://github.com/posit-dev/ark/issues/689 is resolved,
+    /// we should be able to assert these deterministically in the message
+    /// sequence instead.
     variables_events: RefCell<VecDeque<VariablesFrontendEvent>>,
 }
 
@@ -194,7 +198,7 @@ impl DummyArkFrontend {
             trace_iopub_msg(&msg);
             return msg;
         }
-        // Read from socket, auto-buffering streams and variables comm messages
+        // Read from socket, auto-buffering streams and comm messages
         loop {
             let msg = self.recv_iopub();
             trace_iopub_msg(&msg);
@@ -733,6 +737,9 @@ impl DummyArkFrontend {
     }
 
     /// Wait for the next variables comm event (Refresh or Update).
+    /// This polling loop exists because variables events can race with Idle
+    /// on IOPub. Once https://github.com/posit-dev/ark/issues/689 is
+    /// resolved, this can be replaced by a direct `recv_iopub_next()` call.
     #[track_caller]
     fn recv_variables_event(&self) -> VariablesFrontendEvent {
         // Check buffer first
@@ -752,14 +759,21 @@ impl DummyArkFrontend {
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
                 match &msg {
-                    Message::Stream(ref data) => {
-                        self.buffer_stream(&data.content);
-                    },
                     Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
                         self.buffer_variables_event(&data.content.data);
                         return self.variables_events.borrow_mut().pop_front().unwrap();
                     },
-                    _ => self.pending_iopub_messages.borrow_mut().push_back(msg),
+                    // Buffer any incoming stream messages
+                    Message::Stream(ref data) => {
+                        self.buffer_stream(&data.content);
+                    },
+                    // Idle can race with variables events (see #689)
+                    Message::Status(_) => {
+                        self.pending_iopub_messages.borrow_mut().push_back(msg);
+                    },
+                    other => {
+                        panic!("Unexpected message while waiting for variables event: {other:?}")
+                    },
                 }
             }
         }
