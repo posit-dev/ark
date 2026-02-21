@@ -2819,6 +2819,14 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
     })
 }
 
+#[cfg_attr(not(test), no_mangle)]
+pub(crate) fn eval_env() -> RObject {
+    if !Console::is_initialized() {
+        return R_ENVS.global.into();
+    }
+    Console::get().eval_env()
+}
+
 /// Data passed to the eval body callback via `R_withCallingErrorHandler`.
 #[repr(C)]
 struct EvalBodyData {
@@ -2856,14 +2864,6 @@ unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_v
 // --- Frontend methods ---
 // These functions are hooked up as R frontend methods. They call into our
 // global `Console` singleton.
-
-#[cfg_attr(not(test), no_mangle)]
-pub(crate) fn eval_env() -> RObject {
-    if !Console::is_initialized() {
-        return R_ENVS.global.into();
-    }
-    Console::get().eval_env()
-}
 
 pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
