@@ -1,7 +1,7 @@
 //
 // object.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -104,6 +104,12 @@ unsafe fn unprotect(cell: SEXP) {
     // There should now be no references to the cell above, allowing it
     // (and the object it contains) to be cleaned up.
     SET_TAG(cell, R_NilValue);
+}
+
+unsafe fn protect_replace(cell: SEXP, data: SEXP) -> SEXP {
+    let old = TAG(cell);
+    SET_TAG(cell, data);
+    old
 }
 
 #[derive(Debug)]
@@ -319,6 +325,11 @@ impl RObject {
             sexp: data,
             cell: unsafe { protect(data) },
         }
+    }
+
+    pub fn replace(&mut self, data: SEXP) -> SEXP {
+        self.sexp = data;
+        unsafe { protect_replace(self.cell, data) }
     }
 
     pub fn view(data: SEXP) -> Self {
