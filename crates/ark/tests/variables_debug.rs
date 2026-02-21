@@ -70,6 +70,9 @@ fn test_variables_pane_shows_debug_env() {
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+
+    // Consume the Update triggered by the rm()
+    let _update = frontend.recv_variables_update();
 }
 
 /// When entering debug via a function call, the variables pane should show
@@ -110,10 +113,23 @@ fn test_variables_pane_shows_function_debug_env() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
+    // Should be back to showing the global environment
+    let refresh = frontend.recv_variables_refresh();
+    let names: Vec<&str> = refresh
+        .variables
+        .iter()
+        .map(|v| v.display_name.as_str())
+        .collect();
+    assert!(names.contains(&"test_gv2"));
+    assert!(!names.contains(&"my_arg"));
+
     // Clean up
     frontend.send_execute_request("rm(test_gv2, f)", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+
+    // Consume the Update triggered by the rm()
+    let _update = frontend.recv_variables_update();
 }
