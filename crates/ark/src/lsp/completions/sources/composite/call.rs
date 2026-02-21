@@ -1,7 +1,7 @@
 //
 // call.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -14,6 +14,7 @@ use harp::utils::r_is_function;
 use tower_lsp::lsp_types::CompletionItem;
 use tree_sitter::Node;
 
+use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_parameter;
 use crate::lsp::completions::sources::utils::call_node_position_type;
@@ -125,7 +126,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
-        ..Default::default()
+        env: console::eval_env(),
     };
 
     // Try to evaluate the first argument
@@ -189,7 +190,7 @@ fn completions_from_session_arguments(
     // for S3 methods based on `object`.
     let r_callable = harp::parse_eval(callable, RParseEvalOptions {
         forbid_function_calls: true,
-        ..Default::default()
+        env: console::eval_env(),
     });
 
     let r_callable = match r_callable {
