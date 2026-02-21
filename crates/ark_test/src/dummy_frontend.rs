@@ -13,6 +13,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use amalthea::comm::variables_comm::RefreshParams;
+use amalthea::comm::variables_comm::UpdateParams;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
@@ -736,6 +737,18 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Wait for the next variables `Update` event.
+    ///
+    /// Checks the internal buffer first (populated by `recv_iopub_next()`),
+    /// then reads more IOPub messages if needed.
+    #[track_caller]
+    pub fn recv_variables_update(&self) -> UpdateParams {
+        match self.recv_variables_event() {
+            VariablesFrontendEvent::Update(params) => params,
+            other => panic!("Expected variables Update, got {other:?}"),
+        }
+    }
+
     /// Wait for the next variables comm event (Refresh or Update).
     /// This polling loop exists because variables events can race with Idle
     /// on IOPub. Once https://github.com/posit-dev/ark/issues/689 is
@@ -1373,16 +1386,22 @@ impl Drop for DummyArkFrontend {
             );
         }
 
+        // Fail if variables events were buffered but never consumed
+        let buffered_variables = self.variables_events.borrow();
+        if !buffered_variables.is_empty() {
+            panic!(
+                "Test has {} unconsumed variables event(s): {:?}",
+                buffered_variables.len(),
+                *buffered_variables
+            );
+        }
+        drop(buffered_variables);
+
         // Helper to check if a message is exempt from "unexpected message" check
-        let variables_comm_id = self.variables_comm_id.borrow().clone();
         let is_exempt = |msg: &Message| -> bool {
             match msg {
                 Message::Stream(_) => true,
                 Message::CommMsg(comm) => {
-                    // Variables comm events arrive asynchronously
-                    if variables_comm_id.as_deref() == Some(&comm.content.comm_id) {
-                        return true;
-                    }
                     comm.content.data.get("method").and_then(|v| v.as_str()) == Some("execute") &&
                         comm.content
                             .data
