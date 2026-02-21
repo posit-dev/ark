@@ -112,6 +112,22 @@ fn test_variables_list() {
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
     });
 
+    // Simulate a prompt signal so `update()` picks up the new variable
+    EVENTS.console_prompt.emit(());
+    let msg = iopub_rx.recv_comm_msg();
+    let data = match msg {
+        CommMsg::Data(data) => data,
+        _ => panic!("Expected data message"),
+    };
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesFrontendEvent::Update(params) => {
+            assert_eq!(params.assigned.len(), 1);
+            assert_eq!(params.assigned[0].display_name, "everything");
+        },
+        _ => panic!("Expected update event"),
+    }
+
     // Request a list of variables
     let request = VariablesBackendRequest::List;
     let data = serde_json::to_value(request).unwrap();
