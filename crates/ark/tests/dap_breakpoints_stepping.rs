@@ -500,7 +500,7 @@ lapply(1:3, function(x) {
 
     // R exits the debugger and completes lapply
     frontend.recv_iopub_stop_debug();
-    frontend.recv_iopub_execute_result();
+    // No execute result: source() returns invisibly
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -656,7 +656,7 @@ fn test_dap_breakpoint_for_loop_iteration() {
     frontend.recv_iopub_execute_input();
     // R exits the debugger and completes the for loop
     frontend.recv_iopub_stop_debug();
-    frontend.recv_iopub_execute_result();
+    // No execute result: source() returns invisibly
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 

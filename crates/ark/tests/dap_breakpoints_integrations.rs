@@ -42,7 +42,7 @@ foo <- function() {
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_execute_result();
+    // No execute result: source() returns invisibly
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
