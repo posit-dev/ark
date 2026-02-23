@@ -99,6 +99,7 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
+use crate::console_filter::strip_debug_prefix_lines;
 use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
@@ -361,7 +362,7 @@ pub struct Console {
 
     /// Filter for debug console output. Removes R's internal debug messages
     /// from user-visible console output.
-    filter: ConsoleFilter,
+    pub(crate) filter: ConsoleFilter,
 }
 
 /// Stack of pending inputs
@@ -1111,22 +1112,31 @@ impl Console {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
+        let info = self.prompt_info(prompt);
+        log::trace!("R prompt: {}", info.input_prompt);
+
+        let is_browser = matches!(info.kind, PromptKind::Browser);
+
+        // Debug messages like "Called from: top level" go through the autoprint
+        // path at top level (because `is_auto_printing()` returns true when
+        // `n_frame == 0`). Strip these debug prefix lines at every browser
+        // prompt so they don't become a spurious `execute_result`, while
+        // preserving step results like `[1] 42`.
+        if is_browser {
+            strip_debug_prefix_lines(&mut self.autoprint_output);
+        }
+
         // Flush the stream filter and finalize any pending debug capture.
-        // Reaching ReadConsole confirms `Filtering` content was real debug
-        // output (suppressed). Unconfirmed `Buffering` content is emitted.
-        let (emit, update) = self.filter.on_read_console();
-        if let Some((text, stream)) = emit {
+        // Browser prompt means filtered content was real debug output (suppress).
+        // Top-level prompt means it was user output matching a prefix (emit).
+        let (emits, update) = self.filter.on_read_console(is_browser);
+        for (text, stream) in emits {
             let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
             self.iopub_tx.send(message).unwrap();
         }
         if let Some(update) = update {
             self.debug_handle_call_text_update(update);
         }
-
-        // State machine part of ReadConsole
-
-        let info = self.prompt_info(prompt);
-        log::trace!("R prompt: {}", info.input_prompt);
 
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
@@ -2453,19 +2463,13 @@ impl Console {
             // differentiate, but that could change in the future:
             // https://github.com/posit-dev/positron/issues/1881
 
-            // Handle last expression - filter debug messages but accumulate in autoprint_output
+            // Handle last expression — accumulate for execute_result.
+            // We don't filter here: debug messages that go through autoprint
+            // (e.g., "Called from:" at top level) are cleared when we detect
+            // a browser prompt at ReadConsole time. This avoids suppressing
+            // user output from print methods that happen to match a prefix.
             if console.pending_inputs.is_none() {
-                // Feed through stream filter to remove debug messages
-                let (actions, debug_update) = console.filter.feed(&content, stream);
-
-                if let Some(update) = debug_update {
-                    console.debug_handle_call_text_update(update);
-                }
-
-                // Accumulate filtered output in autoprint_output instead of emitting to IOPub
-                for (text, _) in actions {
-                    console.autoprint_output.push_str(&text);
-                }
+                console.autoprint_output.push_str(&content);
                 return;
             }
 
@@ -2550,8 +2554,8 @@ impl Console {
         // Check stream filter timeout to handle long computations between
         // WriteConsole calls. Timeout means we didn't reach ReadConsole to
         // confirm debug output, so accumulated content is emitted.
-        let (emit, update) = self.filter.check_timeout();
-        if let Some((text, stream)) = emit {
+        let (emits, update) = self.filter.check_timeout();
+        for (text, stream) in emits {
             let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
             self.iopub_tx.send(message).unwrap();
         }
