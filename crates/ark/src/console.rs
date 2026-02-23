@@ -101,6 +101,7 @@ use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::console_filter::strip_debug_prefix_lines;
 use crate::console_filter::ConsoleFilter;
+use crate::console_filter::DebugCallTextUpdate;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
@@ -1120,23 +1121,17 @@ impl Console {
         // Debug messages like "Called from: top level" go through the autoprint
         // path at top level (because `is_auto_printing()` returns true when
         // `n_frame == 0`). Strip these debug prefix lines at every browser
-        // prompt so they don't become a spurious `execute_result`, while
-        // preserving step results like `[1] 42`.
+        // prompt so they are not included in `execute_result`.
         if is_browser {
             strip_debug_prefix_lines(&mut self.autoprint_output);
         }
 
         // Flush the stream filter and finalize any pending debug capture.
-        // Browser prompt means filtered content was real debug output (suppress).
-        // Top-level prompt means it was user output matching a prefix (emit).
-        let (emits, update) = self.filter.on_read_console(is_browser);
-        for (text, stream) in emits {
-            let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
-            self.iopub_tx.send(message).unwrap();
-        }
-        if let Some(update) = update {
-            self.debug_handle_call_text_update(update);
-        }
+        // A browser prompt means filtered content was real debug output (which
+        // we suppress). Top-level prompt means it was user output matching a
+        // prefix (which we emit).
+        let filter_output = self.filter.on_read_console(is_browser);
+        self.emit_filter_output(filter_output);
 
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
@@ -2463,7 +2458,7 @@ impl Console {
             // differentiate, but that could change in the future:
             // https://github.com/posit-dev/positron/issues/1881
 
-            // Handle last expression — accumulate for execute_result.
+            // Handle last expression. Accumulate for `execute_result` if any.
             // We don't filter here: debug messages that go through autoprint
             // (e.g., "Called from:" at top level) are cleared when we detect
             // a browser prompt at ReadConsole time. This avoids suppressing
@@ -2483,18 +2478,30 @@ impl Console {
             // IOPub.
         }
 
-        // Feed content through the stream filter to remove debug messages
-        let (actions, debug_update) = console.filter.feed(&content, stream);
-
-        // Apply any debug state update from the filter
-        if let Some(update) = debug_update {
-            console.debug_handle_call_text_update(update);
+        // Debug messages are not emitted on Stderr so we can just send these right away
+        if stream == Stream::Stderr {
+            let message = IOPubMessage::Stream(StreamOutput {
+                name: stream,
+                text: content,
+            });
+            console.iopub_tx.send(message).unwrap();
+            return;
         }
 
-        // Process filter actions
-        for (text, stream) in actions {
+        let filter_output = console.filter.feed(&content);
+        console.emit_filter_output(filter_output);
+    }
+
+    fn emit_filter_output(
+        &mut self,
+        (emits, update): (Vec<(String, Stream)>, Option<DebugCallTextUpdate>),
+    ) {
+        for (text, stream) in emits {
             let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
-            console.iopub_tx.send(message).unwrap();
+            self.iopub_tx.send(message).unwrap();
+        }
+        if let Some(update) = update {
+            self.debug_update_call_text(update);
         }
     }
 
@@ -2553,15 +2560,12 @@ impl Console {
 
         // Check stream filter timeout to handle long computations between
         // WriteConsole calls. Timeout means we didn't reach ReadConsole to
-        // confirm debug output, so accumulated content is emitted.
-        let (emits, update) = self.filter.check_timeout();
-        for (text, stream) in emits {
-            let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
-            self.iopub_tx.send(message).unwrap();
-        }
-        if let Some(update) = update {
-            self.debug_handle_call_text_update(update);
-        }
+        // confirm debug output within a reasonable amount of time, so
+        // accumulated content is emitted. This allows user code to produce
+        // output that looks like debug lines emitted by R without them getting
+        // filtered out or held up too long.
+        let filter_output = self.filter.check_timeout();
+        self.emit_filter_output(filter_output);
 
         // Coalesce up to three concurrent tasks in case the R event loop is
         // slowed down
