@@ -126,6 +126,16 @@ impl ConsoleFilter {
         }
     }
 
+    #[cfg(test)]
+    fn new_with_timeout(timeout: Duration) -> Self {
+        Self {
+            state: ConsoleFilterState::Passthrough {
+                at_line_start: true,
+            },
+            timeout,
+        }
+    }
+
     /// Feed content through the filter and get actions to perform.
     /// Returns actions to emit content to IOPub.
     /// Also returns the captured DebugCallText state update, if any.
@@ -134,15 +144,17 @@ impl ConsoleFilter {
         content: &str,
         stream: Stream,
     ) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
-        // Only filter stdout - debug messages are emitted on stdout
+        // Only filter stdout as debug messages are emitted on stdout
         if stream == Stream::Stderr {
             return (vec![(content.to_string(), stream)], None);
         }
 
-        // Check timeout before processing
-        let timeout_update = self.check_timeout_internal();
+        let (timeout_emit, timeout_update) = self.check_timeout_internal();
 
         let mut actions: Vec<(String, Stream)> = Vec::new();
+        if let Some(emit) = timeout_emit {
+            actions.push(emit);
+        }
         let mut debug_update = timeout_update;
 
         // Process content character by character to handle line boundaries
@@ -253,13 +265,13 @@ impl ConsoleFilter {
                 expr_buffer,
                 timestamp,
             } => {
-                // Check timeout
+                // Check timeout: not confirmed as debug output, emit back to user
                 if timestamp.elapsed() > self.timeout {
-                    let update = finalize_capture(*pattern, expr_buffer);
+                    let text = format!("{}{}", pattern.prefix(), expr_buffer);
                     self.state = ConsoleFilterState::Passthrough {
                         at_line_start: expr_buffer.ends_with('\n'),
                     };
-                    return (None, Some(update), 0);
+                    return (Some((text, Stream::Stdout)), None, 0);
                 }
 
                 // Append content to expression buffer
@@ -282,12 +294,12 @@ impl ConsoleFilter {
                         (None, None, content.len())
                     },
                     ExpressionStatus::SyntaxError => {
-                        // Treat as complete (safety net)
-                        let update = finalize_capture(*pattern, expr_buffer);
+                        // Not valid R, probably not real debug output. Emit back to user.
+                        let text = format!("{}{}", pattern.prefix(), expr_buffer);
                         self.state = ConsoleFilterState::Passthrough {
                             at_line_start: expr_buffer.ends_with('\n'),
                         };
-                        (None, Some(update), content.len())
+                        (Some((text, Stream::Stdout)), None, content.len())
                     },
                 }
             },
@@ -316,44 +328,52 @@ impl ConsoleFilter {
         }
     }
 
-    /// Called when ReadConsole is entered - flush/finalize any pending state
-    pub fn on_read_console(&mut self) -> Option<DebugCallTextUpdate> {
+    /// Called when ReadConsole is entered, flush/finalize any pending state.
+    /// Reaching ReadConsole confirms that filtered content was real debug
+    /// output (the expected sequence is debug message then browser prompt).
+    /// Content in `Filtering` state is suppressed and finalized as a debug
+    /// state update. Content in `Buffering` state (unconfirmed prefix match)
+    /// is emitted back to the user.
+    pub fn on_read_console(&mut self) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
         match std::mem::replace(&mut self.state, ConsoleFilterState::Passthrough {
             at_line_start: true,
         }) {
-            ConsoleFilterState::Passthrough { .. } => None,
-            ConsoleFilterState::Buffering { .. } => {
-                // Buffering state at ReadConsole means we didn't complete a match.
-                // The buffer content was debug output that didn't get emitted,
-                // which is fine - we just discard it.
-                None
-            },
+            ConsoleFilterState::Passthrough { .. } => (None, None),
+            ConsoleFilterState::Buffering { buffer, stream, .. } => (Some((buffer, stream)), None),
             ConsoleFilterState::Filtering {
                 pattern,
                 expr_buffer,
                 ..
-            } => Some(finalize_capture(pattern, &expr_buffer)),
+            } => (None, Some(finalize_capture(pattern, &expr_buffer))),
         }
     }
 
-    /// Check for timeout and handle state transitions
-    /// Returns any debug update from timeout handling
-    pub fn check_timeout(&mut self) -> Option<DebugCallTextUpdate> {
+    /// Check for timeout and handle state transitions.
+    /// Timeout means we didn't reach ReadConsole to confirm debug output,
+    /// so we emit the accumulated content back to the user.
+    pub fn check_timeout(&mut self) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
         self.check_timeout_internal()
     }
 
-    fn check_timeout_internal(&mut self) -> Option<DebugCallTextUpdate> {
+    fn check_timeout_internal(
+        &mut self,
+    ) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
         match &self.state {
-            ConsoleFilterState::Passthrough { .. } => None,
-            ConsoleFilterState::Buffering { timestamp, .. } => {
+            ConsoleFilterState::Passthrough { .. } => (None, None),
+            ConsoleFilterState::Buffering {
+                buffer,
+                stream,
+                timestamp,
+            } => {
                 if timestamp.elapsed() > self.timeout {
-                    // Timeout - transition to Passthrough
-                    // The buffer is lost, but that's intentional for timeout
+                    let emit = (buffer.clone(), *stream);
                     self.state = ConsoleFilterState::Passthrough {
-                        at_line_start: true,
+                        at_line_start: buffer.ends_with('\n'),
                     };
+                    (Some(emit), None)
+                } else {
+                    (None, None)
                 }
-                None
             },
             ConsoleFilterState::Filtering {
                 pattern,
@@ -361,13 +381,13 @@ impl ConsoleFilter {
                 timestamp,
             } => {
                 if timestamp.elapsed() > self.timeout {
-                    let update = finalize_capture(*pattern, expr_buffer);
+                    let text = format!("{}{}", pattern.prefix(), expr_buffer);
                     self.state = ConsoleFilterState::Passthrough {
                         at_line_start: expr_buffer.ends_with('\n'),
                     };
-                    Some(update)
+                    (Some((text, Stream::Stdout)), None)
                 } else {
-                    None
+                    (None, None)
                 }
             },
         }
@@ -380,7 +400,14 @@ impl ConsoleFilter {
         }) {
             ConsoleFilterState::Passthrough { .. } => None,
             ConsoleFilterState::Buffering { buffer, stream, .. } => Some((buffer, stream)),
-            ConsoleFilterState::Filtering { .. } => None,
+            ConsoleFilterState::Filtering {
+                pattern,
+                expr_buffer,
+                ..
+            } => {
+                let text = format!("{}{}", pattern.prefix(), expr_buffer);
+                Some((text, Stream::Stdout))
+            },
         }
     }
 }
@@ -632,18 +659,21 @@ mod tests {
     }
 
     #[test]
-    fn test_on_read_console_finalizes_buffering() {
+    fn test_on_read_console_emits_buffering() {
         let mut filter = ConsoleFilter::new();
 
         // Start buffering with partial match
         let _ = filter.feed("Called ", Stream::Stdout);
 
-        // ReadConsole should finalize - returns update if in Filtering state
-        // For Buffering state, it just resets without returning an update
-        let update = filter.on_read_console();
+        // Buffering is an unconfirmed prefix match, so ReadConsole emits it
+        let (emit, update) = filter.on_read_console();
+
+        let (text, stream) = emit.unwrap();
+        assert_eq!(text, "Called ");
+        assert_eq!(stream, Stream::Stdout);
+        assert!(update.is_none());
 
         // After on_read_console, filter should be in Passthrough state
-        // (we can verify this by feeding more content)
         let (actions, _) = filter.feed("Hello\n", Stream::Stdout);
         let emitted: String = actions
             .iter()
@@ -652,8 +682,6 @@ mod tests {
             .collect();
 
         assert!(emitted.contains("Hello"));
-        // update may or may not be Some depending on state
-        let _ = update;
     }
 
     #[test]
