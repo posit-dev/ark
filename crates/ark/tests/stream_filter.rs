@@ -89,16 +89,16 @@ fn test_debug_at_filtered_when_stepping() {
     dap.recv_continued();
 }
 
-/// Verify that step results are preserved when stepping through code.
-/// The filter should suppress "debug at file#line: expr" but NOT the
-/// auto-printed result of evaluating the expression.
+/// Verify that PrintValue output from debug messages is suppressed.
+/// R's debug handler emits `debug at file#line: ` followed by `PrintValue(Stmt)`.
+/// For literals, `PrintValue(42)` produces `[1] 42` which is not valid R syntax.
+/// The filter accumulates everything until ReadConsole and suppresses it,
+/// so no spurious output leaks to the user.
 #[test]
-fn test_step_results_preserved_when_stepping() {
+fn test_step_debug_printvalue_suppressed() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    // Source a file with browser() to enter debug mode.
-    // After browser(), stepping through `42` should show [1] 42 as output.
     let _file = frontend.send_source(
         "
 {
@@ -109,16 +109,14 @@ fn test_step_results_preserved_when_stepping() {
     );
     dap.recv_stopped();
 
-    // Step with `n` to evaluate `42`. The debug message "debug at file#N: 42"
-    // should be filtered, but the step result "[1] 42" should be preserved.
+    // Step with `n`. The debug message "debug at file#N: [1] 42" is
+    // accumulated by the filter and suppressed at the browser prompt.
+    // No stdout output should appear for this step.
     frontend.send_execute_request("n", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-
-    // The step result should appear in stdout (not suppressed by the filter)
-    frontend.assert_stream_stdout_contains("[1] 42");
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
@@ -428,11 +426,12 @@ fn test_adversarial_cat_interleaved_with_normal() {
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    // Non-matching lines are emitted immediately during feed()
+    // "normal line" is emitted immediately (no prefix match).
+    // The remaining content is accumulated while the filter is in
+    // Filtering state and emitted at ReadConsole (top-level prompt).
     frontend.assert_stream_stdout_contains("normal line");
-    frontend.assert_stream_stdout_contains("another normal line");
-    // Prefix-matching line is deferred to ReadConsole, emitted at top-level prompt
     frontend.assert_stream_stdout_contains("Called from: adversarial line");
+    frontend.assert_stream_stdout_contains("another normal line");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }

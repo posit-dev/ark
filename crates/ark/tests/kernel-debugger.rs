@@ -5,8 +5,6 @@ use ark_test::DummyArkFrontend;
 fn test_execute_request_browser() {
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -20,8 +18,6 @@ fn test_execute_request_browser() {
 fn test_execute_request_browser_continue() {
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -37,8 +33,6 @@ fn test_execute_request_browser_continue() {
 fn test_execute_request_browser_empty_input() {
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("{browser(); 1; 2}", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -46,25 +40,22 @@ fn test_execute_request_browser_empty_input() {
     frontend.recv_shell_execute_reply();
 
     // Step past browser() with empty input
-    // ("debug at" is filtered from console output, but step produces result ` 1`)
+    // ("debug at" is filtered from console output. No execute_result here:
+    // the `[1] 1` that R emits is PrintValue of the expression code, not
+    // a real evaluation result.)
     let code = "";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
-    // Stepping produces the result of the expression we step over
-    assert!(frontend.recv_iopub_execute_result().contains(" 1"));
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    // Step past `1` with empty input
-    // ("debug at" is filtered from console output, but step produces result ` 2`)
+    // Step past `1` with empty input (same: no execute_result)
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
-    // Stepping produces the result of the expression we step over
-    assert!(frontend.recv_iopub_execute_result().contains(" 2"));
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -88,8 +79,6 @@ fn test_execute_request_browser_empty_input_disabled() {
     // Set browserNLdisabled
     frontend.execute_request_invisibly("options(browserNLdisabled = TRUE)");
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -123,8 +112,6 @@ fn test_execute_request_browser_empty_input_disabled() {
 fn test_execute_request_browser_nested() {
     let frontend = DummyArkFrontend::lock();
 
-    // Enter first browser
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -134,8 +121,6 @@ fn test_execute_request_browser_nested() {
     // Evaluate a value in the outer browser
     frontend.execute_request("42", |result| assert!(result.contains("[1] 42")));
 
-    // Start nested browser from within the first browser
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -224,8 +209,6 @@ fn test_execute_request_browser_error_in_debug() {
 
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -261,8 +244,6 @@ fn test_execute_request_browser_incomplete() {
 
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -312,7 +293,6 @@ fn()";
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -339,8 +319,6 @@ fn()";
 fn test_execute_request_browser_stdin() {
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -383,7 +361,6 @@ fn test_execute_request_browser_multiple_expressions() {
     assert_eq!(input.code, code);
 
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
-    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -411,7 +388,6 @@ fn test_execute_request_browser_multiple_expressions() {
     assert_eq!(input.code, code);
 
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
-    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -439,7 +415,6 @@ fn test_execute_request_browser_local_variable() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -472,7 +447,6 @@ fn test_browser_in_base_env() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -503,8 +477,6 @@ fn test_browser_in_base_env() {
 fn test_execute_request_browser_braced_step_out() {
     let frontend = DummyArkFrontend::lock();
 
-    // browser() at top level enters debug mode without visible output
-    // ("Called from:" is filtered from console output)
     frontend.send_execute_request("{browser()}", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -538,7 +510,6 @@ evalq(base::browser(), env)";
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
