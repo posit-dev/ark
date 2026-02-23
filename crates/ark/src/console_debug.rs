@@ -120,6 +120,8 @@ impl Console {
                     remove_fenced_frames(&mut stack);
                 }
 
+                self.filter.set_debugging(true);
+
                 let mut dap = self.debug_dap.lock().unwrap();
                 dap.start_debug(stack, fallback_sources, debug_stopped_reason)
             },
@@ -136,6 +138,7 @@ impl Console {
         }
 
         self.debug_is_debugging = false;
+        self.filter.set_debugging(false);
         self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
         self.debug_stop_session();

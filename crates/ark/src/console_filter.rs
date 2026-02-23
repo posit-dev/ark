@@ -1,7 +1,7 @@
 //
 // console_filter.rs
 //
-// Copyright (C) 2026 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2025 Posit Software, PBC. All rights reserved.
 //
 // Filter for debug console output. Removes R's internal debug messages from
 // user-visible console output while preserving the information needed for
@@ -48,6 +48,14 @@ impl MatchedPattern {
         }
     }
 
+    /// Whether the text after the prefix is an R expression that should
+    /// be validated with the parser. `Debug` and `DebugAt` contain actual
+    /// R code; the others contain context descriptions like `"top level"`
+    /// and are completed on newline instead.
+    fn has_r_expression(&self) -> bool {
+        matches!(self, MatchedPattern::Debug | MatchedPattern::DebugAt)
+    }
+
     fn all() -> &'static [MatchedPattern] {
         &[
             MatchedPattern::CalledFrom,
@@ -85,19 +93,34 @@ enum ConsoleFilterState {
         timestamp: Instant,
     },
 
-    /// Confirmed match. Accumulating the expression that follows the prefix.
-    /// Content is suppressed from IOPub.
+    /// Confirmed prefix match. Accumulating the expression that follows.
+    /// We parse the expression to determine when it's complete.
     Filtering {
         pattern: MatchedPattern,
         expr_buffer: String,
         timestamp: Instant,
+        /// Whether the console was in a debug session when this match started.
+        was_debugging: bool,
     },
+}
+
+/// A captured debug message awaiting confirmation at ReadConsole
+struct PendingCapture {
+    pattern: MatchedPattern,
+    expr_buffer: String,
+    was_debugging: bool,
+    timestamp: Instant,
 }
 
 /// Filter for debug console output
 pub struct ConsoleFilter {
     state: ConsoleFilterState,
+    /// Captured debug messages awaiting ReadConsole confirmation
+    pending: Vec<PendingCapture>,
     timeout: Duration,
+    /// Whether we're currently inside a debug session. Updated by the
+    /// console so the filter can record context when entering `Filtering`.
+    is_debugging: bool,
 }
 
 fn get_timeout() -> Duration {
@@ -122,7 +145,9 @@ impl ConsoleFilter {
             state: ConsoleFilterState::Passthrough {
                 at_line_start: true,
             },
+            pending: Vec::new(),
             timeout: get_timeout(),
+            is_debugging: false,
         }
     }
 
@@ -132,8 +157,14 @@ impl ConsoleFilter {
             state: ConsoleFilterState::Passthrough {
                 at_line_start: true,
             },
+            pending: Vec::new(),
             timeout,
+            is_debugging: false,
         }
+    }
+
+    pub fn set_debugging(&mut self, is_debugging: bool) {
+        self.is_debugging = is_debugging;
     }
 
     /// Feed content through the filter and get actions to perform.
@@ -149,15 +180,26 @@ impl ConsoleFilter {
             return (vec![(content.to_string(), stream)], None);
         }
 
-        let (timeout_emit, timeout_update) = self.check_timeout_internal();
-
         let mut actions: Vec<(String, Stream)> = Vec::new();
+        let mut debug_update: Option<DebugCallTextUpdate> = None;
+
+        // Check for timed-out pending captures first
+        let (pending_emits, pending_update) = self.check_pending_timeouts();
+        actions.extend(pending_emits);
+        if pending_update.is_some() {
+            debug_update = pending_update;
+        }
+
+        // Check current state timeout
+        let (timeout_emit, timeout_update) = self.check_state_timeout();
         if let Some(emit) = timeout_emit {
             actions.push(emit);
         }
-        let mut debug_update = timeout_update;
+        if timeout_update.is_some() {
+            debug_update = timeout_update;
+        }
 
-        // Process content character by character to handle line boundaries
+        // Process content chunk by chunk to handle line boundaries
         let mut remaining = content;
 
         while !remaining.is_empty() {
@@ -191,6 +233,7 @@ impl ConsoleFilter {
                                 pattern,
                                 expr_buffer: String::new(),
                                 timestamp: Instant::now(),
+                                was_debugging: self.is_debugging,
                             };
                             (None, None, prefix_len)
                         },
@@ -241,6 +284,7 @@ impl ConsoleFilter {
                             pattern,
                             expr_buffer: after_prefix,
                             timestamp: Instant::now(),
+                            was_debugging: self.is_debugging,
                         };
                         (None, None, content.len())
                     },
@@ -264,8 +308,9 @@ impl ConsoleFilter {
                 pattern,
                 expr_buffer,
                 timestamp,
+                was_debugging,
             } => {
-                // Check timeout: not confirmed as debug output, emit back to user
+                // Check timeout
                 if timestamp.elapsed() > self.timeout {
                     let text = format!("{}{}", pattern.prefix(), expr_buffer);
                     self.state = ConsoleFilterState::Passthrough {
@@ -274,33 +319,66 @@ impl ConsoleFilter {
                     return (Some((text, Stream::Stdout)), None, 0);
                 }
 
-                // Append content to expression buffer
-                expr_buffer.push_str(content);
+                if pattern.has_r_expression() {
+                    // `Debug` and `DebugAt`: use R's parser to decide
+                    // when the expression is complete.
+                    expr_buffer.push_str(content);
+                    let expr_to_parse = extract_expression(*pattern, expr_buffer);
 
-                // Check if expression is complete
-                let expr_text = extract_expression(*pattern, expr_buffer);
-                match check_expression_complete(&expr_text) {
-                    ExpressionStatus::Complete => {
-                        let update = finalize_capture(*pattern, expr_buffer);
-                        // After a complete expression, we're at a line start
-                        // (the expression includes a trailing newline)
-                        self.state = ConsoleFilterState::Passthrough {
-                            at_line_start: true,
-                        };
-                        (None, Some(update), content.len())
-                    },
-                    ExpressionStatus::Incomplete => {
-                        // Keep accumulating
-                        (None, None, content.len())
-                    },
-                    ExpressionStatus::SyntaxError => {
-                        // Not valid R, probably not real debug output. Emit back to user.
-                        let text = format!("{}{}", pattern.prefix(), expr_buffer);
-                        self.state = ConsoleFilterState::Passthrough {
-                            at_line_start: expr_buffer.ends_with('\n'),
-                        };
-                        (Some((text, Stream::Stdout)), None, content.len())
-                    },
+                    match check_expression_status(&expr_to_parse) {
+                        ExpressionStatus::Complete => {
+                            self.pending.push(PendingCapture {
+                                pattern: *pattern,
+                                expr_buffer: expr_buffer.clone(),
+                                was_debugging: *was_debugging,
+                                timestamp: *timestamp,
+                            });
+                            self.state = ConsoleFilterState::Passthrough {
+                                at_line_start: expr_buffer.ends_with('\n'),
+                            };
+                            (None, None, content.len())
+                        },
+                        ExpressionStatus::Incomplete => (None, None, content.len()),
+                        ExpressionStatus::SyntaxError => {
+                            // Not a valid R expression — not a real debug
+                            // message. Flush-emit everything.
+                            let text = format!("{}{}", pattern.prefix(), expr_buffer);
+                            self.state = ConsoleFilterState::Passthrough {
+                                at_line_start: expr_buffer.ends_with('\n'),
+                            };
+                            (Some((text, Stream::Stdout)), None, content.len())
+                        },
+                    }
+                } else {
+                    // `CalledFrom`, `DebuggingIn`, `ExitingFrom`: the text
+                    // after the prefix is a context description (e.g.,
+                    // "top level") or a function call that may span multiple
+                    // lines. Use the parser to detect completion, but treat
+                    // SyntaxError as complete since these are always real
+                    // debug messages once the prefix has matched. Only
+                    // append up to the first newline so that subsequent
+                    // unrelated content is not swallowed into the capture.
+                    let (to_append, consumed) = match content.find('\n') {
+                        Some(pos) => (&content[..=pos], pos + 1),
+                        None => (content, content.len()),
+                    };
+                    expr_buffer.push_str(to_append);
+
+                    match check_expression_status(expr_buffer) {
+                        ExpressionStatus::Complete | ExpressionStatus::SyntaxError => {
+                            self.pending.push(PendingCapture {
+                                pattern: *pattern,
+                                expr_buffer: expr_buffer.clone(),
+                                was_debugging: *was_debugging,
+                                timestamp: *timestamp,
+                            });
+                            self.state = ConsoleFilterState::Passthrough {
+                                at_line_start: expr_buffer.ends_with('\n'),
+                            };
+                            (None, None, consumed)
+                        },
+                        ExpressionStatus::Incomplete => (None, None, consumed),
+                    }
                 }
             },
         }
@@ -329,35 +407,118 @@ impl ConsoleFilter {
     }
 
     /// Called when ReadConsole is entered, flush/finalize any pending state.
-    /// Reaching ReadConsole confirms that filtered content was real debug
-    /// output (the expected sequence is debug message then browser prompt).
-    /// Content in `Filtering` state is suppressed and finalized as a debug
-    /// state update. Content in `Buffering` state (unconfirmed prefix match)
-    /// is emitted back to the user.
-    pub fn on_read_console(&mut self) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
+    ///
+    /// The `is_browser` parameter indicates whether this is a browser prompt
+    /// (debug mode) or a top-level prompt (normal execution). This is the key
+    /// signal for distinguishing real debug messages from adversarial user
+    /// output:
+    ///
+    /// When `was_debugging || is_browser`, the content is suppressed as
+    /// real debug output. Otherwise it is emitted back to the user.
+    ///
+    /// - `was_debugging`: the prefix was matched while already in a debug
+    ///   session, so it's debug machinery output (including `exiting from:`
+    ///   which may be followed by a top-level prompt).
+    /// - `is_browser`: we weren't debugging but we've now landed on a
+    ///   browser prompt, so this is debug-entry output like `Called from:`.
+    /// - Neither: user output at top level that happened to match a
+    ///   prefix — emit it.
+    ///
+    /// Content in `Buffering` state (unconfirmed prefix match) is always
+    /// emitted since we never confirmed a full prefix match.
+    pub fn on_read_console(
+        &mut self,
+        is_browser: bool,
+    ) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
+        let mut emits: Vec<(String, Stream)> = Vec::new();
+        let mut debug_update: Option<DebugCallTextUpdate> = None;
+
+        // Process all pending captures
+        for capture in self.pending.drain(..) {
+            if capture.was_debugging || is_browser {
+                // Suppress and produce debug state update
+                debug_update = Some(finalize_capture(capture.pattern, &capture.expr_buffer));
+            } else {
+                // Emit back to user
+                let text = format!("{}{}", capture.pattern.prefix(), capture.expr_buffer);
+                emits.push((text, Stream::Stdout));
+            }
+        }
+
+        // Process current state
         match std::mem::replace(&mut self.state, ConsoleFilterState::Passthrough {
             at_line_start: true,
         }) {
-            ConsoleFilterState::Passthrough { .. } => (None, None),
-            ConsoleFilterState::Buffering { buffer, stream, .. } => (Some((buffer, stream)), None),
+            ConsoleFilterState::Passthrough { .. } => {},
+            ConsoleFilterState::Buffering { buffer, stream, .. } => {
+                emits.push((buffer, stream));
+            },
             ConsoleFilterState::Filtering {
                 pattern,
                 expr_buffer,
+                was_debugging,
                 ..
-            } => (None, Some(finalize_capture(pattern, &expr_buffer))),
+            } => {
+                if was_debugging || is_browser {
+                    debug_update = Some(finalize_capture(pattern, &expr_buffer));
+                } else {
+                    let text = format!("{}{}", pattern.prefix(), expr_buffer);
+                    emits.push((text, Stream::Stdout));
+                }
+            },
         }
+
+        let emits_opt = if emits.is_empty() { vec![] } else { emits };
+        (emits_opt, debug_update)
     }
 
     /// Check for timeout and handle state transitions.
     /// Timeout means we didn't reach ReadConsole to confirm debug output,
     /// so we emit the accumulated content back to the user.
-    pub fn check_timeout(&mut self) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
-        self.check_timeout_internal()
+    pub fn check_timeout(&mut self) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
+        let mut emits: Vec<(String, Stream)> = Vec::new();
+        let mut debug_update: Option<DebugCallTextUpdate> = None;
+
+        let (pending_emits, pending_update) = self.check_pending_timeouts();
+        emits.extend(pending_emits);
+        if pending_update.is_some() {
+            debug_update = pending_update;
+        }
+
+        let (state_emit, state_update) = self.check_state_timeout();
+        if let Some(emit) = state_emit {
+            emits.push(emit);
+        }
+        if state_update.is_some() {
+            debug_update = state_update;
+        }
+
+        (emits, debug_update)
     }
 
-    fn check_timeout_internal(
-        &mut self,
-    ) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
+    /// Check pending captures for timeouts
+    fn check_pending_timeouts(&mut self) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
+        let mut emits: Vec<(String, Stream)> = Vec::new();
+        let mut timed_out_indices: Vec<usize> = Vec::new();
+
+        for (i, capture) in self.pending.iter().enumerate() {
+            if capture.timestamp.elapsed() > self.timeout {
+                let text = format!("{}{}", capture.pattern.prefix(), capture.expr_buffer);
+                emits.push((text, Stream::Stdout));
+                timed_out_indices.push(i);
+            }
+        }
+
+        // Remove timed out captures in reverse order to preserve indices
+        for i in timed_out_indices.into_iter().rev() {
+            self.pending.remove(i);
+        }
+
+        (emits, None)
+    }
+
+    /// Check current state for timeout
+    fn check_state_timeout(&mut self) -> (Option<(String, Stream)>, Option<DebugCallTextUpdate>) {
         match &self.state {
             ConsoleFilterState::Passthrough { .. } => (None, None),
             ConsoleFilterState::Buffering {
@@ -379,6 +540,7 @@ impl ConsoleFilter {
                 pattern,
                 expr_buffer,
                 timestamp,
+                ..
             } => {
                 if timestamp.elapsed() > self.timeout {
                     let text = format!("{}{}", pattern.prefix(), expr_buffer);
@@ -394,39 +556,59 @@ impl ConsoleFilter {
     }
 
     /// Get any buffered content that should be emitted (for cleanup)
-    pub fn flush(&mut self) -> Option<(String, Stream)> {
+    pub fn flush(&mut self) -> Vec<(String, Stream)> {
+        let mut emits: Vec<(String, Stream)> = Vec::new();
+
+        // Flush pending captures
+        for capture in self.pending.drain(..) {
+            let text = format!("{}{}", capture.pattern.prefix(), capture.expr_buffer);
+            emits.push((text, Stream::Stdout));
+        }
+
+        // Flush current state
         match std::mem::replace(&mut self.state, ConsoleFilterState::Passthrough {
             at_line_start: true,
         }) {
-            ConsoleFilterState::Passthrough { .. } => None,
-            ConsoleFilterState::Buffering { buffer, stream, .. } => Some((buffer, stream)),
+            ConsoleFilterState::Passthrough { .. } => {},
+            ConsoleFilterState::Buffering { buffer, stream, .. } => {
+                emits.push((buffer, stream));
+            },
             ConsoleFilterState::Filtering {
                 pattern,
                 expr_buffer,
                 ..
             } => {
                 let text = format!("{}{}", pattern.prefix(), expr_buffer);
-                Some((text, Stream::Stdout))
+                emits.push((text, Stream::Stdout));
             },
         }
+
+        emits
     }
 }
 
 /// Try to match content against known prefixes
 fn try_match_prefix(content: &str) -> PrefixMatch {
+    let mut best_match: Option<MatchedPattern> = None;
+    let mut best_len: usize = 0;
     let mut has_partial = false;
 
+    // Although not necessary right now, use longest match approach to be
+    // defensive
     for pattern in MatchedPattern::all() {
         let prefix = pattern.prefix();
-        if content.starts_with(prefix) {
-            return PrefixMatch::Full(*pattern);
+        if content.starts_with(prefix) && prefix.len() > best_len {
+            best_match = Some(*pattern);
+            best_len = prefix.len();
         }
         if prefix.starts_with(content) && !content.is_empty() {
             has_partial = true;
         }
     }
 
-    if has_partial {
+    if let Some(pattern) = best_match {
+        PrefixMatch::Full(pattern)
+    } else if has_partial {
         PrefixMatch::Partial
     } else {
         PrefixMatch::None
@@ -483,24 +665,30 @@ fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
 
 /// Status of expression parsing
 enum ExpressionStatus {
+    /// Expression is syntactically complete
     Complete,
+    /// Expression is syntactically valid but incomplete (e.g., unclosed brace)
     Incomplete,
+    /// Expression has a syntax error
     SyntaxError,
 }
 
-/// Check if an expression is syntactically complete using R's parser
-fn check_expression_complete(expr: &str) -> ExpressionStatus {
-    // Empty expression is incomplete
+/// Check whether an expression string is complete, incomplete, or has a syntax error
+fn check_expression_status(expr: &str) -> ExpressionStatus {
+    // Empty or whitespace-only is incomplete
     if expr.trim().is_empty() {
         return ExpressionStatus::Incomplete;
     }
 
-    // Use harp's parse_status to check expression completeness
+    // Use R's parser to check the expression status
     match parse_status(&ParseInput::Text(expr)) {
         Ok(ParseResult::Complete(_)) => ExpressionStatus::Complete,
         Ok(ParseResult::Incomplete) => ExpressionStatus::Incomplete,
         Ok(ParseResult::SyntaxError { .. }) => ExpressionStatus::SyntaxError,
-        Err(_) => ExpressionStatus::SyntaxError,
+        Err(_) => {
+            // Parser error - treat as syntax error to be safe
+            ExpressionStatus::SyntaxError
+        },
     }
 }
 
@@ -548,6 +736,38 @@ fn finalize_capture(pattern: MatchedPattern, expr_buffer: &str) -> DebugCallText
             DebugCallTextUpdate::Reset
         },
     }
+}
+
+/// Strip debug prefix lines from a string, used to clean `autoprint_output`
+/// at browser prompts.
+///
+/// For `debug at` and `debug:` patterns the prefix is stripped but the
+/// expression rendering is kept (it is what the user sees as the step
+/// result). For other patterns (`Called from:`, `debugging in:`,
+/// `exiting from:`) the entire line is removed.
+pub fn strip_debug_prefix_lines(text: &mut String) {
+    if text.is_empty() {
+        return;
+    }
+    let mut result = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        if line.starts_with(MatchedPattern::DebugAt.prefix()) {
+            let after_prefix = &line[MatchedPattern::DebugAt.prefix().len()..];
+            if let Some(expr_start) = find_debug_at_expression_start(after_prefix) {
+                result.push_str(&after_prefix[expr_start..]);
+            }
+        } else if line.starts_with(MatchedPattern::Debug.prefix()) {
+            result.push_str(&line[MatchedPattern::Debug.prefix().len()..]);
+        } else if MatchedPattern::all()
+            .iter()
+            .any(|p| line.starts_with(p.prefix()))
+        {
+            // `Called from:`, `debugging in:`, `exiting from:` → drop entirely
+        } else {
+            result.push_str(line);
+        }
+    }
+    *text = result;
 }
 
 #[cfg(test)]
@@ -666,11 +886,13 @@ mod tests {
         let _ = filter.feed("Called ", Stream::Stdout);
 
         // Buffering is an unconfirmed prefix match, so ReadConsole emits it
-        let (emit, update) = filter.on_read_console();
+        // regardless of whether it's a browser prompt or not
+        let (emits, update) = filter.on_read_console(false);
 
-        let (text, stream) = emit.unwrap();
+        assert_eq!(emits.len(), 1);
+        let (text, stream) = &emits[0];
         assert_eq!(text, "Called ");
-        assert_eq!(stream, Stream::Stdout);
+        assert_eq!(*stream, Stream::Stdout);
         assert!(update.is_none());
 
         // After on_read_console, filter should be in Passthrough state
@@ -694,8 +916,194 @@ mod tests {
         // Flush should return the buffered content
         let flushed = filter.flush();
 
-        let (text, stream) = flushed.unwrap();
+        assert_eq!(flushed.len(), 1);
+        let (text, stream) = &flushed[0];
         assert_eq!(text, "Called ");
-        assert_eq!(stream, Stream::Stdout);
+        assert_eq!(*stream, Stream::Stdout);
+    }
+
+    fn collect_stdout(actions: &[(String, Stream)]) -> String {
+        actions
+            .iter()
+            .filter(|(_, s)| *s == Stream::Stdout)
+            .map(|(s, _)| s.as_str())
+            .collect()
+    }
+
+    // --- Adversarial output tests ---
+    //
+    // These verify that user output resembling debug messages is recovered
+    // rather than silently swallowed. The filter only suppresses content
+    // that is confirmed by reaching ReadConsole (the browser prompt).
+
+    #[test]
+    fn test_adversarial_filtering_timeout_emits() {
+        // Prefix matched but no expression content follows and no
+        // ReadConsole arrives. Timeout emits the prefix back to the user.
+        let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
+
+        // Feed just the prefix — enters Filtering with empty expr_buffer,
+        // which is Incomplete without needing R's parser.
+        let (actions, _) = filter.feed("debug: ", Stream::Stdout);
+        assert!(actions.is_empty());
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        let (emits, update) = filter.check_timeout();
+        assert_eq!(emits.len(), 1);
+        let (text, stream) = &emits[0];
+        assert_eq!(text, "debug: ");
+        assert_eq!(*stream, Stream::Stdout);
+        assert!(update.is_none());
+    }
+
+    #[test]
+    fn test_adversarial_buffering_timeout_emits() {
+        // Partial prefix match that times out before resolving
+        let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
+        let (actions, _) = filter.feed("debug", Stream::Stdout);
+        assert!(actions.is_empty());
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        let (emits, _) = filter.check_timeout();
+        assert_eq!(emits.len(), 1);
+        let (text, stream) = &emits[0];
+        assert_eq!(text, "debug");
+        assert_eq!(*stream, Stream::Stdout);
+    }
+
+    #[test]
+    fn test_adversarial_all_prefixes_timeout_emit() {
+        for prefix in MatchedPattern::all() {
+            let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
+            let (actions, _) = filter.feed(prefix.prefix(), Stream::Stdout);
+            assert!(actions.is_empty());
+
+            std::thread::sleep(Duration::from_millis(5));
+
+            let (emits, update) = filter.check_timeout();
+            assert_eq!(emits.len(), 1);
+            let (text, _) = &emits[0];
+            assert_eq!(text, prefix.prefix());
+            assert!(update.is_none());
+        }
+    }
+
+    #[test]
+    fn test_adversarial_debug_at_malformed_path_timeout_emits() {
+        // "debug at " without the expected `#<digits>: ` pattern means the
+        // expression extractor never finds a start, so the expression stays
+        // empty (Incomplete). Timeout recovers the content.
+        let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
+
+        // Feed prefix separately so it's consumed, then the malformed path
+        // enters the expr_buffer but stays Incomplete (empty extracted expr).
+        let (actions, _) = filter.feed("debug at ", Stream::Stdout);
+        assert!(actions.is_empty());
+        let (actions, _) = filter.feed("not-a-path\n", Stream::Stdout);
+        assert!(actions.is_empty());
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        let (emits, update) = filter.check_timeout();
+        assert_eq!(emits.len(), 1);
+        let (text, _) = &emits[0];
+        assert_eq!(text, "debug at not-a-path\n");
+        assert!(update.is_none());
+    }
+
+    #[test]
+    fn test_adversarial_prefix_mid_line_passes_through() {
+        // Prefix text that doesn't start at a line boundary is not filtered
+        let mut filter = ConsoleFilter::new();
+        let (actions, update) = filter.feed("foo debug: bar\n", Stream::Stdout);
+
+        assert_eq!(collect_stdout(&actions), "foo debug: bar\n");
+        assert!(update.is_none());
+    }
+
+    #[test]
+    fn test_adversarial_partial_prefix_then_non_matching() {
+        // "Cal" looks like start of "Called from: " but next chunk is "culator"
+        let mut filter = ConsoleFilter::new();
+        let (actions1, _) = filter.feed("Cal", Stream::Stdout);
+        assert!(actions1.is_empty());
+
+        let (actions2, _) = filter.feed("culator\n", Stream::Stdout);
+        assert_eq!(collect_stdout(&actions2), "Calculator\n");
+    }
+
+    #[test]
+    fn test_adversarial_flush_recovers_filtering_state() {
+        let mut filter = ConsoleFilter::new();
+        let (actions, _) = filter.feed("Called from: ", Stream::Stdout);
+        assert!(actions.is_empty());
+
+        let flushed = filter.flush();
+        assert_eq!(flushed.len(), 1);
+        let (text, stream) = &flushed[0];
+        assert_eq!(text, "Called from: ");
+        assert_eq!(*stream, Stream::Stdout);
+    }
+
+    #[test]
+    fn test_adversarial_on_read_console_browser_suppresses() {
+        // Content in Filtering state IS suppressed when a browser prompt
+        // arrives, because that confirms it was a real debug message.
+        let mut filter = ConsoleFilter::new();
+        let (actions, _) = filter.feed("Called from: ", Stream::Stdout);
+        assert!(actions.is_empty());
+
+        let (emits, update) = filter.on_read_console(true);
+        assert!(emits.is_empty());
+        assert!(update.is_some());
+    }
+
+    #[test]
+    fn test_adversarial_on_read_console_toplevel_emits() {
+        // Content in Filtering state IS emitted when a top-level prompt
+        // arrives, because that means it was user output matching a prefix.
+        let mut filter = ConsoleFilter::new();
+        let (actions, _) = filter.feed("Called from: ", Stream::Stdout);
+        assert!(actions.is_empty());
+
+        let (emits, update) = filter.on_read_console(false);
+        assert_eq!(emits.len(), 1);
+        let (text, stream) = &emits[0];
+        assert_eq!(text, "Called from: ");
+        assert_eq!(*stream, Stream::Stdout);
+        assert!(update.is_none());
+    }
+
+    #[test]
+    fn test_adversarial_feed_after_timeout_works_normally() {
+        // After a timeout recovery, subsequent output passes through normally
+        let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
+        let _ = filter.feed("debug: ", Stream::Stdout);
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        // Next feed triggers timeout recovery then processes new content
+        let (actions, _) = filter.feed("normal output\n", Stream::Stdout);
+        let emitted = collect_stdout(&actions);
+        assert!(emitted.contains("debug: "));
+        assert!(emitted.contains("normal output\n"));
+    }
+
+    #[test]
+    fn test_adversarial_timeout_during_feed_emits() {
+        // Timeout fires inside `feed` (via check_timeout at the start)
+        // when new content arrives after the deadline.
+        let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
+        let _ = filter.feed("exiting from: ", Stream::Stdout);
+
+        std::thread::sleep(Duration::from_millis(5));
+
+        let (actions, update) = filter.feed("next line\n", Stream::Stdout);
+        let emitted = collect_stdout(&actions);
+        assert!(emitted.contains("exiting from: "));
+        assert!(emitted.contains("next line\n"));
+        assert!(update.is_none());
     }
 }
