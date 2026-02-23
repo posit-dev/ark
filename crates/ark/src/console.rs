@@ -1111,8 +1111,15 @@ impl Console {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        // Flush the stream filter and finalize any pending debug capture
-        if let Some(update) = self.filter.on_read_console() {
+        // Flush the stream filter and finalize any pending debug capture.
+        // Reaching ReadConsole confirms `Filtering` content was real debug
+        // output (suppressed). Unconfirmed `Buffering` content is emitted.
+        let (emit, update) = self.filter.on_read_console();
+        if let Some((text, stream)) = emit {
+            let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
+            self.iopub_tx.send(message).unwrap();
+        }
+        if let Some(update) = update {
             self.debug_handle_call_text_update(update);
         }
 
@@ -2540,8 +2547,15 @@ impl Console {
             return;
         }
 
-        // Check stream filter timeout to handle long computations between WriteConsole calls
-        if let Some(update) = self.filter.check_timeout() {
+        // Check stream filter timeout to handle long computations between
+        // WriteConsole calls. Timeout means we didn't reach ReadConsole to
+        // confirm debug output, so accumulated content is emitted.
+        let (emit, update) = self.filter.check_timeout();
+        if let Some((text, stream)) = emit {
+            let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
+            self.iopub_tx.send(message).unwrap();
+        }
+        if let Some(update) = update {
             self.debug_handle_call_text_update(update);
         }
 
