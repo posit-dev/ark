@@ -162,7 +162,7 @@ context_frame_info <- function(
         environment,
         call_text,
         last_start_line,
-        fn_name = fn_name
+        fn_name
     )
 }
 
@@ -213,7 +213,7 @@ frame_info <- function(
     environment,
     call_text,
     last_start_line,
-    fn_name = NULL
+    fn_name
 ) {
     if (!is.null(srcref)) {
         # Prefer srcref if we have it
@@ -232,8 +232,9 @@ frame_info <- function(
     # Only deparse if `srcref` failed!
     fn_text <- deparse_string(fn)
 
-    # Prefix with a named assignment if we have a known function name.
-    # This makes the virtual document self-documenting.
+    # Prefix with a named assignment if we have a known function name. This
+    # makes the virtual document self-documenting. This does not affect
+    # debug-stepping since we're not adding any line breaks.
     # https://github.com/posit-dev/positron/issues/11889
     if (!is.null(fn_name)) {
         fn_text <- paste0(fn_name, " <- ", fn_text)
