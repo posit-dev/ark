@@ -1552,14 +1552,14 @@ impl Console {
             if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
                 let mut sym = String::from(sym);
 
-                // When stopped at an exception breakpoint, the top frame is
-                // the hidden handler that called `browser()`. Remap "step
-                // over" to "step out" so the user leaves the handler frame
-                // instead of stepping through internal code.
+                // When stopped at an exception breakpoint or pause, the top
+                // frame is the hidden handler that called `browser()`. Remap
+                // "step over" to "step out" so the user leaves the handler
+                // frame instead of stepping through internal code.
                 if sym == "n" &&
                     matches!(
                         self.debug_stopped_reason,
-                        Some(DebugStoppedReason::Condition { .. })
+                        Some(DebugStoppedReason::Condition { .. } | DebugStoppedReason::Pause)
                     )
                 {
                     sym = String::from("f");

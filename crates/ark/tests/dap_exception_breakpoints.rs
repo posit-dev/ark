@@ -190,6 +190,92 @@ fn test_dap_break_on_error_step_over_exits_handler() {
     dap.recv_continued();
 }
 
+/// Same as above but for warning exception breakpoints. After "step over"
+/// (`f`), the warning handler falls through to default warning handling.
+#[test]
+fn test_dap_break_on_warning_step_over_exits_handler() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["warning"]);
+
+    let code = "warning('test warning')";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_start_debug();
+
+    dap.recv_stopped_exception();
+
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // "Step over" is remapped to "step out" to exit the hidden handler frame
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.assert_stream_stderr_contains("test warning");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_continued();
+}
+
+/// Same as above but for interrupt exception breakpoints. After "step over"
+/// (`f`), the interrupt handler resumes the interrupted computation via
+/// `.tryResumeInterrupt()`.
+#[test]
+fn test_dap_break_on_interrupt_step_over_exits_handler() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["interrupt"]);
+
+    frontend.send_execute_request("repeat NULL", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    thread::sleep(Duration::from_millis(30));
+    handle_interrupt_request();
+
+    frontend.recv_iopub_start_debug();
+    dap.recv_stopped();
+
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // "Step over" is remapped to "step out" to exit the hidden handler frame.
+    // The handler calls `.tryResumeInterrupt()` which resumes the interrupted
+    // loop. Send another interrupt to break out.
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    dap.recv_continued();
+
+    // The loop resumed, interrupt again to stop it for good
+    thread::sleep(Duration::from_millis(30));
+    handle_interrupt_request();
+
+    frontend.recv_iopub_start_debug();
+    dap.recv_stopped();
+
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Quit the debugger this time
+    frontend.send_execute_request("Q", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_continued();
+}
+
 /// Test that `.handleSimpleError()` frame is excluded from the stack trace
 #[test]
 fn test_dap_break_on_error_excludes_handle_simple_error_frame() {
