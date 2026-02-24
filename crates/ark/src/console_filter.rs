@@ -47,7 +47,9 @@ pub enum MatchedPattern {
 }
 
 impl MatchedPattern {
-    /// Returns the prefix string for this pattern
+    /// Returns the prefix string for this pattern.
+    /// No prefix is a prefix of another (e.g., `"debug: "` and `"debug at "`
+    /// diverge before either is complete). `try_match_prefix` relies on this.
     fn prefix(&self) -> &'static str {
         match self {
             MatchedPattern::CalledFrom => "Called from: ",
@@ -382,28 +384,20 @@ impl ConsoleFilter {
     }
 }
 
-/// Try to match content against known prefixes
 fn try_match_prefix(content: &str) -> PrefixMatch {
-    let mut best_match: Option<MatchedPattern> = None;
-    let mut best_len: usize = 0;
     let mut has_partial = false;
 
-    // Although not necessary right now, use longest match approach to be
-    // defensive
     for pattern in MatchedPattern::all() {
         let prefix = pattern.prefix();
-        if content.starts_with(prefix) && prefix.len() > best_len {
-            best_match = Some(*pattern);
-            best_len = prefix.len();
+        if content.starts_with(prefix) {
+            return PrefixMatch::Full(*pattern);
         }
         if prefix.starts_with(content) && !content.is_empty() {
             has_partial = true;
         }
     }
 
-    if let Some(pattern) = best_match {
-        PrefixMatch::Full(pattern)
-    } else if has_partial {
+    if has_partial {
         PrefixMatch::Partial
     } else {
         PrefixMatch::None
