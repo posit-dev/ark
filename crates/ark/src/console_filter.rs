@@ -210,7 +210,7 @@ impl ConsoleFilter {
 
             ConsoleFilterState::Buffering { buffer, timestamp } => {
                 if timestamp.elapsed() > self.timeout {
-                    let emit = buffer.clone();
+                    let emit = std::mem::take(buffer);
                     self.state = ConsoleFilterState::Passthrough {
                         at_line_start: emit.ends_with('\n'),
                     };
@@ -238,7 +238,7 @@ impl ConsoleFilter {
                     },
                     PrefixMatch::None => {
                         // Cannot match, flush buffer
-                        let emit = buffer.clone();
+                        let emit = std::mem::take(buffer);
                         self.state = ConsoleFilterState::Passthrough {
                             at_line_start: emit.ends_with('\n'),
                         };
