@@ -156,6 +156,34 @@ impl<T: Into<RObject>> RFunctionExt<T> for RFunction {
     }
 }
 
+/// Type alias for the body callback of `with_calling_error_handler`.
+pub type CallingErrorHandlerBody = unsafe extern "C-unwind" fn(data: *mut c_void) -> SEXP;
+
+/// Type alias for the error handler callback of `with_calling_error_handler`.
+///
+/// The callback receives the error condition SEXP and a data pointer.
+/// Typically the handler should either:
+/// - Store error information and exit non-locally, e.g. by invoking a restart
+///   (e.g., `invokeRestart("abort")`)
+/// - Return normally to let R continue condition dispatch
+pub type CallingErrorHandlerCallback =
+    unsafe extern "C-unwind" fn(err: SEXP, data: *mut c_void) -> SEXP;
+
+/// Evaluate code with a local calling error handler.
+///
+/// This is a thin wrapper around R's `R_withCallingErrorHandler` that installs
+/// a local calling error handler on `R_HandlerStack`. Local handlers have
+/// priority over global handlers, which is useful when you need to intercept
+/// errors before other handlers (like R's debug handler) can catch them.
+pub unsafe fn with_calling_error_handler(
+    body: CallingErrorHandlerBody,
+    body_data: *mut c_void,
+    handler: CallingErrorHandlerCallback,
+    handler_data: *mut c_void,
+) -> SEXP {
+    libr::R_withCallingErrorHandler(Some(body), body_data, Some(handler), handler_data)
+}
+
 /// Run closure in a context protected from errors and longjumps
 ///
 /// `try_catch()` runs a closure and captures any R-level errors with an R
@@ -271,12 +299,7 @@ where
     }
 
     let longjump = top_level_exec(|| unsafe {
-        libr::R_withCallingErrorHandler(
-            Some(callback::<F, T>),
-            payload,
-            Some(handler::<F, T>),
-            payload,
-        );
+        with_calling_error_handler(callback::<F, T>, payload, handler::<F, T>, payload);
     });
 
     res.unwrap_or_else(|| {

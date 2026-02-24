@@ -11,6 +11,7 @@ use std::time::Duration;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark::sys::control::handle_interrupt_request;
 use ark_test::DummyArkFrontend;
+use ark_test::SourceFile;
 
 /// Test that an error at top-level triggers the debugger when error breakpoints are enabled
 #[test]
@@ -500,4 +501,89 @@ fn test_dap_pause_with_trycatch_interrupt_handler() {
 
     // Verify DAP didn't receive any stopped event (we should NOT have entered debugger)
     dap.assert_no_events();
+}
+
+/// Test that an error thrown while already paused at a regular breakpoint
+/// correctly trims the handler frame from the stack trace.
+#[test]
+fn test_dap_break_on_error_while_at_breakpoint() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Enable error exception breakpoints
+    dap.set_exception_breakpoints(&["error"]);
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x + 1
+}
+foo()
+",
+    );
+
+    // Set breakpoint on line 3: `x <- 1`
+    let breakpoints = dap.set_breakpoints(&file.path, &[3]);
+    assert_eq!(breakpoints.len(), 1);
+
+    // Source the file to hit the breakpoint
+    frontend.source_file_and_hit_breakpoint(&file);
+    dap.recv_breakpoint_verified();
+    dap.recv_stopped();
+
+    // Verify we're stopped at the breakpoint inside foo()
+    dap.assert_top_frame("foo()");
+
+    // While paused at the breakpoint, evaluate code that triggers an error.
+    // The error exception breakpoint should fire and create a nested browser.
+    frontend.send_execute_request("stop('nested error')", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+
+    // Leaving the breakpoint debug session emits a Continued event
+    dap.recv_continued();
+
+    frontend.recv_iopub_start_debug();
+
+    // Should receive a stopped *exception* event (not a step event).
+    // This verifies `debug_stopped_reason` was correctly set to `Condition`.
+    let (text, description) = dap.recv_stopped_exception();
+    assert!(text.contains("simpleError"));
+    assert!(description.contains("nested error"));
+
+    // The stream output shows where the browser was called from
+    frontend.assert_stream_stdout_contains("Called from:");
+
+    // The kernel goes idle while waiting for input in the error browser
+    frontend.recv_iopub_idle();
+
+    // The handler frame should be trimmed from the stack
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    // foo() should be in the stack (we errored while inside it)
+    assert!(
+        frame_names.contains(&"foo()"),
+        "Expected foo() in stack, got: {frame_names:?}",
+    );
+
+    // Continue out of the error browser. `globalErrorHandler`'s defer block
+    // saves the traceback, invokes `options(error)`, and calls
+    // `invokeRestart("abort")` which jumps to top level.
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    dap.recv_continued();
+
+    // The abort restart jumps to top level. The error is reported with a
+    // proper traceback (saved by `globalErrorHandler`).
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("nested error"));
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply(); // source()
+    frontend.recv_shell_execute_reply(); // stop('nested error')
+    frontend.recv_shell_execute_reply_exception(); // c
 }

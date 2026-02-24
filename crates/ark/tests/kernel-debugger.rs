@@ -123,7 +123,8 @@ fn test_execute_request_browser_nested() {
     // Evaluate another value in the nested browser
     frontend.execute_request("\"hello\"", |result| assert!(result.contains("hello")));
 
-    // Throw an error in the nested browser
+    // Throw an error in the nested browser. `globalErrorHandler` runs and
+    // exits all the way to top level.
     let code = "stop('error in nested')";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -131,10 +132,23 @@ fn test_execute_request_browser_nested() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.assert_stream_stderr_contains("Error: error in nested");
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("error in nested"));
     frontend.recv_iopub_idle();
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
+
+    // Now back at top level. Start a new browser session to test
+    // continue-from-nested and error-in-parent scenarios.
+    frontend.execute_request("browser()", |result| {
+        assert!(result.contains("Called from: top level"));
+    });
+
+    // Enter nested browser
+    frontend.execute_request("browser()", |_result| {});
 
     // Continue to exit the nested browser and return to parent
     frontend.execute_request_invisibly("c");
@@ -142,7 +156,8 @@ fn test_execute_request_browser_nested() {
     // Back in the parent browser, evaluate another value
     frontend.execute_request("3.14", |result| assert!(result.contains("[1] 3.14")));
 
-    // Throw an error in the outer browser
+    // Throw an error in the parent browser. `globalErrorHandler` runs and
+    // exits to top level.
     let code = "stop('error in parent')";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -150,22 +165,22 @@ fn test_execute_request_browser_nested() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.assert_stream_stderr_contains("Error: error in parent");
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("error in parent"));
     frontend.recv_iopub_idle();
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    frontend.execute_request("NA", |result| assert!(result.contains("[1] NA")));
-    // Quit the outer browser
-    frontend.execute_request_invisibly("Q");
+    assert_eq!(
+        frontend.recv_shell_execute_reply_exception(),
+        input.execution_count
+    );
 }
 
 #[test]
 fn test_execute_request_browser_error() {
-    // The behaviour for errors is different in browsers than at top-level
-    // because our global handler does not run in that case. Instead the error
-    // is streamed on IOPub::Stderr and a regular execution result is sent as
-    // response.
+    // When evaluating in the debugger, our local calling error handler
+    // ensures `globalErrorHandler` runs. This gives proper backtrace
+    // capturing and error formatting, but exits the debugger via
+    // `invokeRestart("abort")`.
 
     let frontend = DummyArkFrontend::lock();
 
@@ -179,12 +194,12 @@ fn test_execute_request_browser_error() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, "stop('foobar')");
 
-    frontend.assert_stream_stderr_contains("Error: foobar");
+    // `globalErrorHandler` formats the error and exits to top level
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("foobar"));
     frontend.recv_iopub_idle();
 
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-
-    frontend.execute_request_invisibly("Q");
+    frontend.recv_shell_execute_reply_exception();
 }
 
 #[test]

@@ -65,6 +65,7 @@ use harp::exec::exec_with_cleanup;
 use harp::exec::r_check_stack;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
+use harp::exec::with_calling_error_handler;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::library::RLibraries;
@@ -1612,7 +1613,13 @@ impl Console {
     }
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
-    unsafe fn eval(expr: libr::SEXP, srcref: libr::SEXP, buf: *mut c_uchar, buflen: c_int) {
+    unsafe fn eval(
+        expr: libr::SEXP,
+        srcref: libr::SEXP,
+        buf: *mut c_uchar,
+        buflen: c_int,
+        is_debugging: bool,
+    ) {
         let frame = harp::r_current_frame();
 
         // SAFETY: This may jump in case of error, keep this POD
@@ -1624,8 +1631,25 @@ impl Console {
             let old_srcref = libr::Rf_protect(libr::get(libr::R_Srcref));
             libr::set(libr::R_Srcref, srcref);
 
-            // Evaluate the expression. Beware: this may throw an R longjump.
-            let value = libr::Rf_eval(expr, frame);
+            // Beware: this may throw an R longjump.
+            let value = if is_debugging {
+                // When debugging, install our error handler as a local calling
+                // handler so it fires before R's own error handler. This ensures
+                // proper backtrace capturing and, when error exception breakpoints
+                // are enabled, correct stopped reason for the DAP event. We could
+                // eventually set our error handler in this way for all evals, but
+                // for now make it conditional on debugging as this is a new
+                // approach.
+                let mut body_data = EvalBodyData { expr, frame };
+                with_calling_error_handler(
+                    eval_body_callback,
+                    &mut body_data as *mut _ as *mut c_void,
+                    eval_error_callback,
+                    std::ptr::null_mut(),
+                )
+            } else {
+                libr::Rf_eval(expr, frame)
+            };
             libr::Rf_protect(value);
 
             // Restore `R_Srcref`, necessary at least to avoid messing with
@@ -2601,6 +2625,46 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
     })
 }
 
+/// Data passed to the eval body callback via `R_withCallingErrorHandler`.
+#[repr(C)]
+struct EvalBodyData {
+    expr: libr::SEXP,
+    frame: libr::SEXP,
+}
+
+/// Body callback for `R_withCallingErrorHandler` in `Console::eval`.
+/// Simply evaluates the expression in the given frame.
+unsafe extern "C-unwind" fn eval_body_callback(data: *mut c_void) -> libr::SEXP {
+    let data = unsafe { &*(data as *const EvalBodyData) };
+    unsafe { libr::Rf_eval(data.expr, data.frame) }
+}
+
+/// Error handler callback for `R_withCallingErrorHandler` in `Console::eval`.
+/// This fires when an error occurs during evaluation in a debug REPL.
+///
+/// Calls the R-side `local_error_handler` which delegates to
+/// `globalErrorHandler`. If error exception breakpoints are enabled, that
+/// enters the error browser first. In all cases it saves the traceback
+/// and invokes the abort restart to jump to top level.
+unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_void) -> libr::SEXP {
+    // End current debug session (if any) so the error browser can start fresh
+    let console = Console::get_mut();
+    if console.debug_is_debugging {
+        console.debug_stop();
+    }
+
+    // Call the R-side global error handler which sets the stopped reason,
+    // calls `browser()`, saves the backtrace, and invokes the abort restart
+    unsafe {
+        let call = libr::Rf_lang2(r_symbol!(".ps.errors.globalErrorHandler"), err);
+        libr::Rf_protect(call);
+        libr::Rf_eval(call, ARK_ENVS.positron_ns);
+        // The handler longjumps via invok`eRestart("abort")`
+    }
+
+    unreachable!("globalErrorHandler longjumps via invokeRestart")
+}
+
 // --- Frontend methods ---
 // These functions are hooked up as R frontend methods. They call into our
 // global `Console` singleton.
@@ -2745,7 +2809,7 @@ fn r_read_console_impl(
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
-                Console::eval(expr, srcref, buf, buflen);
+                Console::eval(expr, srcref, buf, buflen, console.debug_is_debugging);
 
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning

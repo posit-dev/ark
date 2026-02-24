@@ -245,20 +245,19 @@ fn test_dap_error_in_eval() {
     let stack = dap.stack_trace();
     assert_eq!(stack.len(), 1, "Should have 1 frame");
 
-    // Evaluate an expression that causes an error.
-    // Unlike stepping to an error (which exits debug), evaluating an error
-    // from the console should keep us in debug mode.
-    frontend.debug_send_error_expr("stop('eval error')", "eval error");
+    // Evaluate an expression that causes an error. Our local calling error
+    // handler ensures `globalErrorHandler` runs (for proper backtrace
+    // capturing), which exits the debugger and jumps to top level.
+    frontend.send_execute_request("stop('eval error')", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
     dap.recv_continued();
-    dap.recv_stopped();
 
-    // We should still be in debug mode with the same stack
-    let stack = dap.stack_trace();
-    assert_eq!(stack.len(), 1, "Should still have 1 frame after eval error");
-
-    // Clean exit
-    frontend.debug_send_quit();
-    dap.recv_continued();
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("eval error"));
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception(); // stop('eval error')
 }
 
 #[test]
