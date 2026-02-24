@@ -49,6 +49,7 @@ debugger_stack_info <- function(
         # `dplyr::mutate())`, we can't get source location info, so return a
         # minimal frame with unknown location.
         # See https://github.com/posit-dev/positron/issues/8979
+        # and https://github.com/posit-dev/positron/issues/12021
         frame <- frame %||% frame_info_fallback()
 
         return(list(frame))
