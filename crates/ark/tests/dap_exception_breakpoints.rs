@@ -461,13 +461,13 @@ fn test_dap_pause_with_trycatch_interrupt_handler() {
 
     // Start code that uses tryCatch to swallow interrupts
     frontend.send_execute_request(
-        "tryCatch({ Sys.sleep(10) }, interrupt = function(e) 'caught')",
+        "tryCatch({ repeat NULL }, interrupt = function(e) 'caught')",
         ExecuteRequestOptions::default(),
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Give R a moment to enter the sleep
+    // Give R a moment to enter the loop
     thread::sleep(Duration::from_millis(30));
 
     // Send pause request - but tryCatch will catch the interrupt before
@@ -483,7 +483,7 @@ fn test_dap_pause_with_trycatch_interrupt_handler() {
     // Now the critical test: send a REGULAR interrupt (not a pause) to code
     // WITHOUT tryCatch. If the `is_interrupting_for_debugger` flag wasn't reset,
     // this regular interrupt would incorrectly be treated as a debugger pause.
-    frontend.send_execute_request("Sys.sleep(10)", ExecuteRequestOptions::default());
+    frontend.send_execute_request("repeat NULL", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
