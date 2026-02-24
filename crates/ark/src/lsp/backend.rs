@@ -75,7 +75,9 @@ macro_rules! cast_response {
         match $target {
             RequestResponse::Result(Ok($pat(resp))) => Ok(resp),
             RequestResponse::Result(Ok(_)) => {
-                panic!("Unexpected variant while casting to {}", stringify!($pat))
+                let message = format!("Unexpected variant while casting to {}", stringify!($pat));
+                log::error!("{message}");
+                Err(new_jsonrpc_error(message))
             },
             RequestResponse::Result(Err(err)) => match err {
                 LspError::JsonRpc(err) => Err(err),
