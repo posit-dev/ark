@@ -151,6 +151,45 @@ f()
     dap.recv_continued();
 }
 
+/// Test that "step over" (`n`) at an exception breakpoint is remapped to "step
+/// out" (`f`) to exit the hidden handler frame instead of stepping through
+/// internal code. In the real IDE flow, the DAP server sends the step command
+/// as an execute request via the comm channel, so we test the same path here.
+#[test]
+fn test_dap_break_on_error_step_over_exits_handler() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    dap.set_exception_breakpoints(&["error"]);
+
+    let code = "stop('test error')";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_start_debug();
+
+    dap.recv_stopped_exception();
+
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Send "n" (step over) as an execute request. Since the top frame is the
+    // hidden handler that called `browser()`, this is remapped to "f" (step
+    // out) so the user leaves the handler instead of stepping through
+    // internal code. The handler finishes, the defer block saves the
+    // traceback, invokes the abort restart, and jumps to top level.
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("test error"));
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+    dap.recv_continued();
+}
+
 /// Test that `.handleSimpleError()` frame is excluded from the stack trace
 #[test]
 fn test_dap_break_on_error_excludes_handle_simple_error_frame() {

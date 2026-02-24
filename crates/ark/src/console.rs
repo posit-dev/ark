@@ -1550,7 +1550,20 @@ impl Console {
             // are entered as symbols). Whether or not it parses as a symbol,
             // if we're currently debugging we must set `debug_preserve_focus`.
             if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
-                let sym = String::from(sym);
+                let mut sym = String::from(sym);
+
+                // When stopped at an exception breakpoint, the top frame is
+                // the hidden handler that called `browser()`. Remap "step
+                // over" to "step out" so the user leaves the handler frame
+                // instead of stepping through internal code.
+                if sym == "n" &&
+                    matches!(
+                        self.debug_stopped_reason,
+                        Some(DebugStoppedReason::Condition { .. })
+                    )
+                {
+                    sym = String::from("f");
+                }
 
                 if DEBUG_COMMANDS.contains(&&sym[..]) {
                     return self.debug_forward_command(buf, buflen, sym);
