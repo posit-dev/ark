@@ -1,0 +1,9 @@
+---
+source: crates/ark/src/lsp/statement_range.rs
+expression: "serde_json::to_string_pretty(&rejection).unwrap()"
+---
+{
+  "kind": "rejection",
+  "rejectionKind": "syntax",
+  "line": 12
+}

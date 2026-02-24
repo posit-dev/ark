@@ -35,6 +35,7 @@ use crate::lsp::backend::LspMessage;
 use crate::lsp::backend::LspNotification;
 use crate::lsp::backend::LspRequest;
 use crate::lsp::backend::LspResponse;
+use crate::lsp::backend::LspResult;
 use crate::lsp::capabilities::Capabilities;
 use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::document::Document;
@@ -427,7 +428,7 @@ impl GlobalState {
         handler: Handler,
         into_lsp_response: impl FnOnce(T) -> LspResponse + Send + 'static,
     ) where
-        Handler: FnOnce() -> anyhow::Result<T>,
+        Handler: FnOnce() -> LspResult<T>,
         Handler: Send + 'static,
     {
         lsp::spawn_blocking(move || {
@@ -452,20 +453,21 @@ impl GlobalState {
 /// # Arguments
 ///
 /// * - `response_tx`: A response channel for the tower-lsp request handler.
-/// * - `response`: A closure producing a response wrapped in a `anyhow::Result`. Errors are logged.
+/// * - `response`: A closure producing a response wrapped in a `LspResult`. Errors are logged.
 /// * - `into_lsp_response`: A constructor for the relevant `LspResponse` variant.
 fn respond<T>(
     response_tx: TokioUnboundedSender<RequestResponse>,
-    response: impl FnOnce() -> anyhow::Result<T>,
+    response: impl FnOnce() -> LspResult<T>,
     into_lsp_response: impl FnOnce(T) -> LspResponse,
 ) -> anyhow::Result<()> {
-    let mut crashed = false;
-
-    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(response))
-        .map_err(|err| {
+    let response = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(response)) {
+        Ok(response) => {
+            let response = response.map(into_lsp_response);
+            RequestResponse::Result(response)
+        },
+        Err(err) => {
             // Set global crash flag to disable the LSP
             LSP_HAS_CRASHED.store(true, Ordering::Release);
-            crashed = true;
 
             let msg: String = if let Some(msg) = err.downcast_ref::<&str>() {
                 msg.to_string()
@@ -478,22 +480,19 @@ fn respond<T>(
             // This creates an uninformative backtrace that is reported in the
             // LSP logs. Note that the relevant backtrace is the one created by
             // our panic hook and reported via the _kernel_ logs.
-            anyhow!("Panic occurred while handling request: {msg}")
-        })
-        // Unwrap nested Result
-        .and_then(|resp| resp);
-
-    let out = match response {
-        Ok(_) => Ok(()),
-        Err(ref err) => Err(anyhow!("Error while handling request:\n{err:?}")),
+            RequestResponse::Crashed(anyhow!("Panic occurred while handling request: {msg}"))
+        },
     };
 
-    let response = response.map(into_lsp_response);
-
-    let response = if crashed {
-        RequestResponse::Crashed(response)
-    } else {
-        RequestResponse::Result(response)
+    let out = match response {
+        RequestResponse::Result(Ok(_)) => Ok(()),
+        RequestResponse::Result(Err(ref error)) => {
+            Err(anyhow!("Error while handling request:\n{error:?}"))
+        },
+        RequestResponse::Crashed(ref error) => {
+            Err(anyhow!("Crashed while handling request:\n{error:?}"))
+        },
+        RequestResponse::Disabled => Err(anyhow!("Received impossible `Disabled` response state")),
     };
 
     // Ignore errors from a closed channel. This indicates the request has

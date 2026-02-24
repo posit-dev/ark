@@ -14,6 +14,7 @@ use tree_sitter::Point;
 use tree_sitter::Tree;
 
 use crate::lsp;
+use crate::lsp::backend::LspResult;
 use crate::lsp::document::Document;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeType;
@@ -40,7 +41,7 @@ pub struct HelpTopicResponse {
 pub(crate) fn help_topic(
     point: Point,
     document: &Document,
-) -> anyhow::Result<Option<HelpTopicResponse>> {
+) -> LspResult<Option<HelpTopicResponse>> {
     let tree = &document.ast;
 
     let Some(node) = locate_help_node(tree, point) else {
