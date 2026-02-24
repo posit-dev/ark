@@ -400,34 +400,6 @@ fn try_match_prefix(content: &str) -> PrefixMatch {
     }
 }
 
-/// Find the start of the expression in a `debug at` buffer
-/// The buffer contains content after `debug at `, i.e., `<path>#<line>: <expr>`
-fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
-    // Look for `#<digits>: ` pattern
-    let mut in_digits = false;
-    let bytes = buffer.as_bytes();
-
-    for (i, &b) in bytes.iter().enumerate() {
-        if b == b'#' {
-            in_digits = true;
-        } else if in_digits {
-            if b.is_ascii_digit() {
-                // Still in digits
-            } else if b == b':' {
-                // Found colon after digits, check for space
-                if i + 2 <= buffer.len() && bytes.get(i + 1) == Some(&b' ') {
-                    return Some(i + 2);
-                }
-                in_digits = false;
-            } else {
-                in_digits = false;
-            }
-        }
-    }
-
-    None
-}
-
 /// Update to apply to the Console's debug_call_text field
 #[derive(Debug)]
 pub enum DebugCallTextUpdate {
@@ -497,6 +469,34 @@ fn extract_debug_at_update(after_prefix: &str) -> DebugCallTextUpdate {
 
 fn extract_debug_update(after_prefix: &str) -> DebugCallTextUpdate {
     DebugCallTextUpdate::Finalized(after_prefix.to_string(), DebugCallTextKind::Debug)
+}
+
+/// Find the start of the expression in a `debug at` buffer
+/// The buffer contains content after `debug at `, i.e., `<path>#<line>: <expr>`
+fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
+    // Look for `#<digits>: ` pattern
+    let mut in_digits = false;
+    let bytes = buffer.as_bytes();
+
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'#' {
+            in_digits = true;
+        } else if in_digits {
+            if b.is_ascii_digit() {
+                // Still in digits
+            } else if b == b':' {
+                // Found colon after digits, check for space
+                if i + 2 <= buffer.len() && bytes.get(i + 1) == Some(&b' ') {
+                    return Some(i + 2);
+                }
+                in_digits = false;
+            } else {
+                in_digits = false;
+            }
+        }
+    }
+
+    None
 }
 
 /// Strip lines starting with debug prefixes from a string, used to clean
