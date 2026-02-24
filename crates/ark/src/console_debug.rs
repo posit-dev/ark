@@ -170,12 +170,6 @@ impl Console {
         // recreate the debugger state after their code execution.
         let call_text = match self.debug_call_text.clone() {
             DebugCallText::None => None,
-            DebugCallText::Capturing(call_text, _) => {
-                log::error!(
-                    "Call text is in `Capturing` state, but should be `Finalized`: '{call_text}'."
-                );
-                None
-            },
             DebugCallText::Finalized(call_text, DebugCallTextKind::Debug) => Some(call_text),
             DebugCallText::Finalized(_, DebugCallTextKind::DebugAt) => None,
         };

@@ -101,7 +101,6 @@ use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::console_filter::strip_debug_prefix_lines;
 use crate::console_filter::ConsoleFilter;
-use crate::console_filter::DebugCallTextUpdate;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
@@ -165,7 +164,6 @@ pub enum SessionMode {
 #[derive(Clone, Debug)]
 pub enum DebugCallText {
     None,
-    Capturing(String, DebugCallTextKind),
     Finalized(String, DebugCallTextKind),
 }
 
@@ -1130,8 +1128,11 @@ impl Console {
         // A browser prompt means filtered content was real debug output (which
         // we suppress). Top-level prompt means it was user output matching a
         // prefix (which we emit).
-        let filter_output = self.filter.on_read_console(is_browser);
-        self.emit_filter_output(filter_output);
+        let (emits, debug_update) = self.filter.on_read_console(is_browser);
+        self.emit_filter_streams(emits);
+        if let Some(update) = debug_update {
+            self.debug_update_call_text(update);
+        }
 
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
@@ -2481,7 +2482,7 @@ impl Console {
         if stream == Stream::Stderr {
             // Flush any buffered stdout so it appears before this stderr
             let flushed = console.filter.flush();
-            console.emit_filter_output((flushed, None));
+            console.emit_filter_streams(flushed);
 
             // Now emit Stderr message
             let message = IOPubMessage::Stream(StreamOutput {
@@ -2492,20 +2493,14 @@ impl Console {
             return;
         }
 
-        let filter_output = console.filter.feed(&content);
-        console.emit_filter_output(filter_output);
+        let emits = console.filter.feed(&content);
+        console.emit_filter_streams(emits);
     }
 
-    fn emit_filter_output(
-        &mut self,
-        (emits, update): (Vec<(String, Stream)>, Option<DebugCallTextUpdate>),
-    ) {
+    fn emit_filter_streams(&mut self, emits: Vec<(String, Stream)>) {
         for (text, stream) in emits {
             let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
             self.iopub_tx.send(message).unwrap();
-        }
-        if let Some(update) = update {
-            self.debug_update_call_text(update);
         }
     }
 
@@ -2568,8 +2563,8 @@ impl Console {
         // accumulated content is emitted. This allows user code to produce
         // output that looks like debug lines emitted by R without them getting
         // filtered out or held up too long.
-        let filter_output = self.filter.check_timeout();
-        self.emit_filter_output(filter_output);
+        let emits = self.filter.check_timeout();
+        self.emit_filter_streams(emits);
 
         // Coalesce up to three concurrent tasks in case the R event loop is
         // slowed down
