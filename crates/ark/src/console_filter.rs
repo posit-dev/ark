@@ -147,8 +147,8 @@ impl ConsoleFilter {
     }
 
     /// Feed content through the filter.
-    /// Returns content to emit to IOPub and an optional debug state update.
-    pub fn feed(&mut self, content: &str) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
+    /// Returns content to emit to IOPub.
+    pub fn feed(&mut self, content: &str) -> Vec<(String, Stream)> {
         let mut emits: Vec<(String, Stream)> = Vec::new();
 
         // Check current state timeout
@@ -167,7 +167,7 @@ impl ConsoleFilter {
             remaining = &remaining[consumed..];
         }
 
-        (emits, None)
+        emits
     }
 
     /// Process a chunk of content, returning (action, bytes_consumed)
@@ -338,11 +338,8 @@ impl ConsoleFilter {
     /// Check for timeout and handle state transitions.
     /// Timeout means we didn't reach ReadConsole to confirm debug output,
     /// so we emit the accumulated content back to the user.
-    pub fn check_timeout(&mut self) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
-        match self.drain_on_timeout() {
-            Some(emit) => (vec![emit], None),
-            None => (vec![], None),
-        }
+    pub fn check_timeout(&mut self) -> Vec<(String, Stream)> {
+        self.drain_on_timeout().into_iter().collect()
     }
 
     fn drain_on_timeout(&mut self) -> Option<(String, Stream)> {
@@ -602,12 +599,11 @@ mod tests {
     #[test]
     fn test_normal_output_passthrough() {
         let mut filter = ConsoleFilter::new();
-        let (actions, update) = filter.feed("Hello, world!\n");
+        let emits = filter.feed("Hello, world!\n");
 
-        assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].0, "Hello, world!\n");
-        assert_eq!(actions[0].1, Stream::Stdout);
-        assert!(update.is_none());
+        assert_eq!(emits.len(), 1);
+        assert_eq!(emits[0].0, "Hello, world!\n");
+        assert_eq!(emits[0].1, Stream::Stdout);
     }
 
     #[test]
@@ -615,9 +611,9 @@ mod tests {
         let mut filter = ConsoleFilter::new();
 
         // Start with partial match - should buffer
-        let (actions, _) = filter.feed("Called ");
+        let emits = filter.feed("Called ");
         // While buffering, nothing emitted yet
-        assert!(actions.is_empty() || actions.iter().all(|(s, _)| s.is_empty()));
+        assert!(emits.is_empty() || emits.iter().all(|(s, _)| s.is_empty()));
     }
 
     #[test]
@@ -625,10 +621,10 @@ mod tests {
         let mut filter = ConsoleFilter::new();
 
         // Content that starts like a prefix but doesn't match
-        let (actions, _) = filter.feed("Calling function...\n");
+        let emits = filter.feed("Calling function...\n");
 
         // "Calling" doesn't match any prefix, should be emitted
-        let emitted: String = actions
+        let emitted: String = emits
             .iter()
             .filter(|(_, s)| *s == Stream::Stdout)
             .map(|(s, _)| s.as_str())
@@ -642,7 +638,7 @@ mod tests {
         let mut filter = ConsoleFilter::new();
 
         // Start buffering with partial match
-        let _ = filter.feed("Called ");
+        filter.feed("Called ");
 
         // Buffering is an unconfirmed prefix match, so ReadConsole emits it
         // regardless of whether it's a browser prompt or not
@@ -655,8 +651,8 @@ mod tests {
         assert!(update.is_none());
 
         // After on_read_console, filter should be in Passthrough state
-        let (actions, _) = filter.feed("Hello\n");
-        let emitted: String = actions
+        let emits = filter.feed("Hello\n");
+        let emitted: String = emits
             .iter()
             .filter(|(_, s)| *s == Stream::Stdout)
             .map(|(s, _)| s.as_str())
@@ -670,7 +666,7 @@ mod tests {
         let mut filter = ConsoleFilter::new();
 
         // Start buffering
-        let _ = filter.feed("Called ");
+        filter.feed("Called ");
 
         // Flush should return the buffered content
         let flushed = filter.flush();
@@ -701,29 +697,28 @@ mod tests {
         // the accumulated content back to the user.
         let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
 
-        let (actions, _) = filter.feed("debug: ");
-        assert!(actions.is_empty());
+        let emits = filter.feed("debug: ");
+        assert!(emits.is_empty());
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let (emits, update) = filter.check_timeout();
+        let emits = filter.check_timeout();
         assert_eq!(emits.len(), 1);
         let (text, stream) = &emits[0];
         assert_eq!(text, "debug: ");
         assert_eq!(*stream, Stream::Stdout);
-        assert!(update.is_none());
     }
 
     #[test]
     fn test_adversarial_buffering_timeout_emits() {
         // Partial prefix match that times out before resolving
         let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
-        let (actions, _) = filter.feed("debug");
-        assert!(actions.is_empty());
+        let emits = filter.feed("debug");
+        assert!(emits.is_empty());
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let (emits, _) = filter.check_timeout();
+        let emits = filter.check_timeout();
         assert_eq!(emits.len(), 1);
         let (text, stream) = &emits[0];
         assert_eq!(text, "debug");
@@ -734,16 +729,15 @@ mod tests {
     fn test_adversarial_all_prefixes_timeout_emit() {
         for prefix in MatchedPattern::all() {
             let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
-            let (actions, _) = filter.feed(prefix.prefix());
-            assert!(actions.is_empty());
+            let emits = filter.feed(prefix.prefix());
+            assert!(emits.is_empty());
 
             std::thread::sleep(Duration::from_millis(5));
 
-            let (emits, update) = filter.check_timeout();
+            let emits = filter.check_timeout();
             assert_eq!(emits.len(), 1);
             let (text, _) = &emits[0];
             assert_eq!(text, prefix.prefix());
-            assert!(update.is_none());
         }
     }
 
@@ -753,46 +747,44 @@ mod tests {
         // Filtering (no parse-based rejection). Timeout recovers content.
         let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
 
-        let (actions, _) = filter.feed("debug at ");
-        assert!(actions.is_empty());
-        let (actions, _) = filter.feed("not-a-path\n");
-        assert!(actions.is_empty());
+        let emits = filter.feed("debug at ");
+        assert!(emits.is_empty());
+        let emits = filter.feed("not-a-path\n");
+        assert!(emits.is_empty());
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let (emits, update) = filter.check_timeout();
+        let emits = filter.check_timeout();
         assert_eq!(emits.len(), 1);
         let (text, _) = &emits[0];
         assert_eq!(text, "debug at not-a-path\n");
-        assert!(update.is_none());
     }
 
     #[test]
     fn test_adversarial_prefix_mid_line_passes_through() {
         // Prefix text that doesn't start at a line boundary is not filtered
         let mut filter = ConsoleFilter::new();
-        let (actions, update) = filter.feed("foo debug: bar\n");
+        let emits = filter.feed("foo debug: bar\n");
 
-        assert_eq!(collect_stdout(&actions), "foo debug: bar\n");
-        assert!(update.is_none());
+        assert_eq!(collect_stdout(&emits), "foo debug: bar\n");
     }
 
     #[test]
     fn test_adversarial_partial_prefix_then_non_matching() {
         // "Cal" looks like start of "Called from: " but next chunk is "culator"
         let mut filter = ConsoleFilter::new();
-        let (actions1, _) = filter.feed("Cal");
-        assert!(actions1.is_empty());
+        let emits = filter.feed("Cal");
+        assert!(emits.is_empty());
 
-        let (actions2, _) = filter.feed("culator\n");
-        assert_eq!(collect_stdout(&actions2), "Calculator\n");
+        let emits = filter.feed("culator\n");
+        assert_eq!(collect_stdout(&emits), "Calculator\n");
     }
 
     #[test]
     fn test_adversarial_flush_recovers_filtering_state() {
         let mut filter = ConsoleFilter::new();
-        let (actions, _) = filter.feed("Called from: ");
-        assert!(actions.is_empty());
+        let emits = filter.feed("Called from: ");
+        assert!(emits.is_empty());
 
         let flushed = filter.flush();
         assert_eq!(flushed.len(), 1);
@@ -806,8 +798,8 @@ mod tests {
         // Content in Filtering state IS suppressed when a browser prompt
         // arrives, because that confirms it was a real debug message.
         let mut filter = ConsoleFilter::new();
-        let (actions, _) = filter.feed("Called from: ");
-        assert!(actions.is_empty());
+        let emits = filter.feed("Called from: ");
+        assert!(emits.is_empty());
 
         let (emits, update) = filter.on_read_console(true);
         assert!(emits.is_empty());
@@ -819,8 +811,8 @@ mod tests {
         // Content in Filtering state IS emitted when a top-level prompt
         // arrives, because that means it was user output matching a prefix.
         let mut filter = ConsoleFilter::new();
-        let (actions, _) = filter.feed("Called from: ");
-        assert!(actions.is_empty());
+        let emits = filter.feed("Called from: ");
+        assert!(emits.is_empty());
 
         let (emits, update) = filter.on_read_console(false);
         assert_eq!(emits.len(), 1);
@@ -834,13 +826,13 @@ mod tests {
     fn test_adversarial_feed_after_timeout_works_normally() {
         // After a timeout recovery, subsequent output passes through normally
         let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
-        let _ = filter.feed("debug: ");
+        filter.feed("debug: ");
 
         std::thread::sleep(Duration::from_millis(5));
 
         // Next feed triggers timeout recovery then processes new content
-        let (actions, _) = filter.feed("normal output\n");
-        let emitted = collect_stdout(&actions);
+        let emits = filter.feed("normal output\n");
+        let emitted = collect_stdout(&emits);
         assert!(emitted.contains("debug: "));
         assert!(emitted.contains("normal output\n"));
     }
@@ -850,15 +842,14 @@ mod tests {
         // Timeout fires inside `feed` (via check_timeout at the start)
         // when new content arrives after the deadline.
         let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
-        let _ = filter.feed("exiting from: ");
+        filter.feed("exiting from: ");
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let (actions, update) = filter.feed("next line\n");
-        let emitted = collect_stdout(&actions);
+        let emits = filter.feed("next line\n");
+        let emitted = collect_stdout(&emits);
         assert!(emitted.contains("exiting from: "));
         assert!(emitted.contains("next line\n"));
-        assert!(update.is_none());
     }
 
     // --- Tests for accumulate-until-ReadConsole approach ---
@@ -869,8 +860,8 @@ mod tests {
         // flush-emit this as "not a real debug message". The new filter
         // accumulates everything until ReadConsole.
         let mut filter = ConsoleFilter::new();
-        let (actions, _) = filter.feed("debug at file.R#1: [1] 1\n");
-        assert!(actions.is_empty());
+        let emits = filter.feed("debug at file.R#1: [1] 1\n");
+        assert!(emits.is_empty());
 
         let (emits, update) = filter.on_read_console(true);
         assert!(emits.is_empty());
@@ -883,10 +874,10 @@ mod tests {
         // "debug at" arrive before ReadConsole. The filter accumulates
         // everything in a single Filtering state.
         let mut filter = ConsoleFilter::new();
-        let (a1, _) = filter.feed("debugging in: f()\n");
-        assert!(a1.is_empty());
-        let (a2, _) = filter.feed("debug at file.R#1: x <- 1\n");
-        assert!(a2.is_empty());
+        let emits = filter.feed("debugging in: f()\n");
+        assert!(emits.is_empty());
+        let emits = filter.feed("debug at file.R#1: x <- 1\n");
+        assert!(emits.is_empty());
 
         let (emits, update) = filter.on_read_console(true);
         assert!(emits.is_empty());
