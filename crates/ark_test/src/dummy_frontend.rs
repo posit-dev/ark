@@ -179,10 +179,27 @@ impl DataExplorerBuffer {
     }
 }
 
-/// Result of draining accumulated streams
+/// Stream messages captured by `drain_streams()`, preserving wire order.
 pub struct DrainedStreams {
-    pub stdout: String,
-    pub stderr: String,
+    pub messages: Vec<(Stream, String)>,
+}
+
+impl DrainedStreams {
+    pub fn stdout(&self) -> String {
+        self.messages
+            .iter()
+            .filter(|(s, _)| *s == Stream::Stdout)
+            .map(|(_, t)| t.as_str())
+            .collect()
+    }
+
+    pub fn stderr(&self) -> String {
+        self.messages
+            .iter()
+            .filter(|(s, _)| *s == Stream::Stderr)
+            .map(|(_, t)| t.as_str())
+            .collect()
+    }
 }
 
 /// CI-aware timeout for draining streams.
@@ -514,7 +531,9 @@ impl DummyArkFrontend {
     /// - Streams that may arrive during another operation's idle boundary (race conditions)
     /// - Ordering assertions where you need to capture content at a specific point
     ///
-    /// Returns the accumulated stdout and stderr content, clearing the buffers.
+    /// Note: `messages` only contains messages received during the drain
+    /// itself, not messages previously buffered by `assert_stream_*` calls.
+    /// Don't mix both in the same busy/idle window.
     pub fn drain_streams(&self) -> DrainedStreams {
         self.streams_handled.set(true);
         self.drain_streams_internal()
@@ -523,6 +542,7 @@ impl DummyArkFrontend {
     /// Internal drain that doesn't set `streams_handled` (for use in Drop).
     fn drain_streams_internal(&self) -> DrainedStreams {
         let deadline = Instant::now() + default_drain_timeout();
+        let mut messages = Vec::new();
 
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
@@ -530,7 +550,7 @@ impl DummyArkFrontend {
                 Some(msg) => match &msg {
                     Message::Stream(data) => {
                         trace_iopub_msg(&msg);
-                        self.buffer_stream(&data.content);
+                        messages.push((data.content.name, data.content.text.clone()));
                     },
                     _ => {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
@@ -541,10 +561,7 @@ impl DummyArkFrontend {
             }
         }
 
-        DrainedStreams {
-            stdout: std::mem::take(&mut self.stream_stdout.borrow_mut()),
-            stderr: std::mem::take(&mut self.stream_stderr.borrow_mut()),
-        }
+        DrainedStreams { messages }
     }
 
     // Shadow DummyFrontend's stream methods to prevent bypassing the buffering layer.
@@ -1657,7 +1674,7 @@ impl Drop for DummyArkFrontend {
 
         // Drain any straggler streams
         let drained = self.drain_streams_internal();
-        let has_streams = !drained.stdout.is_empty() || !drained.stderr.is_empty();
+        let has_streams = !drained.stdout().is_empty() || !drained.stderr().is_empty();
 
         // Fail if streams were received but no stream assertions were made
         if has_streams && !self.streams_handled.get() {
@@ -1665,7 +1682,8 @@ impl Drop for DummyArkFrontend {
                 "Test received stream output but made no stream assertions.\n\
                  stdout: {:?}\n\
                  stderr: {:?}",
-                drained.stdout, drained.stderr
+                drained.stdout(),
+                drained.stderr()
             );
         }
 

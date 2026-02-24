@@ -2478,8 +2478,12 @@ impl Console {
             // IOPub.
         }
 
-        // Debug messages are not emitted on Stderr so we can just send these right away
         if stream == Stream::Stderr {
+            // Flush any buffered stdout so it appears before this stderr
+            let flushed = console.filter.flush();
+            console.emit_filter_output((flushed, None));
+
+            // Now emit Stderr message
             let message = IOPubMessage::Stream(StreamOutput {
                 name: stream,
                 text: content,
