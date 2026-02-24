@@ -2022,9 +2022,8 @@ fn <- function() {
         (text, point)
     }
 
-    // We typically want the `.unwrap().unwrap()` behavior during tests because we are
-    // testing the actual range and code returned
-    fn find_roxygen_statement_range_unsafe(
+    // Useful when testing the success case
+    fn find_roxygen_statement_range_success(
         root: &Node,
         contents: &str,
         point: Point,
@@ -2094,7 +2093,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' Hi")
@@ -2114,7 +2113,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' @examples")
@@ -2134,7 +2133,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' @examplesIf")
@@ -2155,7 +2154,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' 1 + 1")
@@ -2175,7 +2174,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#'")
@@ -2195,7 +2194,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' @returns")
@@ -2221,7 +2220,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from(
@@ -2264,7 +2263,7 @@ fn <- function() {
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from(
@@ -2306,7 +2305,7 @@ NULL
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from(
@@ -2347,7 +2346,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' 2 + 2")
@@ -2369,7 +2368,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#'2 + 2")
@@ -2391,7 +2390,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' @returns")
@@ -2413,7 +2412,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("##' 1 + 1")
@@ -2436,7 +2435,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("##' 1 +\n###' 2 +\n##' 3")
@@ -2459,7 +2458,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("##' @param x foo")
@@ -2481,7 +2480,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' 1 + 1")
@@ -2508,7 +2507,7 @@ x %>%
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' fn(\n#'   a,\n#'   b\n#' )")
@@ -2602,7 +2601,7 @@ NULL
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' 1 + 1")
@@ -2624,7 +2623,7 @@ NULL
         let document = Document::new(&text, None);
         let root = document.ast.root_node();
         let contents = &document.contents;
-        let statement_range = find_roxygen_statement_range_unsafe(&root, contents, point);
+        let statement_range = find_roxygen_statement_range_success(&root, contents, point);
         assert_eq!(
             get_text(statement_range.range, contents),
             String::from("#' 1 +\n#'   1")
