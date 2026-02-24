@@ -36,6 +36,7 @@ pub mod session;
 pub mod size;
 pub mod source;
 pub mod symbol;
+pub mod syntax;
 pub mod sys;
 pub mod table;
 pub mod traits;

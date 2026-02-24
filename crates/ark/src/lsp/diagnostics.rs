@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use anyhow::bail;
 use anyhow::Result;
-use harp::utils::is_symbol_valid;
-use harp::utils::sym_quote_invalid;
+use harp::syntax::is_valid_symbol;
+use harp::syntax::sym_quote_invalid;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -202,7 +202,7 @@ pub(crate) fn generate_diagnostics(
     // Add per-environment session symbols
     for scope in state.console_scopes.iter() {
         for name in scope.iter() {
-            if is_symbol_valid(name.as_str()) {
+            if is_valid_symbol(name.as_str()) {
                 context.session_symbols.insert(name.clone());
             } else {
                 let name = sym_quote_invalid(name.as_str());

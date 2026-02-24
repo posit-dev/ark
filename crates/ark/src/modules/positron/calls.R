@@ -34,7 +34,7 @@ call_fn_name <- function(x) {
         return(NULL)
     }
 
-    backtick(name)
+    sym_quote_invalid(name)
 }
 
 call_type <- function(x) {

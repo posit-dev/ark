@@ -8,14 +8,14 @@
 use std::fs::DirEntry;
 
 use harp::r_symbol;
-use harp::utils::is_symbol_valid;
+use harp::syntax::is_valid_symbol;
+use harp::syntax::sym_quote;
+use harp::syntax::sym_quote_invalid;
 use harp::utils::r_env_binding_is_active;
 use harp::utils::r_promise_force_with_rollback;
 use harp::utils::r_promise_is_forced;
 use harp::utils::r_promise_is_lazy_load_binding;
 use harp::utils::r_typeof;
-use harp::utils::sym_quote;
-use harp::utils::sym_quote_invalid;
 use libr::R_UnboundValue;
 use libr::Rf_findVarInFrame;
 use libr::Rf_isFunction;
@@ -322,7 +322,7 @@ pub(super) unsafe fn completion_item_from_data_variable(
 
     if enquote {
         item.insert_text = Some(format!("\"{}\"", name));
-    } else if !is_symbol_valid(name) {
+    } else if !is_valid_symbol(name) {
         item.insert_text = Some(sym_quote(name));
     }
 
@@ -367,7 +367,7 @@ pub(super) unsafe fn completion_item_from_object(
     item.label_details = Some(item_details(package));
     item.kind = Some(CompletionItemKind::STRUCT);
 
-    if !is_symbol_valid(name) {
+    if !is_valid_symbol(name) {
         item.insert_text = Some(sym_quote(name));
     }
 
@@ -430,7 +430,7 @@ pub(super) unsafe fn completion_item_from_promise(
     item.detail = Some("Promise".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
-    if !is_symbol_valid(name) {
+    if !is_valid_symbol(name) {
         item.insert_text = Some(sym_quote(name));
     }
 
@@ -447,7 +447,7 @@ pub(super) fn completion_item_from_active_binding(name: &str) -> anyhow::Result<
     item.detail = Some("Active binding".to_string());
     item.kind = Some(CompletionItemKind::STRUCT);
 
-    if !is_symbol_valid(name) {
+    if !is_valid_symbol(name) {
         item.insert_text = Some(sym_quote(name));
     }
 

@@ -10,8 +10,6 @@ use std::ffi::CString;
 
 use itertools::Itertools;
 use libr::*;
-use once_cell::sync::Lazy;
-use regex::Regex;
 
 use crate::call::r_expr_quote;
 use crate::call::RArgument;
@@ -43,10 +41,9 @@ use crate::vector::Vector;
 
 pub fn init_utils() {}
 
-// NOTE: Regex::new() is quite slow to compile, so it's much better to keep
-// a single singleton pattern and use that repeatedly for matches.
-static RE_SYNTACTIC_IDENTIFIER: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[\p{L}\p{Nl}.][\p{L}\p{Nl}\p{Mn}\p{Mc}\p{Nd}\p{Pc}.]*$").unwrap());
+pub use crate::syntax::is_valid_symbol;
+pub use crate::syntax::sym_quote;
+pub use crate::syntax::sym_quote_invalid;
 
 #[harp::register]
 pub extern "C-unwind" fn harp_log_trace(msg: SEXP) -> crate::error::Result<SEXP> {
@@ -474,22 +471,6 @@ pub unsafe fn r_inspect(object: SEXP) {
     let inspect = protect.add(Rf_lang2(r_symbol!("inspect"), object));
     let internal = protect.add(Rf_lang2(r_symbol!(".Internal"), inspect));
     Rf_eval(internal, R_BaseEnv);
-}
-
-pub fn is_symbol_valid(name: &str) -> bool {
-    RE_SYNTACTIC_IDENTIFIER.is_match(name)
-}
-
-pub fn sym_quote_invalid(name: &str) -> String {
-    if is_symbol_valid(name) {
-        name.to_string()
-    } else {
-        sym_quote(name)
-    }
-}
-
-pub fn sym_quote(name: &str) -> String {
-    format!("`{}`", name.replace("`", "\\`"))
 }
 
 pub fn r_is_promise(x: SEXP) -> bool {

@@ -8,8 +8,8 @@
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
+use harp::syntax::sym_quote_invalid;
 use harp::utils::r_typeof;
-use harp::utils::sym_quote_invalid;
 use libr::R_NilValue;
 use libr::VECSXP;
 use libr::VECTOR_ELT;
@@ -210,8 +210,8 @@ mod tests {
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::completion_context::CompletionContext;
     use crate::lsp::completions::sources::unique::custom::completions_from_custom_source;
-    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document::Document;
+    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
