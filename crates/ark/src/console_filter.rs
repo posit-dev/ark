@@ -195,10 +195,14 @@ impl ConsoleFilter {
                             };
                             (None, content.len())
                         },
-                        PrefixMatch::None => self.emit_passthrough_run(content),
+                        PrefixMatch::None => {
+                            // Emit content up to next newline
+                            self.emit_until_newline(content)
+                        },
                     }
                 } else {
-                    self.emit_passthrough_run(content)
+                    // Not at line boundary, emit until we hit a newline
+                    self.emit_until_newline(content)
                 }
             },
 
@@ -262,37 +266,20 @@ impl ConsoleFilter {
         }
     }
 
-    /// Emit as much passthrough content as possible in a single allocation.
-    /// Scans through newlines and stops when the start of a new line could
-    /// match a filter prefix, letting the caller's loop re-enter
-    /// `process_chunk` for the potential match.
-    fn emit_passthrough_run(&mut self, content: &str) -> (Option<(String, Stream)>, usize) {
-        let mut end = 0;
-
-        loop {
-            match content[end..].find('\n') {
-                Some(offset) => {
-                    end += offset + 1;
-                    let rest = &content[end..];
-                    if rest.is_empty() {
-                        break;
-                    }
-                    match try_match_prefix(rest) {
-                        PrefixMatch::Full(_) | PrefixMatch::Partial => break,
-                        PrefixMatch::None => continue,
-                    }
-                },
-                None => {
-                    end = content.len();
-                    break;
-                },
-            }
+    /// Emit content up to and including the next newline, updating state
+    fn emit_until_newline(&mut self, content: &str) -> (Option<(String, Stream)>, usize) {
+        if let Some(newline_pos) = content.find('\n') {
+            let (before, _) = content.split_at(newline_pos + 1);
+            self.state = ConsoleFilterState::Passthrough {
+                at_line_start: true,
+            };
+            (Some((before.to_string(), Stream::Stdout)), newline_pos + 1)
+        } else {
+            self.state = ConsoleFilterState::Passthrough {
+                at_line_start: false,
+            };
+            (Some((content.to_string(), Stream::Stdout)), content.len())
         }
-
-        self.state = ConsoleFilterState::Passthrough {
-            at_line_start: content[..end].ends_with('\n'),
-        };
-        (Some((content[..end].to_string(), Stream::Stdout)), end)
     }
 
     /// Called when ReadConsole is entered, flush/finalize any pending state.
