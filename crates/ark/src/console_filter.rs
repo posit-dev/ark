@@ -25,8 +25,6 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use amalthea::wire::stream::Stream;
-
 use crate::console::DebugCallText;
 use crate::console::DebugCallTextKind;
 
@@ -149,9 +147,9 @@ impl ConsoleFilter {
     }
 
     /// Feed content through the filter.
-    /// Returns content to emit to IOPub.
-    pub fn feed(&mut self, content: &str) -> Vec<(String, Stream)> {
-        let mut emits: Vec<(String, Stream)> = Vec::new();
+    /// Returns stdout content to emit to IOPub.
+    pub fn feed(&mut self, content: &str) -> Vec<String> {
+        let mut emits: Vec<String> = Vec::new();
 
         // Check current state timeout
         if let Some(emit) = self.drain_on_timeout() {
@@ -172,8 +170,8 @@ impl ConsoleFilter {
         emits
     }
 
-    /// Process a chunk of content, returning (action, bytes_consumed)
-    fn process_chunk(&mut self, content: &str) -> (Option<(String, Stream)>, usize) {
+    /// Process a chunk of content, returning (emitted_text, bytes_consumed)
+    fn process_chunk(&mut self, content: &str) -> (Option<String>, usize) {
         match &mut self.state {
             ConsoleFilterState::Passthrough { at_line_start } => {
                 if *at_line_start {
@@ -190,20 +188,15 @@ impl ConsoleFilter {
                             (None, prefix_len)
                         },
                         PrefixMatch::Partial => {
-                            // Start buffering
                             self.state = ConsoleFilterState::Buffering {
                                 buffer: content.to_string(),
                                 timestamp: Instant::now(),
                             };
                             (None, content.len())
                         },
-                        PrefixMatch::None => {
-                            // Emit content up to next newline
-                            self.emit_until_newline(content)
-                        },
+                        PrefixMatch::None => self.emit_until_newline(content),
                     }
                 } else {
-                    // Not at line boundary, emit until we hit a newline
                     self.emit_until_newline(content)
                 }
             },
@@ -214,7 +207,7 @@ impl ConsoleFilter {
                     self.state = ConsoleFilterState::Passthrough {
                         at_line_start: emit.ends_with('\n'),
                     };
-                    return (Some((emit, Stream::Stdout)), 0);
+                    return (Some(emit), 0);
                 }
 
                 buffer.push_str(content);
@@ -242,7 +235,7 @@ impl ConsoleFilter {
                         self.state = ConsoleFilterState::Passthrough {
                             at_line_start: emit.ends_with('\n'),
                         };
-                        (Some((emit, Stream::Stdout)), content.len())
+                        (Some(emit), content.len())
                     },
                 }
             },
@@ -258,7 +251,7 @@ impl ConsoleFilter {
                     self.state = ConsoleFilterState::Passthrough {
                         at_line_start: buffer.ends_with('\n'),
                     };
-                    return (Some((text, Stream::Stdout)), 0);
+                    return (Some(text), 0);
                 }
 
                 // Accumulate everything until ReadConsole resolves
@@ -269,18 +262,18 @@ impl ConsoleFilter {
     }
 
     /// Emit content up to and including the next newline, updating state
-    fn emit_until_newline(&mut self, content: &str) -> (Option<(String, Stream)>, usize) {
+    fn emit_until_newline(&mut self, content: &str) -> (Option<String>, usize) {
         if let Some(newline_pos) = content.find('\n') {
             let (before, _) = content.split_at(newline_pos + 1);
             self.state = ConsoleFilterState::Passthrough {
                 at_line_start: true,
             };
-            (Some((before.to_string(), Stream::Stdout)), newline_pos + 1)
+            (Some(before.to_string()), newline_pos + 1)
         } else {
             self.state = ConsoleFilterState::Passthrough {
                 at_line_start: false,
             };
-            (Some((content.to_string(), Stream::Stdout)), content.len())
+            (Some(content.to_string()), content.len())
         }
     }
 
@@ -307,8 +300,8 @@ impl ConsoleFilter {
     pub fn on_read_console(
         &mut self,
         is_browser: bool,
-    ) -> (Vec<(String, Stream)>, Option<DebugCallTextUpdate>) {
-        let mut emits: Vec<(String, Stream)> = Vec::new();
+    ) -> (Vec<String>, Option<DebugCallTextUpdate>) {
+        let mut emits: Vec<String> = Vec::new();
         let mut debug_update: Option<DebugCallTextUpdate> = None;
 
         // Process current state
@@ -317,7 +310,7 @@ impl ConsoleFilter {
         }) {
             ConsoleFilterState::Passthrough { .. } => {},
             ConsoleFilterState::Buffering { buffer, .. } => {
-                emits.push((buffer, Stream::Stdout));
+                emits.push(buffer);
             },
             ConsoleFilterState::Filtering {
                 pattern,
@@ -329,7 +322,7 @@ impl ConsoleFilter {
                     debug_update = Some(finalize_capture(pattern, &buffer));
                 } else {
                     let text = format!("{}{}", pattern.prefix(), buffer);
-                    emits.push((text, Stream::Stdout));
+                    emits.push(text);
                 }
             },
         }
@@ -340,11 +333,11 @@ impl ConsoleFilter {
     /// Check for timeout and handle state transitions.
     /// Timeout means we didn't reach ReadConsole to confirm debug output,
     /// so we emit the accumulated content back to the user.
-    pub fn check_timeout(&mut self) -> Vec<(String, Stream)> {
+    pub fn check_timeout(&mut self) -> Vec<String> {
         self.drain_on_timeout().into_iter().collect()
     }
 
-    fn drain_on_timeout(&mut self) -> Option<(String, Stream)> {
+    fn drain_on_timeout(&mut self) -> Option<String> {
         let timed_out = match &self.state {
             ConsoleFilterState::Passthrough { .. } => false,
             ConsoleFilterState::Buffering { timestamp, .. } |
@@ -358,13 +351,13 @@ impl ConsoleFilter {
     }
 
     /// Get any buffered content that should be emitted (for cleanup)
-    pub fn flush(&mut self) -> Vec<(String, Stream)> {
+    pub fn flush(&mut self) -> Vec<String> {
         self.drain().into_iter().collect()
     }
 
     /// Replace the current state with Passthrough and return any accumulated
     /// content. Returns `None` when already in Passthrough.
-    fn drain(&mut self) -> Option<(String, Stream)> {
+    fn drain(&mut self) -> Option<String> {
         let prev = std::mem::replace(&mut self.state, ConsoleFilterState::Passthrough {
             at_line_start: true,
         });
@@ -380,7 +373,7 @@ impl ConsoleFilter {
         self.state = ConsoleFilterState::Passthrough {
             at_line_start: text.ends_with('\n'),
         };
-        Some((text, Stream::Stdout))
+        Some(text)
     }
 }
 
@@ -596,8 +589,7 @@ mod tests {
         let emits = filter.feed("Hello, world!\n");
 
         assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0].0, "Hello, world!\n");
-        assert_eq!(emits[0].1, Stream::Stdout);
+        assert_eq!(emits[0], "Hello, world!\n");
     }
 
     #[test]
@@ -607,7 +599,7 @@ mod tests {
         // Start with partial match - should buffer
         let emits = filter.feed("Called ");
         // While buffering, nothing emitted yet
-        assert!(emits.is_empty() || emits.iter().all(|(s, _)| s.is_empty()));
+        assert!(emits.is_empty() || emits.iter().all(|s| s.is_empty()));
     }
 
     #[test]
@@ -618,11 +610,7 @@ mod tests {
         let emits = filter.feed("Calling function...\n");
 
         // "Calling" doesn't match any prefix, should be emitted
-        let emitted: String = emits
-            .iter()
-            .filter(|(_, s)| *s == Stream::Stdout)
-            .map(|(s, _)| s.as_str())
-            .collect();
+        let emitted: String = emits.iter().map(|s| s.as_str()).collect();
 
         assert!(emitted.contains("Calling"));
     }
@@ -639,18 +627,12 @@ mod tests {
         let (emits, update) = filter.on_read_console(false);
 
         assert_eq!(emits.len(), 1);
-        let (text, stream) = &emits[0];
-        assert_eq!(text, "Called ");
-        assert_eq!(*stream, Stream::Stdout);
+        assert_eq!(emits[0], "Called ");
         assert!(update.is_none());
 
         // After on_read_console, filter should be in Passthrough state
         let emits = filter.feed("Hello\n");
-        let emitted: String = emits
-            .iter()
-            .filter(|(_, s)| *s == Stream::Stdout)
-            .map(|(s, _)| s.as_str())
-            .collect();
+        let emitted: String = emits.iter().map(|s| s.as_str()).collect();
 
         assert!(emitted.contains("Hello"));
     }
@@ -666,17 +648,11 @@ mod tests {
         let flushed = filter.flush();
 
         assert_eq!(flushed.len(), 1);
-        let (text, stream) = &flushed[0];
-        assert_eq!(text, "Called ");
-        assert_eq!(*stream, Stream::Stdout);
+        assert_eq!(flushed[0], "Called ");
     }
 
-    fn collect_stdout(actions: &[(String, Stream)]) -> String {
-        actions
-            .iter()
-            .filter(|(_, s)| *s == Stream::Stdout)
-            .map(|(s, _)| s.as_str())
-            .collect()
+    fn collect_emitted(emits: &[String]) -> String {
+        emits.iter().map(|s| s.as_str()).collect()
     }
 
     // --- Adversarial output tests ---
@@ -698,9 +674,7 @@ mod tests {
 
         let emits = filter.check_timeout();
         assert_eq!(emits.len(), 1);
-        let (text, stream) = &emits[0];
-        assert_eq!(text, "debug: ");
-        assert_eq!(*stream, Stream::Stdout);
+        assert_eq!(emits[0], "debug: ");
     }
 
     #[test]
@@ -714,9 +688,7 @@ mod tests {
 
         let emits = filter.check_timeout();
         assert_eq!(emits.len(), 1);
-        let (text, stream) = &emits[0];
-        assert_eq!(text, "debug");
-        assert_eq!(*stream, Stream::Stdout);
+        assert_eq!(emits[0], "debug");
     }
 
     #[test]
@@ -730,8 +702,7 @@ mod tests {
 
             let emits = filter.check_timeout();
             assert_eq!(emits.len(), 1);
-            let (text, _) = &emits[0];
-            assert_eq!(text, prefix.prefix());
+            assert_eq!(emits[0], prefix.prefix());
         }
     }
 
@@ -750,8 +721,7 @@ mod tests {
 
         let emits = filter.check_timeout();
         assert_eq!(emits.len(), 1);
-        let (text, _) = &emits[0];
-        assert_eq!(text, "debug at not-a-path\n");
+        assert_eq!(emits[0], "debug at not-a-path\n");
     }
 
     #[test]
@@ -760,7 +730,7 @@ mod tests {
         let mut filter = ConsoleFilter::new();
         let emits = filter.feed("foo debug: bar\n");
 
-        assert_eq!(collect_stdout(&emits), "foo debug: bar\n");
+        assert_eq!(collect_emitted(&emits), "foo debug: bar\n");
     }
 
     #[test]
@@ -771,7 +741,7 @@ mod tests {
         assert!(emits.is_empty());
 
         let emits = filter.feed("culator\n");
-        assert_eq!(collect_stdout(&emits), "Calculator\n");
+        assert_eq!(collect_emitted(&emits), "Calculator\n");
     }
 
     #[test]
@@ -782,9 +752,7 @@ mod tests {
 
         let flushed = filter.flush();
         assert_eq!(flushed.len(), 1);
-        let (text, stream) = &flushed[0];
-        assert_eq!(text, "Called from: ");
-        assert_eq!(*stream, Stream::Stdout);
+        assert_eq!(flushed[0], "Called from: ");
     }
 
     #[test]
@@ -810,9 +778,7 @@ mod tests {
 
         let (emits, update) = filter.on_read_console(false);
         assert_eq!(emits.len(), 1);
-        let (text, stream) = &emits[0];
-        assert_eq!(text, "Called from: ");
-        assert_eq!(*stream, Stream::Stdout);
+        assert_eq!(emits[0], "Called from: ");
         assert!(update.is_none());
     }
 
@@ -826,7 +792,7 @@ mod tests {
 
         // Next feed triggers timeout recovery then processes new content
         let emits = filter.feed("normal output\n");
-        let emitted = collect_stdout(&emits);
+        let emitted = collect_emitted(&emits);
         assert!(emitted.contains("debug: "));
         assert!(emitted.contains("normal output\n"));
     }
@@ -841,7 +807,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(5));
 
         let emits = filter.feed("next line\n");
-        let emitted = collect_stdout(&emits);
+        let emitted = collect_emitted(&emits);
         assert!(emitted.contains("exiting from: "));
         assert!(emitted.contains("next line\n"));
     }
