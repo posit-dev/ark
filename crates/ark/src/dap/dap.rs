@@ -145,7 +145,7 @@ pub struct Dap {
     pub breakpoints: HashMap<Url, (blake3::Hash, Vec<Breakpoint>)>,
 
     /// Filters for enabled condition breakpoints
-    pub breakpoints_conditions: Vec<String>,
+    pub exception_breakpoint_filters: Vec<String>,
 
     /// Map of `source` -> `source_reference` used for frames that don't have
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
@@ -199,7 +199,7 @@ impl Dap {
             backend_events_tx: None,
             stack: None,
             breakpoints: HashMap::new(),
-            breakpoints_conditions: Vec::new(),
+            exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
@@ -366,7 +366,7 @@ impl Dap {
     }
 
     pub fn is_exception_breakpoint_filter_enabled(&self, filter: &str) -> bool {
-        self.breakpoints_conditions
+        self.exception_breakpoint_filters
             .iter()
             .any(|enabled| enabled == filter)
     }
@@ -605,7 +605,7 @@ mod tests {
             backend_events_tx: Some(backend_events_tx),
             stack: None,
             breakpoints: HashMap::new(),
-            breakpoints_conditions: Vec::new(),
+            exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
@@ -716,7 +716,7 @@ mod tests {
             backend_events_tx: None,
             stack: None,
             breakpoints: HashMap::new(),
-            breakpoints_conditions: Vec::new(),
+            exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),

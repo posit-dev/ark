@@ -615,7 +615,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         args: SetExceptionBreakpointsArguments,
     ) -> Result<(), ServerError> {
         let mut state = self.state.lock().unwrap();
-        state.breakpoints_conditions = args.filters;
+        state.exception_breakpoint_filters = args.filters;
         drop(state);
         let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
             SetExceptionBreakpointsResponse { breakpoints: None },
