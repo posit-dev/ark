@@ -94,30 +94,32 @@ struct ArkStatementRangeSyntaxRejection {
     line: u32,
 }
 
-// Sole conversion method between `ArkStatementRangeResponse` and `StatementRangeResponse`,
-// which handles all Tree-sitter to LSP conversion at the method boundary
-fn statement_range_response_from_ark_statement_range_response(
-    response: ArkStatementRangeResponse,
-    document: &Document,
-) -> anyhow::Result<StatementRangeResponse> {
-    match response {
-        ArkStatementRangeResponse::Success(response) => {
-            // Tree-sitter `Point`s to LSP `Position`s
-            let start = document.lsp_position_from_tree_sitter_point(response.range.start_point)?;
-            let end = document.lsp_position_from_tree_sitter_point(response.range.end_point)?;
-            let range = lsp_types::Range { start, end };
-            Ok(StatementRangeResponse::Success(StatementRangeSuccess {
-                range,
-                code: response.code,
-            }))
-        },
-        ArkStatementRangeResponse::Rejection(rejection) => match rejection {
-            ArkStatementRangeRejection::Syntax(rejection) => Ok(StatementRangeResponse::Rejection(
-                StatementRangeRejection::Syntax(StatementRangeSyntaxRejection {
-                    line: Some(rejection.line),
-                }),
-            )),
-        },
+impl ArkStatementRangeResponse {
+    // Sole conversion method between `ArkStatementRangeResponse` and `StatementRangeResponse`,
+    // which handles all Tree-sitter to LSP conversion at the method boundary
+    fn into_lsp_response(self, document: &Document) -> anyhow::Result<StatementRangeResponse> {
+        match self {
+            ArkStatementRangeResponse::Success(response) => {
+                // Tree-sitter `Point`s to LSP `Position`s
+                let start =
+                    document.lsp_position_from_tree_sitter_point(response.range.start_point)?;
+                let end = document.lsp_position_from_tree_sitter_point(response.range.end_point)?;
+                let range = lsp_types::Range { start, end };
+                Ok(StatementRangeResponse::Success(StatementRangeSuccess {
+                    range,
+                    code: response.code,
+                }))
+            },
+            ArkStatementRangeResponse::Rejection(rejection) => match rejection {
+                ArkStatementRangeRejection::Syntax(rejection) => {
+                    Ok(StatementRangeResponse::Rejection(
+                        StatementRangeRejection::Syntax(StatementRangeSyntaxRejection {
+                            line: Some(rejection.line),
+                        }),
+                    ))
+                },
+            },
+        }
     }
 }
 
@@ -139,15 +141,11 @@ pub(crate) fn statement_range(
     // statement range within that to execute. The returned `code` represents the
     // statement range's code stripped of `#'` tokens so it is runnable.
     if let Some(response) = find_roxygen_statement_range(&root, contents, point)? {
-        return Ok(Some(
-            statement_range_response_from_ark_statement_range_response(response, document)?,
-        ));
+        return Ok(Some(response.into_lsp_response(document)?));
     }
 
     if let Some(response) = find_statement_range(&root, point.row)? {
-        return Ok(Some(
-            statement_range_response_from_ark_statement_range_response(response, document)?,
-        ));
+        return Ok(Some(response.into_lsp_response(document)?));
     }
 
     Ok(None)
