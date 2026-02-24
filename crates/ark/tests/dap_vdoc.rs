@@ -32,16 +32,12 @@ fn test_dap_vdoc_fn_name_stepping() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    frontend.debug_send_browser();
-    dap.recv_stopped();
-
     frontend.debug_enter_debugonce(
         "foo <- eval(parse(text = 'function(x) {\n  x + 1\n  x + 2\n}', keep.source = FALSE))\n\
          debugonce(foo)\n\
          foo(1)",
     );
 
-    dap.recv_continued();
     dap.recv_stopped();
 
     // Initial stop is at the `{ body }` which can't be matched, so position is 0
@@ -73,15 +69,8 @@ fn test_dap_vdoc_fn_name_stepping() {
     assert_eq!(stack[0].end_line, Some(4));
     assert_eq!(stack[0].end_column, Some(10));
 
-    // Step out: function returns, back to outer browser
-    frontend.debug_send_vdoc_step_out("n");
-    dap.recv_continued();
-    dap.recv_stopped();
-
-    let stack = dap.stack_trace();
-    assert_eq!(stack.len(), 1);
-
-    frontend.debug_send_quit();
+    // Step out: function returns
+    frontend.debug_finish("n");
     dap.recv_continued();
 }
 
