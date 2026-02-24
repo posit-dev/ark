@@ -2497,9 +2497,12 @@ impl Console {
         console.emit_filter_streams(emits);
     }
 
-    fn emit_filter_streams(&mut self, emits: Vec<(String, Stream)>) {
-        for (text, stream) in emits {
-            let message = IOPubMessage::Stream(StreamOutput { name: stream, text });
+    fn emit_filter_streams(&mut self, emits: Vec<String>) {
+        for text in emits {
+            let message = IOPubMessage::Stream(StreamOutput {
+                name: Stream::Stdout,
+                text,
+            });
             self.iopub_tx.send(message).unwrap();
         }
     }
