@@ -488,6 +488,64 @@ fn test_dap_pause() {
     dap.recv_continued();
 }
 
+/// Test that enabling the "interrupt" exception breakpoint causes regular
+/// interrupts (Ctrl+C) to drop into the debugger, similar to pause.
+#[test]
+fn test_dap_break_on_interrupt() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Enable interrupt exception breakpoint
+    dap.set_exception_breakpoints(&["interrupt"]);
+
+    // Define a function with an infinite loop
+    frontend.send_execute_request(
+        "looper <- function() { repeat NULL }",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Start the infinite loop
+    frontend.send_execute_request("looper()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Give R a moment to enter the loop
+    thread::sleep(Duration::from_millis(30));
+
+    // Send a regular interrupt (Ctrl+C), not a DAP pause
+    handle_interrupt_request();
+
+    // Should enter the debugger due to the interrupt exception breakpoint.
+    // The stopped reason is "pause" (same as DAP pause) because calling
+    // `conditionMessage()` and friends from within R's interrupt signaling
+    // context is not reliable.
+    frontend.recv_iopub_start_debug();
+    dap.recv_stopped();
+
+    // Verify we're stopped inside looper()
+    // The interrupt handler frame is excluded from the stack
+    let stack = dap.stack_trace();
+    assert_eq!(stack[0].name, "looper()");
+
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Quit the debugger (Q exits and propagates the interrupt)
+    frontend.send_execute_request("Q", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_continued();
+}
+
 /// Test that pause works correctly even when the interrupt is caught by tryCatch.
 /// When tryCatch(interrupt = ) catches the interrupt before our global calling handler,
 /// the `is_interrupting_for_debugger` flag could remain set, causing the next regular

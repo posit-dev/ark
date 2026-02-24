@@ -358,6 +358,14 @@ impl<R: Read, W: Write> DapServer<R, W> {
                     supports_condition: Some(false),
                     condition_description: None,
                 },
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("interrupt"),
+                    label: String::from("Interrupts"),
+                    description: Some(String::from("Break when execution is interrupted")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
             ]),
             ..Default::default()
         }));

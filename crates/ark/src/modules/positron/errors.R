@@ -102,7 +102,10 @@
 }
 
 globalInterruptHandler <- function(cnd) {
-    if (is_interrupting_for_debugger()) {
+    if (
+        is_interrupting_for_debugger() ||
+            debug_should_break_on_condition("interrupt")
+    ) {
         debug_set_stopped_reason_pause()
         browser()
         base::.tryResumeInterrupt()
