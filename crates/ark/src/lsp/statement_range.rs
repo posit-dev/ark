@@ -2023,6 +2023,7 @@ fn <- function() {
     }
 
     // Useful when testing the success case
+    #[track_caller]
     fn find_roxygen_statement_range_success(
         root: &Node,
         contents: &str,
@@ -2051,6 +2052,7 @@ fn <- function() {
     }
 
     // Useful when testing the rejection case
+    #[track_caller]
     fn find_roxygen_statement_range_rejection(
         root: &Node,
         contents: &str,
