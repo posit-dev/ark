@@ -277,6 +277,11 @@ impl Dap {
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
+
+        // Fallback reset in case the interrupt was caught before our global
+        // calling handler could consume it (e.g., a `tryCatch(interrupt = )`
+        // around the interrupted code).
+        self.is_interrupting_for_debugger = false;
         self.fallback_sources.clear();
         self.clear_variables_reference_maps();
         self.reset_variables_reference_count();

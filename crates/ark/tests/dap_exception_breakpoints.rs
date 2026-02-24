@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use ark::sys::control::handle_interrupt_request;
 use ark_test::DummyArkFrontend;
 
 /// Test that an error at top-level triggers the debugger when error breakpoints are enabled
@@ -445,4 +446,58 @@ fn test_dap_pause() {
     frontend.recv_shell_execute_reply();
 
     dap.recv_continued();
+}
+
+/// Test that pause works correctly even when the interrupt is caught by tryCatch.
+/// When tryCatch(interrupt = ) catches the interrupt before our global calling handler,
+/// the `is_interrupting_for_debugger` flag could remain set, causing the next regular
+/// interrupt to incorrectly drop into the debugger. This test verifies the flag is
+/// properly reset as a fallback when returning to the top-level prompt.
+#[test]
+fn test_dap_pause_with_trycatch_interrupt_handler() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Start code that uses tryCatch to swallow interrupts
+    frontend.send_execute_request(
+        "tryCatch({ Sys.sleep(10) }, interrupt = function(e) 'caught')",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Give R a moment to enter the sleep
+    thread::sleep(Duration::from_millis(30));
+
+    // Send pause request - but tryCatch will catch the interrupt before
+    // our global calling handler can process it
+    dap.pause();
+
+    // The interrupt is caught by tryCatch, so we don't enter the debugger.
+    // We should get the result 'caught' back.
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Now the critical test: send a REGULAR interrupt (not a pause) to code
+    // WITHOUT tryCatch. If the `is_interrupting_for_debugger` flag wasn't reset,
+    // this regular interrupt would incorrectly be treated as a debugger pause.
+    frontend.send_execute_request("Sys.sleep(10)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    thread::sleep(Duration::from_millis(30));
+
+    // Send a regular interrupt (NOT pause) - this simulates Ctrl+C
+    handle_interrupt_request();
+
+    // The interrupt should propagate normally (no tryCatch to catch it).
+    // If the flag wasn't reset, we'd incorrectly enter the debugger here.
+    // Instead, we should just get the interrupt error.
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Verify DAP didn't receive any stopped event (we should NOT have entered debugger)
+    dap.assert_no_events();
 }
