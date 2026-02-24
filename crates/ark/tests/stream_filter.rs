@@ -22,9 +22,9 @@ fn test_called_from_filtered_at_top_level() {
     // Drain any streams - should NOT contain "Called from:"
     let streams = frontend.drain_streams();
     assert!(
-        !streams.stdout.contains("Called from:"),
+        !streams.stdout().contains("Called from:"),
         "Called from: should be filtered from stdout, got: {:?}",
-        streams.stdout
+        streams.stdout()
     );
 
     frontend.recv_iopub_idle();
@@ -48,9 +48,9 @@ fn test_called_from_filtered_in_function() {
     // Drain streams - should NOT contain "Called from:"
     let streams = frontend.drain_streams();
     assert!(
-        !streams.stdout.contains("Called from:"),
+        !streams.stdout().contains("Called from:"),
         "Called from: should be filtered from stdout, got: {:?}",
-        streams.stdout
+        streams.stdout()
     );
 
     frontend.recv_iopub_idle();
@@ -146,9 +146,9 @@ fn test_debugging_in_and_exiting_from_filtered() {
     // Drain streams at this point - should NOT contain "debugging in:"
     let streams = frontend.drain_streams();
     assert!(
-        !streams.stdout.contains("debugging in:"),
+        !streams.stdout().contains("debugging in:"),
         "debugging in: should be filtered from stdout, got: {:?}",
-        streams.stdout
+        streams.stdout()
     );
 
     frontend.recv_iopub_idle();
@@ -162,9 +162,9 @@ fn test_debugging_in_and_exiting_from_filtered() {
     // Drain streams - should NOT contain "exiting from:"
     let streams = frontend.drain_streams();
     assert!(
-        !streams.stdout.contains("exiting from:"),
+        !streams.stdout().contains("exiting from:"),
         "exiting from: should be filtered from stdout, got: {:?}",
-        streams.stdout
+        streams.stdout()
     );
 
     // The result [1] 42 should come through
@@ -370,7 +370,7 @@ fn test_adversarial_cat_in_debug_session_is_preserved() {
     frontend.recv_iopub_execute_input();
     let streams = frontend.drain_streams();
     assert!(
-        !streams.stdout.contains("Called from:"),
+        !streams.stdout().contains("Called from:"),
         "Expected suppression of CalledFrom prefix output in debug session"
     );
     frontend.recv_iopub_idle();
@@ -402,7 +402,7 @@ fn test_adversarial_cat_valid_r_in_debug_session_is_suppressed() {
     frontend.recv_iopub_execute_input();
     let streams = frontend.drain_streams();
     assert!(
-        !streams.stdout.contains("debug:"),
+        !streams.stdout().contains("debug:"),
         "Expected suppression of valid-R prefix-matching output in debug session"
     );
     frontend.recv_iopub_idle();
@@ -432,6 +432,46 @@ fn test_adversarial_cat_interleaved_with_normal() {
     frontend.assert_stream_stdout_contains("normal line");
     frontend.assert_stream_stdout_contains("Called from: adversarial line");
     frontend.assert_stream_stdout_contains("another normal line");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// When stderr arrives while stdout is buffered in the filter (e.g. partial
+/// prefix match), the buffered stdout is flushed before the stderr so that
+/// ordering is preserved.
+#[test]
+fn test_stderr_flushes_buffered_stdout() {
+    use amalthea::wire::stream::Stream;
+
+    let frontend = DummyArkFrontend::lock();
+
+    // `cat("debug: ")` outputs a partial debug prefix on stdout, which the
+    // filter buffers. `cat(file=stderr())` then writes to stderr, which
+    // should flush the buffered stdout first.
+    let code = r#"{
+        cat("debug: ")
+        cat("err\n", file = stderr())
+    }"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    let stdout_pos = streams
+        .messages
+        .iter()
+        .position(|(s, t)| *s == Stream::Stdout && t.contains("debug: "));
+    let stderr_pos = streams
+        .messages
+        .iter()
+        .position(|(s, t)| *s == Stream::Stderr && t.contains("err"));
+    assert!(
+        stdout_pos < stderr_pos,
+        "Expected stdout before stderr, got stdout at {stdout_pos:?}, stderr at {stderr_pos:?}\n\
+         Ordered: {:?}",
+        streams.messages
+    );
+
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }
