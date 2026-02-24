@@ -113,6 +113,8 @@ impl Console {
     }
 
     pub(crate) fn debug_stop(&mut self) {
+        self.debug_is_debugging = false;
+        self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
         self.clear_fallback_sources();
         self.debug_reset_frame_id();

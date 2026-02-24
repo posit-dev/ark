@@ -2713,8 +2713,6 @@ pub extern "C-unwind" fn r_read_console(
             //
             // For a more practical example see Shiny app example in
             // https://github.com/rstudio/rstudio/pull/14848
-            console.debug_is_debugging = false;
-            console.debug_stopped_reason = None;
             console.debug_stop();
         },
     )

@@ -109,10 +109,6 @@ globalInterruptHandler <- function(cnd) {
     }
 }
 
-debug_set_stopped_reason_pause <- function() {
-    .ps.Call("ps_debug_set_stopped_reason_pause")
-}
-
 #' @export
 .ps.errors.traceback <- function() {
     traceback <- get0(".Traceback", baseenv(), ifnotfound = list())
@@ -297,6 +293,10 @@ is_interrupting_for_debugger <- function() {
 
 debug_should_break_on_condition <- function(filter) {
     isTRUE(.ps.Call("ps_debug_should_break_on_condition", filter))
+}
+
+debug_set_stopped_reason_pause <- function() {
+    .ps.Call("ps_debug_set_stopped_reason_pause")
 }
 
 debug_set_stopped_reason <- function(cnd) {

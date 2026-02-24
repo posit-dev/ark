@@ -194,7 +194,7 @@ fn listen_dap_events<W: Write>(
                     },
 
                     DapBackendEvent::Exception(DapExceptionEvent { class, message, preserve_focus }) => {
-                        let text = format!("<{class}> {message}");
+                        let text = format!("<{class}>\n{message}");
                         Event::Stopped(StoppedEventBody {
                             reason: StoppedEventReason::Exception,
                             description: Some(message),
@@ -619,7 +619,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
             state.exception_breakpoint_filters = args.filters;
         }
         let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
-            SetExceptionBreakpointsResponse { breakpoints: None },
+            SetExceptionBreakpointsResponse {
+                // This field is only useful for reporting problems with
+                // individual filters. Since we always accept all filters,
+                // `None` is fine here.
+                breakpoints: None,
+            },
         ));
         self.respond(rsp)
     }
