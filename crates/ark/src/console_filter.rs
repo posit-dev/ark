@@ -319,6 +319,9 @@ impl ConsoleFilter {
                 ..
             } => {
                 if was_debugging || is_browser {
+                    // This is the suppression point of the filer. We extract
+                    // debug info for auto-stepping and drop the rest (`pattern`
+                    // and `buffer`).
                     debug_update = Some(finalize_capture(pattern, &buffer));
                 } else {
                     let text = format!("{}{}", pattern.prefix(), buffer);
