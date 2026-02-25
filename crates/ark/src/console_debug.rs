@@ -155,11 +155,14 @@ impl Console {
 
     /// Apply a debug call text update from the stream filter
     pub(crate) fn debug_update_call_text(&mut self, update: DebugCallTextUpdate) {
-        let (new_call_text, reset_last_line) = update.apply();
-
-        self.debug_call_text = new_call_text;
-        if reset_last_line {
-            self.debug_last_line = None;
+        match update {
+            DebugCallTextUpdate::Finalized(text, kind) => {
+                self.debug_call_text = DebugCallText::Finalized(text, kind);
+            },
+            DebugCallTextUpdate::Reset => {
+                self.debug_call_text = DebugCallText::None;
+                self.debug_last_line = None;
+            },
         }
     }
 

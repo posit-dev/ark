@@ -25,7 +25,6 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::console::DebugCallText;
 use crate::console::DebugCallTextKind;
 
 /// Patterns to filter from console output.
@@ -407,19 +406,6 @@ pub enum DebugCallTextUpdate {
     Finalized(String, DebugCallTextKind),
     /// Reset debug state (for debugging in/exiting from)
     Reset,
-}
-
-impl DebugCallTextUpdate {
-    /// Apply this update to a DebugCallText, returning the new value
-    /// and whether `debug_last_line` should be reset.
-    pub fn apply(self) -> (DebugCallText, bool) {
-        match self {
-            DebugCallTextUpdate::Finalized(text, kind) => {
-                (DebugCallText::Finalized(text, kind), false)
-            },
-            DebugCallTextUpdate::Reset => (DebugCallText::None, true),
-        }
-    }
 }
 
 /// Finalize a captured debug message and produce the appropriate debug state
