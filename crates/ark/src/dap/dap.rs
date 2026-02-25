@@ -23,9 +23,11 @@ use stdext::result::ResultExt;
 use stdext::spawn;
 use url::Url;
 
+use crate::console::ConsoleOutputCapture;
 use crate::console::DebugStoppedReason;
 use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
+use crate::dap::dap_variables::object_variable_from_value;
 use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
@@ -412,6 +414,55 @@ impl Dap {
             indexed_variables: None,
             memory_reference: None,
         }
+    }
+
+    pub fn evaluate(
+        &self,
+        expression: &str,
+        frame_id: Option<i64>,
+        capture: Option<&mut ConsoleOutputCapture>,
+    ) -> Result<RVariable, String> {
+        let env = self.frame_env(frame_id)?;
+
+        match harp::parse_eval0(expression, harp::RObject::view(env)) {
+            Ok(value) => {
+                if let Some(capture) = capture {
+                    harp::utils::r_print(value.sexp);
+                    Ok(RVariable {
+                        name: String::new(),
+                        value: capture.take().trim_end().to_string(),
+                        type_field: None,
+                        variables_reference_object: None,
+                    })
+                } else {
+                    Ok(object_variable_from_value(value.sexp))
+                }
+            },
+            Err(err) => Err(format!("{err}")),
+        }
+    }
+
+    fn frame_env(&self, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
+        let Some(frame_id) = frame_id else {
+            return Ok(R_ENVS.global);
+        };
+
+        let Some(variables_reference) =
+            self.frame_id_to_variables_reference.get(&frame_id).copied()
+        else {
+            return Err(format!("Unknown `frame_id`: {frame_id}"));
+        };
+
+        let Some(obj) = self
+            .variables_reference_to_r_object
+            .get(&variables_reference)
+        else {
+            return Err(format!(
+                "Unknown `variables_reference`: {variables_reference}"
+            ));
+        };
+
+        Ok(obj.get().sexp)
     }
 
     pub fn next_breakpoint_id(&mut self) -> i64 {
