@@ -319,3 +319,155 @@ fn test_dap_nested_browser() {
     frontend.debug_send_quit();
     dap.recv_continued();
 }
+
+#[test]
+fn test_dap_hidden_frames_filtered() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Simulate Shiny's stack trace filtering with the sentinel functions.
+    // Frames between `..stacktraceon..` and `..stacktraceoff..` should be hidden.
+    let _file = frontend.send_source(
+        "
+`..stacktraceoff..` <- function(x) x
+`..stacktraceon..` <- function(x) x
+
+user_code <- function() { browser() }
+shiny_internal <- function() { `..stacktraceon..`(user_code()) }
+shiny_wrapper <- function() { `..stacktraceoff..`(shiny_internal()) }
+outer_user <- function() { shiny_wrapper() }
+
+outer_user()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    assert!(stack.len() >= 3);
+    assert_eq!(stack[0].name, "user_code()");
+    assert_eq!(stack[1].name, "shiny_wrapper()");
+    assert_eq!(stack[2].name, "outer_user()");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_hidden_frames_show_with_option() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Enable the option to show hidden frames
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = TRUE)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Same code as above with sentinel functions
+    let _file = frontend.send_source(
+        "
+`..stacktraceoff..` <- function(x) x
+`..stacktraceon..` <- function(x) x
+
+user_code <- function() { browser() }
+shiny_internal <- function() { `..stacktraceon..`(user_code()) }
+shiny_wrapper <- function() { `..stacktraceoff..`(shiny_internal()) }
+outer_user <- function() { shiny_wrapper() }
+
+outer_user()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    // Clean up option before assertions so it doesn't leak on failure
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = NULL)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    assert!(stack.len() >= 6);
+    assert_eq!(stack[0].name, "user_code()");
+    assert_eq!(stack[1].name, "..stacktraceon..()");
+    assert_eq!(stack[2].name, "shiny_internal()");
+    assert_eq!(stack[3].name, "..stacktraceoff..()");
+    assert_eq!(stack[4].name, "shiny_wrapper()");
+    assert_eq!(stack[5].name, "outer_user()");
+}
+
+#[test]
+fn test_dap_hidden_frames_sequential_regions() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // Two sequential hidden regions separated by visible user code
+    let _file = frontend.send_source(
+        "
+`..stacktraceoff..` <- function(x) x
+`..stacktraceon..` <- function(x) x
+
+user_code <- function() { browser() }
+inner_on <- function() { `..stacktraceon..`(user_code()) }
+internal_a <- function() { inner_on() }
+inner_off <- function() { `..stacktraceoff..`(internal_a()) }
+middle_user <- function() { inner_off() }
+outer_on <- function() { `..stacktraceon..`(middle_user()) }
+internal_b <- function() { outer_on() }
+outer_off <- function() { `..stacktraceoff..`(internal_b()) }
+top <- function() { outer_off() }
+
+top()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    assert!(stack.len() >= 5);
+    assert_eq!(stack[0].name, "user_code()");
+    assert_eq!(stack[1].name, "inner_off()");
+    assert_eq!(stack[2].name, "middle_user()");
+    assert_eq!(stack[3].name, "outer_off()");
+    assert_eq!(stack[4].name, "top()");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+#[test]
+fn test_dap_hidden_frames_topmost_preserved() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    // If `..stacktraceoff..` is missing, the topmost frame (where the user
+    // is stopped) must still be visible so they can see where they are.
+    let _file = frontend.send_source(
+        "
+`..stacktraceon..` <- function(x) x
+
+user_code <- function() { browser() }
+wrapper <- function() { `..stacktraceon..`(user_code()) }
+
+wrapper()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    assert_eq!(stack.len(), 1);
+    assert_eq!(stack[0].name, "user_code()");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
