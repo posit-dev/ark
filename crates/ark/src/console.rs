@@ -2731,22 +2731,35 @@ impl Console {
             .unwrap_or_else(|| R_ENVS.global.into())
     }
 
-    fn do_read_console_entry(&mut self, env: RObject) {
+    /// Entry bookkeeping for `r_read_console()`.
+    fn do_read_console_enter(&mut self, env: RObject) {
+        // Track nesting depth of ReadConsole REPLs
         self.read_console_depth
             .set(self.read_console_depth.get() + 1);
 
+        // Reset flag that helps us figure out when a nested REPL returns
         self.read_console_nested_return.set(false);
+
+        // Reset flag that helps us figure out when an error occurred and needs
+        // a reset of `R_EvalDepth` and friends
         self.read_console_threw_error.set(true);
 
+        // Push current frame environment
         self.read_console_env_stack.borrow_mut().push(env);
     }
 
+    /// Exit bookkeeping for `r_read_console()`.
     fn do_read_console_exit(&mut self) {
+        // We're exiting, decrease depth of nested consoles
         self.read_console_depth
             .set(self.read_console_depth.get() - 1);
 
+        // Restore current frame
         self.read_console_env_stack.borrow_mut().pop();
 
+        // Set flag so that parent read console, if any, can detect that a
+        // nested console returned (if it indeed returns instead of looping for
+        // another iteration)
         self.read_console_nested_return.set(true);
 
         // Always stop debug session when yielding back to R. This prevents
