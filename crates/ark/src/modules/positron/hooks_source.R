@@ -118,7 +118,7 @@ make_ark_source <- function(original_source) {
             readLines(uri, encoding = encoding, warn = FALSE),
             collapse = "\n"
         )
-        annotated <- .ps.Call("ps_annotate_source", text, uri)
+        annotated <- .ark_annotate_source(text, uri, with_visible = TRUE)
 
         # If NULL, no breakpoints exist for that URI, fall back
         if (is.null(annotated)) {
@@ -133,20 +133,22 @@ make_ark_source <- function(original_source) {
         parsed <- parse(text = annotated, keep.source = TRUE)
 
         if (length(parsed) != 1) {
-            log_trace("`source()`: Expected a single `{}` expression")
+            log_trace("`source()`: Expected a single `list()[[1]]` expression")
         }
 
         # `eval()` loops over the expression vector, handling gracefully
-        # unexpected lengths (0 or >1)
-        eval(parsed, env)
+        # unexpected lengths (0 or >1). The annotated code is wrapped in
+        # `withVisible()` so the result already has the right structure.
+        invisible(eval(parsed, env))
     }
 }
 
 #' @export
-.ark_annotate_source <- function(source, uri) {
+.ark_annotate_source <- function(source, uri, with_visible = FALSE) {
     stopifnot(
         is_string(source),
-        is_string(uri)
+        is_string(uri),
+        is_bool(with_visible)
     )
-    .ps.Call("ps_annotate_source", source, uri)
+    .ps.Call("ps_annotate_source", source, uri, with_visible)
 }

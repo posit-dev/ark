@@ -729,7 +729,7 @@ impl DummyArkFrontend {
         );
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-        self.recv_iopub_execute_result();
+        // No execute result: source() returns invisibly
         self.recv_iopub_idle();
         self.recv_shell_execute_reply();
     }
@@ -1107,7 +1107,7 @@ pub struct SourceFile {
     file: NamedTempFile,
     pub path: String,
     pub filename: String,
-    uri: String,
+    pub uri: String,
     line_count: u32,
 }
 

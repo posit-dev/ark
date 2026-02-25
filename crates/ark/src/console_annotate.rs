@@ -238,6 +238,23 @@ pub(crate) fn annotate_source(
     uri: &Url,
     breakpoints: &mut [Breakpoint],
 ) -> anyhow::Result<String> {
+    annotate_source_impl(code, uri, breakpoints, false)
+}
+
+pub(crate) fn annotate_source_with_visible(
+    code: &str,
+    uri: &Url,
+    breakpoints: &mut [Breakpoint],
+) -> anyhow::Result<String> {
+    annotate_source_impl(code, uri, breakpoints, true)
+}
+
+fn annotate_source_impl(
+    code: &str,
+    uri: &Url,
+    breakpoints: &mut [Breakpoint],
+    with_visible: bool,
+) -> anyhow::Result<String> {
     // Wrap code in braces first. This:
     // 1. Allows R to step through top-level expressions
     // 2. Makes all breakpoints valid (they're now inside braces, at top-level they'd be invalid)
@@ -260,46 +277,52 @@ pub(crate) fn annotate_source(
     let line_offset: i32 = -1;
 
     let mut rewriter = AnnotationRewriter::new(uri, breakpoints, line_offset, &line_index);
-    let transformed = rewriter.transform(root.syntax().clone());
+    let annotated = rewriter.transform(root.syntax().clone());
 
     if let Some(err) = rewriter.take_err() {
         return Err(err);
     }
 
-    let transformed_code = transformed.to_string();
+    let annotated_code = annotated.to_string();
 
     // Add initial #line directive right after opening brace to ensure
     // all lines are correctly mapped to the original document from the start.
     // Without this, code before the first injected breakpoint would have
     // incorrect line numbers (off by 1 due to the wrapping `{`).
     let initial_directive = format!("#line 1 \"{}\"", uri);
-    let transformed_code =
-        transformed_code.replacen("{\n", &format!("{{\n{}\n", initial_directive), 1);
+    let annotated_code = annotated_code.replacen("{\n", &format!("{{\n{}\n", initial_directive), 1);
 
     // Add a trailing verify call to handle any injected breakpoint in trailing
-    // position. Normally we'd inject a verify call as well a line directive
+    // position. Normally we'd inject a verify call as well as a line directive
     // that ensures source references remain correct after the verify call.
     // But for the last expression in a list, there is no sibling node to attach
     // the line directive trivia to. So, instead of adding a verify call, we
     // rely on verification in a parent list instead. If trailing, there won't
-    // be any verification calls at all though, so we manually add one there:
+    // be any verification calls at all though, so we manually add one here.
     //
-    // ```r
-    // {
-    //    foo({
-    //      .ark_auto_step(.breakpoint(...))
-    //      #line ...
-    //      expr
-    //    })
-    // }
-    // .ark_auto_step(.ark_verify_breakpoints(...))   # <- Manual injection
-    // ```
+    // Wrap in `base::list({...}, verify_call)[[1]]` to:
+    // 1. Execute the code block (first element)
+    // 2. Execute the trailing verify call (second element)
+    // 3. Return only the code block's result via `[[1]]`
     //
-    // This is unconditional for simplicity.
+    // This ensures breakpoints in the last expression get verified while
+    // preserving the return value for callers that depend on it.
+    //
+    // When `with_visible` is true, wrap the code block in `withVisible()` so
+    // callers can access the visibility of the last expression. This is needed
+    // e.g. for `source()` which returns `list(value = ..., visible = ...)`.
     let last_line = code.lines().count() as u32;
     let trailing_verify = format_verify_call(uri, &(0..last_line));
 
-    Ok(format!("{}\n{trailing_verify}\n", transformed_code.trim()))
+    let annotated_code = if with_visible {
+        format!("base::withVisible({})", annotated_code.trim())
+    } else {
+        annotated_code.trim().to_string()
+    };
+
+    Ok(format!(
+        "base::list({annotated_code}, {trailing_verify})[[1]]"
+    ))
 }
 
 /// Rewriter that handles all code annotation inside braced expression lists:
@@ -896,9 +919,14 @@ fn format_verify_call(uri: &Url, line_range: &std::ops::Range<u32>) -> String {
 }
 
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_annotate_source(code: SEXP, uri: SEXP) -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_annotate_source(
+    code: SEXP,
+    uri: SEXP,
+    with_visible: SEXP,
+) -> anyhow::Result<SEXP> {
     let uri: String = RObject::view(uri).try_into()?;
     let code: String = RObject::view(code).try_into()?;
+    let with_visible: bool = RObject::view(with_visible).try_into()?;
 
     let uri = Url::parse(&uri)?;
 
@@ -913,7 +941,12 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(code: SEXP, uri: SEXP) -> any
         if breakpoints.is_empty() {
             return Ok(harp::r_null());
         }
-        annotate_source(&code, &uri, breakpoints.as_mut_slice())?
+
+        if with_visible {
+            annotate_source_with_visible(&code, &uri, breakpoints.as_mut_slice())?
+        } else {
+            annotate_source(&code, &uri, breakpoints.as_mut_slice())?
+        }
     };
 
     // Notify frontend about any breakpoints marked invalid during annotation
