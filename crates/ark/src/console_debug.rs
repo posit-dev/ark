@@ -128,6 +128,13 @@ impl Console {
                 self.debug_call_text = DebugCallText::Finalized(call_text.clone(), *kind)
             },
         }
+
+        // Restore JIT level after a step-into command
+        if let Some(level) = self.debug_jit_level.take() {
+            if let Err(err) = harp::parse_eval_base(&format!("compiler::enableJIT({level}L)")) {
+                log::error!("Failed to restore JIT level: {err:?}");
+            }
+        }
     }
 
     pub(crate) fn debug_handle_write_console(&mut self, content: &str) {
