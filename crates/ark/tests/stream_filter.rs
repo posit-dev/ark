@@ -477,19 +477,24 @@ fn test_stderr_flushes_buffered_stdout() {
 }
 
 /// Verify that multi-line PrintValue output from debug stepping is fully
-/// suppressed from autoprint (execute_result). When stepping through a braced
-/// expression at top level, R emits `debug at #N: ` followed by PrintValue of
-/// the expression. For long output this spans multiple lines. The truncation
-/// in `strip_debug_prefix_lines` must remove all of it, not just the first line.
+/// suppressed while user output from `print()` is preserved.
+///
+/// When stepping through `print(20)` in a top-level braced expression:
+/// - `print(20)` output `[1] 20` goes through the stream filter (n_frame=2,
+///   so `is_auto_printing()` is false) and arrives as IOPub stream stdout.
+/// - The `debug at #N: list(...)` message for the NEXT expression goes
+///   through autoprint (n_frame=0) and is removed by
+///   `strip_debug_prefix_lines`, so no execute_result is emitted.
 #[test]
 fn test_multiline_printvalue_truncated_from_autoprint() {
     let frontend = DummyArkFrontend::lock();
 
-    // Create a long list that will print across multiple lines
+    // Create a long list that will print across multiple lines.
     let long_string = "x".repeat(60);
     let code = format!(
         r#"{{
   browser()
+  print(20)
   list(
     "{long_string}",
     "{long_string}",
@@ -504,12 +509,23 @@ fn test_multiline_printvalue_truncated_from_autoprint() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // Step with `n` to the list expression. This would emit multi-line
-    // "debug at #N: list(...)" output that goes through autoprint at frame 0.
+    // Step to print(20) - emits "debug at #N: print(20)" which is truncated
     frontend.send_execute_request("n", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    // No execute_result should appear - the debug output is truncated
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Step through print(20): executes print(20) producing "[1] 20" on
+    // IOPub stream (n_frame=2), then R advances to list(...) emitting
+    // "debug at #N: list(long...)" into autoprint (n_frame=0).
+    // `strip_debug_prefix_lines` truncates the debug content so no
+    // execute_result is emitted. If it leaked, `recv_iopub_idle()` would
+    // see an unexpected execute_result and panic.
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("[1] 20");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
