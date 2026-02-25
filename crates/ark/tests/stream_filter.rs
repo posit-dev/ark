@@ -67,7 +67,7 @@ fn test_debug_at_filtered_when_stepping() {
     let mut dap = frontend.start_dap();
 
     // Source a file with browser() to enter debug mode
-    let file = frontend.send_source(
+    let _file = frontend.send_source(
         "
 {
   browser()
@@ -80,7 +80,7 @@ fn test_debug_at_filtered_when_stepping() {
 
     // Step with `n` which would normally print "debug at file#line: expr".
     // `debug_send_step_command` drains streams internally.
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -1023,7 +1023,7 @@ fn test_user_output_preserved_between_debug_steps() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    let file = frontend.send_source(
+    let _file = frontend.send_source(
         "
 {
   browser()
@@ -1036,7 +1036,7 @@ fn test_user_output_preserved_between_debug_steps() {
     dap.recv_stopped();
 
     // Step to first cat()
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 

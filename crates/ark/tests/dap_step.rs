@@ -32,7 +32,7 @@ fn test_dap_source_and_step() {
     assert!(stack.len() >= 1, "Expected at least 1 frame");
     assert_file_frame(&stack[0], &file.filename, 5, 12);
 
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -72,7 +72,7 @@ foo()
     assert_file_frame(&stack[0], &file.filename, 3, 12);
 
     // Step with `n` to the bar() call
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -81,7 +81,7 @@ foo()
     assert_file_frame(&stack[0], &file.filename, 4, 8);
 
     // Step with `s` into bar()
-    frontend.debug_send_step_command("s", &file);
+    frontend.debug_send_step_command("s");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -92,7 +92,7 @@ foo()
     assert_eq!(stack[1].name, "foo()");
 
     // Step out with `f` (finish)
-    frontend.debug_send_step_command("f", &file);
+    frontend.debug_send_step_command("f");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -166,12 +166,12 @@ outer()
     assert_file_frame(&stack[0], &file.filename, 3, 12);
 
     // Step with `n` to inner() call
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
     // Step into inner() with `s`
-    frontend.debug_send_step_command("s", &file);
+    frontend.debug_send_step_command("s");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -182,7 +182,7 @@ outer()
     assert_eq!(stack[1].name, "outer()");
 
     // Step out with `f` (finish)
-    frontend.debug_send_step_command("f", &file);
+    frontend.debug_send_step_command("f");
     dap.recv_continued();
     dap.recv_stopped();
 

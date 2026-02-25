@@ -468,15 +468,6 @@ impl DummyArkFrontend {
         self.assert_stream_matches_re(&self.stream_stderr, "stderr", pattern);
     }
 
-    /// Assert that stdout contains a "debug at" message referencing the given file.
-    ///
-    /// R outputs "debug at <path>#<line>: <code>" when stepping through sourced files.
-    /// Note: "debug at" messages are now filtered from console output, so this is a no-op.
-    #[track_caller]
-    pub fn assert_stream_debug_at(&self, _file: &SourceFile) {
-        // "debug at" messages are filtered from console output
-    }
-
     /// Internal helper for regex stream assertions.
     #[track_caller]
     fn assert_stream_matches_re(
@@ -1391,13 +1382,11 @@ impl DummyArkFrontend {
     /// Execute a step command in a sourced file context.
     ///
     /// In sourced files with srcrefs, stepping produces additional messages compared
-    /// to virtual document context: a `stop_debug` comm (debug session ends briefly),
-    /// and a `Stream` with "debug at" output from R.
+    /// to virtual document context: a `stop_debug` comm (debug session ends briefly).
     ///
-    /// The `file` parameter is used to assert that stdout contains "debug at {filename}".
     /// The caller must still consume DAP events (recv_continued, recv_stopped).
     #[track_caller]
-    pub fn debug_send_step_command(&self, cmd: &str, _file: &SourceFile) -> u32 {
+    pub fn debug_send_step_command(&self, cmd: &str) -> u32 {
         trace_separator(&format!("debug_step({})", cmd));
         self.send_execute_request(cmd, ExecuteRequestOptions::default());
         self.recv_iopub_busy();

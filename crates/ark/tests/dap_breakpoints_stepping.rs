@@ -208,7 +208,7 @@ foo()
     dap.assert_top_frame_file(&file);
 
     // Step with `n` to step over the inner {} block
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -218,7 +218,7 @@ foo()
     dap.assert_top_frame_file(&file);
 
     // Continue to hit the breakpoint on line 5 (the `1` expression)
-    frontend.debug_send_step_command("c", &file);
+    frontend.debug_send_step_command("c");
     dap.recv_continued();
     dap.recv_stopped();
 
@@ -780,7 +780,7 @@ fn test_dap_rdebug_globalenv_reset_after_error() {
     dap.assert_top_frame_file(&file);
 
     // Step with `n` to move to stop("foo") line
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
     dap.assert_top_frame_line(9);
