@@ -308,8 +308,9 @@ pub struct Console {
     /// valid for a single session.
     pub(crate) debug_session_index: u32,
 
-    /// The current frame `id`. Unique across all frames within a single debug session.
-    /// Reset after `debug_stop()`, not between debug steps.
+    /// The current frame `id`. Monotonically increasing, unique across all
+    /// frames and debug sessions. It's important that each frame gets a unique
+    /// ID across the process lifetime so that we can invalidate stale requests.
     pub(crate) debug_current_frame_id: i64,
 
     /// Reason for entering the debugger. Used to determine which DAP event to send.
