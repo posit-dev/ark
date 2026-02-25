@@ -41,6 +41,8 @@ use libr::ENVSXP;
 use stdext::result::ResultExt;
 use stdext::spawn;
 
+use crate::console;
+use crate::console::Console;
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::summary_stats::summary_stats;
@@ -95,6 +97,11 @@ pub struct RVariables {
     /// Whether we are currently showing the .Last.value variable in the Variables
     /// pane.
     showing_last_value: bool,
+
+    /// Whether we need to send an initial `Refresh` event to the frontend,
+    /// which is required for frontend initialization. Set on construction,
+    /// cleared after the first `update()` call.
+    needs_initial_refresh: bool,
 }
 
 impl RVariables {
@@ -154,6 +161,7 @@ impl RVariables {
                 version: 0,
                 show_last_value,
                 showing_last_value: false,
+                needs_initial_refresh: true,
             };
             environment.execution_thread();
         });
@@ -162,23 +170,22 @@ impl RVariables {
     pub fn execution_thread(mut self) {
         let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
 
+        // Schedule the initial environment scan as an idle task. If R is
+        // already idle this runs promptly, otherwise it runs at next idle.
+        // This and the prompt-driven `update()` may arrive in either order,
+        // which is safe: the first sends a `Refresh`, the second is a no-op.
+        let initial_signal_tx = prompt_signal_tx.clone();
+        r_task::spawn_idle(move |_| async move {
+            initial_signal_tx.send(()).log_err();
+        });
+
         // Register a handler for console prompt events
         let listen_id = EVENTS.console_prompt.listen({
             move |_| {
                 log::info!("Got console prompt signal.");
-                prompt_signal_tx.send(()).unwrap();
+                prompt_signal_tx.send(()).log_err();
             }
         });
-
-        // Perform the initial environment scan and deliver to the frontend
-        let variables = self.list_variables();
-        let length = variables.len() as i64;
-        let event = VariablesFrontendEvent::Refresh(RefreshParams {
-            variables,
-            length,
-            version: self.version as i64,
-        });
-        self.send_event(event);
 
         // Flag initially set to false, but set to true if the user closes the
         // channel (i.e. the frontend is closed)
@@ -249,13 +256,7 @@ impl RVariables {
     fn list_variables(&mut self) -> Vec<Variable> {
         let mut variables: Vec<Variable> = vec![];
         r_task(|| {
-            self.update_bindings(self.bindings());
-
-            // If the special .Last.value variable is enabled, add it to the
-            // list. This is a special R value that doesn't have its own
-            // binding.
             if let Some(last_value) = self.last_value() {
-                self.showing_last_value = true;
                 variables.push(last_value.var());
             }
 
@@ -566,10 +567,47 @@ impl RVariables {
 
     #[tracing::instrument(level = "trace", skip_all)]
     fn update(&mut self) {
-        let mut assigned: Vec<Variable> = vec![];
-        let mut removed: Vec<String> = vec![];
-
         r_task(|| {
+            let needs_initial_refresh = self.needs_initial_refresh;
+            self.needs_initial_refresh = false;
+
+            let env_changed = self.update_env();
+
+            // Send a full refresh if the environment changed (e.g. entered
+            // or exited debug mode) or on the first update after startup.
+            if env_changed || needs_initial_refresh {
+                self.update_bindings(self.bindings());
+
+                let mut variables: Vec<Variable> = vec![];
+
+                if let (Some(var), _) = self.track_last_value() {
+                    variables.push(var);
+                }
+
+                for binding in self.current_bindings.get() {
+                    variables.push(PositronVariable::new(binding).var());
+                }
+
+                let length = variables.len() as i64;
+                self.send_event(VariablesFrontendEvent::Refresh(RefreshParams {
+                    variables,
+                    length,
+                    version: self.version as i64,
+                }));
+
+                return;
+            }
+
+            // Incremental update: diff old vs new bindings
+            let mut assigned: Vec<Variable> = vec![];
+            let mut removed: Vec<String> = vec![];
+
+            match self.track_last_value() {
+                (Some(var), _) => assigned.push(var),
+                (None, true) => removed.push(".Last.value".to_string()),
+                (None, false) => {},
+            }
+
             let new_bindings = self.bindings();
 
             let mut old_iter = self.current_bindings.get().iter();
@@ -577,18 +615,6 @@ impl RVariables {
 
             let mut new_iter = new_bindings.get().iter();
             let mut new_next = new_iter.next();
-
-            // Track the last value if the user has requested it. Treat this
-            // value as assigned every time we update the Variables list.
-            if let Some(last_value) = self.last_value() {
-                self.showing_last_value = true;
-                assigned.push(last_value.var());
-            } else if self.showing_last_value {
-                // If we are no longer showing the last value, remove it from
-                // the list of assigned variables
-                self.showing_last_value = false;
-                removed.push(".Last.value".to_string());
-            }
 
             loop {
                 match (old_next, new_next) {
@@ -644,24 +670,50 @@ impl RVariables {
                 }
             }
 
-            // Only update the bindings (and the version) if anything changed
             if assigned.len() > 0 || removed.len() > 0 {
                 self.update_bindings(new_bindings);
+                self.send_event(VariablesFrontendEvent::Update(UpdateParams {
+                    assigned,
+                    removed,
+                    unevaluated: vec![],
+                    version: self.version as i64,
+                }));
             }
         });
-
-        if assigned.len() > 0 || removed.len() > 0 {
-            let event = VariablesFrontendEvent::Update(UpdateParams {
-                assigned,
-                removed,
-                unevaluated: vec![],
-                version: self.version as i64,
-            });
-            self.send_event(event);
-        }
     }
 
     // SAFETY: The following methods must be called in an `r_task()`
+
+    /// Updates `self.showing_last_value` and returns the last value variable
+    /// if it should be shown, along with whether it was previously shown.
+    fn track_last_value(&mut self) -> (Option<Variable>, bool) {
+        let was_showing = self.showing_last_value;
+
+        if let Some(last_value) = self.last_value() {
+            self.showing_last_value = true;
+            (Some(last_value.var()), was_showing)
+        } else {
+            self.showing_last_value = false;
+            (None, was_showing)
+        }
+    }
+
+    /// Updates `self.env` to the current effective environment if it changed
+    /// (e.g. entering or exiting debug mode). Returns `true` if switched.
+    fn update_env(&mut self) -> bool {
+        if !Console::is_initialized() {
+            return false;
+        }
+
+        let env = console::selected_env();
+
+        if env.sexp == self.env.get().sexp {
+            return false;
+        }
+
+        self.env = RThreadSafe::new(env);
+        true
+    }
 
     fn bindings(&self) -> RThreadSafe<Vec<Binding>> {
         let env = self.env.get().clone();
