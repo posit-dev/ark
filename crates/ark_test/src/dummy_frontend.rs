@@ -34,6 +34,7 @@ use crate::tracing::trace_separator;
 use crate::tracing::trace_shell_reply;
 use crate::tracing::trace_shell_request;
 use crate::DapClient;
+use crate::LspClient;
 
 // There can be only one frontend per process. Needs to be in a mutex because
 // the frontend wraps zmq sockets which are unsafe to send across threads.
@@ -610,55 +611,53 @@ impl DummyArkFrontend {
     /// the `server_started` response with the port, and connects a `DapClient`.
     #[track_caller]
     pub fn start_dap(&self) -> DapClient {
-        let comm_id = uuid::Uuid::new_v4().to_string();
-
-        // Send comm_open to start the DAP server
-        self.send_shell(CommOpen {
-            comm_id: comm_id.clone(),
-            target_name: String::from("ark_dap"),
-            data: serde_json::json!({ "ip_address": "127.0.0.1" }),
-        });
-
-        // Message order: Busy, then CommMsg and Idle in either order.
-        // The CommMsg travels through an async path (comm_socket -> comm manager -> iopub)
-        // while Idle is sent directly to iopub_tx, so they may arrive out of order.
-        // See FIXME notes at https://github.com/posit-dev/ark/issues/689
-        self.recv_iopub_busy();
-
-        let mut port: Option<u16> = None;
-        let mut got_idle = false;
-
-        while port.is_none() || !got_idle {
-            let msg = self.recv_iopub_next();
-            match msg {
-                Message::CommMsg(data) => {
-                    assert_eq!(data.content.comm_id, comm_id);
-                    let method = data.content.data["method"]
-                        .as_str()
-                        .expect("Expected method field");
-                    assert_eq!(method, "server_started");
-                    port = Some(
-                        data.content.data["params"]["port"]
-                            .as_u64()
-                            .expect("Expected port field") as u16,
-                    );
-                },
-                Message::Status(status) => {
-                    use amalthea::wire::status::ExecutionState;
-                    if status.content.execution_state == ExecutionState::Idle {
-                        got_idle = true;
-                    }
-                },
-                other => panic!("Expected CommMsg or Status(Idle), got {:?}", other),
-            }
-        }
-
-        let port = port.unwrap();
-
+        let port = self.start_server("ark_dap");
         let mut client = DapClient::connect("127.0.0.1", port).unwrap();
         client.initialize();
         client.attach();
         client
+    }
+
+    /// Start LSP server via comm protocol and return a connected client.
+    ///
+    /// This sends a `comm_open` message to start the LSP server, waits for
+    /// the `server_started` response with the port, and connects an `LspClient`.
+    #[track_caller]
+    pub fn start_lsp(&self) -> LspClient {
+        let port = self.start_server("lsp");
+        let mut client = LspClient::connect("127.0.0.1", port).unwrap();
+        client.initialize();
+        client
+    }
+
+    /// Open a server comm and wait for the `server_started` message with the port.
+    #[track_caller]
+    fn start_server(&self, target_name: &str) -> u16 {
+        let comm_id = uuid::Uuid::new_v4().to_string();
+
+        self.send_shell(CommOpen {
+            comm_id: comm_id.clone(),
+            target_name: String::from(target_name),
+            data: serde_json::json!({ "ip_address": "127.0.0.1" }),
+        });
+
+        self.recv_iopub_busy();
+
+        let comm_msg = self.recv_iopub_comm_msg();
+        assert_eq!(comm_msg.comm_id, comm_id);
+
+        let method = comm_msg.data["method"]
+            .as_str()
+            .expect("Expected method field");
+        assert_eq!(method, "server_started");
+
+        let port = comm_msg.data["params"]["port"]
+            .as_u64()
+            .expect("Expected port field") as u16;
+
+        self.recv_iopub_idle();
+
+        port
     }
 
     /// Receive from IOPub and assert a `start_debug` comm message.

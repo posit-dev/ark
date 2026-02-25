@@ -52,7 +52,7 @@ fn completions_from_search_path(
 
     unsafe {
         // Iterate through environments starting from the current frame environment.
-        let env_obj = console::eval_env();
+        let env_obj = console::selected_env();
         let mut env = env_obj.sexp;
 
         while env != R_EmptyEnv {
