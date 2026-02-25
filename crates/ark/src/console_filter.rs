@@ -299,8 +299,8 @@ impl ConsoleFilter {
     pub fn on_read_console(
         &mut self,
         is_browser: bool,
-    ) -> (Vec<String>, Option<DebugCallTextUpdate>) {
-        let mut emits: Vec<String> = Vec::new();
+    ) -> (Option<String>, Option<DebugCallTextUpdate>) {
+        let mut emit: Option<String> = None;
         let mut debug_update: Option<DebugCallTextUpdate> = None;
 
         // Process current state
@@ -309,7 +309,7 @@ impl ConsoleFilter {
         }) {
             ConsoleFilterState::Passthrough { .. } => {},
             ConsoleFilterState::Buffering { buffer, .. } => {
-                emits.push(buffer);
+                emit = Some(buffer);
             },
             ConsoleFilterState::Filtering {
                 pattern,
@@ -324,19 +324,19 @@ impl ConsoleFilter {
                     debug_update = Some(finalize_capture(pattern, &buffer));
                 } else {
                     let text = format!("{}{}", pattern.prefix(), buffer);
-                    emits.push(text);
+                    emit = Some(text);
                 }
             },
         }
 
-        (emits, debug_update)
+        (emit, debug_update)
     }
 
     /// Check for timeout and handle state transitions.
     /// Timeout means we didn't reach ReadConsole to confirm debug output,
     /// so we emit the accumulated content back to the user.
-    pub fn check_timeout(&mut self) -> Vec<String> {
-        self.drain_on_timeout().into_iter().collect()
+    pub fn check_timeout(&mut self) -> Option<String> {
+        self.drain_on_timeout()
     }
 
     fn drain_on_timeout(&mut self) -> Option<String> {
@@ -353,8 +353,8 @@ impl ConsoleFilter {
     }
 
     /// Get any buffered content that should be emitted (for cleanup)
-    pub fn flush(&mut self) -> Vec<String> {
-        self.drain().into_iter().collect()
+    pub fn flush(&mut self) -> Option<String> {
+        self.drain()
     }
 
     /// Replace the current state with Passthrough and return any accumulated
@@ -654,10 +654,9 @@ mod tests {
 
         // Buffering is an unconfirmed prefix match, so ReadConsole emits it
         // regardless of whether it's a browser prompt or not
-        let (emits, update) = filter.on_read_console(false);
+        let (emit, update) = filter.on_read_console(false);
 
-        assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0], "Called ");
+        assert_eq!(emit.unwrap(), "Called ");
         assert!(update.is_none());
 
         // After on_read_console, filter should be in Passthrough state
@@ -677,8 +676,7 @@ mod tests {
         // Flush should return the buffered content
         let flushed = filter.flush();
 
-        assert_eq!(flushed.len(), 1);
-        assert_eq!(flushed[0], "Called ");
+        assert_eq!(flushed.unwrap(), "Called ");
     }
 
     fn collect_emitted(emits: &[String]) -> String {
@@ -702,9 +700,8 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let emits = filter.check_timeout();
-        assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0], "debug: ");
+        let emit = filter.check_timeout();
+        assert_eq!(emit.unwrap(), "debug: ");
     }
 
     #[test]
@@ -716,9 +713,8 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let emits = filter.check_timeout();
-        assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0], "debug");
+        let emit = filter.check_timeout();
+        assert_eq!(emit.unwrap(), "debug");
     }
 
     #[test]
@@ -730,9 +726,8 @@ mod tests {
 
             std::thread::sleep(Duration::from_millis(5));
 
-            let emits = filter.check_timeout();
-            assert_eq!(emits.len(), 1);
-            assert_eq!(emits[0], prefix.prefix());
+            let emit = filter.check_timeout();
+            assert_eq!(emit.unwrap(), prefix.prefix());
         }
     }
 
@@ -749,9 +744,8 @@ mod tests {
 
         std::thread::sleep(Duration::from_millis(5));
 
-        let emits = filter.check_timeout();
-        assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0], "debug at not-a-path\n");
+        let emit = filter.check_timeout();
+        assert_eq!(emit.unwrap(), "debug at not-a-path\n");
     }
 
     #[test]
@@ -781,8 +775,7 @@ mod tests {
         assert!(emits.is_empty());
 
         let flushed = filter.flush();
-        assert_eq!(flushed.len(), 1);
-        assert_eq!(flushed[0], "Called from: ");
+        assert_eq!(flushed.unwrap(), "Called from: ");
     }
 
     #[test]
@@ -793,8 +786,8 @@ mod tests {
         let emits = filter.feed("Called from: ");
         assert!(emits.is_empty());
 
-        let (emits, update) = filter.on_read_console(true);
-        assert!(emits.is_empty());
+        let (emit, update) = filter.on_read_console(true);
+        assert!(emit.is_none());
         assert!(update.is_some());
     }
 
@@ -806,9 +799,8 @@ mod tests {
         let emits = filter.feed("Called from: ");
         assert!(emits.is_empty());
 
-        let (emits, update) = filter.on_read_console(false);
-        assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0], "Called from: ");
+        let (emit, update) = filter.on_read_console(false);
+        assert_eq!(emit.unwrap(), "Called from: ");
         assert!(update.is_none());
     }
 
@@ -853,8 +845,8 @@ mod tests {
         let emits = filter.feed("debug at file.R#1: [1] 1\n");
         assert!(emits.is_empty());
 
-        let (emits, update) = filter.on_read_console(true);
-        assert!(emits.is_empty());
+        let (emit, update) = filter.on_read_console(true);
+        assert!(emit.is_none());
         assert!(update.is_some());
     }
 
@@ -869,8 +861,8 @@ mod tests {
         let emits = filter.feed("debug at file.R#1: x <- 1\n");
         assert!(emits.is_empty());
 
-        let (emits, update) = filter.on_read_console(true);
-        assert!(emits.is_empty());
+        let (emit, update) = filter.on_read_console(true);
+        assert!(emit.is_none());
         assert!(update.is_some());
     }
 
@@ -884,8 +876,8 @@ mod tests {
         let emits = filter.feed("Called from: top level\n");
         assert!(emits.is_empty());
 
-        let (emits, update) = filter.on_read_console(false);
-        assert!(emits.is_empty());
+        let (emit, update) = filter.on_read_console(false);
+        assert!(emit.is_none());
         assert!(update.is_some());
     }
 
@@ -897,8 +889,8 @@ mod tests {
         let emits = filter.feed("Called from: top level\n");
         assert!(emits.is_empty());
 
-        let (emits, update) = filter.on_read_console(true);
-        assert!(emits.is_empty());
+        let (emit, update) = filter.on_read_console(true);
+        assert!(emit.is_none());
         assert!(update.is_some());
     }
 
@@ -913,9 +905,8 @@ mod tests {
         let emits = filter.feed("more content\n");
         assert!(emits.is_empty());
 
-        let (emits, _) = filter.on_read_console(false);
-        assert_eq!(emits.len(), 1);
-        assert_eq!(emits[0], "Called from: some more content\n");
+        let (emit, _) = filter.on_read_console(false);
+        assert_eq!(emit.unwrap(), "Called from: some more content\n");
     }
 
     // --- `truncate_at_debug_prefix` tests (browser-only path) ---

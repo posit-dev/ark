@@ -1146,8 +1146,10 @@ impl Console {
         // A browser prompt means filtered content was real debug output (which
         // we suppress). Top-level prompt means it was user output matching a
         // prefix (which we emit).
-        let (emits, debug_update) = self.filter.on_read_console(is_browser);
-        self.emit_filter_streams(emits);
+        let (emit, debug_update) = self.filter.on_read_console(is_browser);
+        if let Some(text) = emit {
+            self.emit_stdout(text);
+        }
         if let Some(update) = debug_update {
             self.debug_update_call_text(update);
         }
@@ -2499,8 +2501,9 @@ impl Console {
 
         if stream == Stream::Stderr {
             // Flush any buffered stdout so it appears before this stderr
-            let flushed = console.filter.flush();
-            console.emit_filter_streams(flushed);
+            if let Some(text) = console.filter.flush() {
+                console.emit_stdout(text);
+            }
 
             // Now emit Stderr message
             let message = IOPubMessage::Stream(StreamOutput {
@@ -2512,17 +2515,17 @@ impl Console {
         }
 
         let emits = console.filter.feed(&content);
-        console.emit_filter_streams(emits);
+        for text in emits {
+            console.emit_stdout(text);
+        }
     }
 
-    fn emit_filter_streams(&mut self, emits: Vec<String>) {
-        for text in emits {
-            let message = IOPubMessage::Stream(StreamOutput {
-                name: Stream::Stdout,
-                text,
-            });
-            self.iopub_tx.send(message).unwrap();
-        }
+    fn emit_stdout(&mut self, text: String) {
+        let message = IOPubMessage::Stream(StreamOutput {
+            name: Stream::Stdout,
+            text,
+        });
+        self.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -2584,8 +2587,9 @@ impl Console {
         // accumulated content is emitted. This allows user code to produce
         // output that looks like debug lines emitted by R without them getting
         // filtered out or held up too long.
-        let emits = self.filter.check_timeout();
-        self.emit_filter_streams(emits);
+        if let Some(text) = self.filter.check_timeout() {
+            self.emit_stdout(text);
+        }
 
         // Coalesce up to three concurrent tasks in case the R event loop is
         // slowed down
