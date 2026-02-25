@@ -280,6 +280,7 @@ pub struct Console {
     r_error_buffer: Option<CString>,
 
     /// When `Some`, console output is captured here instead of being sent to IOPub.
+    /// Interact with this via `ConsoleOutputCapture` from `start_capture()`.
     pub(crate) captured_output: Option<String>,
 
     /// Whether we should preserve focus when stopping in a debug session. We

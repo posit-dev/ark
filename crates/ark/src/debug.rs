@@ -160,19 +160,14 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
 /// This should only be used in a debugging context where leaking is not an
 /// issue.
 pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
-    let console = Console::get_mut();
-    let was_capturing = console.captured_output.is_some();
-    console.captured_output = Some(String::new());
+    let mut capture = Console::get_mut().start_capture();
 
     // We protect from panics to correctly restore `captured_output`'s state.
     // The panic is resumed right after.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
 
-    let console = Console::get_mut();
-    let mut out = console.captured_output.take().unwrap_or_default();
-    if was_capturing {
-        console.captured_output = Some(String::new());
-    }
+    let mut out = capture.take();
+    drop(capture);
 
     // Unwrap catch-unwind's result and resume panic if needed
     let result = match result {
