@@ -549,7 +549,7 @@ pub(crate) enum ConsoleResult {
 /// Use `take()` to retrieve captured output. Can be called multiple times to
 /// get output accumulated since the last take.
 pub struct ConsoleOutputCapture {
-    was_capturing: bool,
+    previous_output: Option<String>,
     connected: bool,
 }
 
@@ -558,7 +558,7 @@ impl ConsoleOutputCapture {
     /// Used in test contexts where Console is not initialized.
     pub(crate) fn dummy() -> Self {
         Self {
-            was_capturing: false,
+            previous_output: None,
             connected: false,
         }
     }
@@ -593,10 +593,8 @@ impl Drop for ConsoleOutputCapture {
             }
         }
 
-        // Restore previous state
-        if self.was_capturing {
-            console.captured_output = Some(String::new());
-        }
+        // Restore previous capture state
+        console.captured_output = self.previous_output.take();
     }
 }
 
@@ -982,13 +980,12 @@ impl Console {
     }
 
     /// Start capturing console output.
-    /// Returns a guard that restores the previous state on drop.
+    /// Returns a guard that saves and restores the previous capture state on drop.
     pub(crate) fn start_capture(&mut self) -> ConsoleOutputCapture {
-        let was_capturing = self.captured_output.is_some();
-        self.captured_output = Some(String::new());
+        let previous_output = self.captured_output.replace(String::new());
 
         ConsoleOutputCapture {
-            was_capturing,
+            previous_output,
             connected: true,
         }
     }
