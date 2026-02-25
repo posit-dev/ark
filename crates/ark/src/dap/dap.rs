@@ -16,6 +16,7 @@ use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
 use crossbeam::channel::Sender;
 use harp::object::RObject;
+use harp::R_ENVS;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use url::Url;
@@ -319,7 +320,7 @@ impl Dap {
             let environment = frame
                 .environment
                 .take()
-                .unwrap_or_else(|| RThreadSafe::new(RObject::new(unsafe { libr::R_GlobalEnv })));
+                .unwrap_or_else(|| RThreadSafe::new(RObject::new(R_ENVS.global)));
 
             // Map this frame's `id` to a unique `variables_reference`, and
             // then map that `variables_reference` to the R object we will

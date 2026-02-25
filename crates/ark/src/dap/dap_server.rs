@@ -115,18 +115,19 @@ pub fn start_dap(
 
         let reader = BufReader::new(&stream);
         let writer = BufWriter::new(&stream);
+        let (responses_tx, responses_rx) = unbounded::<Response>();
+
         let mut server = DapServer::new(
             reader,
             writer,
             state.clone(),
             r_request_tx.clone(),
             comm_tx.clone(),
+            responses_tx,
         );
 
         let (backend_events_tx, backend_events_rx) = unbounded::<DapBackendEvent>();
-        let (responses_tx, responses_rx) = unbounded::<Response>();
         let (done_tx, done_rx) = bounded::<bool>(0);
-        server.responses_tx = Some(responses_tx);
         let output_clone = server.output.clone();
 
         // We need a scope to let the borrow checker know that
@@ -266,7 +267,7 @@ pub struct DapServer<R: Read, W: Write> {
     state: Arc<Mutex<Dap>>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Option<CommOutgoingTx>,
-    responses_tx: Option<Sender<Response>>,
+    responses_tx: Sender<Response>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
@@ -276,6 +277,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         state: Arc<Mutex<Dap>>,
         r_request_tx: Sender<RRequest>,
         comm_tx: CommOutgoingTx,
+        responses_tx: Sender<Response>,
     ) -> Self {
         let server = Server::new(reader, writer);
         let output = server.output.clone();
@@ -285,7 +287,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             state,
             r_request_tx,
             comm_tx: Some(comm_tx),
-            responses_tx: None,
+            responses_tx,
         }
     }
 
@@ -775,12 +777,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let expression = args.expression;
         let frame_id = args.frame_id;
         let state = self.state.clone();
-
-        let Some(responses_tx) = self.responses_tx.clone() else {
-            let rsp = req.error("DAP: No responses channel for `evaluate`");
-            self.respond(rsp)?;
-            return Ok(());
-        };
+        let responses_tx = self.responses_tx.clone();
 
         log::trace!("DAP: Spawning idle task for evaluate");
         spawn_idle_any_prompt(move |mut capture| async move {
