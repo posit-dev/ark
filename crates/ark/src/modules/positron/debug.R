@@ -140,10 +140,15 @@ debugger_stack_info <- function(
     # to the virtual source from the function.
     has_synthetic_top <- !is.null(top_env) &&
         !identical(top_env, context_environment)
-    last_context_srcref <- if (has_synthetic_top) NULL else context_srcref
+    if (has_synthetic_top) {
+        top_srcref <- context_srcref
+        context_srcref <- NULL
+    } else {
+        top_srcref <- NULL
+    }
 
     last_frame_info <- context_frame_info(
-        last_context_srcref,
+        context_srcref,
         context_fn,
         context_environment,
         context_call_text,
@@ -164,7 +169,7 @@ debugger_stack_info <- function(
         top_frame_info <- frame_info_from_srcref(
             source_name = "<top>.R",
             frame_name = "<top>",
-            srcref = context_srcref,
+            srcref = top_srcref,
             environment = top_env
         )
         if (!is.null(top_frame_info)) {
