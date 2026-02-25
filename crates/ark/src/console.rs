@@ -1800,7 +1800,7 @@ impl Console {
     /// Resolve the frame in which to evaluate the current expression.
     /// Uses the debug-selected frame if one has been set, otherwise the
     /// captured environment from `read_console_env_stack`.
-    fn eval_frame(&self) -> harp::RObject {
+    pub(crate) fn eval_frame(&self) -> harp::RObject {
         let Some(frame_id) = self.debug_selected_frame_id.get() else {
             return self.eval_env();
         };
@@ -2824,7 +2824,7 @@ pub(crate) fn eval_env() -> RObject {
     if !Console::is_initialized() {
         return R_ENVS.global.into();
     }
-    Console::get().eval_env()
+    Console::get().eval_frame()
 }
 
 /// Data passed to the eval body callback via `R_withCallingErrorHandler`.

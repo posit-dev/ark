@@ -178,3 +178,151 @@ f()
     frontend.debug_send_quit();
     dap.recv_continued();
 }
+
+/// When a different frame is selected in the debugger, `$` completions should
+/// find objects from that frame's environment.
+#[test]
+fn test_lsp_completions_selected_frame_dollar() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+outer <- function() {
+  outer_df <- data.frame(outer_col = 1)
+  inner()
+}
+inner <- function() {
+  inner_df <- data.frame(inner_col = 2)
+  browser()
+}
+outer()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let outer_frame_id = stack[1].id;
+
+    // Initially, completions should find inner_df (current frame)
+    let text = "inner_df$\n";
+    let uri = lsp.open_document("selected_dollar_inner.R", text);
+    let items = lsp.completions(&uri, 0, end_position(text));
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, vec!["inner_col"]);
+    lsp.close_document(&uri);
+
+    // Select the outer frame
+    dap.evaluate(".positron_selected_frame", Some(outer_frame_id));
+
+    // Now completions should find outer_df from the selected frame
+    let text = "outer_df$\n";
+    let uri = lsp.open_document("selected_dollar_outer.R", text);
+    let items = lsp.completions(&uri, 0, end_position(text));
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, vec!["outer_col"]);
+    lsp.close_document(&uri);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+/// When a different frame is selected, search-path completions should include
+/// variables from that frame's environment.
+#[test]
+fn test_lsp_completions_selected_frame_search_path() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+outer <- function() {
+  outer_unique_var_abc <- 100
+  inner()
+}
+inner <- function() {
+  inner_unique_var_xyz <- 200
+  browser()
+}
+outer()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let outer_frame_id = stack[1].id;
+
+    // Initially, completions should find inner_unique_var_xyz
+    let text = "inner_unique_var_x\n";
+    let uri = lsp.open_document("selected_search_inner.R", text);
+    let items = lsp.completions(&uri, 0, end_position(text));
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(labels.contains(&"inner_unique_var_xyz"));
+    lsp.close_document(&uri);
+
+    // Select the outer frame
+    dap.evaluate(".positron_selected_frame", Some(outer_frame_id));
+
+    // Now completions should find outer_unique_var_abc from the selected frame
+    let text = "outer_unique_var_a\n";
+    let uri = lsp.open_document("selected_search_outer.R", text);
+    let items = lsp.completions(&uri, 0, end_position(text));
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(labels.contains(&"outer_unique_var_abc"));
+    lsp.close_document(&uri);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
+/// When a different frame is selected, argument completions should find
+/// functions from that frame's environment.
+#[test]
+fn test_lsp_completions_selected_frame_arguments() {
+    let frontend = DummyArkFrontend::lock();
+    let mut lsp = frontend.start_lsp();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+outer <- function() {
+  outer_fun <- function(outer_arg1, outer_arg2) NULL
+  inner()
+}
+inner <- function() {
+  inner_fun <- function(inner_arg) NULL
+  browser()
+}
+outer()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let outer_frame_id = stack[1].id;
+
+    // Initially, completions should find inner_fun's arguments
+    let text = "inner_fun(\n";
+    let uri = lsp.open_document("selected_args_inner.R", text);
+    let items = lsp.completions(&uri, 0, end_position(text));
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, vec!["inner_arg = "]);
+    lsp.close_document(&uri);
+
+    // Select the outer frame
+    dap.evaluate(".positron_selected_frame", Some(outer_frame_id));
+
+    // Now completions should find outer_fun's arguments
+    let text = "outer_fun(\n";
+    let uri = lsp.open_document("selected_args_outer.R", text);
+    let items = lsp.completions(&uri, 0, end_position(text));
+    let mut labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    labels.sort();
+    assert_eq!(labels, vec!["outer_arg1 = ", "outer_arg2 = "]);
+    lsp.close_document(&uri);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
