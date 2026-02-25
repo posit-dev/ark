@@ -18,6 +18,40 @@ initialize_debug <- function() {
     )
 }
 
+# Returns a character vector of hidden frame categories to show (i.e., not
+# filter out). Empty means filter all; `c("fenced", "internal")` means show
+# all. Parsed from the `ark.debugger.show_hidden_frames` option.
+debugger_show_hidden_frames <- function() {
+    opt <- getOption("ark.debugger.show_hidden_frames")
+
+    if (is.null(opt) || identical(opt, FALSE)) {
+        return(character())
+    }
+
+    if (identical(opt, TRUE)) {
+        return(c("fenced", "internal"))
+    }
+
+    if (!is.character(opt)) {
+        stop(sprintf(
+            "`ark.debugger.show_hidden_frames` must be TRUE, FALSE, or a character vector, not `%s`.",
+            class(opt)[[1L]]
+        ))
+    }
+
+    allowed <- c("fenced", "internal")
+    unknown <- setdiff(opt, allowed)
+    if (length(unknown) > 0L) {
+        stop(sprintf(
+            "`ark.debugger.show_hidden_frames` contains unknown values: %s. Allowed values: %s.",
+            paste0("`", unknown, "`", collapse = ", "),
+            paste0("`", allowed, "`", collapse = ", ")
+        ))
+    }
+
+    unique(opt)
+}
+
 debugger_stack_info <- function(
     context_call_text,
     context_last_start_line,

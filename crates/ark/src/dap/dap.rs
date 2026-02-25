@@ -237,8 +237,6 @@ impl Dap {
         self.is_debugging = true;
         self.fallback_sources.extend(fallback_sources);
 
-        remove_condition_handling_frames(&mut stack, &stopped_reason);
-
         self.load_variables_references(&mut stack);
         self.stack = Some(stack);
 
@@ -551,46 +549,6 @@ impl ServerHandler for Dap {
         });
 
         return Ok(());
-    }
-}
-
-/// Discard top frames that are part of the debug infrastructure rather than
-/// user code.
-fn remove_condition_handling_frames(
-    stack: &mut Vec<FrameInfo>,
-    stopped_reason: &DebugStoppedReason,
-) {
-    // Discard top frame when stopped due to exception breakpoint or pause,
-    // it points to our global handler that calls `browser()`
-    if matches!(
-        stopped_reason,
-        DebugStoppedReason::Condition { .. } | DebugStoppedReason::Pause
-    ) && !stack.is_empty()
-    {
-        stack.remove(0);
-    }
-
-    // Then discard base R's own condition handling/emitting frames, if any
-    remove_frame_prefix(stack, &[".handleSimpleError()"]);
-    remove_frame_prefix(stack, &[
-        "doWithOneRestart()",
-        "withOneRestart()",
-        "withRestarts()",
-        ".signalSimpleWarning",
-    ]);
-}
-
-/// Remove frames from the top of the stack that match the given prefixes in order.
-fn remove_frame_prefix(stack: &mut Vec<FrameInfo>, prefixes: &[&str]) {
-    for prefix in prefixes {
-        if stack
-            .first()
-            .is_some_and(|frame| frame.frame_name.starts_with(prefix))
-        {
-            stack.remove(0);
-        } else {
-            break;
-        }
     }
 }
 

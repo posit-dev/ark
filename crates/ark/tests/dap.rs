@@ -470,3 +470,202 @@ wrapper()
     frontend.debug_send_quit();
     dap.recv_continued();
 }
+
+#[test]
+fn test_dap_show_hidden_frames_fenced() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = 'fenced')",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let _file = frontend.send_source(
+        "
+`..stacktraceoff..` <- function(x) x
+`..stacktraceon..` <- function(x) x
+
+user_code <- function() { browser() }
+shiny_internal <- function() { `..stacktraceon..`(user_code()) }
+shiny_wrapper <- function() { `..stacktraceoff..`(shiny_internal()) }
+outer_user <- function() { shiny_wrapper() }
+
+outer_user()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = NULL)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // With "fenced", sentinel frames should be visible
+    assert!(stack.len() >= 6);
+    assert_eq!(stack[0].name, "user_code()");
+    assert_eq!(stack[1].name, "..stacktraceon..()");
+    assert_eq!(stack[2].name, "shiny_internal()");
+    assert_eq!(stack[3].name, "..stacktraceoff..()");
+    assert_eq!(stack[4].name, "shiny_wrapper()");
+    assert_eq!(stack[5].name, "outer_user()");
+}
+
+#[test]
+fn test_dap_show_hidden_frames_fenced_still_hides_internal() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = 'fenced')",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.set_exception_breakpoints(&["error"]);
+
+    frontend.send_source("stop('test')");
+
+    dap.recv_stopped_exception();
+
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_error();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+
+    dap.recv_continued();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = NULL)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // With "fenced", internal condition-handling frames should still be hidden
+    assert!(!frame_names
+        .iter()
+        .any(|f| f.starts_with(".handleSimpleError")));
+}
+
+#[test]
+fn test_dap_show_hidden_frames_internal() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = 'internal')",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.set_exception_breakpoints(&["error"]);
+
+    frontend.send_source("stop('test')");
+
+    dap.recv_stopped_exception();
+
+    let stack = dap.stack_trace();
+    let frame_names: Vec<&str> = stack.iter().map(|f| f.name.as_str()).collect();
+
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_execute_error();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+
+    dap.recv_continued();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = NULL)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // With "internal", the .handleSimpleError() frame should now be visible
+    assert!(frame_names
+        .iter()
+        .any(|f| f.starts_with(".handleSimpleError")));
+}
+
+#[test]
+fn test_dap_show_hidden_frames_internal_still_hides_fenced() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = 'internal')",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let _file = frontend.send_source(
+        "
+`..stacktraceoff..` <- function(x) x
+`..stacktraceon..` <- function(x) x
+
+user_code <- function() { browser() }
+shiny_internal <- function() { `..stacktraceon..`(user_code()) }
+shiny_wrapper <- function() { `..stacktraceoff..`(shiny_internal()) }
+outer_user <- function() { shiny_wrapper() }
+
+outer_user()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    frontend.send_execute_request(
+        "options(ark.debugger.show_hidden_frames = NULL)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // With "internal", fenced frames should still be hidden
+    assert!(stack.len() >= 3);
+    assert_eq!(stack[0].name, "user_code()");
+    assert_eq!(stack[1].name, "shiny_wrapper()");
+    assert_eq!(stack[2].name, "outer_user()");
+}

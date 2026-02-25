@@ -79,7 +79,7 @@ impl Console {
         debug_stopped_reason: DebugStoppedReason,
     ) {
         match self.debug_stack_info() {
-            Ok(stack) => {
+            Ok(mut stack) => {
                 // Figure out whether we changed location since last time,
                 // e.g. because the user evaluated an expression that hit
                 // another breakpoint. In that case we do want to move
@@ -99,6 +99,14 @@ impl Console {
                 self.debug_last_stack = stack_id;
 
                 let preserve_focus = same_stack && debug_preserve_focus;
+
+                let show = get_show_hidden_frames();
+                if !show.internal {
+                    remove_condition_handling_frames(&mut stack, &debug_stopped_reason);
+                }
+                if !show.fenced {
+                    remove_fenced_frames(&mut stack);
+                }
 
                 let mut dap = self.debug_dap.lock().unwrap();
                 dap.start_debug(
@@ -277,10 +285,6 @@ impl Console {
 
             log::trace!("DAP: Current call stack:\n{out:#?}");
 
-            if !harp::get_option_bool("ark.debugger.show_hidden_frames") {
-                filter_hidden_frames(&mut out);
-            }
-
             Ok(out)
         }
     }
@@ -352,6 +356,77 @@ impl Console {
     }
 }
 
+/// Controls which categories of hidden frames to show (i.e., not filter out).
+/// Parsed from the `ark.debugger.show_hidden_frames` R option.
+struct ShowHiddenFrames {
+    /// Show frames fenced by `..stacktraceon..`/`..stacktraceoff..` sentinels
+    fenced: bool,
+    /// Show internal condition-handling frames (e.g. `.handleSimpleError()`)
+    internal: bool,
+}
+
+/// Read the `ark.debugger.show_hidden_frames` R option via the R-side
+/// `debugger_show_hidden_frames()` helper, which validates and normalises
+/// the option into a character vector of categories to show.
+fn get_show_hidden_frames() -> ShowHiddenFrames {
+    let values =
+        match RFunction::new("", "debugger_show_hidden_frames").call_in(ARK_ENVS.positron_ns) {
+            Ok(obj) => Vec::<String>::try_from(obj).unwrap_or_default(),
+            Err(err) => {
+                log::warn!("Failed to read `ark.debugger.show_hidden_frames`: {err:?}");
+                return ShowHiddenFrames {
+                    fenced: false,
+                    internal: false,
+                };
+            },
+        };
+
+    ShowHiddenFrames {
+        fenced: values.iter().any(|v| v == "fenced"),
+        internal: values.iter().any(|v| v == "internal"),
+    }
+}
+
+/// Discard top frames that are part of the debug infrastructure rather than
+/// user code.
+fn remove_condition_handling_frames(
+    stack: &mut Vec<FrameInfo>,
+    stopped_reason: &DebugStoppedReason,
+) {
+    // Discard top frame when stopped due to exception breakpoint or pause,
+    // it points to our global handler that calls `browser()`
+    if matches!(
+        stopped_reason,
+        DebugStoppedReason::Condition { .. } | DebugStoppedReason::Pause
+    ) && !stack.is_empty()
+    {
+        stack.remove(0);
+    }
+
+    // Then discard base R's own condition handling/emitting frames, if any
+    remove_frame_prefix(stack, &[".handleSimpleError()"]);
+    remove_frame_prefix(stack, &[
+        "doWithOneRestart()",
+        "withOneRestart()",
+        "withRestarts()",
+        ".signalSimpleWarning",
+    ]);
+}
+
+/// Remove frames from the top of the stack that match the given prefixes in order.
+fn remove_frame_prefix(stack: &mut Vec<FrameInfo>, prefixes: &[&str]) {
+    for prefix in prefixes {
+        if stack
+            .first()
+            .is_some_and(|frame| frame.frame_name.starts_with(prefix))
+        {
+            stack.remove(0);
+        } else {
+            break;
+        }
+    }
+}
+
 /// Removes frames fenced between `..stacktraceon..` and `..stacktraceoff..`
 /// markers (used by Shiny to hide internal frames from error stack traces).
 ///
@@ -373,7 +448,7 @@ impl Console {
 ///
 /// The topmost frame (index 0) is never filtered out so the user always
 /// sees where they are stopped.
-fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
+fn remove_fenced_frames(frames: &mut Vec<FrameInfo>) {
     let mut hidden_depth: u32 = 0;
     let mut first = true;
 
@@ -615,14 +690,14 @@ mod tests {
     #[test]
     fn test_filter_hidden_frames_empty() {
         let mut frames = vec![];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert!(frames.is_empty());
     }
 
     #[test]
     fn test_filter_hidden_frames_no_sentinels() {
         let mut frames = vec![frame("a()"), frame("b()"), frame("c()")];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["a()", "b()", "c()"]);
     }
 
@@ -635,7 +710,7 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("outer()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user_code()", "outer()"]);
     }
 
@@ -656,7 +731,7 @@ mod tests {
             frame("outer_off()"),
             frame("top()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec![
             "user_code()",
             "inner_off()",
@@ -685,7 +760,7 @@ mod tests {
             frame("..stacktraceoff..(captureStackTraces)"),
             frame("shiny::runApp()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec![
             "renderPlot()",
             "output$distPlot()",
@@ -711,14 +786,14 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("visible()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user()", "visible()"]);
     }
 
     #[test]
     fn test_filter_hidden_frames_only_sentinels() {
         let mut frames = vec![frame("..stacktraceon..()"), frame("..stacktraceoff..()")];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         // The first frame is always kept, even if it's a sentinel
         assert_eq!(names(&frames), vec!["..stacktraceon..()"]);
     }
@@ -732,7 +807,7 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("wrapper()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user_code()", "wrapper()"]);
     }
 
@@ -746,7 +821,7 @@ mod tests {
             frame("..stacktraceon..()"),
             frame("wrapper()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user_code()"]);
     }
 
@@ -759,7 +834,7 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("outer()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         // The sentinel at index 0 is kept without triggering hidden state,
         // so `internal()` between on/off is also visible
         assert_eq!(names(&frames), vec![
