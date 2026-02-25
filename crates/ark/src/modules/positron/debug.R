@@ -36,12 +36,23 @@ debugger_stack_info <- function(
     }
 
     if (n == 0L) {
-        return(list(frame_info_from_srcref(
+        # At the global level with no function calls on the stack.
+        # Try to get source location from `context_srcref`
+        frame <- frame_info_from_srcref(
             source_name = "<global>.R",
             frame_name = "<global>",
             srcref = context_srcref,
             environment = NULL
-        )))
+        )
+
+        # When `context_srcref` is NULL (e.g., when `browser()` is called inside
+        # `dplyr::mutate())`, we can't get source location info, so return a
+        # minimal frame with unknown location.
+        # See https://github.com/posit-dev/positron/issues/8979
+        # and https://github.com/posit-dev/positron/issues/12021
+        frame <- frame %||% frame_info_fallback()
+
+        return(list(frame))
     }
 
     top_level_loc <- 1L
@@ -337,6 +348,16 @@ reparse_frame_text <- function(fn_text, call_text) {
         fn_expr = fn_expr,
         fn_text = fn_text,
         call_text = call_text
+    )
+}
+
+frame_info_fallback <- function() {
+    frame_info_unknown_range(
+        source_name = "<global>.R",
+        frame_name = "<global>",
+        file = NULL,
+        contents = "# Unknown source location",
+        environment = NULL
     )
 }
 
