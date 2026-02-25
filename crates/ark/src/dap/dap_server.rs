@@ -593,39 +593,49 @@ impl<R: Read, W: Write> DapServer<R, W> {
         req: Request,
         args: StackTraceArguments,
     ) -> Result<(), ServerError> {
-        let state = self.state.lock().unwrap();
-        let stack = &state.stack;
-        let fallback_sources = &state.fallback_sources;
-
-        let stack = match stack {
-            Some(stack) => stack
-                .into_iter()
-                .map(|frame| into_dap_frame(frame, fallback_sources))
-                .collect(),
-            _ => vec![],
+        let stack = {
+            let state = self.state.lock().unwrap();
+            let fallback_sources = &state.fallback_sources;
+            match &state.stack {
+                Some(stack) => stack
+                    .into_iter()
+                    .map(|frame| into_dap_frame(frame, fallback_sources))
+                    .collect(),
+                _ => vec![],
+            }
         };
 
         // Slice the stack as requested
         let n_usize = stack.len();
-        let start: usize = args.start_frame.unwrap_or(0).try_into().unwrap();
+
+        let start_frame = args.start_frame.unwrap_or(0);
+        let Ok(start) = usize::try_from(start_frame) else {
+            let rsp = req.error(&format!("Invalid start_frame: {start_frame}"));
+            return self.respond(rsp);
+        };
         let start = std::cmp::min(start, n_usize);
 
         let end = if let Some(levels) = args.levels {
-            let levels: usize = levels.try_into().unwrap();
-            std::cmp::min(start + levels, n_usize)
+            let Ok(levels) = usize::try_from(levels) else {
+                let rsp = req.error(&format!("Invalid levels: {levels}"));
+                return self.respond(rsp);
+            };
+            std::cmp::min(start.saturating_add(levels), n_usize)
         } else {
             n_usize
         };
 
+        let Ok(total_frames) = i64::try_from(n_usize) else {
+            let rsp = req.error(&format!("Stack frame count overflows i64: {n_usize}"));
+            return self.respond(rsp);
+        };
         let stack = stack[start..end].to_vec();
-        let n = stack.len().try_into().unwrap();
 
         let rsp = req.success(ResponseBody::StackTrace(StackTraceResponse {
             stack_frames: stack,
-            total_frames: Some(n),
+            total_frames: Some(total_frames),
         }));
 
-        drop(state);
         self.respond(rsp)
     }
 
