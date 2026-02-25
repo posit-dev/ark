@@ -499,31 +499,67 @@ fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
     None
 }
 
-/// Truncate `autoprint_output` at the first line matching a debug prefix.
+/// Strip `exiting from:` / `debugging in:` debug messages from autoprint.
 ///
-/// Debug prefixes reach autoprint in two cases, both at frame 0:
-/// - `"Called from: ...\n"` from `browser()` at top level
-/// - `"debug at #N: <PrintValue>\n"` from stepping through braced
-///   expressions like `{ browser(); 1; 2 }` at top level
+/// These messages reach autoprint at `n_frame=0` when returning from (or
+/// entering) a debugged function called at top level.
 ///
-/// This output is always emitted after any user output in the same
-/// expression, so everything from the first matching line onwards is
-/// debug noise. Truncating rather than filtering line-by-line also
-/// handles multi-line `PrintValue` continuations that don't start with
-/// a prefix themselves.
+/// - `debugging in:` is stripped unconditionally (no return value possible
+///   when entering a function)
+/// - `exiting from:` is stripped only if it appears on the last line,
+///   meaning there's no user result after it. If there's content after
+///   (the return value), we keep everything to avoid losing it.
 ///
-/// This is simpler than the stream filter state machine, appropriate here
-/// because autoprint only accumulates for the last top-level expression.
-pub fn strip_debug_prefix_lines(text: &mut String) {
+/// Callers must only invoke this when exiting a debug session (e.g.,
+/// at a browser prompt, or when `debug_was_debugging` is set).
+pub fn strip_leading_debug_lines(text: &mut String) {
     if text.is_empty() {
         return;
     }
 
+    if text.starts_with(MatchedPattern::DebuggingIn.prefix()) {
+        // Entering a function, no return value possible. Strip everything.
+        text.clear();
+    } else if text.starts_with(MatchedPattern::ExitingFrom.prefix()) {
+        // Exiting a function. Only strip if "exiting from:" is on the last
+        // line, meaning there's no return value after it. Otherwise keep
+        // everything (noise + result) to avoid losing user content.
+        let last_line = text.lines().last().unwrap_or("");
+        if last_line.starts_with(MatchedPattern::ExitingFrom.prefix()) {
+            text.clear();
+        }
+        // Otherwise keep entire buffer as-is
+    }
+}
+
+/// Truncate autoprint at the first line matching any debug prefix.
+///
+/// Only safe at browser prompts, because prefixes like `Called from:` or
+/// `debug: ` could appear in user print methods at top level.
+///
+/// Debug prefixes that reach autoprint at browser prompts:
+/// - `"Called from: ...\n"` from `browser()` at top level
+/// - `"debug at #N: <PrintValue>\n"` from stepping through braced
+///   expressions like `{ browser(); 1; 2 }` at top level, possibly
+///   multi-line
+///
+/// These always appear AFTER any user output in the same expression,
+/// so truncating at the first match also removes multi-line `PrintValue`
+/// continuations that don't start with a prefix themselves.
+///
+/// Note: `exiting from:` and `debugging in:` are NOT matched here because
+/// they are handled by `strip_leading_debug_lines`. Including them would
+/// incorrectly truncate when that function intentionally keeps noise to
+/// preserve a return value.
+pub fn truncate_at_debug_prefix(text: &mut String) {
     let mut pos = 0;
     for line in text.split_inclusive('\n') {
-        let is_debug = MatchedPattern::all()
-            .iter()
-            .any(|p| line.starts_with(p.prefix()));
+        // Only match prefixes that appear AFTER user output at browser prompts.
+        // `exiting from:` and `debugging in:` appear BEFORE user output and
+        // are handled separately by `strip_leading_debug_lines`.
+        let is_debug = line.starts_with(MatchedPattern::CalledFrom.prefix()) ||
+            line.starts_with(MatchedPattern::DebugAt.prefix()) ||
+            line.starts_with(MatchedPattern::Debug.prefix());
         if is_debug {
             text.truncate(pos);
             return;
@@ -853,7 +889,53 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_debug_prefix_lines_truncates_at_first() {
+    fn test_on_read_console_was_debugging_toplevel_suppresses() {
+        // `was_debugging=true` means the prefix was matched during a debug
+        // session. Even at a top-level prompt (is_browser=false), the content
+        // is suppressed (e.g., `exiting from:` followed by top-level prompt).
+        let mut filter = ConsoleFilter::new();
+        filter.set_debugging(true);
+        let emits = filter.feed("Called from: top level\n");
+        assert!(emits.is_empty());
+
+        let (emits, update) = filter.on_read_console(false);
+        assert!(emits.is_empty());
+        assert!(update.is_some());
+    }
+
+    #[test]
+    fn test_on_read_console_was_debugging_browser_suppresses() {
+        // Both `was_debugging` and `is_browser` true: suppressed.
+        let mut filter = ConsoleFilter::new();
+        filter.set_debugging(true);
+        let emits = filter.feed("Called from: top level\n");
+        assert!(emits.is_empty());
+
+        let (emits, update) = filter.on_read_console(true);
+        assert!(emits.is_empty());
+        assert!(update.is_some());
+    }
+
+    #[test]
+    fn test_filtering_accumulates_across_feeds() {
+        let mut filter = ConsoleFilter::new();
+        let emits = filter.feed("Called from: ");
+        assert!(emits.is_empty());
+
+        let emits = filter.feed("some ");
+        assert!(emits.is_empty());
+        let emits = filter.feed("more content\n");
+        assert!(emits.is_empty());
+
+        let (emits, _) = filter.on_read_console(false);
+        assert_eq!(emits.len(), 1);
+        assert_eq!(emits[0], "Called from: some more content\n");
+    }
+
+    // --- `truncate_at_debug_prefix` tests (browser-only path) ---
+
+    #[test]
+    fn test_truncate_at_first_debug_prefix() {
         let mut text = String::from(
             "[1] 42\n\
              normal output\n\
@@ -861,31 +943,167 @@ mod tests {
              [1] 42\n\
              Called from: top level\n",
         );
-        strip_debug_prefix_lines(&mut text);
+        truncate_at_debug_prefix(&mut text);
         assert_eq!(text, "[1] 42\nnormal output\n");
     }
 
     #[test]
-    fn test_strip_debug_prefix_lines_multiline_printvalue() {
+    fn test_truncate_multiline_printvalue() {
         let mut text = String::from(
             "debug at #2: [1] 1 2 3\n\
              [4] 4 5 6\n",
         );
-        strip_debug_prefix_lines(&mut text);
+        truncate_at_debug_prefix(&mut text);
         assert_eq!(text, "");
     }
 
     #[test]
-    fn test_strip_debug_prefix_lines_empty() {
+    fn test_truncate_empty() {
         let mut text = String::new();
-        strip_debug_prefix_lines(&mut text);
+        truncate_at_debug_prefix(&mut text);
         assert_eq!(text, "");
     }
 
     #[test]
-    fn test_strip_debug_prefix_lines_no_prefixes() {
+    fn test_truncate_no_prefixes() {
         let mut text = String::from("[1] 42\nhello\n");
-        strip_debug_prefix_lines(&mut text);
+        truncate_at_debug_prefix(&mut text);
         assert_eq!(text, "[1] 42\nhello\n");
+    }
+
+    // --- `strip_leading_debug_lines` tests ---
+
+    #[test]
+    fn test_strip_exiting_from_with_result() {
+        // When there's a return value after "exiting from:", keep everything
+        // (noise + result) to avoid losing user content.
+        let mut text = String::from(
+            "exiting from: identity()\n\
+             [1] 1\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "exiting from: identity()\n[1] 1\n");
+    }
+
+    #[test]
+    fn test_strip_exiting_from_no_result() {
+        // When "exiting from:" is on the last line (no result after),
+        // strip everything.
+        let mut text = String::from("exiting from: f()\n");
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_strip_exiting_from_multiline_no_result() {
+        // Multi-line debug message. Last line doesn't start with
+        // "exiting from:", so we keep everything (conservative).
+        let mut text = String::from(
+            "exiting from: f(very_long_argument_name_1 = 1, very_long_argument_name_2 = 2,\n\
+             \x20   very_long_argument_name_3 = 3)\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        // Last line is the continuation, not "exiting from:", so kept
+        assert_eq!(
+            text,
+            "exiting from: f(very_long_argument_name_1 = 1, very_long_argument_name_2 = 2,\n\
+             \x20   very_long_argument_name_3 = 3)\n"
+        );
+    }
+
+    #[test]
+    fn test_strip_exiting_from_multiline_with_result() {
+        // Multi-line debug message followed by result. Keep everything.
+        let mut text = String::from(
+            "exiting from: f(very_long_argument_name_1 = 1, very_long_argument_name_2 = 2,\n\
+             \x20   very_long_argument_name_3 = 3)\n\
+             [1] 42\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(
+            text,
+            "exiting from: f(very_long_argument_name_1 = 1, very_long_argument_name_2 = 2,\n\
+             \x20   very_long_argument_name_3 = 3)\n\
+             [1] 42\n"
+        );
+    }
+
+    #[test]
+    fn test_strip_debugging_in_clears_all() {
+        // "debugging in:" fires when entering a function, no return value
+        // is possible. Strip everything unconditionally.
+        let mut text = String::from("debugging in: f()\n");
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_strip_debugging_in_multiline_clears_all() {
+        // Multi-line "debugging in:" is also cleared entirely.
+        let mut text = String::from(
+            "debugging in: f(very_long_argument_name_1 = 1, very_long_argument_name_2 = 2,\n\
+             \x20   very_long_argument_name_3 = 3)\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_strip_debugging_in_with_following_content_clears_all() {
+        // Even if there's content after "debugging in:", it's debug noise
+        // (like "debug at"), not a return value. Clear everything.
+        let mut text = String::from(
+            "debugging in: f()\n\
+             debug at file.R#1: x <- 1\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_strip_does_not_touch_non_leading() {
+        // Buffer doesn't start with debug prefix, leave it alone.
+        let mut text = String::from(
+            "[1] 42\n\
+             exiting from: f()\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "[1] 42\nexiting from: f()\n");
+    }
+
+    #[test]
+    fn test_strip_exiting_from_result_ends_with_paren() {
+        // User's result ends with ')'. Last line doesn't start with
+        // "exiting from:", so we keep everything.
+        let mut text = String::from(
+            "exiting from: f()\n\
+             list(a = 1)\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "exiting from: f()\nlist(a = 1)\n");
+    }
+
+    #[test]
+    fn test_strip_exiting_from_multiple_with_result() {
+        // Multiple "exiting from:" messages followed by result. Keep all.
+        let mut text = String::from(
+            "exiting from: g()\n\
+             exiting from: f()\n\
+             [1] 1\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "exiting from: g()\nexiting from: f()\n[1] 1\n");
+    }
+
+    #[test]
+    fn test_strip_exiting_from_multiple_last_line() {
+        // Multiple "exiting from:" messages, last line is "exiting from:".
+        // This means no result, so clear everything.
+        let mut text = String::from(
+            "exiting from: g()\n\
+             exiting from: f()\n",
+        );
+        strip_leading_debug_lines(&mut text);
+        assert_eq!(text, "");
     }
 }

@@ -99,7 +99,8 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
-use crate::console_filter::strip_debug_prefix_lines;
+use crate::console_filter::strip_leading_debug_lines;
+use crate::console_filter::truncate_at_debug_prefix;
 use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
@@ -300,10 +301,12 @@ pub struct Console {
     /// Whether or not we are currently in a debugging state.
     pub(crate) debug_is_debugging: bool,
 
-    /// Set when `debug_is_debugging` transitions from true to false in the
-    /// `r_read_console` cleanup. Lets the next `read_console` know we just
-    /// left a debug session, so `exiting from:` in autoprint can be stripped
-    /// even at a non-browser prompt.
+    /// Whether we just left a debug session. Used to strip `exiting from:`
+    /// from autoprint at the next non-browser prompt (e.g., after "c").
+    /// Set to `true` in `r_read_console` cleanup, cleared after use in
+    /// `read_console`. The cleanup only ever sets this to `true`, never
+    /// resets it to `false`, because nested cleanups fire inner-to-outer
+    /// and the outer one would otherwise clobber the inner's `true`.
     debug_was_debugging: bool,
 
     /// The current call emitted by R as `debug: <call-text>`.
@@ -1123,17 +1126,20 @@ impl Console {
 
         let is_browser = matches!(info.kind, PromptKind::Browser);
 
-        // Debug messages like "Called from: top level" go through the autoprint
-        // path at top level (because `is_auto_printing()` returns true when
-        // `n_frame == 0`). Strip these debug prefix lines at every browser
-        // prompt so they are not included in `execute_result`.
-        //
-        // Also strip when we just left a debug session (e.g., user typed "c"
-        // to continue). In that case `exiting from: f()` reaches autoprint
-        // at `n_frame=0` before the top-level prompt.
+        // Leading `exiting from:` / `debugging in:` reach autoprint at
+        // `n_frame=0` when leaving/entering a debugged function at top level.
+        // Only strip when we know we just left a debug session.
         if is_browser || self.debug_was_debugging {
             self.debug_was_debugging = false;
-            strip_debug_prefix_lines(&mut self.autoprint_output);
+            strip_leading_debug_lines(&mut self.autoprint_output);
+        }
+
+        // Other debug prefixes (`Called from:`, `debug at`, `debug:`) only
+        // reach autoprint at browser prompts (from stepping in top-level
+        // braced expressions). Truncate only there because these prefixes
+        // could appear in user print methods at top level.
+        if is_browser {
+            truncate_at_debug_prefix(&mut self.autoprint_output);
         }
 
         // Flush the stream filter and finalize any pending debug capture.
