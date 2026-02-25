@@ -27,7 +27,7 @@ use crate::console::ConsoleOutputCapture;
 use crate::console::DebugStoppedReason;
 use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
-use crate::dap::dap_variables::object_variable_from_value;
+use crate::dap::dap_variables::object_variable;
 use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
@@ -435,7 +435,7 @@ impl Dap {
                         variables_reference_object: None,
                     })
                 } else {
-                    Ok(object_variable_from_value(value.sexp))
+                    Ok(object_variable(String::new(), value.sexp))
                 }
             },
             Err(err) => Err(format!("{err}")),
