@@ -152,6 +152,7 @@ context_frame_info <- function(
 ) {
     frame_name <- as_label(frame_call)
     source_name <- paste0(frame_name, ".R")
+    fn_name <- call_fn_name(frame_call)
 
     frame_info(
         source_name,
@@ -160,7 +161,8 @@ context_frame_info <- function(
         fn,
         environment,
         call_text,
-        last_start_line
+        last_start_line,
+        fn_name
     )
 }
 
@@ -172,6 +174,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         deparse_string(call)
     })
     frame_names <- lapply(frame_calls, function(call) as_label(call))
+    fn_names <- lapply(frame_calls, function(call) call_fn_name(call))
 
     # Currently only tracked for the context frame, as that is where it is most useful,
     # since that is where the user is actively stepping.
@@ -185,6 +188,7 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
         environment <- environments[[i]]
         call_text <- call_texts[[i]]
         frame_name <- frame_names[[i]]
+        fn_name <- fn_names[[i]]
 
         out[[i]] <- frame_info(
             source_name = paste0(frame_name, ".R"),
@@ -193,7 +197,8 @@ intermediate_frame_infos <- function(n, calls, fns, environments, frame_calls) {
             fn = fn,
             environment = environment,
             call_text = call_text,
-            last_start_line = last_start_line
+            last_start_line = last_start_line,
+            fn_name = fn_name
         )
     }
 
@@ -207,7 +212,8 @@ frame_info <- function(
     fn,
     environment,
     call_text,
-    last_start_line
+    last_start_line,
+    fn_name
 ) {
     if (!is.null(srcref)) {
         # Prefer srcref if we have it
@@ -225,6 +231,14 @@ frame_info <- function(
 
     # Only deparse if `srcref` failed!
     fn_text <- deparse_string(fn)
+
+    # Prefix with a named assignment if we have a known function name. This
+    # makes the virtual document self-documenting. This does not affect
+    # debug-stepping since we're not adding any line breaks.
+    # https://github.com/posit-dev/positron/issues/11889
+    if (!is.null(fn_name)) {
+        fn_text <- paste0(fn_name, " <- ", fn_text)
+    }
 
     # Reparse early on, so even if we fail to find `call_text` or fail to reparse,
     # we pass a `fn_text` to `frame_info_unknown_range()` where we've consistently removed

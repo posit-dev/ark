@@ -28,7 +28,7 @@ as_label <- function(x) {
 }
 
 is_simple_call <- function(x) {
-    call_print_type(x) == "call"
+    call_print_type(x) == "prefix"
 }
 
 # From https://github.com/r-lib/rlang/blob/main/R/call.R
@@ -304,4 +304,17 @@ call_parse_type <- function(call) {
     }
 
     ""
+}
+
+sym_quote_invalid <- function(x) {
+    if (is_valid_symbol(x)) {
+        x
+    } else {
+        paste0("`", x, "`")
+    }
+}
+
+is_valid_symbol <- function(str) {
+    stopifnot(is_string(str))
+    .Call("harp_is_valid_symbol", str)
 }

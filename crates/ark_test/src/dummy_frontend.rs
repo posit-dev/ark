@@ -61,6 +61,8 @@ pub struct DummyArkFrontend {
     /// If stream is emitted during a test, there must be at least one stream
     /// assertion.
     streams_handled: Cell<bool>,
+    /// Whether we're currently in a debug context (between start_debug and stop_debug)
+    in_debug: Cell<bool>,
 }
 
 /// Result of draining accumulated streams
@@ -118,6 +120,7 @@ impl DummyArkFrontend {
             stream_stderr: RefCell::new(String::new()),
             pending_iopub_messages: RefCell::new(VecDeque::new()),
             streams_handled: Cell::new(false),
+            in_debug: Cell::new(false),
         }
     }
 
@@ -674,6 +677,7 @@ impl DummyArkFrontend {
             },
             other => panic!("Expected CommMsg with start_debug, got {:?}", other),
         }
+        self.in_debug.set(true);
     }
 
     /// Receive from IOPub and assert a `stop_debug` comm message.
@@ -692,6 +696,12 @@ impl DummyArkFrontend {
             },
             other => panic!("Expected CommMsg with stop_debug, got {:?}", other),
         }
+        self.in_debug.set(false);
+    }
+
+    /// Whether the frontend is currently in a debug context.
+    pub fn in_debug(&self) -> bool {
+        self.in_debug.get()
     }
 
     /// Send an execute request with tracing
@@ -972,6 +982,121 @@ impl DummyArkFrontend {
         self.assert_stream_stdout_contains(&file.filename);
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
+    }
+
+    /// Execute a step command in a virtual document debug context.
+    ///
+    /// Unlike `debug_send_step_command` (which expects "debug at" stream output for
+    /// file-backed sources), this handles the vdoc case where stepping doesn't
+    /// produce "debug at" output.
+    ///
+    /// The caller must still consume DAP events (recv_continued, recv_stopped).
+    #[track_caller]
+    pub fn debug_send_vdoc_step_command(&self, cmd: &str) -> u32 {
+        self.send_execute_request(cmd, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
+        self.drain_streams();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply()
+    }
+
+    /// Execute code that enters a `debugonce()` function.
+    ///
+    /// This handles the transition from the current debug context into a function
+    /// marked with `debugonce()`.
+    ///
+    /// Stream assertion: "debugging in:".
+    /// The caller must still consume DAP events (recv_continued, recv_stopped).
+    #[track_caller]
+    pub fn debug_enter_debugonce(&self, code: &str) -> u32 {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        if self.in_debug() {
+            self.recv_iopub_stop_debug();
+        }
+        self.assert_stream_stdout_contains("debugging in:");
+        self.recv_iopub_start_debug();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply()
+    }
+
+    /// Step out of a vdoc function, returning to the parent debug context.
+    ///
+    /// When stepping out of a function, the return value appears as an `execute_result`.
+    /// The caller must still consume DAP events (recv_continued, recv_stopped).
+    #[track_caller]
+    pub fn debug_send_vdoc_step_out(&self, cmd: &str) -> u32 {
+        self.send_execute_request(cmd, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_start_debug();
+        self.recv_iopub_execute_result();
+        self.drain_streams();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply()
+    }
+
+    /// Finish execution of the current debug function when there is no parent
+    /// debug context (i.e. debugonce was entered from top level, not from a browser).
+    ///
+    /// Unlike `debug_send_vdoc_step_out`, this does not expect a `start_debug`
+    /// after `stop_debug`, since there is no parent debug session to return to.
+    ///
+    /// The caller must still consume the DAP `Continued` event (no `Stopped`).
+    #[track_caller]
+    pub fn debug_finish(&self, cmd: &str) -> u32 {
+        self.send_execute_request(cmd, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_stop_debug();
+        self.recv_iopub_execute_result();
+        self.drain_streams();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply()
+    }
+
+    /// Get the content of a virtual document by its URI.
+    ///
+    /// This queries the kernel's virtual document storage via an R function call.
+    /// Returns `None` if the document is not found (or has empty content).
+    ///
+    /// Note: In debug mode, this consumes stop_debug/start_debug messages.
+    /// Outside debug mode, no debug messages are expected.
+    #[track_caller]
+    pub fn get_virtual_document(&self, uri: &str) -> Option<String> {
+        // Use cat() which handles NULL gracefully (outputs nothing)
+        let code = format!(
+            "cat(.ps.internal(.ps.Call(\"ps_get_virtual_document\", \"{}\")), sep = \"\\n\")",
+            uri
+        );
+        self.send_execute_request(&code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+
+        let was_in_debug = self.in_debug();
+        if was_in_debug {
+            self.recv_iopub_stop_debug();
+        }
+
+        let streams = self.drain_streams();
+        let content = streams.stdout.trim_end();
+
+        if was_in_debug {
+            self.recv_iopub_start_debug();
+        }
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply();
+
+        if content.is_empty() {
+            None
+        } else {
+            Some(content.to_string())
+        }
     }
 }
 

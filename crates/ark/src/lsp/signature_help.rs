@@ -8,12 +8,12 @@
 use harp::eval::RParseEvalOptions;
 use harp::object::*;
 use harp::r_null;
+use harp::syntax::sym_quote_invalid;
 use harp::utils::r_formals;
 use harp::utils::r_is_function;
 use harp::utils::r_is_object;
 use harp::utils::r_type2char;
 use harp::utils::r_typeof;
-use harp::utils::sym_quote_invalid;
 use harp::RSymbol;
 use libr::*;
 use log::info;
@@ -509,8 +509,8 @@ mod tests {
     use tower_lsp::lsp_types::ParameterLabel;
 
     use crate::fixtures::point_from_cursor;
-    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document::Document;
+    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::signature_help::argument_label;
     use crate::lsp::signature_help::r_signature_help;
 

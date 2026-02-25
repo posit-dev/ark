@@ -2488,6 +2488,11 @@ impl Console {
         self.lsp_virtual_documents.contains_key(&uri)
     }
 
+    pub fn get_virtual_document(&self, uri: &str) -> Option<String> {
+        let uri = uri.strip_prefix("ark:").unwrap_or(uri);
+        self.lsp_virtual_documents.get(uri).cloned()
+    }
+
     pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method {request:?}");
 
@@ -2931,4 +2936,16 @@ unsafe extern "C-unwind" fn ps_insert_virtual_document(
     Console::get_mut().insert_virtual_document(uri, contents);
 
     Ok(RObject::null().sexp)
+}
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_get_virtual_document(uri: SEXP) -> anyhow::Result<SEXP> {
+    let uri: String = RObject::view(uri).try_into()?;
+
+    let content = Console::get().get_virtual_document(&uri);
+
+    match content {
+        Some(content) => Ok(RObject::from(content).sexp),
+        None => Ok(RObject::null().sexp),
+    }
 }
