@@ -208,7 +208,7 @@ fn test_dap_error_during_debug() {
     let mut dap = frontend.start_dap();
 
     // Code that will error after browser()
-    let file = frontend.send_source(
+    let _file = frontend.send_source(
         "
 {
   browser()
@@ -223,7 +223,7 @@ fn test_dap_error_during_debug() {
     assert!(stack.len() >= 1, "Should have at least 1 frame");
 
     // Step to execute the error
-    frontend.debug_send_step_command("n", &file);
+    frontend.debug_send_step_command("n");
     dap.recv_continued();
     dap.recv_stopped();
 
