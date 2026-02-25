@@ -81,15 +81,14 @@ impl Console {
         match self.debug_stack_info() {
             Ok(mut stack) => {
                 // Figure out whether we changed location since last time,
-                // e.g. because the user evaluated an expression that hit
-                // another breakpoint. In that case we do want to move
-                // focus, even though the user didn't explicitly used a step
-                // gesture. Our indication that we changed location is
-                // whether the call stack looks the same as last time. This
-                // is not 100% reliable as this heuristic might have false
-                // negatives, e.g. if the control flow exited the current
-                // context via condition catching and jumped back in the
-                // debugged function.
+                // e.g. because a transient eval hit another breakpoint. In
+                // that case we can't preserve the debug session and need to
+                // show the user the new location. Our indication that we
+                // changed location is whether the call stack looks the same
+                // as last time. This is not 100% reliable as this heuristic
+                // might have false negatives, e.g. if the control flow
+                // exited the current context via condition catching and
+                // jumped back in the debugged function.
                 let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
                 let stack_changed = stack_id != self.debug_last_stack;
 

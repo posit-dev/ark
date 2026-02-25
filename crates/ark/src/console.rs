@@ -1632,7 +1632,7 @@ impl Console {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> ConsoleResult {
-        // Default: preserve current focus for evaluated expressions.
+        // Default: Mark evaluation as transient.
         // This only has an effect if we're debugging.
         // https://github.com/posit-dev/positron/issues/3151
         self.debug_transient_eval = true;
