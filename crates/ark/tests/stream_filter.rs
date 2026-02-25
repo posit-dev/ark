@@ -532,3 +532,76 @@ fn test_multiline_printvalue_truncated_from_autoprint() {
     // Exit the debugger
     frontend.execute_request_invisibly("Q");
 }
+
+/// When `c` (continue) is used in a debugged function, user cat() output
+/// matching a debug prefix is deferred by the stream filter but ultimately
+/// emitted, because `filter.set_debugging(false)` fires when the browser's
+/// ReadConsole returns "c". So during the function body, `was_debugging` is
+/// false, and at the top-level ReadConsole the filter emits the content
+/// (was_debugging=false, is_browser=false).
+///
+/// `exiting from: f()` reaches autoprint at n_frame=0. The
+/// `debug_was_debugging` flag (set during cleanup) tells the next
+/// `read_console` to strip it even at a non-browser prompt.
+#[test]
+fn test_continue_prefix_cat_preserved() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly(
+        r#"f <- function() {
+            cat("line1\n")
+            cat("Called from: user log\n")
+            cat("line3\n")
+            1
+        }"#,
+    );
+    frontend.execute_request_invisibly("debug(f)");
+
+    // Call f() - enters debugger at first expression
+    frontend.send_execute_request("f()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue with "c" - executes entire function body without stopping.
+    // `filter.set_debugging(false)` fires when the browser's ReadConsole
+    // returns "c", so all cat() output during execution has was_debugging=false.
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+
+    // All three cat() lines survive: the prefix-matching line is deferred
+    // by the stream filter but emitted at the top-level ReadConsole because
+    // was_debugging=false and is_browser=false.
+    assert!(
+        streams.stdout().contains("line1"),
+        "line1 should survive, got: {:?}",
+        streams.stdout()
+    );
+    assert!(
+        streams.stdout().contains("Called from: user log"),
+        "prefix-matching cat output should survive with c, got: {:?}",
+        streams.stdout()
+    );
+    assert!(
+        streams.stdout().contains("line3"),
+        "line3 should survive, got: {:?}",
+        streams.stdout()
+    );
+
+    let result = frontend.recv_iopub_execute_result();
+    assert!(result.contains("[1] 1"));
+    assert!(
+        !result.contains("exiting from:"),
+        "exiting from: should be stripped via debug_was_debugging, got: {result:?}"
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(f)");
+}
