@@ -38,10 +38,10 @@ use super::dap::Breakpoint;
 use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
+use crate::console::Console;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
-use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
@@ -52,6 +52,11 @@ use crate::request::RRequest;
 use crate::url::ExtUrl;
 
 const THREAD_ID: i64 = -1;
+
+/// Sentinel expression sent by the frontend to notify the kernel that the user
+/// selected a different stack frame in the debugger UI. Subsequent console
+/// evaluations will run in that frame's environment.
+const SELECTED_FRAME_EXPRESSION: &str = ".positron_selected_frame";
 
 // TODO: Handle comm close to shut down the DAP server thread.
 //
@@ -184,28 +189,36 @@ fn listen_dap_events<W: Write>(
                         })
                     },
 
-                    DapBackendEvent::Stopped (DapStoppedEvent{ preserve_focus }) => {
+                    DapBackendEvent::Stopped => {
                         Event::Stopped(StoppedEventBody {
                             reason: StoppedEventReason::Step,
                             description: None,
                             thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(preserve_focus),
+                            preserve_focus_hint: Some(false),
                             text: None,
                             all_threads_stopped: Some(true),
                             hit_breakpoint_ids: None,
                         })
                     },
 
-                    DapBackendEvent::Exception(DapExceptionEvent { class, message, preserve_focus }) => {
+                    DapBackendEvent::Exception(DapExceptionEvent { class, message }) => {
                         let text = format!("<{class}>\n{message}");
                         Event::Stopped(StoppedEventBody {
                             reason: StoppedEventReason::Exception,
                             description: Some(message),
                             thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(preserve_focus),
+                            preserve_focus_hint: Some(false),
                             text: Some(text),
                             all_threads_stopped: Some(true),
                             hit_breakpoint_ids: None,
+                        })
+                    },
+
+                    DapBackendEvent::Invalidated => {
+                        Event::Invalidated(InvalidatedEventBody {
+                            areas: Some(vec![types::InvalidatedAreas::Variables]),
+                            thread_id: Some(THREAD_ID),
+                            stack_frame_id: None,
                         })
                     },
 
@@ -786,7 +799,19 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 None => (expression.as_str(), false),
             };
 
-            let rsp = {
+            let rsp = if expression == SELECTED_FRAME_EXPRESSION {
+                log::trace!("DAP: Received frame selection sentinel, frame_id: {frame_id:?}");
+                Console::get().set_debug_selected_frame_id(frame_id);
+                req.success(ResponseBody::Evaluate(EvaluateResponse {
+                    result: String::new(),
+                    type_field: None,
+                    presentation_hint: None,
+                    variables_reference: 0,
+                    named_variables: None,
+                    indexed_variables: None,
+                    memory_reference: None,
+                }))
+            } else {
                 let capture = if print { Some(&mut capture) } else { None };
                 let result = state.lock().unwrap().evaluate(expr, frame_id, capture);
                 log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
@@ -796,7 +821,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         let response = state.lock().unwrap().into_evaluate_response(variable);
                         req.success(ResponseBody::Evaluate(response))
                     },
-                    Err(err) => req.error(&err),
+                    Err(err) => req.error(&format!("Can't evaluate variable: {err:?}")),
                 }
             };
 

@@ -111,6 +111,14 @@ fn format_dap_event(event: &Event) -> String {
                 id, line, verified
             )
         },
+        Event::Invalidated(body) => {
+            let areas = body
+                .areas
+                .as_ref()
+                .map(|a| format!("{:?}", a))
+                .unwrap_or_else(|| "all".into());
+            format!("Invalidated(areas={})", areas)
+        },
         Event::Terminated(_) => "Terminated".to_string(),
         Event::Exited(body) => format!("Exited(code={})", body.exit_code),
         Event::Thread(body) => {

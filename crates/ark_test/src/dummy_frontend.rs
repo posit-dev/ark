@@ -920,20 +920,17 @@ impl DummyArkFrontend {
     /// Execute an expression while in debug mode and receive all expected messages.
     ///
     /// This is for evaluating expressions that don't advance the debugger (e.g., `1`, `x`).
-    /// The caller must still receive the DAP `Stopped` event with `preserve_focus_hint=true`.
+    /// The caller must still receive the DAP `Invalidated` event to refresh variables.
     ///
-    /// The message sequence is (in order):
-    /// 1. stop_debug (leaving current location)
-    /// 2. start_debug (back at same location)
-    /// 3. execute_result (the evaluated expression result)
-    /// 4. idle
+    /// Transient evals skip the stop_debug/start_debug cycle to preserve frame selection
+    /// and keep frame IDs valid. The message sequence is (in order):
+    /// 1. execute_result (the evaluated expression result)
+    /// 2. idle
     #[track_caller]
     pub fn debug_send_expr(&self, expr: &str) -> u32 {
         self.send_execute_request(expr, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-        self.recv_iopub_stop_debug();
-        self.recv_iopub_start_debug();
         self.recv_iopub_execute_result();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
@@ -943,22 +940,21 @@ impl DummyArkFrontend {
     ///
     /// Unlike stepping to an error (which exits debug), evaluating an error
     /// from the console should keep us in debug mode.
-    /// The caller must still receive the DAP `Stopped` event with `preserve_focus_hint=true`.
+    /// The caller must still receive the DAP `Invalidated` event to refresh variables.
     ///
-    /// Note: In debug mode, errors are streamed on stderr (not as `ExecuteError`)
-    /// and a regular execution reply is sent. That's a limitation of the R kernel.
-    ///
-    /// The `error_contains` parameter specifies what substring to expect in stderr.
+    /// The `error_contains` parameter specifies what substring to expect in the error.
     #[track_caller]
     pub fn debug_send_error_expr(&self, expr: &str, error_contains: &str) -> u32 {
         self.send_execute_request(expr, ExecuteRequestOptions::default());
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-        self.recv_iopub_stop_debug();
-        self.recv_iopub_start_debug();
-        self.assert_stream_stderr_contains(error_contains);
+        let evalue = self.recv_iopub_execute_error();
+        assert!(
+            evalue.contains(error_contains),
+            "Expected error containing {error_contains:?}, got: {evalue:?}"
+        );
         self.recv_iopub_idle();
-        self.recv_shell_execute_reply()
+        self.recv_shell_execute_reply_exception()
     }
 
     /// Execute a step command in a sourced file context.
@@ -1065,8 +1061,8 @@ impl DummyArkFrontend {
     /// This queries the kernel's virtual document storage via an R function call.
     /// Returns `None` if the document is not found (or has empty content).
     ///
-    /// Note: In debug mode, this consumes stop_debug/start_debug messages.
-    /// Outside debug mode, no debug messages are expected.
+    /// Note: In debug mode, transient evals don't produce stop_debug/start_debug
+    /// messages. The caller must receive the DAP `Invalidated` event separately.
     #[track_caller]
     pub fn get_virtual_document(&self, uri: &str) -> Option<String> {
         // Use cat() which handles NULL gracefully (outputs nothing)
@@ -1078,17 +1074,9 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        let was_in_debug = self.in_debug();
-        if was_in_debug {
-            self.recv_iopub_stop_debug();
-        }
-
         let streams = self.drain_streams();
         let content = streams.stdout.trim_end();
 
-        if was_in_debug {
-            self.recv_iopub_start_debug();
-        }
         self.recv_iopub_idle();
         self.recv_shell_execute_reply();
 

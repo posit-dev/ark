@@ -27,11 +27,16 @@
     # This reproduces the behaviour of R's default error handler:
     # - Invoke `getOption("error")`
     # - Save backtrace for `traceback()`
-    # - Jump to top-level
+    # - Jump to top-level, or back to browser if we're in one
     defer({
         invoke_option_error_handler()
         poke_traceback()
-        invokeRestart("abort")
+
+        if (!is.null(findRestart("browser"))) {
+            invokeRestart("browser")
+        } else {
+            invokeRestart("abort")
+        }
     })
 
     if (!.ps.is_installed("rlang")) {

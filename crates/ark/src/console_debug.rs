@@ -75,30 +75,41 @@ impl From<&FrameInfo> for FrameInfoId {
 impl Console {
     pub(crate) fn debug_start(
         &mut self,
-        debug_preserve_focus: bool,
+        transient_eval: bool,
         debug_stopped_reason: DebugStoppedReason,
     ) {
         match self.debug_stack_info() {
             Ok(mut stack) => {
                 // Figure out whether we changed location since last time,
-                // e.g. because the user evaluated an expression that hit
-                // another breakpoint. In that case we do want to move
-                // focus, even though the user didn't explicitly used a step
-                // gesture. Our indication that we changed location is
-                // whether the call stack looks the same as last time. This
-                // is not 100% reliable as this heuristic might have false
-                // negatives, e.g. if the control flow exited the current
-                // context via condition catching and jumped back in the
-                // debugged function.
+                // e.g. because a transient eval hit another breakpoint. In
+                // that case we can't preserve the debug session and need to
+                // show the user the new location. Our indication that we
+                // changed location is whether the call stack looks the same
+                // as last time. This is not 100% reliable as this heuristic
+                // might have false negatives, e.g. if the control flow
+                // exited the current context via condition catching and
+                // jumped back in the debugged function.
                 let stack_id: Vec<FrameInfoId> = stack.iter().map(|f| f.into()).collect();
-                let same_stack = stack_id == self.debug_last_stack;
+                let stack_changed = stack_id != self.debug_last_stack;
 
-                // Initialize fallback sources for this stack
-                let fallback_sources = self.load_fallback_sources(&stack);
+                // Transient eval with unchanged stack: just refresh variables
+                if transient_eval && !stack_changed {
+                    let dap = self.debug_dap.lock().unwrap();
+                    dap.send_invalidated();
+                    return;
+                }
+
+                // If we skipped `debug_stop` during a transient eval but the
+                // stack changed, clean up and notify frontend before starting
+                // the new session.
+                if transient_eval {
+                    self.debug_stop_session();
+                }
 
                 self.debug_last_stack = stack_id;
 
-                let preserve_focus = same_stack && debug_preserve_focus;
+                // Initialize fallback sources for this stack
+                let fallback_sources = self.load_fallback_sources(&stack);
 
                 let show = get_show_hidden_frames();
                 if !show.internal {
@@ -109,23 +120,30 @@ impl Console {
                 }
 
                 let mut dap = self.debug_dap.lock().unwrap();
-                dap.start_debug(
-                    stack,
-                    preserve_focus,
-                    fallback_sources,
-                    debug_stopped_reason,
-                )
+                dap.start_debug(stack, fallback_sources, debug_stopped_reason)
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
     }
 
     pub(crate) fn debug_stop(&mut self) {
+        // Preserve all state in case of transient eval. Only guard when
+        // actually debugging, otherwise we skip resetting state like
+        // `is_interrupting_for_debugger` that needs cleanup regardless.
+        if self.debug_is_debugging && self.debug_transient_eval {
+            return;
+        }
+
         self.debug_is_debugging = false;
         self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
+        self.debug_stop_session();
+    }
+
+    fn debug_stop_session(&mut self) {
         self.clear_fallback_sources();
         self.debug_session_index += 1;
+        self.set_debug_selected_frame_id(None);
 
         let mut dap = self.debug_dap.lock().unwrap();
         dap.stop_debug();
