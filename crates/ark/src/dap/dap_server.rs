@@ -23,6 +23,7 @@ use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use dap::base_message::Sendable;
 use dap::errors::ServerError;
 use dap::events::*;
 use dap::prelude::*;
@@ -44,6 +45,7 @@ use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
+use crate::r_task::spawn_idle_any_prompt;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
@@ -110,12 +112,15 @@ pub fn start_dap(
 
         let reader = BufReader::new(&stream);
         let writer = BufWriter::new(&stream);
+        let (responses_tx, responses_rx) = unbounded::<Response>();
+
         let mut server = DapServer::new(
             reader,
             writer,
             state.clone(),
             r_request_tx.clone(),
             comm_tx.clone(),
+            responses_tx,
         );
 
         let (backend_events_tx, backend_events_rx) = unbounded::<DapBackendEvent>();
@@ -127,14 +132,11 @@ pub fn start_dap(
         // to the stack variable `stream` through `server`)
         let _ = crossbeam::thread::scope(|scope| {
             spawn!(scope, "ark-dap-events", {
-                move |_| listen_dap_events(output_clone, backend_events_rx, done_rx)
+                move |_| listen_dap_events(output_clone, backend_events_rx, responses_rx, done_rx)
             });
 
             // Connect the backend to the events thread
-            {
-                let mut state = state.lock().unwrap();
-                state.backend_events_tx = Some(backend_events_tx);
-            }
+            state.lock().unwrap().backend_events_tx = Some(backend_events_tx);
 
             loop {
                 // If disconnected, break and accept a new connection to create a new server
@@ -157,6 +159,7 @@ pub fn start_dap(
 fn listen_dap_events<W: Write>(
     output: Arc<Mutex<ServerOutput<W>>>,
     backend_events_rx: Receiver<DapBackendEvent>,
+    responses_rx: Receiver<Response>,
     done_rx: Receiver<bool>,
 ) {
     loop {
@@ -231,6 +234,24 @@ fn listen_dap_events<W: Write>(
                 }
             },
 
+            recv(responses_rx) -> response => {
+                let response = match response {
+                    Ok(response) => response,
+                    Err(err) => {
+                        log::info!("DAP: Responses channel closed: {err:?}");
+                        return;
+                    },
+                };
+
+                log::trace!("DAP: Sending async response: {:?}", response);
+
+                let mut output = output.lock().unwrap();
+                if let Err(err) = output.send(Sendable::Response(response)) {
+                    log::warn!("DAP: Failed to send response, closing: {err:?}");
+                    return;
+                }
+            },
+
             // Break the loop and terminate the thread
             recv(done_rx) -> _ => { return; },
         )
@@ -243,6 +264,7 @@ pub struct DapServer<R: Read, W: Write> {
     state: Arc<Mutex<Dap>>,
     r_request_tx: Sender<RRequest>,
     comm_tx: Option<CommOutgoingTx>,
+    responses_tx: Sender<Response>,
 }
 
 impl<R: Read, W: Write> DapServer<R, W> {
@@ -252,6 +274,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         state: Arc<Mutex<Dap>>,
         r_request_tx: Sender<RRequest>,
         comm_tx: CommOutgoingTx,
+        responses_tx: Sender<Response>,
     ) -> Self {
         let server = Server::new(reader, writer);
         let output = server.output.clone();
@@ -261,6 +284,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             state,
             r_request_tx,
             comm_tx: Some(comm_tx),
+            responses_tx,
         }
     }
 
@@ -292,6 +316,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::Source(args) => self.handle_source(req, args),
             Command::Scopes(args) => self.handle_scopes(req, args),
             Command::Variables(args) => self.handle_variables(req, args),
+            Command::Evaluate(args) => self.handle_evaluate(req, args),
             Command::Continue(args) => {
                 let resp = ResponseBody::Continue(ContinueResponse {
                     all_threads_continued: Some(true),
@@ -367,6 +392,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                     condition_description: None,
                 },
             ]),
+            supports_evaluate_for_hovers: Some(true),
             ..Default::default()
         }));
         self.respond(rsp)?;
@@ -740,6 +766,46 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.respond(rsp)
     }
 
+    fn handle_evaluate(
+        &mut self,
+        req: Request,
+        args: EvaluateArguments,
+    ) -> Result<(), ServerError> {
+        let expression = args.expression;
+        let frame_id = args.frame_id;
+        let state = self.state.clone();
+        let responses_tx = self.responses_tx.clone();
+
+        log::trace!("DAP: Spawning idle task for evaluate");
+        spawn_idle_any_prompt(move |mut capture| async move {
+            log::trace!("DAP: Idle task started for evaluate");
+
+            // If expression starts with "/print ", evaluate and print result
+            let (expr, print) = match expression.strip_prefix("/print ") {
+                Some(expr) => (expr, true),
+                None => (expression.as_str(), false),
+            };
+
+            let rsp = {
+                let capture = if print { Some(&mut capture) } else { None };
+                let result = state.lock().unwrap().evaluate(expr, frame_id, capture);
+                log::trace!("DAP: Evaluate completed, success: {}", result.is_ok());
+
+                match result {
+                    Ok(variable) => {
+                        let response = state.lock().unwrap().into_evaluate_response(variable);
+                        req.success(ResponseBody::Evaluate(response))
+                    },
+                    Err(err) => req.error(&err),
+                }
+            };
+
+            responses_tx.send(rsp).log_err();
+        });
+
+        Ok(())
+    }
+
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
         // Wait until we're in the `r_task()` to lock
         // See https://github.com/posit-dev/positron/issues/5024
@@ -764,40 +830,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn into_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
-        let mut state = self.state.lock().unwrap();
-        let mut out = Vec::with_capacity(variables.len());
-
-        for variable in variables.into_iter() {
-            let name = variable.name;
-            let value = variable.value;
-            let type_field = variable.type_field;
-            let variables_reference_object = variable.variables_reference_object;
-
-            // If we have a `variables_reference_object`, then this variable is
-            // structured and has children. We need a new unique
-            // `variables_reference` to return that will map to this object in
-            // a followup `Variables` request.
-            let variables_reference = match variables_reference_object {
-                Some(x) => state.insert_variables_reference_object(x),
-                None => 0,
-            };
-
-            let variable = Variable {
-                name,
-                value,
-                type_field,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            };
-
-            out.push(variable);
-        }
-
-        out
+        self.state.lock().unwrap().into_variables(variables)
     }
 
     fn handle_step<A>(

@@ -125,7 +125,6 @@ impl Console {
         self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
         self.clear_fallback_sources();
-        self.debug_reset_frame_id();
         self.debug_session_index += 1;
 
         let mut dap = self.debug_dap.lock().unwrap();
@@ -293,10 +292,6 @@ impl Console {
         let out = self.debug_current_frame_id;
         self.debug_current_frame_id += 1;
         out
-    }
-
-    pub(crate) fn debug_reset_frame_id(&mut self) {
-        self.debug_current_frame_id = 0;
     }
 
     pub(crate) fn ark_debug_uri(

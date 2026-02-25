@@ -141,7 +141,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
-            crate::r_task::spawn_idle(move || async {
+            crate::r_task::spawn_idle(move |_| async {
                 log::info!("Watching R modules from sources via cargo manifest");
                 spawn_watcher_thread(root);
             });
@@ -257,9 +257,9 @@ mod debug {
                 }
 
                 r_task(|| {
-                    let r_main = Console::get();
+                    let console = Console::get();
                     if let Err(err) =
-                        import_file(&path, *src, r_main.positron_ns.as_ref().unwrap().sexp)
+                        import_file(&path, *src, console.positron_ns.as_ref().unwrap().sexp)
                     {
                         log::error!("{err:?}");
                     }

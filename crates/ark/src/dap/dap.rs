@@ -15,14 +15,20 @@ use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
 use crossbeam::channel::Sender;
+use dap::responses::EvaluateResponse;
+use dap::types::Variable;
 use harp::object::RObject;
+use harp::R_ENVS;
 use stdext::result::ResultExt;
 use stdext::spawn;
 use url::Url;
 
+use crate::console::ConsoleOutputCapture;
 use crate::console::DebugStoppedReason;
 use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
+use crate::dap::dap_variables::object_variable;
+use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
 
@@ -315,11 +321,11 @@ impl Dap {
         for frame in stack.iter_mut() {
             // Move the `environment` out of the `FrameInfo`, who's only
             // job is to get it here. We don't use it otherwise.
-            let environment = frame.environment.take();
-
-            let Some(environment) = environment else {
-                continue;
-            };
+            // If the frame has no environment (e.g. top-level browser), use global env.
+            let environment = frame
+                .environment
+                .take()
+                .unwrap_or_else(|| RThreadSafe::new(RObject::new(R_ENVS.global)));
 
             // Map this frame's `id` to a unique `variables_reference`, and
             // then map that `variables_reference` to the R object we will
@@ -360,6 +366,103 @@ impl Dap {
         self.current_variables_reference += 1;
 
         variables_reference
+    }
+
+    pub fn into_variables(&mut self, variables: Vec<RVariable>) -> Vec<Variable> {
+        let mut out = Vec::with_capacity(variables.len());
+
+        for variable in variables.into_iter() {
+            // If we have a `variables_reference_object`, then this variable is
+            // structured and has children. We need a new unique
+            // `variables_reference` to return that will map to this object in
+            // a followup `Variables` request.
+            let variables_reference = match variable.variables_reference_object {
+                Some(x) => self.insert_variables_reference_object(x),
+                None => 0,
+            };
+
+            let variable = Variable {
+                name: variable.name,
+                value: variable.value,
+                type_field: variable.type_field,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            };
+
+            out.push(variable);
+        }
+
+        out
+    }
+
+    pub fn into_evaluate_response(&mut self, variable: RVariable) -> EvaluateResponse {
+        let variables_reference = match variable.variables_reference_object {
+            Some(obj) => self.insert_variables_reference_object(obj),
+            None => 0,
+        };
+
+        EvaluateResponse {
+            result: variable.value,
+            type_field: variable.type_field,
+            presentation_hint: None,
+            variables_reference,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+        }
+    }
+
+    pub fn evaluate(
+        &self,
+        expression: &str,
+        frame_id: Option<i64>,
+        capture: Option<&mut ConsoleOutputCapture>,
+    ) -> Result<RVariable, String> {
+        let env = self.frame_env(frame_id)?;
+
+        match harp::parse_eval0(expression, harp::RObject::view(env)) {
+            Ok(value) => {
+                if let Some(capture) = capture {
+                    harp::utils::r_print(value.sexp);
+                    Ok(RVariable {
+                        name: String::new(),
+                        value: capture.take().trim_end().to_string(),
+                        type_field: None,
+                        variables_reference_object: None,
+                    })
+                } else {
+                    Ok(object_variable(String::new(), value.sexp))
+                }
+            },
+            Err(err) => Err(evaluate_error_message(err)),
+        }
+    }
+
+    fn frame_env(&self, frame_id: Option<i64>) -> Result<libr::SEXP, String> {
+        let Some(frame_id) = frame_id else {
+            return Ok(R_ENVS.global);
+        };
+
+        let Some(variables_reference) =
+            self.frame_id_to_variables_reference.get(&frame_id).copied()
+        else {
+            return Err(format!("Unknown `frame_id`: {frame_id}"));
+        };
+
+        let Some(obj) = self
+            .variables_reference_to_r_object
+            .get(&variables_reference)
+        else {
+            return Err(format!(
+                "Unknown `variables_reference`: {variables_reference}"
+            ));
+        };
+
+        Ok(obj.get().sexp)
     }
 
     pub fn next_breakpoint_id(&mut self) -> i64 {
@@ -516,6 +619,13 @@ impl Dap {
     }
 }
 
+fn evaluate_error_message(err: harp::Error) -> String {
+    match err {
+        harp::Error::TryCatchError { message, .. } => message,
+        err => format!("{err}"),
+    }
+}
+
 // Handler for Amalthea socket threads
 impl ServerHandler for Dap {
     fn start(
@@ -561,7 +671,6 @@ mod tests {
     fn create_test_dap() -> (Dap, crossbeam::channel::Receiver<DapBackendEvent>) {
         let (backend_events_tx, backend_events_rx) = unbounded();
         let (r_request_tx, _r_request_rx) = unbounded();
-
         let dap = Dap {
             is_debugging: false,
             is_connected: true,

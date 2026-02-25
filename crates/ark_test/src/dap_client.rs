@@ -23,6 +23,7 @@ use dap::requests::AttachRequestArguments;
 use dap::requests::Command;
 use dap::requests::ContinueArguments;
 use dap::requests::DisconnectArguments;
+use dap::requests::EvaluateArguments;
 use dap::requests::InitializeArguments;
 use dap::requests::NextArguments;
 use dap::requests::PauseArguments;
@@ -406,6 +407,49 @@ impl DapClient {
             Some(ResponseBody::Variables(v)) => v.variables,
             other => panic!("Expected Variables response body, got {:?}", other),
         }
+    }
+
+    /// Evaluate an expression and return the result.
+    #[track_caller]
+    pub fn evaluate(&mut self, expression: &str, frame_id: Option<i64>) -> String {
+        let seq = self
+            .send(Command::Evaluate(EvaluateArguments {
+                expression: expression.to_string(),
+                frame_id,
+                context: None,
+                format: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Evaluate request failed: {:?}", response);
+
+        match response.body {
+            Some(ResponseBody::Evaluate(e)) => e.result,
+            other => panic!("Expected Evaluate response body, got {:?}", other),
+        }
+    }
+
+    /// Evaluate an expression that is expected to fail, and return the error message.
+    #[track_caller]
+    pub fn evaluate_error(&mut self, expression: &str, frame_id: Option<i64>) -> String {
+        let seq = self
+            .send(Command::Evaluate(EvaluateArguments {
+                expression: expression.to_string(),
+                frame_id,
+                context: None,
+                format: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(
+            !response.success,
+            "Evaluate request should have failed: {:?}",
+            response
+        );
+
+        format!("{:?}", response.message)
     }
 
     /// Request the list of threads.

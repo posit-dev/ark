@@ -19,6 +19,7 @@ use crossbeam::channel::Sender;
 use uuid::Uuid;
 
 use crate::console::Console;
+use crate::console::ConsoleOutputCapture;
 use crate::fixtures::r_test_init;
 
 /// Task channels for interrupt-time tasks
@@ -26,6 +27,9 @@ static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::
 
 /// Task channels for idle-time tasks
 static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+
+/// Task channels for idle tasks that run at any idle prompt (top-level or browser)
+static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
@@ -58,11 +62,15 @@ impl TaskChannels {
     }
 }
 
-/// Returns receivers for both interrupt and idle tasks.
+/// Returns receivers for interrupt, idle, and debug-idle tasks.
 /// Initializes the task channels if they haven't been initialized yet.
 /// Can only be called once (intended for `Console` during init).
-pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>) {
-    (INTERRUPT_TASKS.take_rx(), IDLE_TASKS.take_rx())
+pub(crate) fn take_receivers() -> (Receiver<RTask>, Receiver<RTask>, Receiver<RTask>) {
+    (
+        INTERRUPT_TASKS.take_rx(),
+        IDLE_TASKS.take_rx(),
+        IDLE_ANY_TASKS.take_rx(),
+    )
 }
 
 pub enum RTask {
@@ -274,12 +282,17 @@ where
     return result.lock().unwrap().take().unwrap();
 }
 
+/// Spawn an async task that runs when R is at top-level idle prompt.
+///
+/// The closure receives a `ConsoleOutputCapture` that can be used to capture
+/// console output during the task. Call `take()` on it to retrieve output, which
+/// can be done multiple times. Any remaining output is logged when the capture is dropped.
 pub(crate) fn spawn_idle<F, Fut>(fun: F)
 where
-    F: FnOnce() -> Fut + 'static + Send,
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
     Fut: Future<Output = ()> + 'static,
 {
-    spawn_ext(fun, true)
+    spawn_idle_to(&IDLE_TASKS, fun)
 }
 
 pub(crate) fn spawn_interrupt<F, Fut>(fun: F)
@@ -288,6 +301,47 @@ where
     Fut: Future<Output = ()> + 'static,
 {
     spawn_ext(fun, false)
+}
+
+/// Spawn an async task that runs when R is at any idle prompt (top-level or browser).
+/// Unlike `spawn_idle` which only runs at top-level, this also runs during debug sessions.
+///
+/// The closure receives a `ConsoleOutputCapture` that can be used to capture
+/// console output during the task. Call `take()` on it to retrieve output, which
+/// can be done multiple times. Any remaining output is logged when the capture is dropped.
+pub(crate) fn spawn_idle_any_prompt<F, Fut>(fun: F)
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    spawn_idle_to(&IDLE_ANY_TASKS, fun)
+}
+
+fn spawn_idle_to<F, Fut>(channels: &LazyLock<TaskChannels>, fun: F)
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    if stdext::IS_TESTING && !Console::is_initialized() {
+        let _lock = harp::fixtures::R_TEST_LOCK.lock();
+        futures::executor::block_on(fun(ConsoleOutputCapture::dummy()));
+        return;
+    }
+
+    let tasks_tx = channels.tx();
+
+    let wrapper_fut = async move {
+        let capture = Console::get_mut().start_capture();
+        fun(capture).await
+    };
+
+    let task = RTask::Async(RTaskAsync {
+        fut: Box::pin(wrapper_fut) as BoxFuture<'static, ()>,
+        tasks_tx: tasks_tx.clone(),
+        start_info: RTaskStartInfo::new(true),
+    });
+
+    tasks_tx.send(task).unwrap();
 }
 
 fn spawn_ext<F, Fut>(fun: F, only_idle: bool)
