@@ -106,12 +106,6 @@ unsafe fn unprotect(cell: SEXP) {
     SET_TAG(cell, R_NilValue);
 }
 
-unsafe fn protect_replace(cell: SEXP, data: SEXP) -> SEXP {
-    let old = TAG(cell);
-    SET_TAG(cell, data);
-    old
-}
-
 #[derive(Debug)]
 pub struct RObject {
     pub sexp: SEXP,
@@ -325,11 +319,6 @@ impl RObject {
             sexp: data,
             cell: unsafe { protect(data) },
         }
-    }
-
-    pub fn replace(&mut self, data: SEXP) -> SEXP {
-        self.sexp = data;
-        unsafe { protect_replace(self.cell, data) }
     }
 
     pub fn view(data: SEXP) -> Self {
