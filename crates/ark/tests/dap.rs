@@ -758,3 +758,45 @@ f(99)
     frontend.debug_send_quit();
     dap.recv_continued();
 }
+
+/// Same as above but with `identity()`, a non-condition related example.
+#[test]
+fn test_dap_browser_in_identity() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+f <- function(my_var) {
+  identity({
+    browser()
+    my_var
+  })
+}
+f(42)
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let frame_id = stack[0].id;
+    let scopes = dap.scopes(frame_id);
+    let variables = dap.variables(scopes[0].variables_reference);
+
+    let var = variables.iter().find(|v| v.name == "my_var").unwrap();
+    assert_eq!(var.value, "42");
+
+    // Evaluate `my_var` from the console: must resolve to the argument.
+    // Transient evals send Invalidated instead of Continued+Stopped.
+    frontend.send_execute_request("my_var", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    dap.recv_invalidated();
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
