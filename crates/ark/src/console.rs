@@ -1798,10 +1798,11 @@ impl Console {
     }
 
     /// Resolve the frame in which to evaluate the current expression.
-    /// Uses the debug-selected frame if one has been set, otherwise the current frame.
+    /// Uses the debug-selected frame if one has been set, otherwise the
+    /// captured environment from `read_console_env_stack`.
     fn eval_frame(&self) -> harp::RObject {
         let Some(frame_id) = self.debug_selected_frame_id.get() else {
-            return harp::r_current_frame();
+            return self.eval_env();
         };
 
         let state = self.debug_dap.lock().unwrap();
@@ -1809,7 +1810,7 @@ impl Console {
             Ok(env) => harp::RObject::view(env),
             Err(err) => {
                 log::warn!("Failed to resolve selected frame {frame_id}: {err}");
-                harp::r_current_frame()
+                self.eval_env()
             },
         }
     }
