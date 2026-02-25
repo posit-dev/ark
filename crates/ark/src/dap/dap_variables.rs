@@ -79,8 +79,9 @@ impl RVariableBuilder {
 ///
 /// Currently can collect variables for either:
 /// - A frame environment, from a `FrameInfo`
-/// - A recursive child of a frame environment, if that child is a bare list
-///   or environment itself.
+/// - A recursive child of a frame environment, if that child is:
+///   - An environment
+///   - A list (both classed and non-classed lists are allowed)
 pub(super) fn object_variables(x: SEXP) -> Vec<RVariable> {
     match r_typeof(x) {
         ENVSXP => env_variables(x),
@@ -157,22 +158,10 @@ fn object_variable(name: String, x: SEXP) -> RVariable {
 }
 
 fn object_variable_classed(name: String, x: SEXP) -> RVariable {
-    // TODO: Eventually add some support for classed values.
-    // Right now we just display the class name.
-    let class = harp::format::s3_class_to_string(x);
-
-    let (value, type_field) = match class {
-        Ok(class) => (class.clone(), class.clone()),
-        Err(err) => {
-            log::error!("{err:?}");
-            (String::from(""), String::from("<???>"))
-        },
-    };
-
-    RVariableBuilder::new(name)
-        .value(value)
-        .type_field(type_field)
-        .build()
+    match r_typeof(x) {
+        VECSXP => classed_list_variable(name, x),
+        _ => object_variable_classed_default(name, x),
+    }
 }
 
 fn object_variable_bare(name: String, x: SEXP) -> RVariable {
@@ -222,12 +211,18 @@ fn vec_type_field(x: SEXP) -> String {
 }
 
 fn list_variable(name: String, x: SEXP) -> RVariable {
+    list_variable_impl(name, x, String::from("<list>"), String::from("<list>"))
+}
+fn classed_list_variable(name: String, x: SEXP) -> RVariable {
+    list_variable_impl(name, x, classed_value(x), classed_type_field(x))
+}
+fn list_variable_impl(name: String, x: SEXP, value: String, type_field: String) -> RVariable {
     // This object can have children, and we know how to handle them
     let x = RThreadSafe::new(RObject::from(x));
 
     RVariableBuilder::new(name)
-        .value(String::from("<list>"))
-        .type_field(String::from("<list>"))
+        .value(value)
+        .type_field(type_field)
         .variables_reference_object(x)
         .build()
 }
@@ -350,6 +345,33 @@ fn active_binding_variable(name: String) -> RVariable {
         .value(String::from("<active binding>"))
         .type_field(String::from("<active binding>"))
         .build()
+}
+
+fn object_variable_classed_default(name: String, x: SEXP) -> RVariable {
+    RVariableBuilder::new(name)
+        .value(classed_value(x))
+        .type_field(classed_type_field(x))
+        .build()
+}
+
+fn classed_value(x: SEXP) -> String {
+    match harp::format::s3_class_to_string(x) {
+        Ok(value) => value,
+        Err(err) => {
+            log::error!("{err:?}");
+            String::from("")
+        },
+    }
+}
+
+fn classed_type_field(x: SEXP) -> String {
+    match harp::format::s3_class_to_string(x) {
+        Ok(value) => value,
+        Err(err) => {
+            log::error!("{err:?}");
+            String::from("<???>")
+        },
+    }
 }
 
 /// Return the names of a vector
