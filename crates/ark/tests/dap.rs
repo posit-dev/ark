@@ -248,12 +248,14 @@ fn test_dap_error_in_eval() {
     // from the console should keep us in debug mode.
     // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.send_execute_request("stop('eval error')", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
     dap.recv_invalidated();
 
     let evalue = frontend.recv_iopub_execute_error();
     assert!(evalue.contains("eval error"));
     frontend.recv_iopub_idle();
-    frontend.recv_shell_execute_reply_exception(); // stop('eval error')
+    frontend.recv_shell_execute_reply_exception();
 }
 
 #[test]

@@ -135,8 +135,10 @@ impl Console {
     }
 
     pub(crate) fn debug_stop(&mut self) {
-        // Preserve all state in case of transient eval
-        if self.debug_transient_eval {
+        // Preserve all state in case of transient eval. Only guard when
+        // actually debugging, otherwise we skip resetting state like
+        // `is_interrupting_for_debugger` that needs cleanup regardless.
+        if self.debug_is_debugging && self.debug_transient_eval {
             return;
         }
 

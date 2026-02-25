@@ -2770,19 +2770,13 @@ unsafe extern "C-unwind" fn eval_body_callback(data: *mut c_void) -> libr::SEXP 
 /// enters the error browser first. In all cases it saves the traceback
 /// and invokes the abort restart to jump to top level.
 unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_void) -> libr::SEXP {
-    // End current debug session (if any) so the error browser can start fresh
-    let console = Console::get_mut();
-    if console.debug_is_debugging {
-        console.debug_stop();
-    }
-
     // Call the R-side global error handler which sets the stopped reason,
-    // calls `browser()`, saves the backtrace, and invokes the abort restart
+    // calls `browser()`, saves the backtrace, and invokes the `abort` or
+    // `browser` restart.
     unsafe {
         let call = libr::Rf_lang2(r_symbol!(".ps.errors.globalErrorHandler"), err);
         libr::Rf_protect(call);
         libr::Rf_eval(call, ARK_ENVS.positron_ns);
-        // The handler longjumps via invok`eRestart("abort")`
     }
 
     unreachable!("globalErrorHandler longjumps via invokeRestart")
