@@ -699,19 +699,16 @@ f(1)
     let var = variables.iter().find(|v| v.name == "my_var").unwrap();
     assert_eq!(var.value, "1");
 
-    // Evaluate `my_var` from the console: must resolve to the argument
+    // Evaluate `my_var` from the console: must resolve to the argument.
+    // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.send_execute_request("my_var", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_stop_debug();
-
-    frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("[1] 1");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
 
     frontend.debug_send_quit();
     dap.recv_continued();
@@ -747,17 +744,16 @@ f(99)
     let var = variables.iter().find(|v| v.name == "my_var").unwrap();
     assert_eq!(var.value, "99");
 
-    // Evaluate `my_var` from the console: must resolve to the argument
+    // Evaluate `my_var` from the console: must resolve to the argument.
+    // Transient evals send Invalidated instead of Continued+Stopped.
     frontend.send_execute_request("my_var", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_stop_debug();
-    frontend.recv_iopub_start_debug();
     frontend.assert_stream_stdout_contains("[1] 99");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
-    dap.recv_continued();
-    dap.recv_stopped();
+
+    dap.recv_invalidated();
 
     frontend.debug_send_quit();
     dap.recv_continued();
