@@ -292,6 +292,23 @@ fn test_adversarial_cat_exiting_from() {
     frontend.recv_shell_execute_reply();
 }
 
+/// cat() output matching "debug at " is preserved. This prefix has the most
+/// complex matching logic (file#line: expr pattern), so it's important to
+/// verify it doesn't get swallowed outside debug sessions.
+#[test]
+fn test_adversarial_cat_debug_at() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.send_execute_request(
+        r#"cat("debug at file.R#1: x <- 1\n")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("debug at file.R#1: x <- 1");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
 /// A print method whose output matches "Called from:" is preserved in the
 /// execute_result (autoprint path). Autoprint output goes through the
 /// filter and accumulates in `autoprint_output`, so we verify it survives.
@@ -341,6 +358,134 @@ fn test_adversarial_print_debug() {
     assert!(result.contains("debug: custom handler"));
 }
 
+/// A print method whose output matches "debug at " is preserved in the
+/// execute_result (autoprint path). This is the most complex prefix.
+#[test]
+fn test_adversarial_print_debug_at() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.execute_request_invisibly(
+        r#"print.ark_test_adv3 <- function(x, ...) cat("debug at file.R#1: x <- 1\n")"#,
+    );
+
+    frontend.send_execute_request(
+        r#"structure(1, class = "ark_test_adv3")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    frontend.execute_request_invisibly("rm(print.ark_test_adv3)");
+
+    assert!(result.contains("debug at file.R#1: x <- 1"));
+}
+
+/// A print method whose output matches "debugging in:" is preserved in the
+/// execute_result (autoprint path).
+#[test]
+fn test_adversarial_print_debugging_in() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.execute_request_invisibly(
+        r#"print.ark_test_adv4 <- function(x, ...) cat("debugging in: custom handler\n")"#,
+    );
+
+    frontend.send_execute_request(
+        r#"structure(1, class = "ark_test_adv4")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    frontend.execute_request_invisibly("rm(print.ark_test_adv4)");
+
+    assert!(result.contains("debugging in: custom handler"));
+}
+
+/// A print method whose output matches "exiting from:" is preserved in the
+/// execute_result (autoprint path). This prefix is specifically handled by
+/// `strip_leading_debug_lines`, which is gated on `is_browser ||
+/// debug_was_debugging`, so at top level it must not fire.
+#[test]
+fn test_adversarial_print_exiting_from() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.execute_request_invisibly(
+        r#"print.ark_test_adv5 <- function(x, ...) cat("exiting from: custom handler\n")"#,
+    );
+
+    frontend.send_execute_request(
+        r#"structure(1, class = "ark_test_adv5")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    frontend.execute_request_invisibly("rm(print.ark_test_adv5)");
+
+    assert!(result.contains("exiting from: custom handler"));
+}
+
+/// A print method whose output starts with "exiting from:" followed by real
+/// content survives at top level. Guards against `strip_leading_debug_lines`
+/// being accidentally called without the `is_browser || debug_was_debugging`
+/// gate.
+#[test]
+fn test_adversarial_print_leading_exiting_from_survives() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.execute_request_invisibly(
+        r#"print.ark_test_strip1 <- function(x, ...) cat("exiting from: g()\nreal result\n")"#,
+    );
+
+    frontend.send_execute_request(
+        r#"structure(1, class = "ark_test_strip1")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    frontend.execute_request_invisibly("rm(print.ark_test_strip1)");
+
+    assert!(result.contains("exiting from: g()"));
+    assert!(result.contains("real result"));
+}
+
+/// A print method whose output has normal text followed by a debug prefix
+/// line survives at top level. Guards against `truncate_at_debug_prefix`
+/// being accidentally called without the `is_browser` gate.
+#[test]
+fn test_adversarial_print_trailing_debug_prefix_survives() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.execute_request_invisibly(
+        r#"print.ark_test_trunc1 <- function(x, ...) cat("user output\ndebug at file.R#1: x <- 1\nmore output\n")"#,
+    );
+
+    frontend.send_execute_request(
+        r#"structure(1, class = "ark_test_trunc1")"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    frontend.execute_request_invisibly("rm(print.ark_test_trunc1)");
+
+    assert!(result.contains("user output"));
+    assert!(result.contains("debug at file.R#1: x <- 1"));
+    assert!(result.contains("more output"));
+}
+
 /// cat() output matching a debug prefix inside a browser session is preserved
 /// when the expression part is not valid R (syntax error). The parse-based
 /// Known limitation: cat() output matching a non-R-expression debug prefix
@@ -349,7 +494,7 @@ fn test_adversarial_print_debug() {
 /// distinguish it from real debug output because both are followed by a
 /// browser ReadConsole prompt and the filter defers resolution to that point.
 #[test]
-fn test_adversarial_cat_in_debug_session_is_preserved() {
+fn test_adversarial_cat_in_debug_session_is_suppressed() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
@@ -540,9 +685,9 @@ fn test_multiline_printvalue_truncated_from_autoprint() {
 /// false, and at the top-level ReadConsole the filter emits the content
 /// (was_debugging=false, is_browser=false).
 ///
-/// `exiting from: f()` reaches autoprint at n_frame=0. The
-/// `debug_was_debugging` flag (set during cleanup) tells the next
-/// `read_console` to strip it even at a non-browser prompt.
+/// `exiting from: f()` reaches autoprint at n_frame=0. Since there's a
+/// return value after it, `strip_leading_debug_lines` keeps everything
+/// (noise + result) to avoid losing user content.
 #[test]
 fn test_continue_prefix_cat_preserved() {
     let frontend = DummyArkFrontend::lock();
@@ -595,13 +740,331 @@ fn test_continue_prefix_cat_preserved() {
 
     let result = frontend.recv_iopub_execute_result();
     assert!(result.contains("[1] 1"));
+    // Note: exiting from: is kept (noise) because there's a result after it.
+    // This is the conservative approach to avoid losing user content.
     assert!(
-        !result.contains("exiting from:"),
-        "exiting from: should be stripped via debug_was_debugging, got: {result:?}"
+        result.contains("exiting from:"),
+        "exiting from: should be kept along with result, got: {result:?}"
     );
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
     frontend.execute_request_invisibly("undebug(f)");
+}
+
+/// Known limitation: when `c` and another expression are submitted as a
+/// batch (e.g., `"c\n1 + 1"`), `exiting from:` leaks through the stream
+/// path instead of being suppressed.
+///
+/// This happens because `filter.set_debugging(false)` fires in the cleanup
+/// when the browser's ReadConsole returns `"c"`, before R emits
+/// `"exiting from:"`. So the filter records `was_debugging = false`. At
+/// the next ReadConsole (top-level, for `"1 + 1"`), `is_browser` is also
+/// false, so the filter emits the content instead of suppressing it.
+///
+/// Fixing this would require mirroring `debug_was_debugging` in the filter,
+/// but that would also suppress user `cat()` output matching a prefix
+/// during `"c"` execution, regressing `test_continue_prefix_cat_preserved`.
+#[test]
+fn test_known_limitation_exiting_from_leaks_in_batch() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly("f <- function() 42");
+    frontend.execute_request_invisibly("debug(f)");
+
+    // Call f() - enters debugger
+    frontend.send_execute_request("f()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Send "c" and "1 + 1" as a batch. The kernel parses this as two
+    // expressions. "c" is recognised as a debug command and forwarded to
+    // the browser. "1 + 1" stays in pending_inputs.
+    //
+    // Because pending_inputs is non-empty when R emits "exiting from:",
+    // the message goes through the stream filter (not autoprint). The
+    // filter has is_debugging=false (set in cleanup), so it leaks.
+    frontend.send_execute_request("c\n1 + 1", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    assert!(
+        streams.stdout().contains("exiting from:"),
+        "Expected 'exiting from:' to leak in batch case, got: {:?}",
+        streams.stdout()
+    );
+
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(f)");
+}
+
+/// When `exiting from:` has a return value after it, we keep everything
+/// (noise + result) to avoid losing user content. This test verifies the
+/// result is preserved even with multi-line debug output.
+#[test]
+fn test_exiting_from_multiline_with_result_kept() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly(
+        "f <- function(long_argument_1 = 1, long_argument_2 = 2, long_argument_3 = 3, long_argument_4 = 4) 42",
+    );
+    frontend.execute_request_invisibly("debug(f)");
+
+    frontend.send_execute_request(
+        "f(long_argument_1 = 1, long_argument_2 = 2, long_argument_3 = 3, long_argument_4 = 4)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue - R emits multi-line "exiting from:" then the return value
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("exiting from:"),
+        "exiting from: should not be in stdout (goes to autoprint), got: {:?}",
+        streams.stdout()
+    );
+
+    let result = frontend.recv_iopub_execute_result();
+    assert!(result.contains("[1] 42"));
+    // Note: exiting from: is kept (noise) because there's a result after it.
+    // This is the conservative approach to avoid losing user content.
+    assert!(
+        result.contains("exiting from:"),
+        "exiting from: should be kept along with result, got: {result:?}"
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(f)");
+}
+
+/// Verify that the `debug: ` prefix (without "at") is filtered when stepping
+/// through un-sourced code. Sourced code produces `debug at file#line: `,
+/// but un-sourced code produces `debug: expr`.
+#[test]
+fn test_debug_prefix_filtered_when_stepping_unsourced() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly("f <- function() { x <- 1; x }");
+    frontend.execute_request_invisibly("debug(f)");
+
+    // Call f() - triggers "debugging in: f()" and "debug: x <- 1"
+    frontend.send_execute_request("f()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("debugging in:"),
+        "debugging in: should be filtered, got: {:?}",
+        streams.stdout()
+    );
+    assert!(
+        !streams.stdout().contains("debug: "),
+        "debug: prefix should be filtered, got: {:?}",
+        streams.stdout()
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Step with n - triggers "debug: x"
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("debug: "),
+        "debug: prefix should be filtered on step, got: {:?}",
+        streams.stdout()
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue to exit
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("exiting from:"),
+        "exiting from: should be filtered, got: {:?}",
+        streams.stdout()
+    );
+
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(f)");
+}
+
+/// Known limitation: when a prefix-matching cat() is followed by a
+/// non-matching cat() in the same expression inside a browser session,
+/// both are suppressed. The first cat() puts the filter in Filtering state,
+/// which accumulates all subsequent content until ReadConsole. At the
+/// browser prompt, everything is suppressed.
+#[test]
+fn test_collateral_suppression_in_browser() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // First cat() matches a prefix, second does not. Both are suppressed
+    // because the Filtering state accumulates everything until ReadConsole.
+    frontend.send_execute_request(
+        r#"{ cat("debug: log msg\n"); cat("innocent line\n") }"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("debug: log msg"),
+        "prefix-matching cat should be suppressed in browser, got: {:?}",
+        streams.stdout()
+    );
+    assert!(
+        !streams.stdout().contains("innocent line"),
+        "collateral cat output should also be suppressed in browser, got: {:?}",
+        streams.stdout()
+    );
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("Q");
+}
+
+/// When in a browser, calling a debugged function and continuing produces
+/// `exiting from:` before the return value. Since there's a return value,
+/// we keep everything (noise + result) to avoid losing user content.
+#[test]
+fn test_exiting_from_kept_with_result_at_browser_prompt() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly("f <- function() 42");
+    frontend.execute_request_invisibly("debug(f)");
+
+    // Enter a browser
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call f() from the browser - enters f's debugger
+    frontend.send_execute_request("f()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue from f's debugger. R emits "exiting from: f()" then the
+    // return value. Since there's a result, we keep everything (noise + result).
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("exiting from:"),
+        "exiting from: should not be in stdout (goes to autoprint), got: {:?}",
+        streams.stdout()
+    );
+
+    let result = frontend.recv_iopub_execute_result();
+    // Note: exiting from: is kept (noise) because there's a result after it.
+    assert!(
+        result.contains("exiting from:"),
+        "exiting from: should be kept along with result, got: {result:?}"
+    );
+    assert!(result.contains("[1] 42"));
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Exit the browser
+    frontend.execute_request_invisibly("Q");
+    frontend.execute_request_invisibly("undebug(f)");
+}
+
+/// Verify that user output from cat() is preserved between debug steps.
+/// When stepping through sourced code with cat() calls, the user output
+/// should survive while debug messages are filtered.
+#[test]
+fn test_user_output_preserved_between_debug_steps() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = frontend.send_source(
+        "
+{
+  browser()
+  cat('step one output\\n')
+  cat('step two output\\n')
+  1
+}
+",
+    );
+    dap.recv_stopped();
+
+    // Step to first cat()
+    frontend.debug_send_step_command("n", &file);
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Execute first cat() - user output should appear
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("step one output");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Execute second cat() - user output should also appear
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_stop_debug();
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stdout_contains("step two output");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Exit the debugger
+    frontend.debug_send_quit();
+    dap.recv_continued();
 }
