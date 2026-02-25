@@ -19,7 +19,6 @@ use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::RObject;
-use libr::R_GlobalEnv;
 use libr::R_NilValue;
 use libr::SEXP;
 use log::info;
@@ -27,6 +26,7 @@ use log::trace;
 use log::warn;
 use stdext::spawn;
 
+use crate::console;
 use crate::console::Console;
 use crate::help::message::HelpEvent;
 use crate::help::message::ShowHelpUrlKind;
@@ -267,45 +267,34 @@ impl RHelp {
     // Must be called in a `r_task` context.
     // Tries calling a custom help handler defined as an ark method.
     fn r_custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
-        unsafe {
-            let env = (|| {
-                #[cfg(not(test))]
-                if Console::is_initialized() {
-                    if let Ok(debug_env) = &Console::get().read_console_frame.try_borrow() {
-                        return (*debug_env).clone();
-                    }
-                }
+        let env = console::eval_env();
 
-                RObject::from(R_GlobalEnv)
-            })();
+        let obj = match harp::parse_eval0(topic.as_str(), env.sexp) {
+            Ok(obj) => obj,
+            Err(err) => {
+                // Could not parse/eval the topic; no custom handler.
+                log::warn!(
+                    "Could not parse/eval help topic expression '{}': {:?}",
+                    topic,
+                    err
+                );
+                return Ok(None);
+            },
+        };
 
-            let obj = match harp::parse_eval0(topic.as_str(), env.sexp) {
-                Ok(obj) => obj,
+        let handler: Option<RObject> =
+            ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
+
+        if let Some(handler) = handler {
+            let mut fun = RFunction::new_inlined(handler);
+            match fun.call_in(env.sexp) {
                 Err(err) => {
-                    // Could not parse/eval the topic; no custom handler.
-                    log::warn!(
-                        "Could not parse/eval help topic expression '{}': {:?}",
-                        topic,
-                        err
-                    );
-                    return Ok(None);
+                    log::error!("Error calling help handler: {:?}", err);
+                    return Err(anyhow!("Error calling help handler: {:?}", err));
                 },
-            };
-
-            let handler: Option<RObject> =
-                ArkGenerics::HelpGetHandler.try_dispatch(obj.sexp, vec![])?;
-
-            if let Some(handler) = handler {
-                let mut fun = RFunction::new_inlined(handler);
-                match fun.call_in(env.sexp) {
-                    Err(err) => {
-                        log::error!("Error calling help handler: {:?}", err);
-                        return Err(anyhow!("Error calling help handler: {:?}", err));
-                    },
-                    Ok(result) => {
-                        return Ok(Some(result.try_into()?));
-                    },
-                }
+                Ok(result) => {
+                    return Ok(Some(result.try_into()?));
+                },
             }
         }
 

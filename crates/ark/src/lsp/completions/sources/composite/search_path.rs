@@ -1,7 +1,7 @@
 //
 // search_path.rs
 //
-// Copyright (C) 2023-2025 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -17,6 +17,7 @@ use libr::R_lsInternal;
 use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
 
+use crate::console;
 use crate::lsp::completions::completion_context::CompletionContext;
 use crate::lsp::completions::completion_item::completion_item_from_package;
 use crate::lsp::completions::completion_item::completion_item_from_symbol;
@@ -51,11 +52,8 @@ fn completions_from_search_path(
 
     unsafe {
         // Iterate through environments starting from the current frame environment.
-        #[cfg(not(test))] // Unit tests do not have an `Console`
-        // Mem-Safety: Object protected by `Console` for the duration of the `r_task()`
-        let mut env = crate::console::Console::get().read_console_frame().sexp;
-        #[cfg(test)]
-        let mut env = libr::R_GlobalEnv;
+        let env_obj = console::eval_env();
+        let mut env = env_obj.sexp;
 
         while env != R_EmptyEnv {
             let is_pkg_env = r_env_is_pkg_env(env);
