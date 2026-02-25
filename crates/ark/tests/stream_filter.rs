@@ -475,3 +475,44 @@ fn test_stderr_flushes_buffered_stdout() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }
+
+/// Verify that multi-line PrintValue output from debug stepping is fully
+/// suppressed from autoprint (execute_result). When stepping through a braced
+/// expression at top level, R emits `debug at #N: ` followed by PrintValue of
+/// the expression. For long output this spans multiple lines. The truncation
+/// in `strip_debug_prefix_lines` must remove all of it, not just the first line.
+#[test]
+fn test_multiline_printvalue_truncated_from_autoprint() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Create a long list that will print across multiple lines
+    let long_string = "x".repeat(60);
+    let code = format!(
+        r#"{{
+  browser()
+  list(
+    "{long_string}",
+    "{long_string}",
+    "{long_string}"
+  )
+}}"#
+    );
+
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Step with `n` to the list expression. This would emit multi-line
+    // "debug at #N: list(...)" output that goes through autoprint at frame 0.
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // No execute_result should appear - the debug output is truncated
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Exit the debugger
+    frontend.execute_request_invisibly("Q");
+}

@@ -411,7 +411,7 @@ pub enum DebugCallTextUpdate {
 
 impl DebugCallTextUpdate {
     /// Apply this update to a DebugCallText, returning the new value
-    /// and whether debug_last_line should be reset
+    /// and whether `debug_last_line` should be reset.
     pub fn apply(self) -> (DebugCallText, bool) {
         match self {
             DebugCallTextUpdate::Finalized(text, kind) => {
@@ -499,32 +499,37 @@ fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
     None
 }
 
-/// Strip lines starting with debug prefixes from a string, used to clean
-/// `autoprint_output` at browser prompts.
+/// Truncate `autoprint_output` at the first line matching a debug prefix.
 ///
-/// This is a simpler approach than the stream filter state machine above,
-/// appropriate here because autoprint output only accumulates for the last
-/// top-level expression. At browser-prompt time, the only prefix-matching
-/// content is R's own debug noise (e.g., `"Called from: top level\n"`),
-/// not user output.
+/// Debug prefixes reach autoprint in two cases, both at frame 0:
+/// - `"Called from: ...\n"` from `browser()` at top level
+/// - `"debug at #N: <PrintValue>\n"` from stepping through braced
+///   expressions like `{ browser(); 1; 2 }` at top level
 ///
-/// All lines matching any debug prefix are removed entirely. The content
-/// after debug prefixes is `PrintValue` output of the expression code,
-/// not the evaluation result, so it should not appear as user output.
+/// This output is always emitted after any user output in the same
+/// expression, so everything from the first matching line onwards is
+/// debug noise. Truncating rather than filtering line-by-line also
+/// handles multi-line `PrintValue` continuations that don't start with
+/// a prefix themselves.
+///
+/// This is simpler than the stream filter state machine, appropriate here
+/// because autoprint only accumulates for the last top-level expression.
 pub fn strip_debug_prefix_lines(text: &mut String) {
     if text.is_empty() {
         return;
     }
-    let mut result = String::with_capacity(text.len());
+
+    let mut pos = 0;
     for line in text.split_inclusive('\n') {
         let is_debug = MatchedPattern::all()
             .iter()
             .any(|p| line.starts_with(p.prefix()));
-        if !is_debug {
-            result.push_str(line);
+        if is_debug {
+            text.truncate(pos);
+            return;
         }
+        pos += line.len();
     }
-    *text = result;
 }
 
 #[cfg(test)]
@@ -848,18 +853,26 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_debug_prefix_lines_all_prefixes() {
+    fn test_strip_debug_prefix_lines_truncates_at_first() {
         let mut text = String::from(
-            "debug at file.R#1: x <- 1\n\
+            "[1] 42\n\
+             normal output\n\
+             debug at file.R#1: x <- 1\n\
              [1] 42\n\
-             debug: y\n\
-             Called from: top level\n\
-             debugging in: f()\n\
-             exiting from: f()\n\
-             normal output\n",
+             Called from: top level\n",
         );
         strip_debug_prefix_lines(&mut text);
         assert_eq!(text, "[1] 42\nnormal output\n");
+    }
+
+    #[test]
+    fn test_strip_debug_prefix_lines_multiline_printvalue() {
+        let mut text = String::from(
+            "debug at #2: [1] 1 2 3\n\
+             [4] 4 5 6\n",
+        );
+        strip_debug_prefix_lines(&mut text);
+        assert_eq!(text, "");
     }
 
     #[test]
