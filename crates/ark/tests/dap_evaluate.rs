@@ -189,6 +189,10 @@ local({
         err.contains("not found"),
         "Expected 'not found' error, got: {err}"
     );
+    assert!(
+        !err.contains("backtrace"),
+        "Error should not contain backtrace, got: {err}"
+    );
 
     // Evaluate incomplete code
     let err = dap.evaluate_error("1 +", Some(frame_id));
@@ -202,6 +206,10 @@ local({
     assert!(
         err.contains("intentional error"),
         "Expected error message, got: {err}"
+    );
+    assert!(
+        !err.contains("backtrace"),
+        "Error should not contain backtrace, got: {err}"
     );
 
     // Debug session should still be alive and stopped after all these errors

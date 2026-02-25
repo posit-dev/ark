@@ -438,7 +438,7 @@ impl Dap {
                     Ok(object_variable(String::new(), value.sexp))
                 }
             },
-            Err(err) => Err(format!("{err}")),
+            Err(err) => Err(evaluate_error_message(err)),
         }
     }
 
@@ -616,6 +616,13 @@ impl Dap {
                     BreakpointState::Verified | BreakpointState::Unverified
                 )
         })
+    }
+}
+
+fn evaluate_error_message(err: harp::Error) -> String {
+    match err {
+        harp::Error::TryCatchError { message, .. } => message,
+        err => format!("{err}"),
     }
 }
 
