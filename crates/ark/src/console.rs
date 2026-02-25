@@ -2820,7 +2820,7 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-pub(crate) fn eval_env() -> RObject {
+pub(crate) fn selected_env() -> RObject {
     if !Console::is_initialized() {
         return R_ENVS.global.into();
     }

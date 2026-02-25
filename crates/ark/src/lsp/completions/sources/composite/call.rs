@@ -126,7 +126,7 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
-        env: console::eval_env(),
+        env: console::selected_env(),
     };
 
     // Try to evaluate the first argument
@@ -190,7 +190,7 @@ fn completions_from_session_arguments(
     // for S3 methods based on `object`.
     let r_callable = harp::parse_eval(callable, RParseEvalOptions {
         forbid_function_calls: true,
-        env: console::eval_env(),
+        env: console::selected_env(),
     });
 
     let r_callable = match r_callable {

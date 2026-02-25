@@ -267,7 +267,7 @@ impl RHelp {
     // Must be called in a `r_task` context.
     // Tries calling a custom help handler defined as an ark method.
     fn r_custom_help_handler(topic: String) -> anyhow::Result<Option<bool>> {
-        let env = console::eval_env();
+        let env = console::selected_env();
 
         let obj = match harp::parse_eval0(topic.as_str(), env.sexp) {
             Ok(obj) => obj,

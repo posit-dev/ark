@@ -196,7 +196,7 @@ pub(super) fn completions_from_evaluated_object_names(
 
     let options = RParseEvalOptions {
         forbid_function_calls: true,
-        env: console::eval_env(),
+        env: console::selected_env(),
     };
 
     // Try to evaluate the object

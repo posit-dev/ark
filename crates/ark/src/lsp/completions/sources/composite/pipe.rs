@@ -88,7 +88,7 @@ pub fn find_pipe_root(
 fn eval_pipe_root(name: &str) -> Option<RObject> {
     let options = RParseEvalOptions {
         forbid_function_calls: true,
-        env: console::eval_env(),
+        env: console::selected_env(),
     };
 
     let value = harp::parse_eval(name, options);

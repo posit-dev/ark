@@ -152,7 +152,7 @@ fn completions_from_extractor_object(text: &str, fun: &str) -> anyhow::Result<Ve
 
         let options = RParseEvalOptions {
             forbid_function_calls: true,
-            env: console::eval_env(),
+            env: console::selected_env(),
         };
 
         let object = match harp::parse_eval(text, options) {
