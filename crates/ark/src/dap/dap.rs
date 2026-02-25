@@ -15,6 +15,8 @@ use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
 use crossbeam::channel::Sender;
+use dap::responses::EvaluateResponse;
+use dap::types::Variable;
 use harp::object::RObject;
 use harp::R_ENVS;
 use stdext::result::ResultExt;
@@ -24,6 +26,7 @@ use url::Url;
 use crate::console::DebugStoppedReason;
 use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
+use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
 
@@ -361,6 +364,54 @@ impl Dap {
         self.current_variables_reference += 1;
 
         variables_reference
+    }
+
+    pub fn into_variables(&mut self, variables: Vec<RVariable>) -> Vec<Variable> {
+        let mut out = Vec::with_capacity(variables.len());
+
+        for variable in variables.into_iter() {
+            // If we have a `variables_reference_object`, then this variable is
+            // structured and has children. We need a new unique
+            // `variables_reference` to return that will map to this object in
+            // a followup `Variables` request.
+            let variables_reference = match variable.variables_reference_object {
+                Some(x) => self.insert_variables_reference_object(x),
+                None => 0,
+            };
+
+            let variable = Variable {
+                name: variable.name,
+                value: variable.value,
+                type_field: variable.type_field,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            };
+
+            out.push(variable);
+        }
+
+        out
+    }
+
+    pub fn into_evaluate_response(&mut self, variable: RVariable) -> EvaluateResponse {
+        let variables_reference = match variable.variables_reference_object {
+            Some(obj) => self.insert_variables_reference_object(obj),
+            None => 0,
+        };
+
+        EvaluateResponse {
+            result: variable.value,
+            type_field: variable.type_field,
+            presentation_hint: None,
+            variables_reference,
+            named_variables: None,
+            indexed_variables: None,
+            memory_reference: None,
+        }
     }
 
     pub fn next_breakpoint_id(&mut self) -> i64 {

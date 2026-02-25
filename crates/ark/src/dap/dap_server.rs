@@ -796,23 +796,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
                 match result {
                     Ok(variable) => {
-                        let variables_reference = match variable.variables_reference_object {
-                            Some(obj) => {
-                                let mut state = state.lock().unwrap();
-                                state.insert_variables_reference_object(obj)
-                            },
-                            None => 0,
-                        };
-
-                        req.success(ResponseBody::Evaluate(EvaluateResponse {
-                            result: variable.value,
-                            type_field: variable.type_field,
-                            presentation_hint: None,
-                            variables_reference,
-                            named_variables: None,
-                            indexed_variables: None,
-                            memory_reference: None,
-                        }))
+                        let response = state.lock().unwrap().into_evaluate_response(variable);
+                        req.success(ResponseBody::Evaluate(response))
                     },
                     Err(err) => req.error(&err),
                 }
@@ -848,40 +833,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn into_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
-        let mut state = self.state.lock().unwrap();
-        let mut out = Vec::with_capacity(variables.len());
-
-        for variable in variables.into_iter() {
-            let name = variable.name;
-            let value = variable.value;
-            let type_field = variable.type_field;
-            let variables_reference_object = variable.variables_reference_object;
-
-            // If we have a `variables_reference_object`, then this variable is
-            // structured and has children. We need a new unique
-            // `variables_reference` to return that will map to this object in
-            // a followup `Variables` request.
-            let variables_reference = match variables_reference_object {
-                Some(x) => state.insert_variables_reference_object(x),
-                None => 0,
-            };
-
-            let variable = Variable {
-                name,
-                value,
-                type_field,
-                presentation_hint: None,
-                evaluate_name: None,
-                variables_reference,
-                named_variables: None,
-                indexed_variables: None,
-                memory_reference: None,
-            };
-
-            out.push(variable);
-        }
-
-        out
+        self.state.lock().unwrap().into_variables(variables)
     }
 
     fn handle_step<A>(
