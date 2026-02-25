@@ -39,6 +39,7 @@ use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::console_debug::FrameInfo;
 use crate::console_debug::FrameSource;
+use crate::dap::dap::DapExceptionEvent;
 use crate::dap::dap::DapStoppedEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
@@ -192,6 +193,19 @@ fn listen_dap_events<W: Write>(
                         })
                     },
 
+                    DapBackendEvent::Exception(DapExceptionEvent { class, message, preserve_focus }) => {
+                        let text = format!("<{class}>\n{message}");
+                        Event::Stopped(StoppedEventBody {
+                            reason: StoppedEventReason::Exception,
+                            description: Some(message),
+                            thread_id: Some(THREAD_ID),
+                            preserve_focus_hint: Some(preserve_focus),
+                            text: Some(text),
+                            all_threads_stopped: Some(true),
+                            hit_breakpoint_ids: None,
+                        })
+                    },
+
                     DapBackendEvent::Terminated => {
                         Event::Terminated(None)
                     },
@@ -293,6 +307,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Command::StepOut(args) => {
                 self.handle_step(req, args, DebugRequest::StepOut, ResponseBody::StepOut)
             },
+            Command::Pause(args) => self.handle_pause(req, args),
             _ => {
                 log::warn!("DAP: Unknown request");
                 let rsp = req.error("Ark DAP: Unknown request");
@@ -325,6 +340,33 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Result<(), ServerError> {
         let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
             supports_restart_request: Some(true),
+            supports_exception_info_request: Some(false),
+            exception_breakpoint_filters: Some(vec![
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("error"),
+                    label: String::from("Errors"),
+                    description: Some(String::from("Break on uncaught R errors")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("warning"),
+                    label: String::from("Warnings"),
+                    description: Some(String::from("Break on R warnings")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("interrupt"),
+                    label: String::from("Interrupts"),
+                    description: Some(String::from("Break when execution is interrupted")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+            ]),
             ..Default::default()
         }));
         self.respond(rsp)?;
@@ -578,11 +620,18 @@ impl<R: Read, W: Write> DapServer<R, W> {
     fn handle_set_exception_breakpoints(
         &mut self,
         req: Request,
-        _args: SetExceptionBreakpointsArguments,
+        args: SetExceptionBreakpointsArguments,
     ) -> Result<(), ServerError> {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.exception_breakpoint_filters = args.filters;
+        }
         let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
             SetExceptionBreakpointsResponse {
-                breakpoints: None, // TODO
+                // This field is only useful for reporting problems with
+                // individual filters. Since we always accept all filters,
+                // `None` is fine here.
+                breakpoints: None,
             },
         ));
         self.respond(rsp)
@@ -760,6 +809,16 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Result<(), ServerError> {
         self.send_command(cmd);
         let rsp = req.success(resp);
+        self.respond(rsp)
+    }
+
+    fn handle_pause(&mut self, req: Request, _args: PauseArguments) -> Result<(), ServerError> {
+        self.state.lock().unwrap().is_interrupting_for_debugger = true;
+
+        log::info!("DAP: Received request to pause R, sending interrupt");
+        crate::sys::control::handle_interrupt_request();
+
+        let rsp = req.success(ResponseBody::Pause);
         self.respond(rsp)
     }
 

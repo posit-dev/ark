@@ -3,7 +3,6 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
-
 use anyhow::anyhow;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -24,6 +23,7 @@ use url::Url;
 use crate::console::Console;
 use crate::console::DebugCallText;
 use crate::console::DebugCallTextKind;
+use crate::console::DebugStoppedReason;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -73,9 +73,13 @@ impl From<&FrameInfo> for FrameInfoId {
 }
 
 impl Console {
-    pub(crate) fn debug_start(&mut self, debug_preserve_focus: bool) {
+    pub(crate) fn debug_start(
+        &mut self,
+        debug_preserve_focus: bool,
+        debug_stopped_reason: DebugStoppedReason,
+    ) {
         match self.debug_stack_info() {
-            Ok(stack) => {
+            Ok(mut stack) => {
                 // Figure out whether we changed location since last time,
                 // e.g. because the user evaluated an expression that hit
                 // another breakpoint. In that case we do want to move
@@ -96,14 +100,29 @@ impl Console {
 
                 let preserve_focus = same_stack && debug_preserve_focus;
 
+                let show = get_show_hidden_frames();
+                if !show.internal {
+                    remove_condition_handling_frames(&mut stack, &debug_stopped_reason);
+                }
+                if !show.fenced {
+                    remove_fenced_frames(&mut stack);
+                }
+
                 let mut dap = self.debug_dap.lock().unwrap();
-                dap.start_debug(stack, preserve_focus, fallback_sources)
+                dap.start_debug(
+                    stack,
+                    preserve_focus,
+                    fallback_sources,
+                    debug_stopped_reason,
+                )
             },
             Err(err) => log::error!("ReadConsole: Can't get stack info: {err:?}"),
         };
     }
 
     pub(crate) fn debug_stop(&mut self) {
+        self.debug_is_debugging = false;
+        self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
         self.clear_fallback_sources();
         self.debug_reset_frame_id();
@@ -266,10 +285,6 @@ impl Console {
 
             log::trace!("DAP: Current call stack:\n{out:#?}");
 
-            if !harp::get_option_bool("ark.debugger.show_hidden_frames") {
-                filter_hidden_frames(&mut out);
-            }
-
             Ok(out)
         }
     }
@@ -341,6 +356,77 @@ impl Console {
     }
 }
 
+/// Controls which categories of hidden frames to show (i.e., not filter out).
+/// Parsed from the `ark.debugger.show_hidden_frames` R option.
+struct ShowHiddenFrames {
+    /// Show frames fenced by `..stacktraceon..`/`..stacktraceoff..` sentinels
+    fenced: bool,
+    /// Show internal condition-handling frames (e.g. `.handleSimpleError()`)
+    internal: bool,
+}
+
+/// Read the `ark.debugger.show_hidden_frames` R option via the R-side
+/// `debugger_show_hidden_frames()` helper, which validates and normalises
+/// the option into a character vector of categories to show.
+fn get_show_hidden_frames() -> ShowHiddenFrames {
+    let values =
+        match RFunction::new("", "debugger_show_hidden_frames").call_in(ARK_ENVS.positron_ns) {
+            Ok(obj) => Vec::<String>::try_from(obj).unwrap_or_default(),
+            Err(err) => {
+                log::warn!("Failed to read `ark.debugger.show_hidden_frames`: {err:?}");
+                return ShowHiddenFrames {
+                    fenced: false,
+                    internal: false,
+                };
+            },
+        };
+
+    ShowHiddenFrames {
+        fenced: values.iter().any(|v| v == "fenced"),
+        internal: values.iter().any(|v| v == "internal"),
+    }
+}
+
+/// Discard top frames that are part of the debug infrastructure rather than
+/// user code.
+fn remove_condition_handling_frames(
+    stack: &mut Vec<FrameInfo>,
+    stopped_reason: &DebugStoppedReason,
+) {
+    // Discard top frame when stopped due to exception breakpoint or pause,
+    // it points to our global handler that calls `browser()`
+    if matches!(
+        stopped_reason,
+        DebugStoppedReason::Condition { .. } | DebugStoppedReason::Pause
+    ) && !stack.is_empty()
+    {
+        stack.remove(0);
+    }
+
+    // Then discard base R's own condition handling/emitting frames, if any
+    remove_frame_prefix(stack, &[".handleSimpleError()"]);
+    remove_frame_prefix(stack, &[
+        "doWithOneRestart()",
+        "withOneRestart()",
+        "withRestarts()",
+        ".signalSimpleWarning",
+    ]);
+}
+
+/// Remove frames from the top of the stack that match the given prefixes in order.
+fn remove_frame_prefix(stack: &mut Vec<FrameInfo>, prefixes: &[&str]) {
+    for prefix in prefixes {
+        if stack
+            .first()
+            .is_some_and(|frame| frame.frame_name.starts_with(prefix))
+        {
+            stack.remove(0);
+        } else {
+            break;
+        }
+    }
+}
+
 /// Removes frames fenced between `..stacktraceon..` and `..stacktraceoff..`
 /// markers (used by Shiny to hide internal frames from error stack traces).
 ///
@@ -362,7 +448,7 @@ impl Console {
 ///
 /// The topmost frame (index 0) is never filtered out so the user always
 /// sees where they are stopped.
-fn filter_hidden_frames(frames: &mut Vec<FrameInfo>) {
+fn remove_fenced_frames(frames: &mut Vec<FrameInfo>) {
     let mut hidden_depth: u32 = 0;
     let mut first = true;
 
@@ -535,6 +621,50 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     Ok(libr::R_NilValue)
 }
 
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_debug_should_break_on_condition(
+    filter: SEXP,
+) -> anyhow::Result<SEXP> {
+    let filter: String = RObject::view(filter).try_into()?;
+
+    let console = Console::get_mut();
+    let dap = console.debug_dap.lock().unwrap();
+
+    let enabled: RObject = dap.is_exception_breakpoint_filter_enabled(&filter).into();
+    Ok(enabled.sexp)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_debug_set_stopped_reason(
+    class: SEXP,
+    message: SEXP,
+) -> anyhow::Result<SEXP> {
+    let class: String = RObject::view(class).try_into()?;
+    let message: String = RObject::view(message).try_into()?;
+
+    Console::get_mut().debug_stopped_reason =
+        Some(DebugStoppedReason::Condition { class, message });
+
+    Ok(libr::R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_debug_set_stopped_reason_pause() -> anyhow::Result<SEXP> {
+    Console::get_mut().debug_stopped_reason = Some(DebugStoppedReason::Pause);
+    Ok(libr::R_NilValue)
+}
+
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_is_interrupting_for_debugger() -> anyhow::Result<SEXP> {
+    let console = Console::get_mut();
+    let mut dap = console.debug_dap.lock().unwrap();
+
+    let result: RObject = dap.is_interrupting_for_debugger.into();
+    dap.is_interrupting_for_debugger = false;
+
+    Ok(result.sexp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,14 +690,14 @@ mod tests {
     #[test]
     fn test_filter_hidden_frames_empty() {
         let mut frames = vec![];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert!(frames.is_empty());
     }
 
     #[test]
     fn test_filter_hidden_frames_no_sentinels() {
         let mut frames = vec![frame("a()"), frame("b()"), frame("c()")];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["a()", "b()", "c()"]);
     }
 
@@ -580,7 +710,7 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("outer()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user_code()", "outer()"]);
     }
 
@@ -601,7 +731,7 @@ mod tests {
             frame("outer_off()"),
             frame("top()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec![
             "user_code()",
             "inner_off()",
@@ -630,7 +760,7 @@ mod tests {
             frame("..stacktraceoff..(captureStackTraces)"),
             frame("shiny::runApp()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec![
             "renderPlot()",
             "output$distPlot()",
@@ -656,14 +786,14 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("visible()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user()", "visible()"]);
     }
 
     #[test]
     fn test_filter_hidden_frames_only_sentinels() {
         let mut frames = vec![frame("..stacktraceon..()"), frame("..stacktraceoff..()")];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         // The first frame is always kept, even if it's a sentinel
         assert_eq!(names(&frames), vec!["..stacktraceon..()"]);
     }
@@ -677,7 +807,7 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("wrapper()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user_code()", "wrapper()"]);
     }
 
@@ -691,7 +821,7 @@ mod tests {
             frame("..stacktraceon..()"),
             frame("wrapper()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         assert_eq!(names(&frames), vec!["user_code()"]);
     }
 
@@ -704,7 +834,7 @@ mod tests {
             frame("..stacktraceoff..()"),
             frame("outer()"),
         ];
-        filter_hidden_frames(&mut frames);
+        remove_fenced_frames(&mut frames);
         // The sentinel at index 0 is kept without triggering hidden state,
         // so `internal()` between on/off is also visible
         assert_eq!(names(&frames), vec![

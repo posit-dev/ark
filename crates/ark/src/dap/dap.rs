@@ -20,6 +20,7 @@ use stdext::result::ResultExt;
 use stdext::spawn;
 use url::Url;
 
+use crate::console::DebugStoppedReason;
 use crate::console_debug::FrameInfo;
 use crate::dap::dap_server;
 use crate::request::RRequest;
@@ -109,10 +110,20 @@ pub enum DapBackendEvent {
         verified: bool,
         message: Option<String>,
     },
+
+    /// Event sent when an exception/error occurs
+    Exception(DapExceptionEvent),
 }
 
 #[derive(Debug, Copy, Clone)]
 pub struct DapStoppedEvent {
+    pub preserve_focus: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DapExceptionEvent {
+    pub class: String,
+    pub message: String,
     pub preserve_focus: bool,
 }
 
@@ -132,6 +143,9 @@ pub struct Dap {
 
     /// Known breakpoints keyed by URI, with document hash
     pub breakpoints: HashMap<Url, (blake3::Hash, Vec<Breakpoint>)>,
+
+    /// Filters for enabled condition breakpoints
+    pub exception_breakpoint_filters: Vec<String>,
 
     /// Map of `source` -> `source_reference` used for frames that don't have
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
@@ -163,6 +177,9 @@ pub struct Dap {
     /// Monotonically increasing breakpoint ID counter
     current_breakpoint_id: i64,
 
+    /// Whether an interrupt was sent to drop into the debugger
+    pub(crate) is_interrupting_for_debugger: bool,
+
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<CommOutgoingTx>,
 
@@ -182,6 +199,7 @@ impl Dap {
             backend_events_tx: None,
             stack: None,
             breakpoints: HashMap::new(),
+            exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
@@ -190,6 +208,7 @@ impl Dap {
             comm_tx: None,
             r_request_tx,
             shared_self: None,
+            is_interrupting_for_debugger: false,
         };
 
         let shared = Arc::new(Mutex::new(state));
@@ -213,6 +232,7 @@ impl Dap {
         mut stack: Vec<FrameInfo>,
         preserve_focus: bool,
         fallback_sources: HashMap<String, String>,
+        stopped_reason: DebugStoppedReason,
     ) {
         self.is_debugging = true;
         self.fallback_sources.extend(fallback_sources);
@@ -229,9 +249,19 @@ impl Dap {
                 .log_err();
 
             if let Some(dap_tx) = &self.backend_events_tx {
-                dap_tx
-                    .send(DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus }))
-                    .log_err();
+                let event = match stopped_reason {
+                    DebugStoppedReason::Step | DebugStoppedReason::Pause => {
+                        DapBackendEvent::Stopped(DapStoppedEvent { preserve_focus })
+                    },
+                    DebugStoppedReason::Condition { class, message } => {
+                        DapBackendEvent::Exception(DapExceptionEvent {
+                            class,
+                            message,
+                            preserve_focus,
+                        })
+                    },
+                };
+                dap_tx.send(event).log_err();
             }
         }
     }
@@ -245,6 +275,11 @@ impl Dap {
     pub fn stop_debug(&mut self) {
         // Reset state
         self.stack = None;
+
+        // Fallback reset in case the interrupt was caught before our global
+        // calling handler could consume it (e.g., a `tryCatch(interrupt = )`
+        // around the interrupted code).
+        self.is_interrupting_for_debugger = false;
         self.fallback_sources.clear();
         self.clear_variables_reference_maps();
         self.reset_variables_reference_count();
@@ -331,6 +366,12 @@ impl Dap {
         let id = self.current_breakpoint_id;
         self.current_breakpoint_id += 1;
         id
+    }
+
+    pub fn is_exception_breakpoint_filter_enabled(&self, filter: &str) -> bool {
+        self.exception_breakpoint_filters
+            .iter()
+            .any(|enabled| enabled == filter)
     }
 
     /// Verify breakpoints within a line range for a given URI
@@ -527,11 +568,13 @@ mod tests {
             backend_events_tx: Some(backend_events_tx),
             stack: None,
             breakpoints: HashMap::new(),
+            exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
             current_variables_reference: 1,
             current_breakpoint_id: 1,
+            is_interrupting_for_debugger: false,
             comm_tx: None,
             r_request_tx,
             shared_self: None,
@@ -636,11 +679,13 @@ mod tests {
             backend_events_tx: None,
             stack: None,
             breakpoints: HashMap::new(),
+            exception_breakpoint_filters: Vec::new(),
             fallback_sources: HashMap::new(),
             frame_id_to_variables_reference: HashMap::new(),
             variables_reference_to_r_object: HashMap::new(),
             current_variables_reference: 1,
             current_breakpoint_id: 1,
+            is_interrupting_for_debugger: false,
             comm_tx: None,
             r_request_tx,
             shared_self: None,
