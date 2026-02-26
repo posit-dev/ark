@@ -431,11 +431,15 @@ impl DummyArkFrontend {
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             match self.recv_iopub_with_timeout(remaining) {
-                Some(msg) => {
-                    if !self.try_buffer_msg(&msg) {
+                Some(msg) => match &msg {
+                    Message::Stream(data) => {
+                        trace_iopub_msg(&msg);
+                        self.buffer_stream(&data.content);
+                    },
+                    _ => {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                         break;
-                    }
+                    },
                 },
                 None => break,
             }
