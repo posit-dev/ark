@@ -64,6 +64,8 @@ We currently use the issue tracker of [Positron](https://github.com/posit-dev/po
 
 - [vscDebugger](https://manuelhentschel.github.io/vscDebugger), a server that implements the [DAP protocol](https://microsoft.github.io/debug-adapter-protocol) for R, also written in R as an R package. By comparison, our DAP server is tightly integrated into our Jupyter kernel. This makes it possible to smoothly integrate with the currently running R session and start debugging at any time without any prerequisite steps.
 
+- [Xeus-R](https://github.com/jupyter-xeus/xeus-r), a Jupyter kernel for R based on the native implementation of the Jupyter protocol [Xeus](https://github.com/jupyter-xeus/xeus). This kernel is implemented as a native C++ frontend to R rather than an R package, providing low-level access to R's C API. It includes Hera, an R package that handles the R counterpart of the kernel, managing the communication and integration between the native C++ components and the R runtime. Xeus-R focuses on performance and integration with the broader Jupyter ecosystem, particularly for notebook environments.
+
 ## Code of Conduct
 
 Please note that this project is released with a [Contributor Code of
