@@ -177,3 +177,5 @@ If changes are needed in these files, that must happen in the separate Positron 
 - When two code paths do analogous things, make them structurally parallel so the symmetry is visible.
 
 - Don't let comments drift from the code. If behaviour changes, update nearby comments. If a file is renamed, update its header comment.
+
+- Use the new async closure syntax, e.g. `async move || { ... }` instead of `|| async move { ... }`.
