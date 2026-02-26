@@ -492,6 +492,24 @@ impl DummyArkFrontend {
     /// busy/idle window.
     #[track_caller]
     pub fn recv_iopub_idle(&self) {
+        self.recv_iopub_idle_impl();
+        self.flush_streams_at_boundary();
+    }
+
+    /// Receive Idle and return accumulated streams.
+    ///
+    /// Use this when you need to collect stream output from an execution rather
+    /// than asserting on it. This is the "collect" counterpart to the "assert"
+    /// pattern used by `recv_iopub_idle()` + `assert_stream_*_contains()`.
+    #[track_caller]
+    pub fn recv_iopub_idle_and_flush(&self) -> DrainedStreams {
+        self.recv_iopub_idle_impl();
+        self.streams_handled.set(true);
+        self.drain_streams_internal()
+    }
+
+    #[track_caller]
+    fn recv_iopub_idle_impl(&self) {
         let msg = self.recv_iopub_next();
         match msg {
             Message::Status(data) => {
@@ -503,8 +521,6 @@ impl DummyArkFrontend {
             },
             other => panic!("Expected Idle status, got {:?}", other),
         }
-
-        self.flush_streams_at_boundary();
     }
 
     /// Flush stream buffers at an idle boundary.
@@ -1205,12 +1221,12 @@ impl DummyArkFrontend {
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
 
-        let streams = self.drain_streams();
-        let content = streams.stdout.trim_end();
-
-        self.recv_iopub_idle();
+        // Wait for execution to complete. IOPub flushes streams before sending
+        // Idle, so by collecting streams at Idle we ensure the output has arrived.
+        let streams = self.recv_iopub_idle_and_flush();
         self.recv_shell_execute_reply();
 
+        let content = streams.stdout.trim_end();
         if content.is_empty() {
             None
         } else {
