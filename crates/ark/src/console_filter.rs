@@ -253,7 +253,19 @@ impl ConsoleFilter {
                     return (Some(text), 0);
                 }
 
-                // Accumulate everything until ReadConsole resolves
+                // At line boundaries within a captured debug message, check
+                // for nested prefixes. R emits each prefix as a complete
+                // WriteConsole call so we can rely on full prefixes appearing
+                // at the start of new content.
+                let at_line_boundary = buffer.is_empty() || buffer.ends_with('\n');
+                if at_line_boundary {
+                    if let PrefixMatch::Full(new_pattern) = try_match_prefix(content) {
+                        *pattern = new_pattern;
+                        buffer.clear();
+                        return (None, new_pattern.prefix().len());
+                    }
+                }
+
                 buffer.push_str(content);
                 (None, content.len())
             },
@@ -409,39 +421,16 @@ pub enum DebugCallTextUpdate {
 }
 
 /// Finalize a captured debug message and produce the appropriate debug state
-/// update. Scans the accumulated buffer for the last `debug at ` or `debug: `
-/// occurrence to extract the expression for auto-stepping.
+/// update. Nested prefixes are already resolved during accumulation (in
+/// `process_chunk`), so `pattern` always reflects the last prefix seen.
 fn finalize_capture(pattern: MatchedPattern, buffer: &str) -> DebugCallTextUpdate {
-    let last_debug_at = buffer.rfind(MatchedPattern::DebugAt.prefix());
-    let last_debug = buffer.rfind(MatchedPattern::Debug.prefix());
-
-    match (last_debug_at, last_debug) {
-        (Some(at_pos), Some(d_pos)) => {
-            if at_pos > d_pos {
-                extract_debug_at_update(&buffer[at_pos + MatchedPattern::DebugAt.prefix().len()..])
-            } else {
-                extract_debug_update(&buffer[d_pos + MatchedPattern::Debug.prefix().len()..])
-            }
+    match pattern {
+        MatchedPattern::DebugAt => extract_debug_at_update(buffer),
+        MatchedPattern::Debug => extract_debug_update(buffer),
+        MatchedPattern::CalledFrom => {
+            DebugCallTextUpdate::Finalized(buffer.to_string(), DebugCallTextKind::Debug)
         },
-        (Some(at_pos), None) => {
-            extract_debug_at_update(&buffer[at_pos + MatchedPattern::DebugAt.prefix().len()..])
-        },
-        (None, Some(d_pos)) => {
-            extract_debug_update(&buffer[d_pos + MatchedPattern::Debug.prefix().len()..])
-        },
-        (None, None) => {
-            // No nested debug message; handle based on the initial pattern
-            match pattern {
-                MatchedPattern::DebugAt => extract_debug_at_update(buffer),
-                MatchedPattern::Debug => extract_debug_update(buffer),
-                MatchedPattern::CalledFrom => {
-                    DebugCallTextUpdate::Finalized(buffer.to_string(), DebugCallTextKind::Debug)
-                },
-                MatchedPattern::DebuggingIn | MatchedPattern::ExitingFrom => {
-                    DebugCallTextUpdate::Reset
-                },
-            }
-        },
+        MatchedPattern::DebuggingIn | MatchedPattern::ExitingFrom => DebugCallTextUpdate::Reset,
     }
 }
 
@@ -467,7 +456,9 @@ fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
     for (i, &b) in bytes.iter().enumerate() {
         if b == b'#' {
             in_digits = true;
-        } else if in_digits {
+            continue;
+        }
+        if in_digits {
             if b.is_ascii_digit() {
                 // Still in digits
             } else if b == b':' {
@@ -499,10 +490,6 @@ fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
 /// Callers must only invoke this when exiting a debug session (e.g.,
 /// at a browser prompt, or when `debug_was_debugging` is set).
 pub fn strip_leading_debug_lines(text: &mut String) {
-    if text.is_empty() {
-        return;
-    }
-
     if text.starts_with(MatchedPattern::DebuggingIn.prefix()) {
         // Entering a function, no return value possible. Strip everything.
         text.clear();
@@ -510,11 +497,12 @@ pub fn strip_leading_debug_lines(text: &mut String) {
         // Exiting a function. Only strip if "exiting from:" is on the last
         // line, meaning there's no return value after it. Otherwise keep
         // everything (noise + result) to avoid losing user content.
-        let last_line = text.lines().last().unwrap_or("");
+        let Some(last_line) = text.lines().last() else {
+            return;
+        };
         if last_line.starts_with(MatchedPattern::ExitingFrom.prefix()) {
             text.clear();
         }
-        // Otherwise keep entire buffer as-is
     }
 }
 
