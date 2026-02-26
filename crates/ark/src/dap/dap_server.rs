@@ -821,7 +821,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         let response = state.lock().unwrap().into_evaluate_response(variable);
                         req.success(ResponseBody::Evaluate(response))
                     },
-                    Err(err) => req.error(&format!("Can't evaluate variable: {err:?}")),
+                    Err(err) => req.error(&format!("Error: {err}")),
                 }
             };
 
