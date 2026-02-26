@@ -408,7 +408,7 @@ fn test_adversarial_print_debugging_in() {
 
 /// A print method whose output matches "exiting from:" is preserved in the
 /// execute_result (autoprint path). This prefix is specifically handled by
-/// `strip_leading_debug_lines`, which is gated on `is_browser ||
+/// `strip_entry_exit_lines`, which is gated on `is_browser ||
 /// debug_was_debugging`, so at top level it must not fire.
 #[test]
 fn test_adversarial_print_exiting_from() {
@@ -433,7 +433,7 @@ fn test_adversarial_print_exiting_from() {
 }
 
 /// A print method whose output starts with "exiting from:" followed by real
-/// content survives at top level. Guards against `strip_leading_debug_lines`
+/// content survives at top level. Guards against `strip_entry_exit_lines`
 /// being accidentally called without the `is_browser || debug_was_debugging`
 /// gate.
 #[test]
@@ -460,7 +460,7 @@ fn test_adversarial_print_leading_exiting_from_survives() {
 }
 
 /// A print method whose output has normal text followed by a debug prefix
-/// line survives at top level. Guards against `truncate_at_debug_prefix`
+/// line survives at top level. Guards against `strip_step_lines`
 /// being accidentally called without the `is_browser` gate.
 #[test]
 fn test_adversarial_print_trailing_debug_prefix_survives() {
@@ -686,7 +686,7 @@ fn test_multiline_printvalue_truncated_from_autoprint() {
 /// (was_debugging=false, is_browser=false).
 ///
 /// `exiting from: f()` reaches autoprint at n_frame=0. Since there's a
-/// return value after it, `strip_leading_debug_lines` keeps everything
+/// return value after it, `strip_entry_exit_lines` keeps everything
 /// (noise + result) to avoid losing user content.
 #[test]
 fn test_continue_prefix_cat_preserved() {

@@ -99,8 +99,8 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
-use crate::console_filter::strip_leading_debug_lines;
-use crate::console_filter::truncate_at_debug_prefix;
+use crate::console_filter::strip_entry_exit_lines;
+use crate::console_filter::strip_step_lines;
 use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
@@ -1131,7 +1131,7 @@ impl Console {
         // Only strip when we know we just left a debug session.
         if is_browser || self.debug_was_debugging {
             self.debug_was_debugging = false;
-            strip_leading_debug_lines(&mut self.autoprint_output);
+            strip_entry_exit_lines(&mut self.autoprint_output);
         }
 
         // Other debug prefixes (`Called from:`, `debug at`, `debug:`) only
@@ -1139,7 +1139,7 @@ impl Console {
         // braced expressions). Truncate only there because these prefixes
         // could appear in user print methods at top level.
         if is_browser {
-            truncate_at_debug_prefix(&mut self.autoprint_output);
+            strip_step_lines(&mut self.autoprint_output);
         }
 
         // Flush the stream filter and finalize any pending debug capture.
