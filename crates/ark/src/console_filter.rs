@@ -333,7 +333,7 @@ impl ConsoleFilter {
                     // This is the suppression point of the filter. We extract
                     // debug info for auto-stepping and drop the rest (`pattern`
                     // and `buffer`).
-                    debug_update = Some(finalize_capture(pattern, &buffer));
+                    debug_update = finalize_capture(pattern, &buffer);
                 } else {
                     let text = format!("{}{}", pattern.prefix(), buffer);
                     emit = Some(text);
@@ -423,14 +423,14 @@ pub enum DebugCallTextUpdate {
 /// Finalize a captured debug message and produce the appropriate debug state
 /// update. Nested prefixes are already resolved during accumulation (in
 /// `process_chunk`), so `pattern` always reflects the last prefix seen.
-fn finalize_capture(pattern: MatchedPattern, buffer: &str) -> DebugCallTextUpdate {
+fn finalize_capture(pattern: MatchedPattern, buffer: &str) -> Option<DebugCallTextUpdate> {
     match pattern {
-        MatchedPattern::DebugAt => extract_debug_at_update(buffer),
-        MatchedPattern::Debug => extract_debug_update(buffer),
-        MatchedPattern::CalledFrom => {
-            DebugCallTextUpdate::Finalized(buffer.to_string(), DebugCallTextKind::Debug)
+        MatchedPattern::DebugAt => Some(extract_debug_at_update(buffer)),
+        MatchedPattern::Debug => Some(extract_debug_update(buffer)),
+        MatchedPattern::CalledFrom => None,
+        MatchedPattern::DebuggingIn | MatchedPattern::ExitingFrom => {
+            Some(DebugCallTextUpdate::Reset)
         },
-        MatchedPattern::DebuggingIn | MatchedPattern::ExitingFrom => DebugCallTextUpdate::Reset,
     }
 }
 
@@ -771,7 +771,7 @@ mod tests {
         // Content in Filtering state IS suppressed when a browser prompt
         // arrives, because that confirms it was a real debug message.
         let mut filter = ConsoleFilter::new();
-        let emits = filter.feed("Called from: ");
+        let emits = filter.feed("debug: x + 1\n");
         assert!(emits.is_empty());
 
         let (emit, update) = filter.on_read_console(true);
@@ -861,7 +861,7 @@ mod tests {
         // is suppressed (e.g., `exiting from:` followed by top-level prompt).
         let mut filter = ConsoleFilter::new();
         filter.set_debugging(true);
-        let emits = filter.feed("Called from: top level\n");
+        let emits = filter.feed("exiting from: f()\n");
         assert!(emits.is_empty());
 
         let (emit, update) = filter.on_read_console(false);
@@ -874,7 +874,7 @@ mod tests {
         // Both `was_debugging` and `is_browser` true: suppressed.
         let mut filter = ConsoleFilter::new();
         filter.set_debugging(true);
-        let emits = filter.feed("Called from: top level\n");
+        let emits = filter.feed("exiting from: f()\n");
         assert!(emits.is_empty());
 
         let (emit, update) = filter.on_read_console(true);
