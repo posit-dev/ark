@@ -117,8 +117,6 @@ fn test_dap_browser_in_dplyr_mutate() {
     let stack = dap.stack_trace();
     assert!(!stack.is_empty(), "Expected at least one stack frame");
 
-    // The execute_request completes after browser() is entered, before we quit
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 

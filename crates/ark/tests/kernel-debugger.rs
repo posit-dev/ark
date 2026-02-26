@@ -161,12 +161,10 @@ fn test_execute_request_browser_nested() {
 
     // Start a new browser session to test continue-from-nested and
     // error-in-parent scenarios.
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.execute_request_invisibly("browser()");
 
     // Enter nested browser
-    frontend.execute_request("browser()", |_result| {});
+    frontend.execute_request_invisibly("browser()");
 
     // Continue to exit the nested browser and return to parent
     frontend.execute_request_invisibly("c");

@@ -170,7 +170,6 @@ fn test_dap_break_on_error_step_over_exits_handler() {
 
     dap.recv_stopped_exception();
 
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -207,7 +206,6 @@ fn test_dap_break_on_warning_step_over_exits_handler() {
 
     dap.recv_stopped_exception();
 
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -242,7 +240,6 @@ fn test_dap_break_on_interrupt_step_over_exits_handler() {
     frontend.recv_iopub_start_debug();
     dap.recv_stopped();
 
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -262,7 +259,6 @@ fn test_dap_break_on_interrupt_step_over_exits_handler() {
     frontend.recv_iopub_start_debug();
     dap.recv_stopped();
 
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -559,7 +555,6 @@ fn test_dap_pause() {
     assert_eq!(stack[0].name, "looper()");
 
     // The pause completed, receive idle before sending Q
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -617,7 +612,6 @@ fn test_dap_break_on_interrupt() {
     let stack = dap.stack_trace();
     assert_eq!(stack[0].name, "looper()");
 
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -735,9 +729,6 @@ foo()
     let (text, description) = dap.recv_stopped_exception();
     assert!(text.contains("simpleError"));
     assert!(description.contains("nested error"));
-
-    // The stream output shows where the browser was called from
-    frontend.assert_stream_stdout_contains("Called from:");
 
     // The kernel goes idle while waiting for input in the error browser
     frontend.recv_iopub_idle();

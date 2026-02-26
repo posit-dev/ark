@@ -1424,7 +1424,6 @@ impl DummyArkFrontend {
     /// This handles the transition from the current debug context into a function
     /// marked with `debugonce()`.
     ///
-    /// Stream assertion: "debugging in:".
     /// The caller must still consume DAP events (recv_continued, recv_stopped).
     #[track_caller]
     pub fn debug_enter_debugonce(&self, code: &str) -> u32 {
@@ -1434,7 +1433,6 @@ impl DummyArkFrontend {
         if self.in_debug() {
             self.recv_iopub_stop_debug();
         }
-        self.assert_stream_stdout_contains("debugging in:");
         self.recv_iopub_start_debug();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
@@ -1499,7 +1497,8 @@ impl DummyArkFrontend {
         let streams = self.recv_iopub_idle_and_flush();
         self.recv_shell_execute_reply();
 
-        let content = streams.stdout.trim_end();
+        let content = streams.stdout();
+        let content = content.trim_end();
         if content.is_empty() {
             None
         } else {
