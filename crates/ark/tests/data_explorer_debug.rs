@@ -56,5 +56,5 @@ fn test_data_explorer_stable_on_frame_selection() {
     frontend.recv_shell_execute_reply();
 
     // The data explorer closes when its binding is removed
-    frontend.recv_iopub_comm_close();
+    frontend.recv_data_explorer_close();
 }
