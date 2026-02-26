@@ -209,19 +209,38 @@ impl DummyArkFrontend {
         // Read from socket, auto-buffering streams and comm messages
         loop {
             let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(ref data) => {
-                    self.buffer_stream(&data.content);
-                },
-                Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                    self.buffer_variables_event(&data.content.data);
-                },
-                Message::CommMsg(ref data) if self.is_data_explorer_comm(&data.content.comm_id) => {
-                    self.buffer_data_explorer_event(&data.content.data);
-                },
-                other => return other,
+            if !self.try_buffer_msg(&msg) {
+                trace_iopub_msg(&msg);
+                return msg;
             }
+        }
+    }
+
+    /// Try to buffer a known message (stream, variables comm, or data explorer comm).
+    /// Traces the message if it was buffered. Returns `true` if the message was consumed.
+    ///
+    /// Comm message buffering is needed because comm events can race with Idle
+    /// on IOPub. Once https://github.com/posit-dev/ark/issues/689 is resolved,
+    /// comm events should arrive deterministically in the message sequence and
+    /// this buffering can be removed.
+    fn try_buffer_msg(&self, msg: &Message) -> bool {
+        match msg {
+            Message::Stream(ref data) => {
+                trace_iopub_msg(msg);
+                self.buffer_stream(&data.content);
+                true
+            },
+            Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
+                trace_iopub_msg(msg);
+                self.buffer_variables_event(&data.content.data);
+                true
+            },
+            Message::CommMsg(ref data) if self.is_data_explorer_comm(&data.content.comm_id) => {
+                trace_iopub_msg(msg);
+                self.buffer_data_explorer_event(&data.content.data);
+                true
+            },
+            _ => false,
         }
     }
 
@@ -282,23 +301,8 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match &msg {
-                    Message::Stream(ref data) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_stream(&data.content);
-                    },
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_variables_event(&data.content.data);
-                    },
-                    Message::CommMsg(ref data)
-                        if self.is_data_explorer_comm(&data.content.comm_id) =>
-                    {
-                        trace_iopub_msg(&msg);
-                        self.buffer_data_explorer_event(&data.content.data);
-                    },
-                    // Don't trace here - will be traced when popped from pending queue
-                    _ => self.pending_iopub_messages.borrow_mut().push_back(msg),
+                if !self.try_buffer_msg(&msg) {
+                    self.pending_iopub_messages.borrow_mut().push_back(msg);
                 }
             }
         }
@@ -399,23 +403,8 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match &msg {
-                    Message::Stream(ref data) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_stream(&data.content);
-                    },
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_variables_event(&data.content.data);
-                    },
-                    Message::CommMsg(ref data)
-                        if self.is_data_explorer_comm(&data.content.comm_id) =>
-                    {
-                        trace_iopub_msg(&msg);
-                        self.buffer_data_explorer_event(&data.content.data);
-                    },
-                    // Don't trace here - will be traced when popped from pending queue
-                    _ => self.pending_iopub_messages.borrow_mut().push_back(msg),
+                if !self.try_buffer_msg(&msg) {
+                    self.pending_iopub_messages.borrow_mut().push_back(msg);
                 }
             }
         }
@@ -442,26 +431,11 @@ impl DummyArkFrontend {
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             match self.recv_iopub_with_timeout(remaining) {
-                Some(msg) => match &msg {
-                    Message::Stream(data) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_stream(&data.content);
-                    },
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_variables_event(&data.content.data);
-                    },
-                    Message::CommMsg(ref data)
-                        if self.is_data_explorer_comm(&data.content.comm_id) =>
-                    {
-                        trace_iopub_msg(&msg);
-                        self.buffer_data_explorer_event(&data.content.data);
-                    },
-                    // Don't trace here - will be traced when popped from pending queue
-                    _ => {
+                Some(msg) => {
+                    if !self.try_buffer_msg(&msg) {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                         break;
-                    },
+                    }
                 },
                 None => break,
             }
@@ -835,16 +809,14 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match &msg {
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        self.buffer_variables_event(&data.content.data);
-                        return self.variables_events.borrow_mut().pop_front().unwrap();
-                    },
-                    // Buffer any incoming stream messages
-                    Message::Stream(ref data) => {
-                        self.buffer_stream(&data.content);
-                    },
-                    // Idle can race with variables events (see #689)
+                if self.try_buffer_msg(&msg) {
+                    if let Some(event) = self.variables_events.borrow_mut().pop_front() {
+                        return event;
+                    }
+                    continue;
+                }
+                // Idle can race with variables events (see #689)
+                match msg {
                     Message::Status(_) => {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                     },
@@ -914,19 +886,13 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match &msg {
-                    Message::CommMsg(ref data)
-                        if self.is_data_explorer_comm(&data.content.comm_id) =>
-                    {
-                        self.buffer_data_explorer_event(&data.content.data);
-                        return self.data_explorer_events.borrow_mut().pop_front().unwrap();
-                    },
-                    Message::Stream(ref data) => {
-                        self.buffer_stream(&data.content);
-                    },
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        self.buffer_variables_event(&data.content.data);
-                    },
+                if self.try_buffer_msg(&msg) {
+                    if let Some(event) = self.data_explorer_events.borrow_mut().pop_front() {
+                        return event;
+                    }
+                    continue;
+                }
+                match msg {
                     Message::Status(_) => {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                     },
@@ -951,22 +917,11 @@ impl DummyArkFrontend {
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             match self.recv_iopub_with_timeout(remaining) {
-                Some(msg) => match &msg {
-                    Message::Stream(data) => {
-                        self.buffer_stream(&data.content);
-                    },
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        self.buffer_variables_event(&data.content.data);
-                    },
-                    Message::CommMsg(ref data)
-                        if self.is_data_explorer_comm(&data.content.comm_id) =>
-                    {
-                        self.buffer_data_explorer_event(&data.content.data);
-                    },
-                    _ => {
+                Some(msg) => {
+                    if !self.try_buffer_msg(&msg) {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                         break;
-                    },
+                    }
                 },
                 None => break,
             }
