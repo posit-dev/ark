@@ -175,7 +175,7 @@ impl RVariables {
         // This and the prompt-driven `update()` may arrive in either order,
         // which is safe: the first sends a `Refresh`, the second is a no-op.
         let initial_signal_tx = prompt_signal_tx.clone();
-        r_task::spawn_idle(move |_| async move {
+        r_task::spawn_idle(async move |_| {
             initial_signal_tx.send(()).log_err();
         });
 

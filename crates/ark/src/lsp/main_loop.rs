@@ -820,7 +820,7 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
     );
 
     for task in batch {
-        let result: anyhow::Result<()> = (|| async {
+        let result: anyhow::Result<()> = (async || {
             match &task {
                 IndexerTask::Create { uri } => {
                     indexer::create(uri)?;

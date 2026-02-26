@@ -792,7 +792,7 @@ impl Console {
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
         r_task::spawn_interrupt({
             let dap_clone = console.debug_dap.clone();
-            || async move {
+            async move || {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
         });
@@ -3121,7 +3121,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn_idle(|_| async move {
+        r_task::spawn_idle(async move |_| {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }

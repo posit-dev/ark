@@ -82,7 +82,7 @@ pub(crate) fn init_graphics_device(
     };
 
     // Launch an R thread task to process messages from the frontend
-    r_task::spawn_interrupt(|| async move { process_notifications(graphics_device_rx).await });
+    r_task::spawn_interrupt(async move || process_notifications(graphics_device_rx).await);
 }
 
 async fn process_notifications(
