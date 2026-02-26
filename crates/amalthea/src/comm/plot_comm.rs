@@ -1,7 +1,7 @@
 // @generated
 
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -30,7 +30,7 @@ pub struct IntrinsicSize {
 /// The plot's metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct PlotMetadata {
-	/// A human-readable name for the plot
+	/// A unique, human-readable name for the plot
 	pub name: String,
 
 	/// The kind of plot e.g. 'Matplotlib', 'ggplot2', etc.
@@ -40,7 +40,10 @@ pub struct PlotMetadata {
 	pub execution_id: String,
 
 	/// The code fragment that produced the plot
-	pub code: String
+	pub code: String,
+
+	/// The origin of the plot, if known
+	pub origin: Option<PlotOrigin>
 }
 
 /// A rendered plot
@@ -64,6 +67,34 @@ pub struct PlotSize {
 
 	/// The plot's width, in pixels
 	pub width: i64
+}
+
+/// The origin (source) of a plot
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PlotOrigin {
+	/// The URI of the document containing the code that produced the plot, if
+	/// available
+	pub uri: String,
+
+	/// The range within the document at uri that produced the plot, if
+	/// available
+	pub range: Option<PlotRange>
+}
+
+/// The range of a plot within a document
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PlotRange {
+	/// The line number on which the plot starts (0-indexed)
+	pub start_line: i64,
+
+	/// The character number on which the plot starts (0-indexed)
+	pub start_character: i64,
+
+	/// The line number on which the plot ends (0-indexed)
+	pub end_line: i64,
+
+	/// The character number on which the plot ends (0-indexed)
+	pub end_character: i64
 }
 
 /// The settings used to render the plot

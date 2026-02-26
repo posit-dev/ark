@@ -20,11 +20,14 @@ use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
 use amalthea::comm::plot_comm::PlotMetadata;
+use amalthea::comm::plot_comm::PlotOrigin;
+use amalthea::comm::plot_comm::PlotRange;
 use amalthea::comm::plot_comm::PlotRenderFormat;
 use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::UpdateParams;
+use amalthea::wire::execute_request::CodeLocation;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -122,6 +125,14 @@ struct WrappedDeviceCallbacks {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PlotId(String);
 
+/// Execution context captured when an execute request starts.
+/// Stored on the graphics device so it can be associated with plots created during execution.
+struct ExecutionContext {
+    execution_id: String,
+    code: String,
+    code_location: Option<CodeLocation>,
+}
+
 struct DeviceContext {
     /// Channel for sending [CommEvent]s to Positron when plot events occur
     comm_event_tx: Sender<CommEvent>,
@@ -184,10 +195,15 @@ struct DeviceContext {
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
 
-    /// The current execution context (execution_id, code) from the active request.
+    /// The current execution context from the active request.
     /// Pushed here when an execute request starts via `on_execute_request()`,
     /// cleared when the request completes.
-    execution_context: RefCell<Option<(String, String)>>,
+    execution_context: RefCell<Option<ExecutionContext>>,
+
+    /// Stack of source file URIs, pushed/popped by the `source()` hook.
+    /// When a plot is created inside `source("foo.R")`, the top of this stack
+    /// provides the file attribution even though the execute_request came from the console.
+    source_context_stack: RefCell<Vec<String>>,
 }
 
 impl DeviceContext {
@@ -213,12 +229,22 @@ impl DeviceContext {
                 format: PlotRenderFormat::Png,
             }),
             execution_context: RefCell::new(None),
+            source_context_stack: RefCell::new(Vec::new()),
         }
     }
 
     /// Set the current execution context (called when an execute request starts)
-    fn set_execution_context(&self, execution_id: String, code: String) {
-        *self.execution_context.borrow_mut() = Some((execution_id, code));
+    fn set_execution_context(
+        &self,
+        execution_id: String,
+        code: String,
+        code_location: Option<CodeLocation>,
+    ) {
+        *self.execution_context.borrow_mut() = Some(ExecutionContext {
+            execution_id,
+            code,
+            code_location,
+        });
     }
 
     /// Clear the current execution context (called when an execute request completes)
@@ -226,9 +252,19 @@ impl DeviceContext {
         *self.execution_context.borrow_mut() = None;
     }
 
-    /// Get the current execution context (clones the value)
-    fn get_execution_context(&self) -> Option<(String, String)> {
-        self.execution_context.borrow().clone()
+    /// Push a source file URI onto the stack (called when `source()` starts)
+    fn push_source_context(&self, uri: String) {
+        self.source_context_stack.borrow_mut().push(uri);
+    }
+
+    /// Pop a source file URI from the stack (called when `source()` completes)
+    fn pop_source_context(&self) {
+        self.source_context_stack.borrow_mut().pop();
+    }
+
+    /// Get the current source file URI, if inside a `source()` call
+    fn current_source_uri(&self) -> Option<String> {
+        self.source_context_stack.borrow().last().cloned()
     }
 
     /// Create a new id for this new plot page (from Positron's perspective)
@@ -316,18 +352,56 @@ impl DeviceContext {
     ///
     /// First checks for context pushed via `on_execute_request()`, then falls back
     /// to getting context from Console's active request (for backwards compatibility
-    /// and edge cases).
-    fn capture_execution_context(&self) -> (String, String) {
-        // First, check if we have a stored execution context from on_execute_request()
-        if let Some(ctx) = self.get_execution_context() {
-            return ctx;
+    /// and edge cases). The fallback path does not include `code_location`.
+    fn capture_execution_context(&self) -> ExecutionContext {
+        // Check if we have a stored execution context from on_execute_request()
+        let stored = self.execution_context.borrow();
+        if let Some(ctx) = stored.as_ref() {
+            return ExecutionContext {
+                execution_id: ctx.execution_id.clone(),
+                code: ctx.code.clone(),
+                code_location: ctx.code_location.clone(),
+            };
+        }
+        drop(stored);
+
+        // Fall back to getting context from Console (for edge cases).
+        // This path does not provide code_location.
+        let (execution_id, code) =
+            Console::get().get_execution_context().unwrap_or_else(|| {
+                // No active request - might be during startup or from R code
+                (String::new(), String::new())
+            });
+
+        ExecutionContext {
+            execution_id,
+            code,
+            code_location: None,
+        }
+    }
+
+    /// Determine the plot origin for a new plot.
+    ///
+    /// Checks three sources in priority order:
+    /// 1. Source context stack (inside `source("file.R")`) -- file-level, no range
+    /// 2. Execute request's `code_location` (code run from a file via the IDE) -- with range
+    /// 3. None (code typed at the console)
+    ///
+    /// When inside `source()`, the source file URI takes priority over the
+    /// execute request's `code_location`, which would just point at the
+    /// `source()` call itself.
+    fn capture_plot_origin(&self, ctx: &ExecutionContext) -> Option<PlotOrigin> {
+        // If we're inside a source() call, use the source file URI
+        // (file-level attribution only, no line range)
+        if let Some(source_uri) = self.current_source_uri() {
+            return Some(PlotOrigin {
+                uri: source_uri,
+                range: None,
+            });
         }
 
-        // Fall back to getting context from Console (for edge cases)
-        Console::get().get_execution_context().unwrap_or_else(|| {
-            // No active request - might be during startup or from R code
-            (String::new(), String::new())
-        })
+        // Otherwise, use the code_location from the execute request
+        ctx.code_location.as_ref().map(Self::code_location_to_origin)
     }
 
     /// Detect the kind of plot from the recording.
@@ -485,12 +559,7 @@ impl DeviceContext {
                 let info = stored_metadata.get(id);
 
                 let plot_metadata = match info {
-                    Some(info) => PlotMetadata {
-                        name: info.name.clone(),
-                        kind: info.kind.clone(),
-                        execution_id: info.execution_id.clone(),
-                        code: info.code.clone(),
-                    },
+                    Some(info) => info.clone(),
                     None => {
                         // Fallback if metadata wasn't captured (shouldn't happen)
                         log::warn!("No metadata found for plot id {id}");
@@ -499,6 +568,7 @@ impl DeviceContext {
                             kind: "plot".to_string(),
                             execution_id: String::new(),
                             code: String::new(),
+                            origin: None,
                         }
                     },
                 };
@@ -610,19 +680,34 @@ impl DeviceContext {
         }
     }
 
+    /// Convert a `CodeLocation` to a `PlotOrigin` for the plot metadata.
+    fn code_location_to_origin(loc: &CodeLocation) -> PlotOrigin {
+        PlotOrigin {
+            uri: loc.uri.to_string(),
+            range: Some(PlotRange {
+                start_line: loc.start.line as i64,
+                start_character: loc.start.character as i64,
+                end_line: loc.end.line as i64,
+                end_character: loc.end.character as i64,
+            }),
+        }
+    }
+
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn process_new_plot_positron(&self, id: &PlotId) {
         log::trace!("Notifying Positron of new plot");
 
-        let (execution_id, code) = self.capture_execution_context();
+        let ctx = self.capture_execution_context();
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
+        let origin = self.capture_plot_origin(&ctx);
 
         self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
             name,
             kind,
-            execution_id,
-            code,
+            execution_id: ctx.execution_id,
+            code: ctx.code,
+            origin,
         });
 
         // Let Positron know that we just created a new plot.
@@ -668,15 +753,17 @@ impl DeviceContext {
     fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Notifying Jupyter frontend of new plot");
 
-        let (execution_id, code) = self.capture_execution_context();
+        let ctx = self.capture_execution_context();
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
+        let origin = self.capture_plot_origin(&ctx);
 
         self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
             name,
             kind,
-            execution_id,
-            code,
+            execution_id: ctx.execution_id,
+            code: ctx.code,
+            origin,
         });
 
         let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
@@ -932,15 +1019,20 @@ pub(crate) fn on_process_idle_events() {
 
 /// Hook applied when an execute request starts
 ///
-/// Pushes the execution context (execution_id, code) to the graphics device
+/// Pushes the execution context (execution_id, code, code_location) to the graphics device
 /// so it can be captured when new plots are created. This allows plots to be
 /// correctly attributed to the code that generated them.
 ///
 /// Called from `handle_execute_request()` after setting the active request.
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_execute_request(execution_id: String, code: String) {
+pub(crate) fn on_execute_request(
+    execution_id: String,
+    code: String,
+    code_location: Option<CodeLocation>,
+) {
     log::trace!("Entering on_execute_request");
-    DEVICE_CONTEXT.with_borrow(|cell| cell.set_execution_context(execution_id, code));
+    DEVICE_CONTEXT
+        .with_borrow(|cell| cell.set_execution_context(execution_id, code, code_location));
 }
 
 /// Hook applied after a code chunk has finished executing
@@ -1152,7 +1244,7 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
 
 /// Retrieve plot metadata by plot ID (display_id).
 ///
-/// Returns a named list with fields: name, kind, execution_id, code.
+/// Returns a named list with fields: name, kind, execution_id, code, origin_uri.
 /// Returns NULL if no metadata is found for the given ID.
 #[tracing::instrument(level = "trace", skip_all)]
 #[harp::register]
@@ -1164,12 +1256,19 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
         let metadata = cell.metadata.borrow();
         match metadata.get(&plot_id) {
             Some(info) => {
+                let origin_uri = info
+                    .origin
+                    .as_ref()
+                    .map(|o| o.uri.as_str())
+                    .unwrap_or("");
+
                 // Create a list with the metadata values
                 let values: Vec<RObject> = vec![
                     RObject::from(info.name.as_str()),
                     RObject::from(info.kind.as_str()),
                     RObject::from(info.execution_id.as_str()),
                     RObject::from(info.code.as_str()),
+                    RObject::from(origin_uri),
                 ];
                 let list = RObject::try_from(values)?;
 
@@ -1179,6 +1278,7 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
                     "kind".to_string(),
                     "execution_id".to_string(),
                     "code".to_string(),
+                    "origin_uri".to_string(),
                 ];
                 let names = RObject::from(names);
                 libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
@@ -1188,4 +1288,21 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
             None => Ok(harp::r_null()),
         }
     })
+}
+
+/// Push a source file URI onto the source context stack.
+/// Called from the `source()` hook when entering a sourced file.
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_push_source_context(uri: SEXP) -> anyhow::Result<SEXP> {
+    let uri_str: String = RObject::view(uri).try_into()?;
+    DEVICE_CONTEXT.with_borrow(|cell| cell.push_source_context(uri_str));
+    Ok(harp::r_null())
+}
+
+/// Pop a source file URI from the source context stack.
+/// Called from the `source()` hook when leaving a sourced file.
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<SEXP> {
+    DEVICE_CONTEXT.with_borrow(|cell| cell.pop_source_context());
+    Ok(harp::r_null())
 }

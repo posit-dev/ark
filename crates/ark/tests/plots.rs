@@ -1,4 +1,8 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::wire::execute_request::ExecuteRequestPositron;
+use amalthea::wire::execute_request::JupyterPositronLocation;
+use amalthea::wire::execute_request::JupyterPositronPosition;
+use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::DummyArkFrontend;
 
 #[test]
@@ -353,5 +357,66 @@ fn test_plot_get_metadata() {
     assert!(
         result.contains("$kind") && result.contains("\"plot\""),
         "Metadata should contain kind 'plot', got:\n{result}"
+    );
+}
+
+/// Test that plot metadata includes origin when code_location is provided.
+///
+/// This test verifies that when an execute_request includes a `positron.code_location`,
+/// the resulting plot's metadata includes the origin URI.
+#[test]
+fn test_plot_get_metadata_with_origin() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    let origin_uri = "file:///path/to/analysis.R";
+
+    // Send execute_request with a code_location
+    frontend.send_execute_request(
+        code,
+        ExecuteRequestOptions {
+            positron: Some(ExecuteRequestPositron {
+                code_location: Some(JupyterPositronLocation {
+                    uri: origin_uri.to_string(),
+                    range: JupyterPositronRange {
+                        start: JupyterPositronPosition {
+                            line: 5,
+                            character: 0,
+                        },
+                        end: JupyterPositronPosition {
+                            line: 5,
+                            character: 10,
+                        },
+                    },
+                }),
+            }),
+            ..ExecuteRequestOptions::default()
+        },
+    );
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Receive display data and get the display_id
+    let display_id = frontend.recv_iopub_display_data_id();
+    assert!(!display_id.is_empty());
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Query the metadata using the display_id
+    let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query_code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Verify origin_uri is present in the metadata
+    assert!(
+        result.contains(origin_uri),
+        "Metadata should contain origin_uri '{origin_uri}', got:\n{result}"
     );
 }
