@@ -17,8 +17,8 @@ initialize_debug <- function() {
         .ark_verify_breakpoints_range
     )
     base_bind(
-        as.symbol(".ark_capture_top_level_environment"),
-        .ark_capture_top_level_environment
+        as.symbol(".ark_capture_current_environment"),
+        .ark_capture_current_environment
     )
 }
 
@@ -63,7 +63,7 @@ debugger_stack_info <- function(
     fns,
     environments,
     calls,
-    top_env
+    current_env
 ) {
     n <- length(fns)
     if (n != length(environments) || n != length(calls)) {
@@ -131,20 +131,20 @@ debugger_stack_info <- function(
         intermediate_frame_calls
     )
 
-    # When `top_env` differs from `context_environment`, it means that (a) the
+    # When `current_env` differs from `context_environment`, it means that (a) the
     # current expression is evaluated from C, e.g. we might be forcing a promise
-    # via `list(...)`, and (b) we're adding a synthetic top environment based on
+    # via `list(...)`, and (b) we're adding a synthetic current environment based on
     # the context srcref. Unfortunately, we don't have any srcref information
-    # for the R-level top in that case, as neither `R_Srcref` nor the last call
+    # for the R-level current frame in that case, as neither `R_Srcref` nor the last call
     # in `sys.calls()` point to the location of the call. So we let it fall back
     # to the virtual source from the function.
-    has_synthetic_top <- !is.null(top_env) &&
-        !identical(top_env, context_environment)
-    if (has_synthetic_top) {
-        top_srcref <- context_srcref
+    has_synthetic_current <- !is.null(current_env) &&
+        !identical(current_env, context_environment)
+    if (has_synthetic_current) {
+        current_srcref <- context_srcref
         context_srcref <- NULL
     } else {
-        top_srcref <- NULL
+        current_srcref <- NULL
     }
 
     last_frame_info <- context_frame_info(
@@ -162,18 +162,18 @@ debugger_stack_info <- function(
         list(last_frame_info)
     )
 
-    # If the captured top-level environment differs from the R-level top frame,
+    # If the captured current environment differs from the R-level top frame,
     # append a synthetic frame. This happens when evaluating from C (e.g.
     # promise forcing).
-    if (has_synthetic_top) {
-        top_frame_info <- frame_info_from_srcref(
-            source_name = "<top>.R",
-            frame_name = "<top>",
-            srcref = top_srcref,
-            environment = top_env
+    if (has_synthetic_current) {
+        current_frame_info <- frame_info_from_srcref(
+            source_name = "<current>.R",
+            frame_name = "<current>",
+            srcref = current_srcref,
+            environment = current_env
         )
-        if (!is.null(top_frame_info)) {
-            out <- c(out, list(top_frame_info))
+        if (!is.null(current_frame_info)) {
+            out <- c(out, list(current_frame_info))
         }
     }
 
@@ -872,9 +872,9 @@ verify_breapoint <- function(uri, id) {
     .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
 }
 
-.ark_capture_top_level_environment <- function() {
+.ark_capture_current_environment <- function() {
     invisible(base_bind(
-        as.symbol(".ark_top_level_env"),
+        as.symbol(".ark_current_env"),
         parent.frame()
     ))
 }

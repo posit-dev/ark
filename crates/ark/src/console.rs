@@ -616,8 +616,8 @@ enum ReadConsolePendingAction {
     #[default]
     None,
 
-    /// We just evaluated `.ark_capture_top_level_environment()` to capture the
-    /// top-level environment into `.ark_top_level_env`. Now retrieve it and
+    /// We just evaluated `.ark_capture_current_environment()` to capture the
+    /// top-level environment into `.ark_current_env`. Now retrieve it and
     /// push onto the frame stack.
     CaptureEnv,
 
@@ -2908,7 +2908,7 @@ pub extern "C-unwind" fn r_read_console(
                 // - Looking at the call stack via `sys.frames()` does not work
                 //   when the browser is evaluating a promise or some other
                 //   C-level `Rf_eval()`.
-                let input = String::from("base::.ark_capture_top_level_environment()");
+                let input = String::from("base::.ark_capture_current_environment()");
                 Console::on_console_input(buf, buflen, input).unwrap();
                 return 1;
             }
@@ -2925,11 +2925,11 @@ pub extern "C-unwind" fn r_read_console(
         },
 
         ReadConsolePendingAction::CaptureEnv => {
-            // We just evaluated `.ark_capture_top_level_environment()`.
+            // We just evaluated `.ark_capture_current_environment()`.
             // Retrieve the captured environment from base namespace for entry
             // bookkeeping below.
             unsafe {
-                let sym = r_symbol!(".ark_top_level_env");
+                let sym = r_symbol!(".ark_current_env");
                 let env: RObject = libr::CDR(sym).into();
 
                 // Allow R to GC the environment again
