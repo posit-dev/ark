@@ -99,7 +99,7 @@ frontend.recv_shell_execute_reply();
 
 // Use drain_streams() to consume buffered stream output so `recv_iopub_idle()` won't panic
 let streams = frontend.drain_streams();
-assert!(streams.stdout.contains("expected"));
+assert!(streams.stdout().contains("expected"));
 ```
 
 **Debugging tests:**

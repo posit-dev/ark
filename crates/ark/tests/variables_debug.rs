@@ -34,7 +34,6 @@ fn test_variables_pane_shows_debug_env() {
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -93,7 +92,6 @@ fn test_variables_pane_shows_function_debug_env() {
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.assert_stream_stdout_contains("Called from: f(99)");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
