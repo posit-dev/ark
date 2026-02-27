@@ -73,13 +73,8 @@
 #' @export
 .ps.rpc.getAddins <- function() {
     pkgs <- .packages(all.available = TRUE)
-    out <- list()
-
-    for (pkg in pkgs) {
-        out <- c(out, get_package_addins(pkg))
-    }
-
-    out
+    out <- lapply(pkgs, get_package_addins)
+    unlist(out, recursive = FALSE)
 }
 
 get_package_addins <- function(pkg) {
@@ -93,16 +88,10 @@ get_package_addins <- function(pkg) {
     if (is.null(dcf)) return(list())
 
     cols <- colnames(dcf)
-    out <- list()
-
-    for (i in seq_len(nrow(dcf))) {
-        addin <- parse_addin_row(dcf, i, cols, pkg)
-        if (!is.null(addin)) {
-            out <- c(out, list(addin))
-        }
-    }
-
-    out
+    out <- lapply(seq_len(nrow(dcf)), function(i) {
+        parse_addin_row(dcf, i, cols, pkg)
+    })
+    out[lengths(out) > 0]
 }
 
 parse_addin_row <- function(dcf, row, cols, pkg) {
@@ -125,13 +114,8 @@ parse_addin_row <- function(dcf, row, cols, pkg) {
 #' @export
 .ps.rpc.getRmdTemplates <- function() {
     pkgs <- .packages(all.available = TRUE)
-    out <- list()
-
-    for (pkg in pkgs) {
-        out <- c(out, get_package_templates(pkg))
-    }
-
-    out
+    out <- lapply(pkgs, get_package_templates)
+    unlist(out, recursive = FALSE)
 }
 
 get_package_templates <- function(pkg) {
@@ -139,16 +123,8 @@ get_package_templates <- function(pkg) {
     if (!nzchar(path)) return(list())
 
     dirs <- list.dirs(path, recursive = FALSE, full.names = TRUE)
-    out <- list()
-
-    for (dir in dirs) {
-        template <- parse_template_dir(dir, pkg)
-        if (!is.null(template)) {
-            out <- c(out, list(template))
-        }
-    }
-
-    out
+    out <- lapply(dirs, function(dir) parse_template_dir(dir, pkg))
+    out[lengths(out) > 0]
 }
 
 parse_template_dir <- function(dir, pkg) {
