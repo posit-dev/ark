@@ -241,25 +241,6 @@ impl DummyFrontend {
         })
     }
 
-    /// Sends an execute request and handles the standard message flow:
-    /// busy -> execute_input -> idle -> execute_reply.
-    /// Asserts that the input code matches and returns the execution count.
-    #[track_caller]
-    pub fn execute_request_invisibly(&self, code: &str) -> u32 {
-        self.send_execute_request(code, ExecuteRequestOptions::default());
-        self.recv_iopub_busy();
-
-        let input = self.recv_iopub_execute_input();
-        assert_eq!(input.code, code);
-
-        self.recv_iopub_idle();
-
-        let execution_count = self.recv_shell_execute_reply();
-        assert_eq!(execution_count, input.execution_count);
-
-        execution_count
-    }
-
     /// Sends an execute request and handles the standard message flow with a result:
     /// busy -> execute_input -> execute_result -> idle -> execute_reply.
     /// Asserts that the input code matches and passes the result to the callback.
@@ -282,16 +263,12 @@ impl DummyFrontend {
     where
         F: FnOnce(String),
     {
-        self.execute_request_with_options(
-            code,
-            result_check,
-            ExecuteRequestOptions {
-                positron: Some(ExecuteRequestPositron {
-                    code_location: Some(code_location),
-                }),
-                ..Default::default()
-            },
-        )
+        self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
+            positron: Some(ExecuteRequestPositron {
+                code_location: Some(code_location),
+            }),
+            ..Default::default()
+        })
     }
 
     #[track_caller]

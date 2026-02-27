@@ -1114,6 +1114,25 @@ impl DummyArkFrontend {
         self.in_debug.get()
     }
 
+    /// Sends an execute request and handles the standard message flow:
+    /// busy -> execute_input -> idle -> execute_reply.
+    /// Asserts that the input code matches and returns the execution count.
+    #[track_caller]
+    pub fn execute_request_invisibly(&self, code: &str) -> u32 {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        self.recv_iopub_idle();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        execution_count
+    }
+
     /// Send an execute request with tracing
     #[track_caller]
     pub fn send_execute_request_traced(&self, code: &str, options: ExecuteRequestOptions) {
