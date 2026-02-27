@@ -109,6 +109,10 @@ pub struct ConsoleFilter {
     /// Whether we're currently inside a debug session. Updated by the
     /// console so the filter can record context when entering `Filtering`.
     is_debugging: bool,
+    /// Whether to suppress confirmed debug output. When `false`, the
+    /// filter still extracts debug info for auto-stepping but emits
+    /// the content instead of dropping it.
+    suppress: bool,
 }
 
 fn get_timeout() -> Duration {
@@ -127,6 +131,7 @@ impl ConsoleFilter {
             },
             timeout: get_timeout(),
             is_debugging: false,
+            suppress: true,
         }
     }
 
@@ -138,11 +143,16 @@ impl ConsoleFilter {
             },
             timeout,
             is_debugging: false,
+            suppress: true,
         }
     }
 
     pub fn set_debugging(&mut self, is_debugging: bool) {
         self.is_debugging = is_debugging;
+    }
+
+    pub fn set_suppress(&mut self, suppress: bool) {
+        self.suppress = suppress;
     }
 
     /// Feed content through the filter.
@@ -330,11 +340,9 @@ impl ConsoleFilter {
                 ..
             } => {
                 if was_debugging || is_browser {
-                    // This is the suppression point of the filter. We extract
-                    // debug info for auto-stepping and drop the rest (`pattern`
-                    // and `buffer`).
                     debug_update = finalize_capture(pattern, &buffer);
-                } else {
+                }
+                if !(was_debugging || is_browser) || !self.suppress {
                     let text = format!("{}{}", pattern.prefix(), buffer);
                     emit = Some(text);
                 }
@@ -875,6 +883,47 @@ mod tests {
         let (emit, update) = filter.on_read_console(true);
         assert!(emit.is_none());
         assert!(update.is_some());
+    }
+
+    #[test]
+    fn test_suppress_false_emits_and_extracts() {
+        // With suppress disabled, debug output is emitted but debug info
+        // is still extracted for auto-stepping.
+        let mut filter = ConsoleFilter::new();
+        filter.set_suppress(false);
+        filter.set_debugging(true);
+        let emits = filter.feed("debug at file.R#10: x <- 1\n");
+        assert!(emits.is_empty());
+
+        let (emit, update) = filter.on_read_console(true);
+        assert_eq!(emit.unwrap(), "debug at file.R#10: x <- 1\n");
+        assert!(update.is_some());
+    }
+
+    #[test]
+    fn test_suppress_false_entry_exit_emits_and_resets() {
+        let mut filter = ConsoleFilter::new();
+        filter.set_suppress(false);
+        filter.set_debugging(true);
+        let emits = filter.feed("exiting from: f()\n");
+        assert!(emits.is_empty());
+
+        let (emit, update) = filter.on_read_console(false);
+        assert_eq!(emit.unwrap(), "exiting from: f()\n");
+        assert!(update.is_some());
+    }
+
+    #[test]
+    fn test_suppress_false_non_debug_still_emits() {
+        // Non-debug output at top level: emitted regardless of suppress flag.
+        let mut filter = ConsoleFilter::new();
+        filter.set_suppress(false);
+        let emits = filter.feed("Called from: user output\n");
+        assert!(emits.is_empty());
+
+        let (emit, update) = filter.on_read_console(false);
+        assert_eq!(emit.unwrap(), "Called from: user output\n");
+        assert!(update.is_none());
     }
 
     #[test]

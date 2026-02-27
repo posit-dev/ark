@@ -1126,19 +1126,24 @@ impl Console {
 
         let is_browser = matches!(info.kind, PromptKind::Browser);
 
+        let suppress = filter_debug_output();
+        self.filter.set_suppress(suppress);
+
         // Leading `exiting from:` / `debugging in:` reach autoprint at
         // `n_frame=0` when leaving/entering a debugged function at top level.
         // Only strip when we know we just left a debug session.
         if is_browser || self.debug_was_debugging {
             self.debug_was_debugging = false;
-            strip_entry_exit_lines(&mut self.autoprint_output);
+            if suppress {
+                strip_entry_exit_lines(&mut self.autoprint_output);
+            }
         }
 
         // Other debug prefixes (`Called from:`, `debug at`, `debug:`) only
         // reach autoprint at browser prompts (from stepping in top-level
         // braced expressions). Truncate only there because these prefixes
         // could appear in user print methods at top level.
-        if is_browser {
+        if is_browser && suppress {
             strip_step_lines(&mut self.autoprint_output);
         }
 
@@ -3237,6 +3242,14 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
     }
 
     Ok(RObject::null().sexp)
+}
+
+fn filter_debug_output() -> bool {
+    let opt: Option<bool> =
+        r_null_or_try_into(harp::get_option("ark.debugger.filter_debug_output"))
+            .ok()
+            .flatten();
+    opt.unwrap_or(true)
 }
 
 fn do_resource_namespaces() -> bool {
