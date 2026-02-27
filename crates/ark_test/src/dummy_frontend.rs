@@ -719,6 +719,72 @@ impl DummyArkFrontend {
         result
     }
 
+    /// Open a UI comm to enable Positron mode (dynamic plots, etc.).
+    ///
+    /// This sends a `comm_open` for the "ui" target, waits for the kernel
+    /// to establish the UI comm channel, and then runs a no-op execute
+    /// request to synchronize. After this call,
+    /// `should_use_dynamic_plots()` returns true.
+    #[track_caller]
+    pub fn open_ui_comm(&self) {
+        let comm_id = uuid::Uuid::new_v4().to_string();
+        self.send_shell(CommOpen {
+            comm_id,
+            target_name: String::from("positron.ui"),
+            data: serde_json::json!({}),
+        });
+
+        // The comm_open triggers busy/idle on the shell thread and also
+        // sends an EstablishUiCommChannel kernel request to the console.
+        // The UI comm then sends events (prompt_state, working_directory)
+        // as CommMsg on IOPub. These can arrive in any order relative to
+        // the busy/idle. We wait for the prompt_state CommMsg as evidence
+        // that the UI comm has been established, draining everything.
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        let mut got_prompt_state = false;
+        let mut idle_count = 0u32;
+
+        // We need to see the prompt_state AND at least one idle
+        while !got_prompt_state || idle_count == 0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let Some(msg) = self.recv_iopub_with_timeout(remaining) else {
+                panic!(
+                    "Timed out waiting for UI comm (got_prompt_state={got_prompt_state}, \
+                     idle_count={idle_count})"
+                );
+            };
+            match &msg {
+                Message::CommMsg(data) => {
+                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str())
+                    {
+                        if method == "prompt_state" {
+                            got_prompt_state = true;
+                        }
+                    }
+                },
+                Message::Status(ref data)
+                    if data.content.execution_state
+                        == amalthea::wire::status::ExecutionState::Idle =>
+                {
+                    idle_count += 1;
+                },
+                Message::Stream(ref data) => {
+                    self.buffer_stream(&data.content);
+                },
+                _ => {},
+            }
+        }
+
+        // The UI comm sends events asynchronously. Some may arrive after
+        // idle. Drain any stragglers with a short timeout.
+        while let Some(msg) = self.recv_iopub_with_timeout(Duration::from_millis(200)) {
+            if let Message::Stream(ref data) = msg {
+                self.buffer_stream(&data.content);
+            }
+            // Discard late comm messages and other events
+        }
+    }
+
     /// Source a file that was created with `SourceFile::new()`.
     #[track_caller]
     pub fn source_file(&self, file: &SourceFile) {

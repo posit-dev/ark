@@ -4,6 +4,7 @@ use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::DummyArkFrontend;
+use ark_test::SourceFile;
 
 #[test]
 fn test_basic_plot() {
@@ -419,4 +420,98 @@ fn test_plot_get_metadata_with_origin() {
         result.contains(origin_uri),
         "Metadata should contain origin_uri '{origin_uri}', got:\n{result}"
     );
+}
+
+/// Test that plots are emitted when created inside source().
+///
+/// This test verifies that when an R file containing plot() is sourced,
+/// the plot is still emitted as display_data on the IOPub channel.
+#[test]
+fn test_plot_from_source() {
+    let frontend = DummyArkFrontend::lock();
+
+    let file = SourceFile::new("plot(1:10)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // The sourced file creates a plot, so we should receive display_data
+    frontend.recv_iopub_display_data();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that multiple plots are emitted when created inside source().
+#[test]
+fn test_multiple_plots_from_source() {
+    let frontend = DummyArkFrontend::lock();
+
+    let file = SourceFile::new("plot(1:10)\nplot(1:5)\nplot(1:3)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // All three plots should be emitted as display_data
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_display_data();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that plots are emitted during source() in dynamic plots mode (Positron).
+///
+/// When the UI comm is connected, plots use the Positron comm protocol
+/// (CommOpen) instead of Jupyter's display_data. This test verifies that
+/// plots created inside source() are properly emitted via comm protocol.
+#[test]
+fn test_plot_from_source_dynamic() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Open a UI comm to enable dynamic plots (Positron mode).
+    // This triggers some comm messages (prompt refresh, etc.) that we need to
+    // drain before proceeding.
+    frontend.open_ui_comm();
+
+    // Test source() with a plot in dynamic mode
+    let file = SourceFile::new("plot(1:10)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+
+    // In dynamic plots mode, the plot should arrive as a CommOpen.
+    // The UI comm also sends CommMsg events (busy, etc.) that we need to skip.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut got_plot_comm = false;
+    let mut got_idle = false;
+
+    while !got_plot_comm || !got_idle {
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "Timed out waiting for plot (got_plot_comm={got_plot_comm}, got_idle={got_idle})"
+            );
+        }
+        let msg = frontend.recv_iopub();
+        match msg {
+            amalthea::wire::jupyter_message::Message::CommOpen(data) => {
+                assert_eq!(data.content.target_name, "positron.plot");
+                got_plot_comm = true;
+            },
+            amalthea::wire::jupyter_message::Message::Status(data)
+                if data.content.execution_state
+                    == amalthea::wire::status::ExecutionState::Idle =>
+            {
+                got_idle = true;
+            },
+            // Skip CommMsg (UI comm events), Status(Busy), ExecuteInput, Stream, etc.
+            _ => {},
+        }
+    }
+    frontend.recv_shell_execute_reply();
 }

@@ -204,6 +204,12 @@ struct DeviceContext {
     /// When a plot is created inside `source("foo.R")`, the top of this stack
     /// provides the file attribution even though the execute_request came from the console.
     source_context_stack: RefCell<Vec<String>>,
+
+    /// The plot origin captured eagerly when drawing starts (i.e. when `has_changes`
+    /// transitions from false to true). This is necessary because the source context
+    /// stack may be popped before `process_changes()` runs (e.g. `source()` completes
+    /// before the execute request finishes), so we snapshot the origin at drawing time.
+    pending_origin: RefCell<Option<Option<PlotOrigin>>>,
 }
 
 impl DeviceContext {
@@ -230,6 +236,7 @@ impl DeviceContext {
             }),
             execution_context: RefCell::new(None),
             source_context_stack: RefCell::new(Vec::new()),
+            pending_origin: RefCell::new(None),
         }
     }
 
@@ -272,6 +279,7 @@ impl DeviceContext {
     fn new_positron_page(&self) {
         self.is_new_page.replace(true);
         self.id.replace(Self::new_id());
+        *self.pending_origin.borrow_mut() = None;
     }
 
     /// Should plot events be sent over [CommSocket]s to the frontend?
@@ -326,6 +334,15 @@ impl DeviceContext {
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
         self.has_changes.replace(old_has_changes || is_drawing);
+
+        // Eagerly capture the plot origin when drawing first starts for this
+        // change set. The source context stack may be popped before
+        // `process_changes()` runs, so we snapshot it now while it's available.
+        if !old_has_changes && is_drawing {
+            let ctx = self.capture_execution_context();
+            let origin = self.capture_plot_origin(&ctx);
+            *self.pending_origin.borrow_mut() = Some(origin);
+        }
     }
 
     /// Hook applied when starting a new page
@@ -402,6 +419,15 @@ impl DeviceContext {
 
         // Otherwise, use the code_location from the execute request
         ctx.code_location.as_ref().map(Self::code_location_to_origin)
+    }
+
+    /// Take the pending origin that was captured eagerly at drawing time.
+    /// Falls back to capturing the origin now if none was pending.
+    fn take_pending_origin(&self, ctx: &ExecutionContext) -> Option<PlotOrigin> {
+        self.pending_origin
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| self.capture_plot_origin(ctx))
     }
 
     /// Detect the kind of plot from the recording.
@@ -700,7 +726,7 @@ impl DeviceContext {
         let ctx = self.capture_execution_context();
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
-        let origin = self.capture_plot_origin(&ctx);
+        let origin = self.take_pending_origin(&ctx);
 
         self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
             name,
@@ -756,7 +782,7 @@ impl DeviceContext {
         let ctx = self.capture_execution_context();
         let kind = self.detect_plot_kind(id);
         let name = self.generate_plot_name(&kind);
-        let origin = self.capture_plot_origin(&ctx);
+        let origin = self.take_pending_origin(&ctx);
 
         self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
             name,
@@ -1058,6 +1084,12 @@ pub(crate) fn on_did_execute_request() {
     DEVICE_CONTEXT.with_borrow(|cell| {
         cell.process_changes();
         cell.clear_execution_context();
+        // Clear any unconsumed pending origin so it doesn't leak into the
+        // next execute request. `process_changes()` above already consumed it
+        // if this execution produced a new plot; this handles the case where
+        // drawing occurred (e.g. `lines()` inside `source()`) but only as an
+        // update to an existing plot, leaving the pending origin unclaimed.
+        *cell.pending_origin.borrow_mut() = None;
     });
 }
 
