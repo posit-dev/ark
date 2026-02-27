@@ -27,20 +27,26 @@
 // 5. `.Call("ps_test_complete_pending_task")` unblocks the oneshot so the
 //    idle task finishes cleanly.
 
+use std::time::Duration;
 use std::time::Instant;
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 
-/// Busy-loop until the kernel confirms the pending idle task has been polled
-/// by checking the `ark.test.task_polled` R option. Each iteration is a
-/// full execute-request round-trip, which also gives the event loop a chance
-/// to process the idle task if it hasn't been picked up yet.
+/// Poll until the kernel confirms the pending idle task has been polled
+/// by checking the `ark.test.task_polled` R option.
+///
+/// We sleep between iterations so the kernel's event loop gets actual
+/// idle time. Without the sleep, execute requests win the `try_recv`
+/// priority check every time and completely starve the idle-task
+/// channel. The kernel never reaches `select` where it could pick up
+/// the idle task.
 fn wait_until_task_polled(frontend: &DummyArkFrontend) {
     let deadline = Instant::now() + RECV_TIMEOUT;
     let polled = std::cell::Cell::new(false);
     loop {
+        std::thread::sleep(Duration::from_millis(50));
         frontend.execute_request("getOption('ark.test.task_polled', FALSE)", |result| {
             polled.set(result.contains("TRUE"));
         });
