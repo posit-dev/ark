@@ -1114,6 +1114,63 @@ impl DummyArkFrontend {
         self.in_debug.get()
     }
 
+    /// Sends an execute request and handles the standard message flow with a result:
+    /// busy -> execute_input -> execute_result -> idle -> execute_reply.
+    /// Asserts that the input code matches and passes the result to the callback.
+    /// Returns the execution count.
+    #[track_caller]
+    pub fn execute_request<F>(&self, code: &str, result_check: F) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.execute_request_with_options(code, result_check, Default::default())
+    }
+
+    #[track_caller]
+    pub fn execute_request_with_location<F>(
+        &self,
+        code: &str,
+        result_check: F,
+        code_location: JupyterPositronLocation,
+    ) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
+            positron: Some(ExecuteRequestPositron {
+                code_location: Some(code_location),
+            }),
+            ..Default::default()
+        })
+    }
+
+    #[track_caller]
+    pub fn execute_request_with_options<F>(
+        &self,
+        code: &str,
+        result_check: F,
+        options: ExecuteRequestOptions,
+    ) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.send_execute_request(code, options);
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let result = self.recv_iopub_execute_result();
+        result_check(result);
+
+        self.recv_iopub_idle();
+
+        let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        execution_count
+    }
+
     /// Sends an execute request and handles the standard message flow:
     /// busy -> execute_input -> idle -> execute_reply.
     /// Asserts that the input code matches and returns the execution count.
@@ -1128,6 +1185,32 @@ impl DummyArkFrontend {
         self.recv_iopub_idle();
 
         let execution_count = self.recv_shell_execute_reply();
+        assert_eq!(execution_count, input.execution_count);
+
+        execution_count
+    }
+
+    /// Sends an execute request that produces an error and handles the standard message flow:
+    /// busy -> execute_input -> execute_error -> idle -> execute_reply_exception.
+    /// Passes the error message to the callback for custom assertions.
+    /// Returns the execution count.
+    #[track_caller]
+    pub fn execute_request_error<F>(&self, code: &str, error_check: F) -> u32
+    where
+        F: FnOnce(String),
+    {
+        self.send_execute_request(code, ExecuteRequestOptions::default());
+        self.recv_iopub_busy();
+
+        let input = self.recv_iopub_execute_input();
+        assert_eq!(input.code, code);
+
+        let error_msg = self.recv_iopub_execute_error();
+        error_check(error_msg);
+
+        self.recv_iopub_idle();
+
+        let execution_count = self.recv_shell_execute_reply_exception();
         assert_eq!(execution_count, input.execution_count);
 
         execution_count
