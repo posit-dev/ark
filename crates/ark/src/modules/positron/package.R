@@ -76,41 +76,46 @@
     out <- list()
 
     for (pkg in pkgs) {
-        path <- system.file("rstudio", "addins.dcf", package = pkg)
-        if (!nzchar(path)) {
-            next
-        }
+        out <- c(out, get_package_addins(pkg))
+    }
 
-        dcf <- tryCatch(read.dcf(path), error = function(e) NULL)
-        if (is.null(dcf)) {
-            next
-        }
+    out
+}
 
-        cols <- colnames(dcf)
+get_package_addins <- function(pkg) {
+    path <- system.file("rstudio", "addins.dcf", package = pkg)
+    if (!nzchar(path)) return(list())
 
-        for (i in seq_len(nrow(dcf))) {
-            binding <- dcf_field(dcf, i, "Binding", cols)
-            if (!nzchar(binding)) {
-                next
-            }
+    dcf <- tryCatch(read.dcf(path), error = function(e) NULL)
+    if (is.null(dcf)) return(list())
 
-            out <- c(
-                out,
-                list(list(
-                    name = dcf_field(dcf, i, "Name", cols),
-                    description = dcf_field(dcf, i, "Description", cols),
-                    binding = binding,
-                    interactive = identical(
-                        tolower(dcf_field(dcf, i, "Interactive", cols, "true")),
-                        "true"
-                    ),
-                    package = pkg
-                ))
-            )
+    cols <- colnames(dcf)
+    out <- list()
+
+    for (i in seq_len(nrow(dcf))) {
+        addin <- parse_addin_row(dcf, i, cols, pkg)
+        if (!is.null(addin)) {
+            out <- c(out, list(addin))
         }
     }
 
     out
+}
+
+parse_addin_row <- function(dcf, row, cols, pkg) {
+    binding <- dcf_field(dcf, row, "Binding", cols)
+    if (!nzchar(binding)) return(NULL)
+
+    list(
+        name = dcf_field(dcf, row, "Name", cols),
+        description = dcf_field(dcf, row, "Description", cols),
+        binding = binding,
+        interactive = identical(
+            tolower(dcf_field(dcf, row, "Interactive", cols, "true")),
+            "true"
+        ),
+        package = pkg
+    )
 }
 
 #' Get all installed R Markdown templates
@@ -120,40 +125,43 @@
     out <- list()
 
     for (pkg in pkgs) {
-        path <- system.file("rmarkdown", "templates", package = pkg)
-        if (!nzchar(path)) {
-            next
-        }
+        out <- c(out, get_package_templates(pkg))
+    }
 
-        template_dirs <- list.dirs(path, recursive = FALSE, full.names = TRUE)
+    out
+}
 
-        for (dir in template_dirs) {
-            yaml_path <- file.path(dir, "template.yaml")
-            if (!file.exists(yaml_path)) {
-                next
-            }
+get_package_templates <- function(pkg) {
+    path <- system.file("rmarkdown", "templates", package = pkg)
+    if (!nzchar(path)) return(list())
 
-            meta <- tryCatch(yaml::read_yaml(yaml_path), error = function(e) {
-                NULL
-            })
-            if (is.null(meta)) {
-                next
-            }
+    dirs <- list.dirs(path, recursive = FALSE, full.names = TRUE)
+    out <- list()
 
-            out <- c(
-                out,
-                list(list(
-                    name = meta$name %||% basename(dir),
-                    description = meta$description %||% "",
-                    create_dir = isTRUE(meta$create_dir),
-                    package = pkg,
-                    template = basename(dir)
-                ))
-            )
+    for (dir in dirs) {
+        template <- parse_template_dir(dir, pkg)
+        if (!is.null(template)) {
+            out <- c(out, list(template))
         }
     }
 
     out
+}
+
+parse_template_dir <- function(dir, pkg) {
+    yaml_path <- file.path(dir, "template.yaml")
+    if (!file.exists(yaml_path)) return(NULL)
+
+    meta <- tryCatch(yaml::read_yaml(yaml_path), error = function(e) NULL)
+    if (is.null(meta)) return(NULL)
+
+    list(
+        name = meta$name %||% basename(dir),
+        description = meta$description %||% "",
+        create_dir = isTRUE(meta$create_dir),
+        package = pkg,
+        template = basename(dir)
+    )
 }
 
 # Safely get a field from a DCF matrix, returning default if missing or NA
