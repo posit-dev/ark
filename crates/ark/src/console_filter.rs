@@ -60,16 +60,6 @@ impl MatchedPattern {
     }
 }
 
-/// Result of trying to match a prefix against buffered content
-enum PrefixMatch {
-    /// Content fully matches a prefix
-    Full(MatchedPattern),
-    /// Content is a partial match of at least one prefix
-    Partial,
-    /// Content cannot match any prefix
-    None,
-}
-
 /// State of the stream filter state machine
 enum ConsoleFilterState {
     /// Default state. Content is emitted to IOPub immediately.
@@ -77,10 +67,6 @@ enum ConsoleFilterState {
         /// Whether the last character emitted was `\n`
         at_line_start: bool,
     },
-
-    /// At the start of a new line, new content partially matches a filter pattern.
-    /// Accumulating in buffer, waiting for enough data to confirm or reject.
-    Buffering { buffer: String, timestamp: Instant },
 
     /// Confirmed prefix match. Accumulating all subsequent content until
     /// `ReadConsole` resolves whether this is real debug output or adversarial
@@ -176,9 +162,9 @@ impl ConsoleFilter {
         match &mut self.state {
             ConsoleFilterState::Passthrough { at_line_start } => {
                 if *at_line_start {
-                    // At line boundary, check if content could match a prefix
+                    // At line boundary, check if content matches a prefix
                     match try_match_prefix(content) {
-                        PrefixMatch::Full(pattern) => {
+                        Some(pattern) => {
                             let prefix_len = pattern.prefix().len();
                             self.state = ConsoleFilterState::Filtering {
                                 pattern,
@@ -188,56 +174,10 @@ impl ConsoleFilter {
                             };
                             (None, prefix_len)
                         },
-                        PrefixMatch::Partial => {
-                            self.state = ConsoleFilterState::Buffering {
-                                buffer: content.to_string(),
-                                timestamp: Instant::now(),
-                            };
-                            (None, content.len())
-                        },
-                        PrefixMatch::None => self.emit_until_newline(content),
+                        None => self.emit_until_newline(content),
                     }
                 } else {
                     self.emit_until_newline(content)
-                }
-            },
-
-            ConsoleFilterState::Buffering { buffer, timestamp } => {
-                if timestamp.elapsed() > self.timeout {
-                    let emit = std::mem::take(buffer);
-                    self.state = ConsoleFilterState::Passthrough {
-                        at_line_start: emit.ends_with('\n'),
-                    };
-                    return (Some(emit), 0);
-                }
-
-                buffer.push_str(content);
-
-                match try_match_prefix(buffer) {
-                    PrefixMatch::Full(pattern) => {
-                        // Full match! Extract any content after the prefix
-                        let prefix_len = pattern.prefix().len();
-                        let after_prefix = buffer[prefix_len..].to_string();
-                        self.state = ConsoleFilterState::Filtering {
-                            pattern,
-                            buffer: after_prefix,
-                            timestamp: Instant::now(),
-                            was_debugging: self.is_debugging,
-                        };
-                        (None, content.len())
-                    },
-                    PrefixMatch::Partial => {
-                        // Still partial, keep buffering
-                        (None, content.len())
-                    },
-                    PrefixMatch::None => {
-                        // Cannot match, flush buffer
-                        let emit = std::mem::take(buffer);
-                        self.state = ConsoleFilterState::Passthrough {
-                            at_line_start: emit.ends_with('\n'),
-                        };
-                        (Some(emit), content.len())
-                    },
                 }
             },
 
@@ -261,7 +201,7 @@ impl ConsoleFilter {
                 // at the start of new content.
                 let at_line_boundary = buffer.is_empty() || buffer.ends_with('\n');
                 if at_line_boundary {
-                    if let PrefixMatch::Full(new_pattern) = try_match_prefix(content) {
+                    if let Some(new_pattern) = try_match_prefix(content) {
                         *pattern = new_pattern;
                         buffer.clear();
                         return (None, new_pattern.prefix().len());
@@ -305,10 +245,7 @@ impl ConsoleFilter {
     /// - `is_browser`: we weren't debugging but we've now landed on a
     ///   browser prompt, so this is debug-entry output like `Called from:`.
     /// - Neither: user output at top level that happened to match a
-    ///   prefix — emit it.
-    ///
-    /// Content in `Buffering` state (unconfirmed prefix match) is always
-    /// emitted since we never confirmed a full prefix match.
+    ///   prefix -- emit it.
     pub fn on_read_console(
         &mut self,
         is_browser: bool,
@@ -321,9 +258,6 @@ impl ConsoleFilter {
             at_line_start: true,
         }) {
             ConsoleFilterState::Passthrough { .. } => {},
-            ConsoleFilterState::Buffering { buffer, .. } => {
-                emit = Some(buffer);
-            },
             ConsoleFilterState::Filtering {
                 pattern,
                 buffer,
@@ -353,7 +287,6 @@ impl ConsoleFilter {
     fn drain_on_timeout(&mut self) -> Option<String> {
         let timed_out = match &self.state {
             ConsoleFilterState::Passthrough { .. } => false,
-            ConsoleFilterState::Buffering { timestamp, .. } |
             ConsoleFilterState::Filtering { timestamp, .. } => timestamp.elapsed() > self.timeout,
         };
         if timed_out {
@@ -376,7 +309,6 @@ impl ConsoleFilter {
         });
         let text = match prev {
             ConsoleFilterState::Passthrough { .. } => return None,
-            ConsoleFilterState::Buffering { buffer, .. } => buffer,
             ConsoleFilterState::Filtering {
                 pattern, buffer, ..
             } => {
@@ -390,24 +322,13 @@ impl ConsoleFilter {
     }
 }
 
-fn try_match_prefix(content: &str) -> PrefixMatch {
-    let mut has_partial = false;
-
+fn try_match_prefix(content: &str) -> Option<MatchedPattern> {
     for pattern in MatchedPattern::all() {
-        let prefix = pattern.prefix();
-        if content.starts_with(prefix) {
-            return PrefixMatch::Full(*pattern);
-        }
-        if prefix.starts_with(content) && !content.is_empty() {
-            has_partial = true;
+        if content.starts_with(pattern.prefix()) {
+            return Some(*pattern);
         }
     }
-
-    if has_partial {
-        PrefixMatch::Partial
-    } else {
-        PrefixMatch::None
-    }
+    None
 }
 
 /// Update to apply to the Console's debug_call_text field
@@ -499,41 +420,27 @@ mod tests {
 
     #[test]
     fn test_prefix_matching() {
-        assert!(matches!(
+        assert_eq!(
             try_match_prefix("Called from: "),
-            PrefixMatch::Full(MatchedPattern::CalledFrom)
-        ));
-        assert!(matches!(
-            try_match_prefix("debug at "),
-            PrefixMatch::Full(MatchedPattern::DebugAt)
-        ));
-        assert!(matches!(
-            try_match_prefix("debug: "),
-            PrefixMatch::Full(MatchedPattern::Debug)
-        ));
+            Some(MatchedPattern::CalledFrom)
+        );
+        assert_eq!(try_match_prefix("debug at "), Some(MatchedPattern::DebugAt));
+        assert_eq!(try_match_prefix("debug: "), Some(MatchedPattern::Debug));
 
         // No longer filtered: "debugging in:" and "exiting from:" pass through
-        assert!(matches!(
-            try_match_prefix("debugging in: "),
-            PrefixMatch::None
-        ));
-        assert!(matches!(
-            try_match_prefix("exiting from: "),
-            PrefixMatch::None
-        ));
+        assert_eq!(try_match_prefix("debugging in: "), None);
+        assert_eq!(try_match_prefix("exiting from: "), None);
 
-        // Partial matches
-        assert!(matches!(try_match_prefix("Cal"), PrefixMatch::Partial));
-        assert!(matches!(try_match_prefix("debug"), PrefixMatch::Partial));
-        assert!(matches!(try_match_prefix("debug "), PrefixMatch::Partial));
-
-        // "debugging " is no longer a partial match since "debugging in:" is removed
-        assert!(matches!(try_match_prefix("debugging "), PrefixMatch::None));
+        // Partial content does not match
+        assert_eq!(try_match_prefix("Cal"), None);
+        assert_eq!(try_match_prefix("debug"), None);
+        assert_eq!(try_match_prefix("debug "), None);
+        assert_eq!(try_match_prefix("debugging "), None);
 
         // Non-matches
-        assert!(matches!(try_match_prefix("Hello"), PrefixMatch::None));
-        assert!(matches!(try_match_prefix("call from"), PrefixMatch::None));
-        assert!(matches!(try_match_prefix(""), PrefixMatch::None));
+        assert_eq!(try_match_prefix("Hello"), None);
+        assert_eq!(try_match_prefix("call from"), None);
+        assert_eq!(try_match_prefix(""), None);
     }
 
     #[test]
@@ -563,16 +470,6 @@ mod tests {
     }
 
     #[test]
-    fn test_buffering_state_on_partial_match() {
-        let mut filter = ConsoleFilter::new();
-
-        // Start with partial match - should buffer
-        let emits = filter.feed("Called ");
-        // While buffering, nothing emitted yet
-        assert!(emits.is_empty() || emits.iter().all(|s| s.is_empty()));
-    }
-
-    #[test]
     fn test_non_matching_prefix_emitted() {
         let mut filter = ConsoleFilter::new();
 
@@ -583,40 +480,6 @@ mod tests {
         let emitted: String = emits.iter().map(|s| s.as_str()).collect();
 
         assert!(emitted.contains("Calling"));
-    }
-
-    #[test]
-    fn test_on_read_console_emits_buffering() {
-        let mut filter = ConsoleFilter::new();
-
-        // Start buffering with partial match
-        filter.feed("Called ");
-
-        // Buffering is an unconfirmed prefix match, so ReadConsole emits it
-        // regardless of whether it's a browser prompt or not
-        let (emit, update) = filter.on_read_console(false);
-
-        assert_eq!(emit.unwrap(), "Called ");
-        assert!(update.is_none());
-
-        // After on_read_console, filter should be in Passthrough state
-        let emits = filter.feed("Hello\n");
-        let emitted: String = emits.iter().map(|s| s.as_str()).collect();
-
-        assert!(emitted.contains("Hello"));
-    }
-
-    #[test]
-    fn test_flush_returns_buffered_content() {
-        let mut filter = ConsoleFilter::new();
-
-        // Start buffering
-        filter.feed("Called ");
-
-        // Flush should return the buffered content
-        let flushed = filter.flush();
-
-        assert_eq!(flushed.unwrap(), "Called ");
     }
 
     fn collect_emitted(emits: &[String]) -> String {
@@ -642,19 +505,6 @@ mod tests {
 
         let emit = filter.check_timeout();
         assert_eq!(emit.unwrap(), "debug: ");
-    }
-
-    #[test]
-    fn test_adversarial_buffering_timeout_emits() {
-        // Partial prefix match that times out before resolving
-        let mut filter = ConsoleFilter::new_with_timeout(Duration::from_millis(1));
-        let emits = filter.feed("debug");
-        assert!(emits.is_empty());
-
-        std::thread::sleep(Duration::from_millis(5));
-
-        let emit = filter.check_timeout();
-        assert_eq!(emit.unwrap(), "debug");
     }
 
     #[test]
@@ -698,14 +548,14 @@ mod tests {
     }
 
     #[test]
-    fn test_adversarial_partial_prefix_then_non_matching() {
-        // "Cal" looks like start of "Called from: " but next chunk is "culator"
+    fn test_adversarial_partial_prefix_passes_through() {
+        // "Cal" doesn't fully match any prefix, so it's emitted immediately
         let mut filter = ConsoleFilter::new();
         let emits = filter.feed("Cal");
-        assert!(emits.is_empty());
+        assert_eq!(collect_emitted(&emits), "Cal");
 
         let emits = filter.feed("culator\n");
-        assert_eq!(collect_emitted(&emits), "Calculator\n");
+        assert_eq!(collect_emitted(&emits), "culator\n");
     }
 
     #[test]
@@ -915,5 +765,4 @@ mod tests {
         strip_step_lines(&mut text);
         assert_eq!(text, "[1] 42\nhello\n");
     }
-
 }
