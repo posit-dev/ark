@@ -86,7 +86,10 @@ get_package_addins <- function(pkg) {
     path <- system.file("rstudio", "addins.dcf", package = pkg)
     if (!nzchar(path)) return(list())
 
-    dcf <- tryCatch(read.dcf(path), error = function(e) NULL)
+    dcf <- tryCatch(read.dcf(path), error = function(cnd) {
+        log_error(sprintf("Failed to read addins.dcf for '%s': %s", pkg, conditionMessage(cnd)))
+        NULL
+    })
     if (is.null(dcf)) return(list())
 
     cols <- colnames(dcf)
@@ -152,7 +155,10 @@ parse_template_dir <- function(dir, pkg) {
     yaml_path <- file.path(dir, "template.yaml")
     if (!file.exists(yaml_path)) return(NULL)
 
-    meta <- tryCatch(yaml::read_yaml(yaml_path), error = function(e) NULL)
+    meta <- tryCatch(yaml::read_yaml(yaml_path), error = function(cnd) {
+        log_error(sprintf("Failed to read template.yaml at '%s': %s", yaml_path, conditionMessage(cnd)))
+        NULL
+    })
     if (is.null(meta)) return(NULL)
 
     list(
