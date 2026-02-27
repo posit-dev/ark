@@ -16,6 +16,7 @@ use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+use libr::SEXP;
 use uuid::Uuid;
 
 use crate::console::Console;
@@ -372,5 +373,72 @@ where
     tasks_tx.send(task).unwrap();
 }
 
-// Tests are tricky because `harp::fixtures::r_test_init()` is very bare bones and
-// doesn't have an `CONSOLE` or `CONSOLE_TASKS_TX`.
+// Test-only R-callable functions for spawning a pending idle task.
+//
+// This allows integration tests to exercise the `captured_output`
+// save/restore mechanism in `poll_task`. The flow is:
+//
+// 1. Test calls `.Call("ps_test_spawn_pending_task")` from R.
+//    This spawns an async idle task that creates a `ConsoleOutputCapture`
+//    and then awaits a oneshot channel (staying Pending).
+//
+// 2. On the next event-loop iteration the task is polled, `captured_output`
+//    is set, and the future yields. `poll_task` should save the capture
+//    into `pending_futures` and clear `captured_output`.
+//
+// 3. The test busy-loops with `getOption("ark.test.task_polled")` until it
+//    sees `TRUE`, confirming the task has been polled.
+//
+// 4. The test sends another execute request (e.g. `cat("hello\n")`).
+//    Because `captured_output` has been cleared, the output reaches IOPub.
+//
+// 5. Test calls `.Call("ps_test_complete_pending_task")` to unblock the
+//    oneshot, letting the idle task finish and drop its capture cleanly.
+
+static PENDING_TASK_TX: Mutex<Option<futures::channel::oneshot::Sender<()>>> = Mutex::new(None);
+
+#[harp::register]
+unsafe extern "C-unwind" fn ps_test_spawn_pending_task() -> anyhow::Result<SEXP> {
+    if !stdext::IS_TESTING {
+        return Err(anyhow::anyhow!(
+            "ps_test_spawn_pending_task is only available in tests"
+        ));
+    }
+
+    // Reset the flag before spawning
+    harp::parse_eval_base("options(ark.test.task_polled = FALSE)")?;
+
+    let (tx, rx) = futures::channel::oneshot::channel::<()>();
+    *PENDING_TASK_TX.lock().unwrap() = Some(tx);
+
+    spawn_idle(async move |_capture| {
+        // Signal that we've been polled (capture is now active)
+        harp::parse_eval_base("options(ark.test.task_polled = TRUE)").ok();
+
+        // Stay pending until the test signals completion
+        let _ = rx.await;
+
+        // Clean up
+        harp::parse_eval_base("options(ark.test.task_polled = NULL)").ok();
+    });
+
+    Ok(libr::R_NilValue)
+}
+
+/// Signal the pending idle task to complete. The oneshot sender is
+/// consumed, the task's future resolves, and its `ConsoleOutputCapture`
+/// is dropped (restoring the previous capture state).
+#[harp::register]
+unsafe extern "C-unwind" fn ps_test_complete_pending_task() -> anyhow::Result<SEXP> {
+    if !stdext::IS_TESTING {
+        return Err(anyhow::anyhow!(
+            "ps_test_complete_pending_task is only available in tests"
+        ));
+    }
+
+    if let Some(tx) = PENDING_TASK_TX.lock().unwrap().take() {
+        let _ = tx.send(());
+    }
+
+    Ok(libr::R_NilValue)
+}

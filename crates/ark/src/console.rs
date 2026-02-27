@@ -2085,8 +2085,8 @@ impl Console {
             Poll::Pending => {
                 start_info.bump_elapsed(tick.elapsed());
                 // Suspend `captured_output` so that console output during
-                // evaluation goes to IOPub instead of being swallowed by a
-                // pending task's capture buffer.
+                // evaluation (e.g. debug messages) goes to IOPub instead of
+                // being swallowed by a pending task's capture buffer.
                 let suspended_capture = self.captured_output.take();
                 self.pending_futures
                     .insert(waker.id, (fut, start_info, suspended_capture));
