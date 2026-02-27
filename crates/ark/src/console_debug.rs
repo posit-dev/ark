@@ -622,7 +622,11 @@ pub unsafe extern "C-unwind" fn ps_should_break(
 /// so that a typo in the condition causes a visible stop rather than
 /// a silently ignored breakpoint.
 fn eval_condition(condition: &str, envir: RObject) -> bool {
-    let result = match harp::parse_eval0(condition, envir) {
+    // Wrap in `as.logical()` so R's truthy/falsy coercion applies,
+    // e.g. `0` → FALSE, `1` → TRUE, `nrow(df)` → logical
+    let code = format!("as.logical({condition})");
+
+    let result = match harp::parse_eval0(&code, envir) {
         Ok(val) => val,
         Err(err) => {
             log::info!("DAP: Condition evaluation error for {condition:?}: {err:?}");
@@ -630,11 +634,15 @@ fn eval_condition(condition: &str, envir: RObject) -> bool {
         },
     };
 
-    match bool::try_from(result) {
-        Ok(val) => val,
+    match Option::<bool>::try_from(result) {
+        Ok(Some(val)) => val,
+        Ok(None) => {
+            log::info!("DAP: Condition {condition:?} evaluated to NA, treating as TRUE");
+            true
+        },
         Err(_) => {
             log::info!(
-                "DAP: Condition {condition:?} did not evaluate to logical, treating as TRUE"
+                "DAP: Condition {condition:?} did not evaluate to scalar logical, treating as TRUE"
             );
             true
         },
