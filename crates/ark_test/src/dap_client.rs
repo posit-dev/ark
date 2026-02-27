@@ -36,6 +36,7 @@ use dap::requests::StepInArguments;
 use dap::requests::VariablesArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
+use dap::responses::ResponseMessage;
 use dap::responses::StackTraceResponse;
 use dap::types::Breakpoint;
 use dap::types::Capabilities;
@@ -320,11 +321,7 @@ impl DapClient {
     /// Request a page of the stack trace, returning the full response
     /// including `total_frames`.
     #[track_caller]
-    pub fn stack_trace_paged(
-        &mut self,
-        start_frame: i64,
-        levels: i64,
-    ) -> StackTraceResponse {
+    pub fn stack_trace_paged(&mut self, start_frame: i64, levels: i64) -> StackTraceResponse {
         let seq = self
             .send(Command::StackTrace(StackTraceArguments {
                 thread_id: -1,
@@ -449,7 +446,11 @@ impl DapClient {
             response
         );
 
-        format!("{:?}", response.message)
+        match response.message {
+            Some(ResponseMessage::Error(msg)) => msg,
+            Some(other) => format!("{other:?}"),
+            None => String::new(),
+        }
     }
 
     /// Request the list of threads.

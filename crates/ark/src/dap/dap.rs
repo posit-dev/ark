@@ -645,6 +645,7 @@ impl Dap {
 fn evaluate_error_message(err: harp::Error) -> String {
     match err {
         harp::Error::TryCatchError { message, .. } => message,
+        harp::Error::ParseSyntaxError { message } => message,
         err => format!("{err}"),
     }
 }

@@ -201,16 +201,13 @@ local({
         "Expected incomplete code error, got: {err}"
     );
 
+    // Evaluate syntax error
+    let err = dap.evaluate_error("foo)", Some(frame_id));
+    assert_eq!(err, "Error: unexpected ')'");
+
     // Cause an R error during evaluation
-    let err = dap.evaluate_error("stop('intentional error')", Some(frame_id));
-    assert!(
-        err.contains("intentional error"),
-        "Expected error message, got: {err}"
-    );
-    assert!(
-        !err.contains("backtrace"),
-        "Error should not contain backtrace, got: {err}"
-    );
+    let err = dap.evaluate_error("stop('foo')", Some(frame_id));
+    assert_eq!(err, "Error: foo");
 
     // Debug session should still be alive and stopped after all these errors
     let result = dap.evaluate("x", Some(frame_id));
