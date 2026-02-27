@@ -28,6 +28,7 @@ use crate::treesitter::BinaryOperatorType;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 use crate::treesitter::TsQuery;
+use crate::url::ExtUrl;
 
 /// FileId represents a unique identifier for a file in the workspace index
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
@@ -155,6 +156,10 @@ pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
 
 #[tracing::instrument(level = "trace", skip_all, fields(uri = %uri))]
 pub fn update(document: &Document, uri: &Url) -> anyhow::Result<()> {
+    // Defensive, callers are expected to filter virtual doc URIs before queuing
+    if !ExtUrl::is_indexable(uri) {
+        return Ok(());
+    }
     delete(uri)?;
     index_document(document, uri);
     Ok(())
@@ -255,10 +260,9 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
     true
 }
 
+// Only called for actual files during workspace walking. Documents managed by
+// the LSP go through `update()` instead.
 pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
-    // Only index R files for file URIs. This discards `inmemory` (Console) and
-    // `ark` schemes in particular.
-
     if uri.scheme() != "file" {
         return Ok(());
     }
@@ -665,5 +669,37 @@ class <- R6::R6Class(
             &index.get("foo").unwrap().data,
             IndexEntryData::Variable { name } => assert_eq!(name, "foo")
         );
+    }
+
+    #[test]
+    fn test_update_skips_ark_virtual_doc() {
+        let _guard = ResetIndexerGuard;
+
+        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
+        let doc = Document::new("foo <- 1", None);
+
+        update(&doc, &ark_uri).unwrap();
+        assert!(find("foo").is_none());
+    }
+
+    #[test]
+    fn test_update_indexes_git_uri() {
+        let _guard = ResetIndexerGuard;
+
+        let git_uri = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
+        let doc = Document::new("foo <- 1", None);
+
+        update(&doc, &git_uri).unwrap();
+        assert!(find("foo").is_some());
+    }
+
+    #[test]
+    fn test_create_skips_non_file_uri() {
+        let _guard = ResetIndexerGuard;
+
+        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
+
+        create(&ark_uri).unwrap();
+        assert!(find("foo").is_none());
     }
 }
