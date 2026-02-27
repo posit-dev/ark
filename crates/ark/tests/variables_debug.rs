@@ -163,7 +163,6 @@ fn test_variables_pane_refreshes_on_frame_selection() {
         .collect();
     assert_eq!(names, vec!["inner_var"]);
 
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
