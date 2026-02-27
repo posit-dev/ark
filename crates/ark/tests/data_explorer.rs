@@ -70,7 +70,6 @@ use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
 use ark_test::dummy_jupyter_header;
-use ark_test::r_test_lock;
 use ark_test::socket_rpc_request;
 use ark_test::IOPubReceiverExt;
 use ark_test::RECV_TIMEOUT;
@@ -869,15 +868,12 @@ fn test_mtcars_sort(setup: &TestSetup, has_row_names: bool, display_name: String
 
 #[test]
 fn test_basic_mtcars() {
-    let _lock = r_test_lock();
     let setup = TestSetup::new("mtcars");
     test_mtcars_sort(&setup, true, String::from("mtcars"));
 }
 
 #[test]
 fn test_tibble_support() {
-    let _lock = r_test_lock();
-
     let has_tibble =
         r_task(|| harp::parse_eval_global("mtcars_tib <- tibble::as_tibble(mtcars)").is_ok());
     if !has_tibble {
@@ -894,7 +890,6 @@ fn test_tibble_support() {
 
 #[test]
 fn test_women_dataset() {
-    let _lock = r_test_lock();
     let setup = TestSetup::new("women");
 
     // Check initial data values (first 2 rows)
@@ -940,7 +935,6 @@ fn test_women_dataset() {
 
 #[test]
 fn test_matrix_support() {
-    let _lock = r_test_lock();
     let setup = TestSetup::new("volcano");
 
     // Verify volcano matrix has 61 columns
@@ -977,8 +971,6 @@ fn test_matrix_support() {
 
 #[test]
 fn test_data_table_support() {
-    let _lock = r_test_lock();
-
     let has_data_table =
         r_task(|| harp::parse_eval_global("mtcars_dt <- data.table::data.table(mtcars)").is_ok());
     if !has_data_table {
@@ -995,7 +987,6 @@ fn test_data_table_support() {
 
 #[test]
 fn test_null_counts() {
-    let _lock = r_test_lock();
     let setup = TestSetup::from_expression(
         "fibo <- data.frame(col = c(1, NA, 2, 3, 5, NA, 13, 21, NA))",
         None,
@@ -1040,8 +1031,6 @@ fn test_null_counts() {
 
 #[test]
 fn test_summary_stats() {
-    let _lock = r_test_lock();
-
     // Create test data with mixed types for summary statistics
     r_task(|| {
         harp::parse_eval_global(
@@ -1096,8 +1085,6 @@ fn test_summary_stats() {
 
 #[test]
 fn test_search_filters() {
-    let _lock = r_test_lock();
-
     // Create test data with various text patterns
     r_task(|| {
         harp::parse_eval_global(
@@ -1271,8 +1258,6 @@ fn test_search_filters() {
 
 #[test]
 fn test_live_updates() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression(
         "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
         Some("x"),
@@ -1399,7 +1384,6 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 // Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
 #[test]
 fn test_invalid_filters_preserved() {
-    let _lock = r_test_lock();
     let setup = open_data_explorer_from_expression(
         r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
         Some("test_df"),
@@ -1523,8 +1507,6 @@ fn test_invalid_filters_preserved() {
 
 #[test]
 fn test_data_explorer_special_values() {
-    let _lock = r_test_lock();
-
     let code = "x <- tibble::tibble(
             a = c(1, NA, NaN, Inf, -Inf),
             b = c('a', 'b', 'c', 'd', NA),
@@ -1571,7 +1553,6 @@ fn test_data_explorer_special_values() {
 // work with sorting/filtering the data and then exporting it.
 #[test]
 fn test_export_data() {
-    let _lock = r_test_lock();
     let setup = open_data_explorer_from_expression(
         r#"data.frame(
                 a = c(1, 3, 2),
@@ -1631,8 +1612,6 @@ fn test_export_data() {
 // A regression test for https://github.com/posit-dev/positron/issues/4170
 #[test]
 fn test_update_data_filters_reapplied() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression(
         r#"
             x <- data.frame(
@@ -1761,8 +1740,6 @@ fn test_set_membership_helper(
 
 #[test]
 fn test_set_membership_filter() {
-    let _lock = r_test_lock();
-
     r_task(|| {
         harp::parse_eval_global(
             r#"categories <- data.frame(
@@ -1842,8 +1819,6 @@ fn test_set_membership_filter() {
 
 #[test]
 fn test_get_data_values_by_indices() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression(
         "data.frame(x = c(1:10), y = letters[1:10], z = seq(0,1, length.out = 10))",
         None,
@@ -1888,8 +1863,6 @@ fn test_get_data_values_by_indices() {
 
 #[test]
 fn test_data_update_num_rows() {
-    let _lock = r_test_lock();
-
     // Regression test for https://github.com/posit-dev/positron/issues/4286
     // We test that after sending the data update event we also correctly update the
     // new number of rows.
@@ -1937,8 +1910,6 @@ fn test_data_update_num_rows() {
 
 #[test]
 fn test_histogram() {
-    let _lock = r_test_lock();
-
     let setup =
         open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
 
@@ -1963,8 +1934,6 @@ fn test_histogram() {
 
 #[test]
 fn test_histogram_single_bin_same_values() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression("data.frame(x = rep(5, 10))", None).unwrap();
 
     let histogram_req =
@@ -1993,8 +1962,6 @@ fn test_histogram_single_bin_same_values() {
 
 #[test]
 fn test_frequency_table() {
-    let _lock = r_test_lock();
-
     let setup =
         open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
             .unwrap();
@@ -2017,8 +1984,6 @@ fn test_frequency_table() {
 
 #[test]
 fn test_row_names_matrix() {
-    let _lock = r_test_lock();
-
     // Convert mtcars to a matrix
     let setup =
         open_data_explorer_from_expression("as.matrix(mtcars)", Some("mtcars_matrix")).unwrap();
@@ -2058,7 +2023,6 @@ fn test_row_names_matrix() {
 
 #[test]
 fn test_schema_identification() {
-    let _lock = r_test_lock();
     let setup = open_data_explorer_from_expression(
         "data.frame(
             a = c(1, 2, 3),
@@ -2099,7 +2063,6 @@ fn test_schema_identification() {
 
 #[test]
 fn test_search_schema_text_filters() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_search_test_dataframe().unwrap();
 
     // Schema: user_name(0), user_age(1), user_id(2), email_address(3), admin_email(4),
@@ -2189,7 +2152,6 @@ fn test_search_schema_text_filters() {
 
 #[test]
 fn test_search_schema_data_type_filters() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
 
     // Schema: name(0 - str), age(1 - int), score(2 - dbl), is_active(3 - lgl), date_joined(4 - Date)
@@ -2247,7 +2209,6 @@ fn test_search_schema_data_type_filters() {
 
 #[test]
 fn test_search_schema_sort_orders() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_sort_order_test_dataframe().unwrap();
 
     // Test original sort order (no filters)
@@ -2267,7 +2228,6 @@ fn test_search_schema_sort_orders() {
 
 #[test]
 fn test_search_schema_combined_filters() {
-    let _lock = r_test_lock();
     let setup = TestSetup::from_expression(
         "data.frame(
             user_name = c('Alice', 'Bob'),
@@ -2296,7 +2256,6 @@ fn test_search_schema_combined_filters() {
 
 #[test]
 fn test_search_schema_no_matches() {
-    let _lock = r_test_lock();
     let setup = TestSetup::from_expression(
         "data.frame(name = c('Alice', 'Bob'), age = c(25, 30))",
         None,
@@ -2315,8 +2274,6 @@ fn test_search_schema_no_matches() {
 
 #[test]
 fn test_search_schema_type_sort_orders() {
-    let _lock = r_test_lock();
-
     // Create a simpler dataframe with multiple columns of different types for type sorting tests
     let setup = TestSetup::from_expression(
         "data.frame(
@@ -2399,8 +2356,6 @@ fn test_search_schema_type_sort_orders() {
 
 #[test]
 fn test_search_schema_text_with_sort_orders() {
-    let _lock = r_test_lock();
-
     // Create a schema specifically for testing text search with sorting
     let setup = TestSetup::from_expression(
         "data.frame(
@@ -2464,7 +2419,6 @@ fn test_search_schema_text_with_sort_orders() {
 
 #[test]
 fn test_search_schema_edge_cases() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
 
     // Test empty search term
@@ -2531,8 +2485,6 @@ fn test_search_schema_edge_cases() {
 
 #[test]
 fn test_column_labels() {
-    let _lock = r_test_lock();
-
     // Create a data frame with column labels
     r_task(|| {
         harp::parse_eval_global(
@@ -2580,8 +2532,6 @@ fn test_column_labels() {
 
 #[test]
 fn test_column_labels_missing() {
-    let _lock = r_test_lock();
-
     // Create a data frame without column labels
     r_task(|| {
         harp::parse_eval_global(
@@ -2624,8 +2574,6 @@ fn test_column_labels_missing() {
 
 #[test]
 fn test_column_labels_haven_compatibility() {
-    let _lock = r_test_lock();
-
     // Test with haven::labelled vectors if haven is available
     r_task(|| {
         harp::parse_eval_global(
@@ -2681,8 +2629,6 @@ fn test_column_labels_haven_compatibility() {
 
 #[test]
 fn test_column_labels_edge_cases() {
-    let _lock = r_test_lock();
-
     // Test edge cases: empty labels, non-character labels, multiple labels, etc.
     r_task(|| {
         harp::parse_eval_global(
@@ -2905,8 +2851,6 @@ fn test_export_with_sort_order() {
 
 #[test]
 fn test_empty_data_frame_schema() {
-    let _lock = r_test_lock();
-
     // Test schema behavior with 0-row data frames for different column types
     let setup = open_data_explorer_from_expression(
         "data.frame(
@@ -2959,8 +2903,6 @@ fn test_empty_data_frame_schema() {
 
 #[test]
 fn test_empty_data_frame_data_values() {
-    let _lock = r_test_lock();
-
     // Test data values request behavior with 0-row data frames
     let setup = open_data_explorer_from_expression(
         "data.frame(
@@ -2987,8 +2929,6 @@ fn test_empty_data_frame_data_values() {
 
 #[test]
 fn test_empty_data_frame_state() {
-    let _lock = r_test_lock();
-
     // Test state request with 0-row data frame
     let setup =
         open_data_explorer_from_expression("data.frame(x = numeric(0), y = character(0))", None)
@@ -3006,8 +2946,6 @@ fn test_empty_data_frame_state() {
 
 #[test]
 fn test_empty_data_frame_column_profiles() {
-    let _lock = r_test_lock();
-
     // Test column profile requests (histograms, summary stats) with 0-row data frames
     let setup = open_data_explorer_from_expression(
         "data.frame(numbers = numeric(0), strings = character(0))",
@@ -3042,8 +2980,6 @@ fn test_empty_data_frame_column_profiles() {
 
 #[test]
 fn test_single_row_data_frame_column_profiles() {
-    let _lock = r_test_lock();
-
     // Test column profiles specifically for 1-row data frames to ensure sparklines work
     let setup = open_data_explorer_from_expression(
         "data.frame(
