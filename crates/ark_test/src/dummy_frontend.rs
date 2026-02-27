@@ -61,6 +61,8 @@ pub struct DummyArkFrontend {
     stream_stdout: RefCell<String>,
     /// Accumulated stderr stream content
     stream_stderr: RefCell<String>,
+    /// Ordered list of stream messages for proper interleaving
+    stream_messages: RefCell<Vec<(Stream, String)>>,
     /// Put-back queue for non-stream IOPub messages encountered during stream assertions
     pending_iopub_messages: RefCell<VecDeque<Message>>,
     /// Tracks whether any stream assertion was made (for Drop validation).
@@ -249,6 +251,7 @@ impl DummyArkFrontend {
             guard: Self::get_frontend().lock().unwrap(),
             stream_stdout: RefCell::new(String::new()),
             stream_stderr: RefCell::new(String::new()),
+            stream_messages: RefCell::new(Vec::new()),
             pending_iopub_messages: RefCell::new(VecDeque::new()),
             streams_handled: Cell::new(false),
             in_debug: Cell::new(false),
@@ -260,10 +263,14 @@ impl DummyArkFrontend {
 
     /// Buffer a stream message into the appropriate accumulator.
     fn buffer_stream(&self, data: &amalthea::wire::stream::StreamOutput) {
+        // Store in both the concatenated buffers (for assertions) and the ordered list
         match data.name {
             Stream::Stdout => self.stream_stdout.borrow_mut().push_str(&data.text),
             Stream::Stderr => self.stream_stderr.borrow_mut().push_str(&data.text),
         }
+        self.stream_messages
+            .borrow_mut()
+            .push((data.name, data.text.clone()));
     }
 
     /// Receive from IOPub with a timeout.
@@ -635,7 +642,15 @@ impl DummyArkFrontend {
     pub fn recv_iopub_idle_and_flush(&self) -> DrainedStreams {
         self.recv_iopub_idle_impl();
         self.streams_handled.set(true);
-        self.drain_streams_internal()
+
+        // Take the ordered stream messages and clear the buffers
+        let messages = std::mem::take(&mut *self.stream_messages.borrow_mut());
+
+        // Also clear the concatenated buffers for consistency
+        self.stream_stdout.borrow_mut().clear();
+        self.stream_stderr.borrow_mut().clear();
+
+        DrainedStreams { messages }
     }
 
     #[track_caller]
@@ -675,6 +690,7 @@ impl DummyArkFrontend {
         // Clear buffers and reset flag for next operation
         self.stream_stdout.borrow_mut().clear();
         self.stream_stderr.borrow_mut().clear();
+        self.stream_messages.borrow_mut().clear();
         self.streams_handled.set(false);
     }
 
