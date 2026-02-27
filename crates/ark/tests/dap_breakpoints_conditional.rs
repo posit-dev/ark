@@ -445,7 +445,7 @@ fn test_dap_conditional_breakpoint_numeric_expression_in_loop() {
     dap.assert_top_frame_file(&file);
 
     let frame_id = dap.stack_trace()[0].id;
-    assert_eq!(dap.evaluate("i", Some(frame_id)), "2");
+    assert_eq!(dap.evaluate("i", Some(frame_id)), "2L");
 
     frontend.debug_send_quit();
     dap.recv_continued();
