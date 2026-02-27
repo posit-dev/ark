@@ -577,21 +577,76 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
     }
 }
 
+/// Check whether a breakpoint should actually stop execution.
+///
+/// Combines the enabled check with condition evaluation in a single call
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
+pub unsafe extern "C-unwind" fn ps_should_break(
     uri: SEXP,
     id: SEXP,
+    env: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let env = RObject::new(env);
+
     let uri: String = RObject::view(uri).try_into()?;
     let uri = Url::parse(&uri)?;
 
     let id: String = RObject::view(id).try_into()?;
+    let id: i64 = id.parse()?;
 
     let console = Console::get_mut();
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
-    Ok(RObject::from(enabled).sexp)
+    let condition = dap.breakpoint_condition(&uri, id).map(String::from);
+
+    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}");
+
+    if !enabled {
+        return Ok(RObject::from(false).sexp);
+    }
+
+    // Must drop before calling back into R to avoid deadlock
+    drop(dap);
+
+    let should_break = match &condition {
+        None => true,
+        Some(condition) => eval_condition(condition, env),
+    };
+
+    Ok(RObject::from(should_break).sexp)
+}
+
+/// Evaluate a condition expression in a given environment.
+/// Returns `true` if the condition is met or if evaluation errors,
+/// so that a typo in the condition causes a visible stop rather than
+/// a silently ignored breakpoint.
+fn eval_condition(condition: &str, envir: RObject) -> bool {
+    // Wrap in `as.logical()` so R's truthy/falsy coercion applies,
+    // e.g. `0` → FALSE, `1` → TRUE, `nrow(df)` → logical
+    let code = format!("as.logical({condition})");
+
+    let result = match harp::parse_eval0(&code, envir) {
+        Ok(val) => val,
+        Err(err) => {
+            log::info!("DAP: Condition evaluation error for {condition:?}: {err:?}");
+            return true;
+        },
+    };
+
+    match Option::<bool>::try_from(result) {
+        Ok(Some(val)) => val,
+        Ok(None) => {
+            log::info!("DAP: Condition {condition:?} evaluated to NA, treating as TRUE");
+            true
+        },
+        Err(_) => {
+            log::info!(
+                "DAP: Condition {condition:?} did not evaluate to scalar logical, treating as TRUE"
+            );
+            true
+        },
+    }
 }
 
 /// Verify a single breakpoint by ID.

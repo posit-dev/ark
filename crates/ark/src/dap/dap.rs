@@ -69,6 +69,11 @@ pub struct Breakpoint {
     /// Whether this breakpoint was actually injected into code during annotation.
     /// Only injected breakpoints can be verified by range-based verification.
     pub injected: bool,
+    /// Optional condition expression. When set, the breakpoint only fires if
+    /// this R expression evaluates to `TRUE` in the breakpoint's environment.
+    /// We keep this as a string instead of a parsed expression for safety,
+    /// since breakpoint state is also inspected by the DAP server thread.
+    pub condition: Option<String>,
 }
 
 impl Breakpoint {
@@ -80,6 +85,7 @@ impl Breakpoint {
             original_line: line,
             state,
             injected: false,
+            condition: None,
         }
     }
 
@@ -601,7 +607,7 @@ impl Dap {
         bps.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
-    pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: String) -> bool {
+    pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: i64) -> bool {
         let Some((_, breakpoints)) = self.breakpoints.get(uri) else {
             return false;
         };
@@ -610,7 +616,7 @@ impl Dap {
         // breakpoint in an expression that hasn't been evaluated yet (or hasn't
         // finished).
         breakpoints.iter().any(|bp| {
-            bp.id.to_string() == id &&
+            bp.id == id &&
                 matches!(
                     bp.state,
                     BreakpointState::Verified | BreakpointState::Unverified
@@ -639,6 +645,12 @@ impl Dap {
         };
 
         Ok(obj.get().sexp)
+    }
+
+    pub(crate) fn breakpoint_condition(&self, uri: &Url, id: i64) -> Option<&str> {
+        let (_, breakpoints) = self.breakpoints.get(uri)?;
+        let bp = breakpoints.iter().find(|bp| bp.id == id)?;
+        bp.condition.as_deref()
     }
 }
 
