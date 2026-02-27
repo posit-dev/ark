@@ -99,7 +99,6 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
-use crate::console_filter::strip_entry_exit_lines;
 use crate::console_filter::strip_step_lines;
 use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
@@ -300,14 +299,6 @@ pub struct Console {
 
     /// Whether or not we are currently in a debugging state.
     pub(crate) debug_is_debugging: bool,
-
-    /// Whether we just left a debug session. Used to strip `exiting from:`
-    /// from autoprint at the next non-browser prompt (e.g., after "c").
-    /// Set to `true` in `r_read_console` cleanup, cleared after use in
-    /// `read_console`. The cleanup only ever sets this to `true`, never
-    /// resets it to `false`, because nested cleanups fire inner-to-outer
-    /// and the outer one would otherwise clobber the inner's `true`.
-    debug_was_debugging: bool,
 
     /// The current call emitted by R as `debug: <call-text>`.
     pub(crate) debug_call_text: DebugCallText,
@@ -937,7 +928,6 @@ impl Console {
             lsp_virtual_documents: HashMap::new(),
             debug_dap: dap,
             debug_is_debugging: false,
-            debug_was_debugging: false,
             debug_stopped_reason: None,
             tasks_interrupt_rx,
             tasks_idle_rx,
@@ -1129,20 +1119,12 @@ impl Console {
         let suppress = filter_debug_output();
         self.filter.set_suppress(suppress);
 
-        // Leading `exiting from:` / `debugging in:` reach autoprint at
-        // `n_frame=0` when leaving/entering a debugged function at top level.
-        // Only strip when we know we just left a debug session.
-        if is_browser || self.debug_was_debugging {
-            self.debug_was_debugging = false;
-            if suppress {
-                strip_entry_exit_lines(&mut self.autoprint_output);
-            }
-        }
-
-        // Other debug prefixes (`Called from:`, `debug at`, `debug:`) only
-        // reach autoprint at browser prompts (from stepping in top-level
-        // braced expressions). Truncate only there because these prefixes
-        // could appear in user print methods at top level.
+        // Debug prefixes (`Called from:`, `debug at`, `debug:`) reach
+        // autoprint when stepping in top-level braced expressions. We only
+        // strip them at browser prompts (not top-level prompts) because at
+        // top level these strings could be legitimate user output, and we only
+        // take the risk of incorrectly stripping user output when we're in the
+        // debugger.
         if is_browser && suppress {
             strip_step_lines(&mut self.autoprint_output);
         }
@@ -2426,7 +2408,8 @@ impl Console {
         let console = Console::get_mut();
 
         if let Some(captured) = &mut console.captured_output {
-            captured.push_str(&console_to_utf8(buf).unwrap());
+            let content = console_to_utf8(buf).unwrap();
+            captured.push_str(&content);
             return;
         }
 
@@ -2855,14 +2838,6 @@ impl Console {
 
         // Restore current frame
         self.read_console_env_stack.borrow_mut().pop();
-
-        // Sticky: only set to true, never back to false. Nested
-        // `r_read_console` cleanups fire in inner-to-outer order, so the
-        // outer (non-debugging) cleanup would overwrite the inner
-        // (debugging) one. `read_console` clears the flag after use.
-        if self.debug_is_debugging {
-            self.debug_was_debugging = true;
-        }
 
         // Set flag so that parent read console, if any, can detect that a
         // nested console returned (if it indeed returns instead of looping for

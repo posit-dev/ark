@@ -128,47 +128,49 @@ fn test_step_debug_printvalue_suppressed() {
     dap.recv_continued();
 }
 
-/// Verify that "debugging in:" and "exiting from:" are filtered.
-/// This test uses debug() on a simple function to trigger both messages.
+/// Verify that "debugging in:" and "exiting from:" pass through to the user.
+/// These patterns are no longer filtered because `exiting from:` is not
+/// followed by `do_browser()`, making it unsafe to accumulate content after
+/// it without risking swallowing user output.
+///
+/// `debugging in:` is emitted while inside the function's debug handler
+/// (n_frame > 0), so it goes to stdout via the stream filter (unfiltered).
+/// `exiting from:` at top level (n_frame=0) goes to autoprint alongside
+/// the return value.
 #[test]
-fn test_debugging_in_and_exiting_from_filtered() {
+fn test_debugging_in_and_exiting_from_visible() {
     let frontend = DummyArkFrontend::lock();
 
     // Define a function and debug it
     frontend.execute_request_invisibly("f <- function() 42");
     frontend.execute_request_invisibly("debug(f)");
 
-    // Call the function - this triggers "debugging in:"
+    // Call the function - R enters f's debug handler (n_frame > 0) and
+    // emits "debugging in:" via WriteConsole. Since it's not a filtered
+    // pattern, it passes through to stdout. The `debug:` prefix that
+    // follows IS filtered and suppressed at the browser prompt.
     frontend.send_execute_request("f()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Drain streams at this point - should NOT contain "debugging in:"
-    let streams = frontend.drain_streams();
-    assert!(
-        !streams.stdout().contains("debugging in:"),
-        "debugging in: should be filtered from stdout, got: {:?}",
-        streams.stdout()
-    );
+    frontend.assert_stream_stdout_contains("debugging in:");
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // Continue to exit the function - this triggers "exiting from:"
+    // Continue to exit the function. At n_frame=0, both "exiting from:"
+    // and the return value go through autoprint into execute_result.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Drain streams - should NOT contain "exiting from:"
-    let streams = frontend.drain_streams();
+    let result = frontend.recv_iopub_execute_result();
     assert!(
-        !streams.stdout().contains("exiting from:"),
-        "exiting from: should be filtered from stdout, got: {:?}",
-        streams.stdout()
+        result.contains("exiting from:"),
+        "exiting from: should be visible in execute_result, got: {result:?}"
     );
+    assert!(result.contains("[1] 42"));
 
-    // The result [1] 42 should come through
-    frontend.recv_iopub_execute_result();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -202,7 +204,6 @@ fn test_user_output_in_debug_not_filtered() {
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -407,9 +408,7 @@ fn test_adversarial_print_debugging_in() {
 }
 
 /// A print method whose output matches "exiting from:" is preserved in the
-/// execute_result (autoprint path). This prefix is specifically handled by
-/// `strip_entry_exit_lines`, which is gated on `is_browser ||
-/// debug_was_debugging`, so at top level it must not fire.
+/// execute_result (autoprint path). This prefix is not filtered.
 #[test]
 fn test_adversarial_print_exiting_from() {
     let frontend = DummyArkFrontend::lock();
@@ -433,9 +432,7 @@ fn test_adversarial_print_exiting_from() {
 }
 
 /// A print method whose output starts with "exiting from:" followed by real
-/// content survives at top level. Guards against `strip_entry_exit_lines`
-/// being accidentally called without the `is_browser || debug_was_debugging`
-/// gate.
+/// content survives at top level. "exiting from:" is not filtered.
 #[test]
 fn test_adversarial_print_leading_exiting_from_survives() {
     let frontend = DummyArkFrontend::lock();
@@ -460,8 +457,8 @@ fn test_adversarial_print_leading_exiting_from_survives() {
 }
 
 /// A print method whose output has normal text followed by a debug prefix
-/// line survives at top level. Guards against `strip_step_lines`
-/// being accidentally called without the `is_browser` gate.
+/// line survives at top level. `strip_step_lines` is only called at browser
+/// prompts, so it must not fire here.
 #[test]
 fn test_adversarial_print_trailing_debug_prefix_survives() {
     let frontend = DummyArkFrontend::lock();
@@ -500,7 +497,6 @@ fn test_adversarial_cat_in_debug_session_is_suppressed() {
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -535,7 +531,6 @@ fn test_adversarial_cat_valid_r_in_debug_session_is_suppressed() {
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -685,9 +680,8 @@ fn test_multiline_printvalue_truncated_from_autoprint() {
 /// false, and at the top-level ReadConsole the filter emits the content
 /// (was_debugging=false, is_browser=false).
 ///
-/// `exiting from: f()` reaches autoprint at n_frame=0. Since there's a
-/// return value after it, `strip_entry_exit_lines` keeps everything
-/// (noise + result) to avoid losing user content.
+/// `exiting from: f()` reaches autoprint at n_frame=0. Since `exiting from:`
+/// is not filtered, it appears in the execute_result alongside the return value.
 #[test]
 fn test_continue_prefix_cat_preserved() {
     let frontend = DummyArkFrontend::lock();
@@ -706,7 +700,7 @@ fn test_continue_prefix_cat_preserved() {
     frontend.send_execute_request("f()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
+    frontend.assert_stream_stdout_contains("debugging in:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -740,11 +734,9 @@ fn test_continue_prefix_cat_preserved() {
 
     let result = frontend.recv_iopub_execute_result();
     assert!(result.contains("[1] 1"));
-    // Note: exiting from: is kept (noise) because there's a result after it.
-    // This is the conservative approach to avoid losing user content.
     assert!(
         result.contains("exiting from:"),
-        "exiting from: should be kept along with result, got: {result:?}"
+        "exiting from: should be visible in result, got: {result:?}"
     );
 
     frontend.recv_iopub_idle();
@@ -753,21 +745,11 @@ fn test_continue_prefix_cat_preserved() {
     frontend.execute_request_invisibly("undebug(f)");
 }
 
-/// Known limitation: when `c` and another expression are submitted as a
-/// batch (e.g., `"c\n1 + 1"`), `exiting from:` leaks through the stream
-/// path instead of being suppressed.
-///
-/// This happens because `filter.set_debugging(false)` fires in the cleanup
-/// when the browser's ReadConsole returns `"c"`, before R emits
-/// `"exiting from:"`. So the filter records `was_debugging = false`. At
-/// the next ReadConsole (top-level, for `"1 + 1"`), `is_browser` is also
-/// false, so the filter emits the content instead of suppressing it.
-///
-/// Fixing this would require mirroring `debug_was_debugging` in the filter,
-/// but that would also suppress user `cat()` output matching a prefix
-/// during `"c"` execution, regressing `test_continue_prefix_cat_preserved`.
+/// When `c` and another expression are submitted as a batch (e.g.,
+/// `"c\n1 + 1"`), `exiting from:` passes through to the stream path.
+/// Since `exiting from:` is not filtered, it appears in streams.
 #[test]
-fn test_known_limitation_exiting_from_leaks_in_batch() {
+fn test_exiting_from_visible_in_batch() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.execute_request_invisibly("f <- function() 42");
@@ -777,7 +759,7 @@ fn test_known_limitation_exiting_from_leaks_in_batch() {
     frontend.send_execute_request("f()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
+    frontend.assert_stream_stdout_contains("debugging in:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -786,18 +768,13 @@ fn test_known_limitation_exiting_from_leaks_in_batch() {
     // the browser. "1 + 1" stays in pending_inputs.
     //
     // Because pending_inputs is non-empty when R emits "exiting from:",
-    // the message goes through the stream filter (not autoprint). The
-    // filter has is_debugging=false (set in cleanup), so it leaks.
+    // the message goes through the stream path (not autoprint). Since
+    // "exiting from:" is not filtered, it appears in streams.
     frontend.send_execute_request("c\n1 + 1", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    let streams = frontend.drain_streams();
-    assert!(
-        streams.stdout().contains("exiting from:"),
-        "Expected 'exiting from:' to leak in batch case, got: {:?}",
-        streams.stdout()
-    );
+    frontend.assert_stream_stdout_contains("exiting from:");
 
     frontend.recv_iopub_execute_result();
     frontend.recv_iopub_idle();
@@ -806,11 +783,10 @@ fn test_known_limitation_exiting_from_leaks_in_batch() {
     frontend.execute_request_invisibly("undebug(f)");
 }
 
-/// When `exiting from:` has a return value after it, we keep everything
-/// (noise + result) to avoid losing user content. This test verifies the
-/// result is preserved even with multi-line debug output.
+/// `exiting from:` with a return value is visible in execute_result.
+/// Since `exiting from:` is not filtered, it appears alongside the result.
 #[test]
-fn test_exiting_from_multiline_with_result_kept() {
+fn test_exiting_from_multiline_with_result_visible() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.execute_request_invisibly(
@@ -824,7 +800,7 @@ fn test_exiting_from_multiline_with_result_kept() {
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
+    frontend.assert_stream_stdout_contains("debugging in:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -836,17 +812,15 @@ fn test_exiting_from_multiline_with_result_kept() {
     let streams = frontend.drain_streams();
     assert!(
         !streams.stdout().contains("exiting from:"),
-        "exiting from: should not be in stdout (goes to autoprint), got: {:?}",
+        "exiting from: should not be in stdout (goes to autoprint at n_frame=0), got: {:?}",
         streams.stdout()
     );
 
     let result = frontend.recv_iopub_execute_result();
     assert!(result.contains("[1] 42"));
-    // Note: exiting from: is kept (noise) because there's a result after it.
-    // This is the conservative approach to avoid losing user content.
     assert!(
         result.contains("exiting from:"),
-        "exiting from: should be kept along with result, got: {result:?}"
+        "exiting from: should be visible in result, got: {result:?}"
     );
 
     frontend.recv_iopub_idle();
@@ -857,7 +831,9 @@ fn test_exiting_from_multiline_with_result_kept() {
 
 /// Verify that the `debug: ` prefix (without "at") is filtered when stepping
 /// through un-sourced code. Sourced code produces `debug at file#line: `,
-/// but un-sourced code produces `debug: expr`.
+/// but un-sourced code produces `debug: expr`. `debugging in:` goes to
+/// stdout (n_frame > 0 inside the debug handler). `exiting from:` at top
+/// level goes to autoprint alongside the return value.
 #[test]
 fn test_debug_prefix_filtered_when_stepping_unsourced() {
     let frontend = DummyArkFrontend::lock();
@@ -865,22 +841,15 @@ fn test_debug_prefix_filtered_when_stepping_unsourced() {
     frontend.execute_request_invisibly("f <- function() { x <- 1; x }");
     frontend.execute_request_invisibly("debug(f)");
 
-    // Call f() - triggers "debugging in: f()" and "debug: x <- 1"
+    // Call f() - triggers "debugging in: f()" and "debug: x <- 1".
+    // `debugging in:` passes through to stdout (n_frame > 0, not filtered).
+    // `debug:` is accumulated by the filter and suppressed at the
+    // browser prompt.
     frontend.send_execute_request("f()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    let streams = frontend.drain_streams();
-    assert!(
-        !streams.stdout().contains("debugging in:"),
-        "debugging in: should be filtered, got: {:?}",
-        streams.stdout()
-    );
-    assert!(
-        !streams.stdout().contains("debug: "),
-        "debug: prefix should be filtered, got: {:?}",
-        streams.stdout()
-    );
+    frontend.assert_stream_stdout_contains("debugging in:");
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
@@ -900,19 +869,19 @@ fn test_debug_prefix_filtered_when_stepping_unsourced() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // Continue to exit
+    // Continue to exit - at n_frame=0, both "exiting from:" and the
+    // return value go through autoprint into execute_result.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    let streams = frontend.drain_streams();
+    let result = frontend.recv_iopub_execute_result();
     assert!(
-        !streams.stdout().contains("exiting from:"),
-        "exiting from: should be filtered, got: {:?}",
-        streams.stdout()
+        result.contains("exiting from:"),
+        "exiting from: should be visible in execute_result, got: {result:?}"
     );
+    assert!(result.contains("[1] 1"));
 
-    frontend.recv_iopub_execute_result();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -931,7 +900,6 @@ fn test_collateral_suppression_in_browser() {
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -961,10 +929,9 @@ fn test_collateral_suppression_in_browser() {
 }
 
 /// When in a browser, calling a debugged function and continuing produces
-/// `exiting from:` before the return value. Since there's a return value,
-/// we keep everything (noise + result) to avoid losing user content.
+/// `exiting from:` in autoprint alongside the return value.
 #[test]
-fn test_exiting_from_kept_with_result_at_browser_prompt() {
+fn test_exiting_from_visible_at_browser_prompt() {
     let frontend = DummyArkFrontend::lock();
 
     frontend.execute_request_invisibly("f <- function() 42");
@@ -974,7 +941,6 @@ fn test_exiting_from_kept_with_result_at_browser_prompt() {
     frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -982,28 +948,20 @@ fn test_exiting_from_kept_with_result_at_browser_prompt() {
     frontend.send_execute_request("f()", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.drain_streams();
+    frontend.assert_stream_stdout_contains("debugging in:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // Continue from f's debugger. R emits "exiting from: f()" then the
-    // return value. Since there's a result, we keep everything (noise + result).
+    // Continue from f's debugger. "exiting from:" goes through autoprint
+    // alongside the return value.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    let streams = frontend.drain_streams();
-    assert!(
-        !streams.stdout().contains("exiting from:"),
-        "exiting from: should not be in stdout (goes to autoprint), got: {:?}",
-        streams.stdout()
-    );
-
     let result = frontend.recv_iopub_execute_result();
-    // Note: exiting from: is kept (noise) because there's a result after it.
     assert!(
         result.contains("exiting from:"),
-        "exiting from: should be kept along with result, got: {result:?}"
+        "exiting from: should be visible in execute_result, got: {result:?}"
     );
     assert!(result.contains("[1] 42"));
 
@@ -1067,4 +1025,165 @@ fn test_user_output_preserved_between_debug_steps() {
     // Exit the debugger
     frontend.debug_send_quit();
     dap.recv_continued();
+}
+
+// --- Nested debug context tests ---
+//
+// These test `exiting from:` in nested function calls where the inner
+// function exits to an outer function (n_frame > 0). Previously these
+// scenarios could swallow user output because the filter accumulated
+// content after `exiting from:` until the next ReadConsole.
+
+/// Scenario 1: Exit inner to debugged outer with more statements.
+/// R does not emit `exiting from:` when returning from inner to outer's
+/// debug handler (the outer handler takes over directly). The `debug:`
+/// messages for the next step in outer are still filtered. User output
+/// from `cat()` is preserved.
+#[test]
+fn test_nested_exit_inner_to_debugged_outer_with_statements() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly(
+        r#"outer <- function() {
+            inner()
+            cat("after inner\n")
+            1
+        }"#,
+    );
+    frontend.execute_request_invisibly("inner <- function() 42");
+    frontend.execute_request_invisibly("debug(outer)");
+    frontend.execute_request_invisibly("debug(inner)");
+
+    // Call outer() - enters outer's debugger
+    frontend.send_execute_request("outer()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("debugging in:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Step to inner() call - enters inner's debugger.
+    // R doesn't emit "debugging in:" when entering from another debugged
+    // function, and `debug:` is filtered, so no streams here.
+    frontend.send_execute_request("n", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue inner - exits to outer's debug handler for next statement
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // No `exiting from:` because R doesn't emit it when returning to
+    // another debug handler. `debug:` for the next step is still filtered.
+    let streams = frontend.drain_streams();
+    assert!(
+        !streams.stdout().contains("debug: "),
+        "debug: prefix should be filtered, got: {:?}",
+        streams.stdout()
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue outer - executes cat("after inner\n") and returns
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // "after inner" from cat() should be visible
+    frontend.assert_stream_stdout_contains("after inner");
+
+    // "exiting from: outer(...)" is visible in execute_result (autoprint
+    // at n_frame=0)
+    let result = frontend.recv_iopub_execute_result();
+    assert!(
+        result.contains("exiting from:"),
+        "exiting from: should be visible in execute_result, got: {result:?}"
+    );
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(outer)");
+    frontend.execute_request_invisibly("undebug(inner)");
+}
+
+/// Scenario 2: Exit inner to non-debugged outer with user output.
+/// Both `exiting from:` and user output are visible, nothing swallowed.
+/// This was the main bug: user output after `exiting from:` was being
+/// swallowed by the filter.
+#[test]
+fn test_nested_exit_inner_to_non_debugged_outer_with_user_output() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly(
+        r#"outer <- function() {
+            inner()
+            cat("user output\n")
+            42
+        }"#,
+    );
+    frontend.execute_request_invisibly("inner <- function() 1");
+    frontend.execute_request_invisibly("debug(inner)");
+
+    // Call outer() - enters inner's debugger
+    frontend.send_execute_request("outer()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("debugging in:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue inner - exits to non-debugged outer
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Both "exiting from:" and "user output" should be visible
+    frontend.assert_stream_stdout_contains("exiting from:");
+    frontend.assert_stream_stdout_contains("user output");
+
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(inner)");
+}
+
+/// Scenario 3: Exit inner to non-debugged outer with no output.
+/// `exiting from:` is visible, return value preserved.
+#[test]
+fn test_nested_exit_inner_to_non_debugged_outer_no_output() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly("outer <- function() inner()");
+    frontend.execute_request_invisibly("inner <- function() 42");
+    frontend.execute_request_invisibly("debug(inner)");
+
+    frontend.send_execute_request("outer()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("debugging in:");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Continue inner - exits to non-debugged outer, no user output
+    frontend.send_execute_request("c", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // "exiting from:" is visible
+    frontend.assert_stream_stdout_contains("exiting from:");
+
+    // Return value goes through autoprint
+    let result = frontend.recv_iopub_execute_result();
+    assert!(result.contains("[1] 42"));
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.execute_request_invisibly("undebug(inner)");
 }

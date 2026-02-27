@@ -141,6 +141,8 @@ impl Console {
         self.filter.set_debugging(false);
         self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
+        self.debug_call_text = DebugCallText::None;
+        self.debug_last_line = None;
         self.debug_stop_session();
     }
 
@@ -158,10 +160,6 @@ impl Console {
         match update {
             DebugCallTextUpdate::Finalized(text, kind) => {
                 self.debug_call_text = DebugCallText::Finalized(text, kind);
-            },
-            DebugCallTextUpdate::Reset => {
-                self.debug_call_text = DebugCallText::None;
-                self.debug_last_line = None;
             },
         }
     }

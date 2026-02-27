@@ -389,7 +389,7 @@ foo <- function() {
     frontend.recv_iopub_execute_input();
 
     frontend.recv_iopub_start_debug();
-    // "debugging in:" is filtered from console output
+    frontend.assert_stream_stdout_contains("debugging in:");
     frontend.recv_iopub_idle();
 
     // DAP: Stopped at function body
@@ -407,7 +407,6 @@ foo <- function() {
 
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -424,7 +423,6 @@ foo <- function() {
 
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.drain_streams();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
