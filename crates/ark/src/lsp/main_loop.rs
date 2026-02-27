@@ -949,7 +949,7 @@ pub(crate) fn index_create(uris: Vec<Url>, state: WorldState) {
 
 pub(crate) fn index_update(uris: Vec<Url>, state: WorldState) {
     for uri in uris {
-        if !is_indexable(&uri) {
+        if !ExtUrl::is_indexable(&uri) {
             continue;
         }
 
@@ -1008,7 +1008,7 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
     );
 
     for (uri, _document) in state.documents.iter() {
-        if !is_indexable(uri) {
+        if !ExtUrl::is_indexable(uri) {
             continue;
         }
 
@@ -1019,10 +1019,4 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
             }))
             .unwrap_or_else(|err| lsp::log_error!("Failed to queue diagnostics refresh: {err}"));
     }
-}
-
-/// Virtual documents (e.g. `ark://` debugger vdocs) should not be indexed
-/// or diagnosed since they show foreign code the user can't edit.
-fn is_indexable(uri: &Url) -> bool {
-    ExtUrl::is_local(uri)
 }

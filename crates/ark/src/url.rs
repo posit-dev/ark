@@ -52,9 +52,17 @@ impl ExtUrl {
         Ok(Self::normalize(url))
     }
 
-    /// Whether this URI points to a local file (as opposed to a virtual document).
-    pub fn is_local(uri: &Url) -> bool {
-        uri.scheme() == "file"
+    /// Whether this URI should be indexed and diagnosed. Currently uses an
+    /// exclude list: only `ark://` virtual documents are excluded since they
+    /// show foreign code the user can't edit.
+    pub fn is_indexable(uri: &Url) -> bool {
+        !Self::is_ark_virtual_doc(uri)
+    }
+
+    /// Whether this URI points to an `ark://` virtual document (e.g. debugger
+    /// vdocs showing foreign code).
+    pub fn is_ark_virtual_doc(uri: &Url) -> bool {
+        uri.scheme() == "ark"
     }
 
     /// Normalize a file URI for consistent comparison.
@@ -129,21 +137,24 @@ mod tests {
     }
 
     #[test]
-    fn test_is_local_file_uri() {
-        let uri = Url::parse("file:///home/user/test.R").unwrap();
-        assert!(ExtUrl::is_local(&uri));
+    fn test_is_ark_virtual_doc() {
+        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
+        assert!(ExtUrl::is_ark_virtual_doc(&ark_uri));
+
+        let file_uri = Url::parse("file:///home/user/test.R").unwrap();
+        assert!(!ExtUrl::is_ark_virtual_doc(&file_uri));
     }
 
     #[test]
-    fn test_is_local_ark_uri() {
-        let uri = Url::parse("ark://namespace/test.R").unwrap();
-        assert!(!ExtUrl::is_local(&uri));
-    }
+    fn test_is_indexable() {
+        let file_uri = Url::parse("file:///home/user/test.R").unwrap();
+        assert!(ExtUrl::is_indexable(&file_uri));
 
-    #[test]
-    fn test_is_local_inmemory_uri() {
-        let uri = Url::parse("inmemory://console/input.R").unwrap();
-        assert!(!ExtUrl::is_local(&uri));
+        let git_uri = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
+        assert!(ExtUrl::is_indexable(&git_uri));
+
+        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
+        assert!(!ExtUrl::is_indexable(&ark_uri));
     }
 
     #[test]

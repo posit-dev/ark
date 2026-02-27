@@ -156,8 +156,8 @@ pub fn map(mut callback: impl FnMut(&Url, &String, &IndexEntry)) {
 
 #[tracing::instrument(level = "trace", skip_all, fields(uri = %uri))]
 pub fn update(document: &Document, uri: &Url) -> anyhow::Result<()> {
-    // Defensive, callers are expected to filter non-file URIs before queuing
-    if !ExtUrl::is_local(uri) {
+    // Defensive, callers are expected to filter virtual doc URIs before queuing
+    if !ExtUrl::is_indexable(uri) {
         return Ok(());
     }
     delete(uri)?;
@@ -261,7 +261,7 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
 }
 
 pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
-    if !ExtUrl::is_local(uri) {
+    if uri.scheme() != "file" {
         return Ok(());
     }
     let Ok(path) = uri.to_file_path() else {
@@ -670,7 +670,7 @@ class <- R6::R6Class(
     }
 
     #[test]
-    fn test_update_skips_non_file_uri() {
+    fn test_update_skips_ark_virtual_doc() {
         let _guard = ResetIndexerGuard;
 
         let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
@@ -678,6 +678,17 @@ class <- R6::R6Class(
 
         update(&doc, &ark_uri).unwrap();
         assert!(find("foo").is_none());
+    }
+
+    #[test]
+    fn test_update_indexes_git_uri() {
+        let _guard = ResetIndexerGuard;
+
+        let git_uri = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
+        let doc = Document::new("foo <- 1", None);
+
+        update(&doc, &git_uri).unwrap();
+        assert!(find("foo").is_some());
     }
 
     #[test]
