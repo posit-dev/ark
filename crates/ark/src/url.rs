@@ -52,10 +52,17 @@ impl ExtUrl {
         Ok(Self::normalize(url))
     }
 
-    /// Whether this URI should be indexed and diagnosed. Currently uses an
-    /// exclude list: only `ark://` virtual documents are excluded since they
-    /// show foreign code the user can't edit.
+    /// Whether this URI should be indexed. Currently uses an exclude list:
+    /// only `ark://` virtual documents are excluded since they show foreign
+    /// code the user can't edit.
     pub fn is_indexable(uri: &Url) -> bool {
+        !Self::is_ark_virtual_doc(uri)
+    }
+
+    /// Whether this URI should get diagnostics. Currently uses the same
+    /// exclude list as [`Self::is_indexable`] but kept separate so the
+    /// criteria can diverge independently.
+    pub fn should_diagnose(uri: &Url) -> bool {
         !Self::is_ark_virtual_doc(uri)
     }
 
@@ -155,6 +162,18 @@ mod tests {
 
         let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
         assert!(!ExtUrl::is_indexable(&ark_uri));
+    }
+
+    #[test]
+    fn test_should_diagnose() {
+        let file_uri = Url::parse("file:///home/user/test.R").unwrap();
+        assert!(ExtUrl::should_diagnose(&file_uri));
+
+        let git_uri = Url::parse("git:///home/user/test.R?ref=HEAD").unwrap();
+        assert!(ExtUrl::should_diagnose(&git_uri));
+
+        let ark_uri = Url::parse("ark://namespace/test.R").unwrap();
+        assert!(!ExtUrl::should_diagnose(&ark_uri));
     }
 
     #[test]

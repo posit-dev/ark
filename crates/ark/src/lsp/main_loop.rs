@@ -1008,7 +1008,7 @@ pub(crate) fn diagnostics_refresh_all(state: WorldState) {
     );
 
     for (uri, _document) in state.documents.iter() {
-        if !ExtUrl::is_indexable(uri) {
+        if !ExtUrl::should_diagnose(uri) {
             continue;
         }
 

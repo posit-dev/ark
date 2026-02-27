@@ -260,6 +260,8 @@ pub fn filter_entry(entry: &DirEntry) -> bool {
     true
 }
 
+// Only called for actual files during workspace walking. Documents managed by
+// the LSP go through `update()` instead.
 pub(crate) fn create(uri: &Url) -> anyhow::Result<()> {
     if uri.scheme() != "file" {
         return Ok(());
