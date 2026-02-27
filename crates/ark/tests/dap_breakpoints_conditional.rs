@@ -306,6 +306,152 @@ foo()
     frontend.recv_shell_execute_reply();
 }
 
+/// Test that a condition returning a value not coercible to logical (e.g. an
+/// environment) errors during `as.logical()` and is treated as TRUE.
+#[test]
+fn test_dap_conditional_breakpoint_non_coercible_condition_stops() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x + 1
+}
+foo()
+",
+    );
+
+    // `as.logical(environment())` errors: cannot coerce type 'environment' to logical
+    let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "environment()")]);
+    assert_eq!(breakpoints.len(), 1);
+
+    frontend.source_file_and_hit_breakpoint(&file);
+
+    dap.recv_breakpoint_verified();
+    dap.recv_stopped();
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a numeric zero condition is coerced to FALSE (breakpoint skipped).
+#[test]
+fn test_dap_conditional_breakpoint_numeric_zero_skips() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x + 1
+}
+foo()
+",
+    );
+
+    // `0` coerces to FALSE via `as.logical()`
+    let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "0")]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a non-zero numeric condition is coerced to TRUE (breakpoint fires).
+#[test]
+fn test_dap_conditional_breakpoint_numeric_nonzero_stops() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x + 1
+}
+foo()
+",
+    );
+
+    // `42` coerces to TRUE via `as.logical()`
+    let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "42")]);
+    assert_eq!(breakpoints.len(), 1);
+
+    frontend.source_file_and_hit_breakpoint(&file);
+
+    dap.recv_breakpoint_verified();
+    dap.recv_stopped();
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a numeric expression is coerced: `i - 1` is falsy when `i == 1`
+/// and truthy when `i == 2`.
+#[test]
+fn test_dap_conditional_breakpoint_numeric_expression_in_loop() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+{
+  for (i in 1:3) {
+    x <- i * 10
+  }
+}
+",
+    );
+
+    // `i - 1` evaluates to 0 (falsy) on first iteration, non-zero (truthy) after
+    let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(4, "i - 1")]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    // i=1: `i - 1` is 0 → FALSE, skipped. i=2: `i - 1` is 1 → TRUE, stops.
+    frontend.recv_iopub_breakpoint_hit();
+    dap.recv_stopped();
+    dap.assert_top_frame_line(4);
+    dap.assert_top_frame_file(&file);
+
+    let frame_id = dap.stack_trace()[0].id;
+    assert_eq!(dap.evaluate("i", Some(frame_id)), "2");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
 /// Test that changing a condition via SetBreakpoints takes effect without re-sourcing.
 ///
 /// The condition is stored in the Rust DAP state and queried at runtime,
