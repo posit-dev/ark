@@ -1433,6 +1433,7 @@ impl DummyArkFrontend {
         if self.in_debug() {
             self.recv_iopub_stop_debug();
         }
+        self.assert_stream_stdout_contains("debugging in:");
         self.recv_iopub_start_debug();
         self.recv_iopub_idle();
         self.recv_shell_execute_reply()
