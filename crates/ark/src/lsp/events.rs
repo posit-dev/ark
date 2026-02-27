@@ -10,7 +10,7 @@ use stdext::event::Event;
 
 #[derive(Default)]
 pub struct Events {
-    pub console_prompt: Event<()>,
+    pub environment_changed: Event<()>,
 }
 
 pub static EVENTS: Lazy<Events> = Lazy::new(|| Events::default());

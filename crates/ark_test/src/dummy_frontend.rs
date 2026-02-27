@@ -12,12 +12,14 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::fixtures::dummy_frontend::DummyConnection;
 use amalthea::fixtures::dummy_frontend::DummyFrontend;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::wire::comm_close::CommClose;
 use amalthea::wire::comm_open::CommOpen;
 use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
@@ -75,6 +77,106 @@ pub struct DummyArkFrontend {
     /// we should be able to assert these deterministically in the message
     /// sequence instead.
     variables_events: RefCell<VecDeque<VariablesFrontendEvent>>,
+    /// Auto-buffered data explorer state.
+    data_explorer: DataExplorerBuffer,
+}
+
+/// A buffered data explorer message, preserving arrival order across event
+/// types so tests can assert on sequencing.
+#[derive(Debug)]
+enum DataExplorerMessage {
+    Event(DataExplorerFrontendEvent),
+    Close(String),
+}
+
+/// Buffers data explorer comm messages that arrive asynchronously on IOPub.
+///
+/// The data explorer spawns a background thread that sends CommOpen, CommMsg
+/// (events), and CommClose independently of the execute request lifecycle.
+/// These can race with Idle and other messages, so we buffer them here and
+/// provide methods to consume them in tests.
+struct DataExplorerBuffer {
+    /// Comm IDs of open data explorer comms.
+    comm_ids: RefCell<Vec<String>>,
+    /// Buffered messages in arrival order.
+    messages: RefCell<VecDeque<DataExplorerMessage>>,
+}
+
+impl DataExplorerBuffer {
+    fn new() -> Self {
+        Self {
+            comm_ids: RefCell::new(Vec::new()),
+            messages: RefCell::new(VecDeque::new()),
+        }
+    }
+
+    fn is_data_explorer_comm(&self, comm_id: &str) -> bool {
+        self.comm_ids.borrow().iter().any(|id| id == comm_id)
+    }
+
+    fn track_open(&self, comm_id: String) {
+        self.comm_ids.borrow_mut().push(comm_id);
+    }
+
+    fn buffer_event(&self, data: &serde_json::Value) {
+        let event: DataExplorerFrontendEvent = serde_json::from_value(data.clone()).unwrap();
+        self.messages
+            .borrow_mut()
+            .push_back(DataExplorerMessage::Event(event));
+    }
+
+    fn buffer_close(&self, close: &CommClose) {
+        self.comm_ids.borrow_mut().retain(|id| id != &close.comm_id);
+        self.messages
+            .borrow_mut()
+            .push_back(DataExplorerMessage::Close(close.comm_id.clone()));
+    }
+
+    /// Pop the next message if it's an `Event`.
+    /// Returns `None` if the buffer is empty.
+    /// Panics if the next message is a `Close` (wrong receive method).
+    fn pop_event(&self) -> Option<DataExplorerFrontendEvent> {
+        let mut messages = self.messages.borrow_mut();
+        match messages.front() {
+            Some(DataExplorerMessage::Event(_)) => match messages.pop_front() {
+                Some(DataExplorerMessage::Event(event)) => Some(event),
+                _ => None,
+            },
+            Some(other) => panic!("Expected data explorer Event, got {other:?}"),
+            None => None,
+        }
+    }
+
+    /// Pop the next message if it's a `Close`.
+    /// Returns `None` if the buffer is empty.
+    /// Panics if the next message is an `Event` (wrong receive method).
+    fn pop_close(&self) -> Option<String> {
+        let mut messages = self.messages.borrow_mut();
+        match messages.front() {
+            Some(DataExplorerMessage::Close(_)) => match messages.pop_front() {
+                Some(DataExplorerMessage::Close(id)) => Some(id),
+                _ => None,
+            },
+            Some(other) => panic!("Expected data explorer Close, got {other:?}"),
+            None => None,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.messages.borrow().is_empty()
+    }
+
+    /// Panic if any messages were buffered but never consumed.
+    fn assert_consumed(&self) {
+        let messages = self.messages.borrow();
+        if !messages.is_empty() {
+            panic!(
+                "Test has {} unconsumed data explorer message(s): {:?}",
+                messages.len(),
+                *messages
+            );
+        }
+    }
 }
 
 /// Result of draining accumulated streams
@@ -135,6 +237,7 @@ impl DummyArkFrontend {
             in_debug: Cell::new(false),
             variables_comm_id: RefCell::new(None),
             variables_events: RefCell::new(VecDeque::new()),
+            data_explorer: DataExplorerBuffer::new(),
         }
     }
 
@@ -202,16 +305,51 @@ impl DummyArkFrontend {
         // Read from socket, auto-buffering streams and comm messages
         loop {
             let msg = self.recv_iopub();
-            trace_iopub_msg(&msg);
-            match msg {
-                Message::Stream(ref data) => {
-                    self.buffer_stream(&data.content);
-                },
-                Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                    self.buffer_variables_event(&data.content.data);
-                },
-                other => return other,
+            if !self.try_buffer_msg(&msg) {
+                trace_iopub_msg(&msg);
+                return msg;
             }
+        }
+    }
+
+    /// Try to buffer a known message (stream, variables comm, or data explorer comm).
+    /// Traces the message if it was buffered. Returns `true` if the message was consumed.
+    ///
+    /// Comm message buffering is needed because comm events can race with Idle
+    /// on IOPub. Once https://github.com/posit-dev/ark/issues/689 is resolved,
+    /// comm events should arrive deterministically in the message sequence and
+    /// this buffering can be removed.
+    fn try_buffer_msg(&self, msg: &Message) -> bool {
+        match msg {
+            Message::Stream(ref data) => {
+                trace_iopub_msg(msg);
+                self.buffer_stream(&data.content);
+                true
+            },
+            Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
+                trace_iopub_msg(msg);
+                self.buffer_variables_event(&data.content.data);
+                true
+            },
+            Message::CommMsg(ref data)
+                if self
+                    .data_explorer
+                    .is_data_explorer_comm(&data.content.comm_id) =>
+            {
+                trace_iopub_msg(msg);
+                self.data_explorer.buffer_event(&data.content.data);
+                true
+            },
+            Message::CommClose(ref data)
+                if self
+                    .data_explorer
+                    .is_data_explorer_comm(&data.content.comm_id) =>
+            {
+                trace_iopub_msg(msg);
+                self.data_explorer.buffer_close(&data.content);
+                true
+            },
+            _ => false,
         }
     }
 
@@ -260,17 +398,8 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match &msg {
-                    Message::Stream(ref data) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_stream(&data.content);
-                    },
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_variables_event(&data.content.data);
-                    },
-                    // Don't trace here - will be traced when popped from pending queue
-                    _ => self.pending_iopub_messages.borrow_mut().push_back(msg),
+                if !self.try_buffer_msg(&msg) {
+                    self.pending_iopub_messages.borrow_mut().push_back(msg);
                 }
             }
         }
@@ -371,13 +500,8 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match msg {
-                    Message::Stream(ref data) => {
-                        trace_iopub_msg(&msg);
-                        self.buffer_stream(&data.content);
-                    },
-                    // Don't trace here - will be traced when popped from pending queue
-                    other => self.pending_iopub_messages.borrow_mut().push_back(other),
+                if !self.try_buffer_msg(&msg) {
+                    self.pending_iopub_messages.borrow_mut().push_back(msg);
                 }
             }
         }
@@ -409,7 +533,6 @@ impl DummyArkFrontend {
                         trace_iopub_msg(&msg);
                         self.buffer_stream(&data.content);
                     },
-                    // Don't trace here - will be traced when popped from pending queue
                     _ => {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                         break;
@@ -787,16 +910,14 @@ impl DummyArkFrontend {
             let poll_timeout = remaining.min(Duration::from_millis(100));
 
             if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
-                match &msg {
-                    Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
-                        self.buffer_variables_event(&data.content.data);
-                        return self.variables_events.borrow_mut().pop_front().unwrap();
-                    },
-                    // Buffer any incoming stream messages
-                    Message::Stream(ref data) => {
-                        self.buffer_stream(&data.content);
-                    },
-                    // Idle can race with variables events (see #689)
+                if self.try_buffer_msg(&msg) {
+                    if let Some(event) = self.variables_events.borrow_mut().pop_front() {
+                        return event;
+                    }
+                    continue;
+                }
+                // Idle can race with variables events (see #689)
+                match msg {
                     Message::Status(_) => {
                         self.pending_iopub_messages.borrow_mut().push_back(msg);
                     },
@@ -805,6 +926,148 @@ impl DummyArkFrontend {
                     },
                 }
             }
+        }
+    }
+
+    /// Execute `View(var_name)` and track the resulting data explorer comm.
+    ///
+    /// Returns the comm ID. After this call, data explorer comm messages are
+    /// automatically buffered by `recv_iopub_next()` (parallel to how Stream
+    /// and Variables messages are handled).
+    ///
+    /// Note: The data explorer comm is opened asynchronously by a spawned thread,
+    /// so the CommOpen message may arrive after the execute request completes.
+    #[track_caller]
+    pub fn open_data_explorer(&self, var_name: &str) -> String {
+        self.send_execute_request(
+            &format!("View({var_name})"),
+            ExecuteRequestOptions::default(),
+        );
+        self.recv_iopub_busy();
+        self.recv_iopub_execute_input();
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply();
+
+        // The CommOpen is sent asynchronously by the data explorer thread,
+        // so we need to wait for it separately after the execute completes.
+        let comm_open = self.recv_iopub_comm_open();
+        assert_eq!(
+            comm_open.target_name, "positron.dataExplorer",
+            "Expected data explorer comm, got {:?}",
+            comm_open.target_name
+        );
+
+        let comm_id = comm_open.comm_id;
+        self.data_explorer.track_open(comm_id.clone());
+
+        comm_id
+    }
+
+    /// Receive the next data explorer event from the buffer.
+    ///
+    /// Checks the internal buffer first (populated by `recv_iopub_next()`),
+    /// then reads more IOPub messages if needed, with timeout.
+    #[track_caller]
+    pub fn recv_data_explorer_event(&self) -> DataExplorerFrontendEvent {
+        // Check buffer first
+        if let Some(event) = self.data_explorer.pop_event() {
+            return event;
+        }
+
+        // Read more IOPub messages until we get a data explorer event
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        loop {
+            if Instant::now() >= deadline {
+                panic!("Timeout waiting for data explorer event");
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let poll_timeout = remaining.min(Duration::from_millis(100));
+
+            if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
+                if self.try_buffer_msg(&msg) {
+                    if let Some(event) = self.data_explorer.pop_event() {
+                        return event;
+                    }
+                    continue;
+                }
+                match msg {
+                    Message::Status(_) => {
+                        self.pending_iopub_messages.borrow_mut().push_back(msg);
+                    },
+                    other => {
+                        panic!(
+                            "Unexpected message while waiting for data explorer event: {other:?}"
+                        )
+                    },
+                }
+            }
+        }
+    }
+
+    /// Receive the next data explorer CommClose from the buffer.
+    ///
+    /// Checks the internal buffer first (populated by `try_buffer_msg()`),
+    /// then reads more IOPub messages if needed, with timeout.
+    #[track_caller]
+    pub fn recv_data_explorer_close(&self) -> String {
+        if let Some(comm_id) = self.data_explorer.pop_close() {
+            return comm_id;
+        }
+
+        let deadline = Instant::now() + RECV_TIMEOUT;
+        loop {
+            if Instant::now() >= deadline {
+                panic!("Timeout waiting for data explorer CommClose");
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let poll_timeout = remaining.min(Duration::from_millis(100));
+
+            if let Some(msg) = self.recv_iopub_with_timeout(poll_timeout) {
+                if self.try_buffer_msg(&msg) {
+                    if let Some(comm_id) = self.data_explorer.pop_close() {
+                        return comm_id;
+                    }
+                    continue;
+                }
+                match msg {
+                    Message::Status(_) => {
+                        self.pending_iopub_messages.borrow_mut().push_back(msg);
+                    },
+                    other => {
+                        panic!(
+                            "Unexpected message while waiting for data explorer CommClose: {other:?}"
+                        )
+                    },
+                }
+            }
+        }
+    }
+
+    /// Assert that no data explorer events are buffered.
+    ///
+    /// Drains IOPub briefly to catch any stragglers before checking.
+    #[track_caller]
+    pub fn assert_no_data_explorer_events(&self) {
+        // Brief drain to catch any in-flight messages
+        let deadline = Instant::now() + default_drain_timeout();
+
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self.recv_iopub_with_timeout(remaining) {
+                Some(msg) => {
+                    if !self.try_buffer_msg(&msg) {
+                        self.pending_iopub_messages.borrow_mut().push_back(msg);
+                        break;
+                    }
+                },
+                None => break,
+            }
+        }
+
+        if !self.data_explorer.is_empty() {
+            self.data_explorer.assert_consumed();
         }
     }
 
@@ -1412,6 +1675,8 @@ impl Drop for DummyArkFrontend {
             );
         }
         drop(buffered_variables);
+
+        self.data_explorer.assert_consumed();
 
         // Helper to check if a message is exempt from "unexpected message" check
         let is_exempt = |msg: &Message| -> bool {

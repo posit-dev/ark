@@ -249,11 +249,10 @@ impl RDataExplorer {
     }
 
     pub fn execution_thread(mut self) {
-        // Register a handler for console prompt events. We do this before sending
-        // `CommManagerEvent::Opened` to ensure we can't miss any console prompt events
-        // (#781).
+        // Register a handler for environment change events. We do this before sending
+        // `CommManagerEvent::Opened` to ensure we can't miss any events (#781).
         let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
-        let listen_id = EVENTS.console_prompt.listen({
+        let listen_id = EVENTS.environment_changed.listen({
             move |_| {
                 prompt_signal_tx.send(()).unwrap();
             }
@@ -281,8 +280,8 @@ impl RDataExplorer {
         // Set up event loop to listen for incoming messages from the frontend
         loop {
             select! {
-                // When a console prompt event is received, check for updates to
-                // the underlying data
+                // When the environment changes, check for updates to the
+                // underlying data
                 recv(&prompt_signal_rx) -> msg => {
                     if let Ok(()) = msg {
                         match self.update() {
@@ -324,7 +323,7 @@ impl RDataExplorer {
             }
         }
 
-        EVENTS.console_prompt.remove(listen_id);
+        EVENTS.environment_changed.remove(listen_id);
 
         if !user_initiated_close {
             // Send a close message to the frontend if the frontend didn't

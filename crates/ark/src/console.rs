@@ -1187,8 +1187,7 @@ impl Console {
             self.refresh_lsp();
         }
 
-        // Signal prompt
-        EVENTS.console_prompt.emit(());
+        EVENTS.environment_changed.emit(());
 
         self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
     }
@@ -2775,6 +2774,11 @@ impl Console {
 
     pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
         self.debug_selected_frame_id.set(frame_id);
+
+        // Signal listeners (e.g. the Variables pane) that they can update state
+        if frame_id.is_some() {
+            EVENTS.environment_changed.emit(());
+        }
     }
 
     /// Check if this is a browser prompt for which we need to capture the
