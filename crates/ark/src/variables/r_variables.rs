@@ -179,10 +179,10 @@ impl RVariables {
             initial_signal_tx.send(()).log_err();
         });
 
-        // Register a handler for console prompt events
-        let listen_id = EVENTS.console_prompt.listen({
+        // Register a handler for environment change events
+        let listen_id = EVENTS.environment_changed.listen({
             move |_| {
-                log::info!("Got console prompt signal.");
+                log::info!("Got environment changed signal.");
                 prompt_signal_tx.send(()).log_err();
             }
         });
@@ -235,7 +235,7 @@ impl RVariables {
             }
         }
 
-        EVENTS.console_prompt.remove(listen_id);
+        EVENTS.environment_changed.remove(listen_id);
 
         if !user_initiated_close {
             // Send a close message to the frontend if the frontend didn't
