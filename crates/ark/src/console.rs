@@ -247,7 +247,7 @@ pub struct Console {
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
     tasks_idle_any_rx: Receiver<RTask>,
-    pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
+    pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
     /// Channel to communicate requests and events to the frontend
     /// by forwarding them through the UI comm. Optional, and really Positron specific.
@@ -2056,7 +2056,18 @@ impl Console {
 
         let (mut fut, mut start_info) = match fut {
             Some(fut) => (fut, waker.start_info.clone()),
-            None => self.pending_futures.remove(&waker.id).unwrap(),
+            None => {
+                let (fut, start_info, suspended_capture) =
+                    self.pending_futures.remove(&waker.id).unwrap();
+                // Restore `captured_output` that was suspended when this
+                // future last yielded, so the future's `ConsoleOutputCapture`
+                // can continue accumulating into it.
+                if suspended_capture.is_some() {
+                    stdext::soft_assert!(self.captured_output.is_none());
+                    self.captured_output = suspended_capture;
+                }
+                (fut, start_info)
+            },
         };
 
         let awaker = waker.clone().into();
@@ -2073,7 +2084,12 @@ impl Console {
             },
             Poll::Pending => {
                 start_info.bump_elapsed(tick.elapsed());
-                self.pending_futures.insert(waker.id, (fut, start_info));
+                // Suspend `captured_output` so that console output during
+                // evaluation (e.g. debug messages) goes to IOPub instead of
+                // being swallowed by a pending task's capture buffer.
+                let suspended_capture = self.captured_output.take();
+                self.pending_futures
+                    .insert(waker.id, (fut, start_info, suspended_capture));
                 None
             },
         }
