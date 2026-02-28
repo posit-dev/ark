@@ -99,6 +99,8 @@ use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
+use crate::console_filter::strip_step_lines;
+use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
@@ -162,7 +164,6 @@ pub enum SessionMode {
 #[derive(Clone, Debug)]
 pub enum DebugCallText {
     None,
-    Capturing(String, DebugCallTextKind),
     Finalized(String, DebugCallTextKind),
 }
 
@@ -357,6 +358,10 @@ pub struct Console {
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
     pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
+
+    /// Filter for debug console output. Removes R's internal debug messages
+    /// from user-visible console output.
+    pub(crate) filter: ConsoleFilter,
 }
 
 /// Stack of pending inputs
@@ -948,6 +953,7 @@ impl Console {
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
             read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
+            filter: ConsoleFilter::new(),
         }
     }
 
@@ -1105,12 +1111,35 @@ impl Console {
         buflen: c_int,
         _hist: c_int,
     ) -> ConsoleResult {
-        self.debug_handle_read_console();
-
-        // State machine part of ReadConsole
-
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
+
+        let is_browser = matches!(info.kind, PromptKind::Browser);
+
+        let suppress = filter_debug_output();
+        self.filter.set_suppress(suppress);
+
+        // Debug prefixes (`Called from:`, `debug at`, `debug:`) reach
+        // autoprint when stepping in top-level braced expressions. We only
+        // strip them at browser prompts (not top-level prompts) because at
+        // top level these strings could be legitimate user output, and we only
+        // take the risk of incorrectly stripping user output when we're in the
+        // debugger.
+        if is_browser && suppress {
+            strip_step_lines(&mut self.autoprint_output);
+        }
+
+        // Flush the stream filter and finalize any pending debug capture.
+        // A browser prompt means filtered content was real debug output (which
+        // we suppress). Top-level prompt means it was user output matching a
+        // prefix (which we emit).
+        let (emit, debug_update) = self.filter.on_read_console(is_browser);
+        if let Some(text) = emit {
+            self.emit_stdout(text);
+        }
+        if let Some(update) = debug_update {
+            self.debug_update_call_text(update);
+        }
 
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
         // is true. Otherwise it is false.
@@ -2379,7 +2408,8 @@ impl Console {
         let console = Console::get_mut();
 
         if let Some(captured) = &mut console.captured_output {
-            captured.push_str(&console_to_utf8(buf).unwrap());
+            let content = console_to_utf8(buf).unwrap();
+            captured.push_str(&content);
             return;
         }
 
@@ -2396,10 +2426,6 @@ impl Console {
             }
             return;
         }
-
-        // To capture the current `debug: <call>` output, for use in the debugger's
-        // match based fallback
-        console.debug_handle_write_console(&content);
 
         let stream = if otype == 0 {
             Stream::Stdout
@@ -2441,7 +2467,11 @@ impl Console {
             // differentiate, but that could change in the future:
             // https://github.com/posit-dev/positron/issues/1881
 
-            // Handle last expression
+            // Handle last expression. Accumulate for `execute_result` if any.
+            // We don't filter here: debug messages that go through autoprint
+            // (e.g., "Called from:" at top level) are cleared when we detect
+            // a browser prompt at ReadConsole time. This avoids suppressing
+            // user output from print methods that happen to match a prefix.
             if console.pending_inputs.is_none() {
                 console.autoprint_output.push_str(&content);
                 return;
@@ -2457,12 +2487,33 @@ impl Console {
             // IOPub.
         }
 
-        // Stream output via the IOPub channel.
+        if stream == Stream::Stderr {
+            // Flush any buffered stdout so it appears before this stderr
+            if let Some(text) = console.filter.flush() {
+                console.emit_stdout(text);
+            }
+
+            // Now emit Stderr message
+            let message = IOPubMessage::Stream(StreamOutput {
+                name: stream,
+                text: content,
+            });
+            console.iopub_tx.send(message).unwrap();
+            return;
+        }
+
+        let emits = console.filter.feed(&content);
+        for text in emits {
+            console.emit_stdout(text);
+        }
+    }
+
+    fn emit_stdout(&mut self, text: String) {
         let message = IOPubMessage::Stream(StreamOutput {
-            name: stream,
-            text: content,
+            name: Stream::Stdout,
+            text,
         });
-        console.iopub_tx.send(message).unwrap();
+        self.iopub_tx.send(message).unwrap();
     }
 
     /// Invoked by R to change busy state
@@ -2516,6 +2567,16 @@ impl Console {
         // and Linux have 8MB).
         if let Err(_) = r_check_stack(Some(128 * 1024)) {
             return;
+        }
+
+        // Check stream filter timeout to handle long computations between
+        // WriteConsole calls. Timeout means we didn't reach ReadConsole to
+        // confirm debug output within a reasonable amount of time, so
+        // accumulated content is emitted. This allows user code to produce
+        // output that looks like debug lines emitted by R without them getting
+        // filtered out or held up too long.
+        if let Some(text) = self.filter.check_timeout() {
+            self.emit_stdout(text);
         }
 
         // Coalesce up to three concurrent tasks in case the R event loop is
@@ -2748,6 +2809,13 @@ impl Console {
     }
 
     fn read_console_enter(&mut self, env: RObject) {
+        // Restore JIT level after a step-into command
+        if let Some(level) = self.debug_jit_level.take() {
+            if let Err(err) = harp::parse_eval_base(&format!("compiler::enableJIT({level}L)")) {
+                log::error!("Failed to restore JIT level: {err:?}");
+            }
+        }
+
         // Track nesting depth of ReadConsole REPLs
         self.read_console_depth
             .set(self.read_console_depth.get() + 1);
@@ -3149,6 +3217,14 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
     }
 
     Ok(RObject::null().sexp)
+}
+
+fn filter_debug_output() -> bool {
+    let opt: Option<bool> =
+        r_null_or_try_into(harp::get_option("ark.debugger.filter_debug_output"))
+            .ok()
+            .flatten();
+    opt.unwrap_or(true)
 }
 
 fn do_resource_namespaces() -> bool {

@@ -88,20 +88,18 @@ frontend.recv_iopub_execute_result();
 frontend.recv_iopub_idle();
 frontend.recv_shell_execute_reply();
 
-// For debug flows with streams, stream assertions MUST come before idle
-frontend.recv_iopub_start_debug();
-frontend.recv_iopub_stop_debug();
-frontend.recv_iopub_start_debug();
-frontend.assert_stream_stdout_contains("Called from:");
-frontend.assert_stream_stdout_contains("debug at");
-frontend.recv_iopub_idle();  // Flushes stream buffers, resets for next operation
+// Asserting on stream output (order-sensitive: assert in expected order)
+frontend.send_execute_request("cat('hello\\nworld\\n')", ExecuteRequestOptions::default());
+frontend.recv_iopub_busy();
+frontend.recv_iopub_execute_input();
+frontend.assert_stream_stdout_contains("hello");
+frontend.assert_stream_stdout_contains("world");
+frontend.recv_iopub_idle();  // Flushes stream buffers, panics on unasserted streams
 frontend.recv_shell_execute_reply();
 
-// For ordering assertions, use drain_streams() at checkpoints
-frontend.recv_iopub_stop_debug();
-let after_stop = frontend.drain_streams();
-frontend.recv_iopub_start_debug();
-assert!(after_stop.stdout.contains("debugging in:"));
+// Use drain_streams() to consume buffered stream output so `recv_iopub_idle()` won't panic
+let streams = frontend.drain_streams();
+assert!(streams.stdout().contains("expected"));
 ```
 
 **Debugging tests:**

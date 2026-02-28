@@ -183,9 +183,7 @@ options(error = recover)
 
     assert!(frontend.recv_iopub_execute_error().contains("foo"));
 
-    // We set up the call stack to show a simple `error_handler()`
-    frontend.assert_stream_stdout_contains("Called from: ark_recover()");
-
+    // "Called from:" is filtered from console output
     frontend.recv_iopub_idle();
     assert_eq!(
         frontend.recv_shell_execute_reply_exception(),

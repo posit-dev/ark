@@ -29,7 +29,6 @@ fn test_data_explorer_stable_on_frame_selection() {
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_start_debug();
     dap.recv_stopped();
-    frontend.assert_stream_stdout_contains("Called from:");
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 

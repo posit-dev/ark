@@ -5,9 +5,11 @@ use ark_test::DummyArkFrontend;
 fn test_execute_request_browser() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     frontend.execute_request_invisibly("Q");
 }
@@ -16,9 +18,11 @@ fn test_execute_request_browser() {
 fn test_execute_request_browser_continue() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     frontend.execute_request_invisibly("n");
 }
@@ -29,27 +33,29 @@ fn test_execute_request_browser_continue() {
 fn test_execute_request_browser_empty_input() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("{browser(); 1; 2}", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("{browser(); 1; 2}", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     // Step past browser() with empty input
+    // ("debug at" is filtered from console output. No execute_result here:
+    // the `[1] 1` that R emits is PrintValue of the expression code, not
+    // a real evaluation result.)
     let code = "";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
-    // Stepping produces debug output
-    assert!(frontend.recv_iopub_execute_result().contains("debug at"));
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
-    // Step past `1` with empty input
+    // Step past `1` with empty input (same: no execute_result)
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
-    assert!(frontend.recv_iopub_execute_result().contains("debug at"));
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -70,12 +76,14 @@ fn test_execute_request_browser_empty_input() {
 fn test_execute_request_browser_empty_input_disabled() {
     let frontend = DummyArkFrontend::lock();
 
-    // Set the option to disable empty input advancing the debugger
+    // Set browserNLdisabled
     frontend.execute_request_invisibly("options(browserNLdisabled = TRUE)");
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     // Empty input should NOT advance the debugger, we should still be in the browser
     let code = "";
@@ -102,20 +110,22 @@ fn test_execute_request_browser_empty_input_disabled() {
 
 #[test]
 fn test_execute_request_browser_nested() {
-    // Test nested browser() calls - entering a browser within a browser
     let frontend = DummyArkFrontend::lock();
 
-    // Start first browser
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     // Evaluate a value in the outer browser
     frontend.execute_request("42", |result| assert!(result.contains("[1] 42")));
 
-    // Start nested browser from within the first browser
-    // Nested browser() produces execute_result output
-    frontend.execute_request("browser()", |_result| {});
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     // Evaluate a command in the nested browser
     frontend.execute_request("1", |result| assert!(result.contains("[1] 1")));
@@ -151,12 +161,10 @@ fn test_execute_request_browser_nested() {
 
     // Start a new browser session to test continue-from-nested and
     // error-in-parent scenarios.
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.execute_request_invisibly("browser()");
 
     // Enter nested browser
-    frontend.execute_request("browser()", |_result| {});
+    frontend.execute_request_invisibly("browser()");
 
     // Continue to exit the nested browser and return to parent
     frontend.execute_request_invisibly("c");
@@ -191,16 +199,19 @@ fn test_execute_request_browser_nested() {
 }
 
 #[test]
-fn test_execute_request_browser_error() {
-    // When evaluating in the debugger, errors are handled by
-    // `globalErrorHandler` which records the error and restarts the browser.
-    // We stay in the browser with a proper `ExecuteError`.
+fn test_execute_request_browser_error_in_debug() {
+    // The behaviour for errors is different in browsers than at top-level
+    // because our global handler does not run in that case. Instead the error
+    // is streamed on IOPub::Stderr and a regular execution result is sent as
+    // response.
 
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     frontend.send_execute_request("stop('foobar')", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -231,9 +242,11 @@ fn test_execute_request_browser_incomplete() {
 
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     let code = "1 +";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
@@ -278,8 +291,6 @@ fn()";
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // We aren't at top level, so this comes as an iopub stream
-    frontend.assert_stream_stdout_contains("Called from: fn()");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -306,9 +317,11 @@ fn()";
 fn test_execute_request_browser_stdin() {
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     let options = ExecuteRequestOptions {
         allow_stdin: true,
@@ -346,7 +359,6 @@ fn test_execute_request_browser_multiple_expressions() {
     assert_eq!(input.code, code);
 
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
-    frontend.assert_stream_stdout_contains("Called from: top level");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -374,7 +386,6 @@ fn test_execute_request_browser_multiple_expressions() {
     assert_eq!(input.code, code);
 
     assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
-    frontend.assert_stream_stdout_contains("Called from: top level");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -402,7 +413,6 @@ fn test_execute_request_browser_local_variable() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    frontend.assert_stream_stdout_contains("Called from: eval(quote({");
     frontend.recv_iopub_idle();
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
@@ -435,9 +445,6 @@ fn test_browser_in_base_env() {
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // Inside `evalq()` we aren't at top level, so this comes as an iopub stream
-    // and not an execute result
-    frontend.assert_stream_stdout_contains("Called from: evalq(browser(), baseenv())");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 
@@ -468,10 +475,11 @@ fn test_browser_in_base_env() {
 fn test_execute_request_browser_braced_step_out() {
     let frontend = DummyArkFrontend::lock();
 
-    // Evaluate `{browser()}` which enters the debugger
-    frontend.execute_request("{browser()}", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    frontend.send_execute_request("{browser()}", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     // Step once with `n` to leave the debugger (the braced expression completes)
     frontend.execute_request_invisibly("n");
@@ -500,9 +508,6 @@ evalq(base::browser(), env)";
     let input = frontend.recv_iopub_execute_input();
     assert_eq!(input.code, code);
 
-    // Inside `evalq()` we aren't at top level, so this comes as an iopub stream
-    // and not an execute result
-    frontend.assert_stream_stdout_contains("Called from: evalq(base::browser(), env)");
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 

@@ -69,9 +69,13 @@ fn test_shutdown_request_browser() {
     install_sigint_handler();
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request("browser()", |result| {
-        assert!(result.contains("Called from: top level"));
-    });
+    // browser() at top level enters debug mode without visible output
+    // ("Called from:" is filtered from console output)
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 
     frontend.send_shutdown_request(true);
     frontend.recv_iopub_busy();
