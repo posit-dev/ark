@@ -35,9 +35,9 @@ impl CommHandlerContext {
     }
 
     /// Request that Console close this comm after the current handler method
-    /// returns. The handler can still send final responses or events before
-    /// calling this.
-    pub fn close(&self) {
+    /// returns. The handler can still send responses or events before and
+    /// after calling this since cleanup is deferred.
+    pub fn close_on_exit(&self) {
         self.closed.store(true, Ordering::Relaxed);
     }
 

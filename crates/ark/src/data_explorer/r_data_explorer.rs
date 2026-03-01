@@ -487,7 +487,7 @@ impl CommHandler for RDataExplorer {
     fn handle_environment(&mut self, ctx: &CommHandlerContext) {
         match self.update(ctx) {
             Ok(true) => {},
-            Ok(false) => ctx.close(),
+            Ok(false) => ctx.close_on_exit(),
             Err(err) => {
                 log::error!("Error while checking environment for data viewer update: {err}");
             },
