@@ -97,6 +97,7 @@ use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use url::Url;
 use uuid::Uuid;
 
+use crate::comm_handler::RegisteredComm;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::console_filter::strip_step_lines;
@@ -213,7 +214,7 @@ pub struct Console {
     session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
-    comm_event_tx: Sender<CommEvent>,
+    pub(crate) comm_event_tx: Sender<CommEvent>,
 
     /// Execution requests from the frontend. Processed from `ReadConsole()`.
     /// Requests for code execution provide input to that method.
@@ -359,6 +360,9 @@ pub struct Console {
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
     pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
+
+    /// Comm handlers registered on the R thread (keyed by comm ID).
+    pub(crate) comms: HashMap<String, RegisteredComm>,
 }
 
 /// Stack of pending inputs
@@ -951,6 +955,7 @@ impl Console {
             read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
+            comms: HashMap::new(),
         }
     }
 
@@ -1214,6 +1219,7 @@ impl Console {
         }
 
         EVENTS.environment_changed.emit(());
+        self.comm_notify_environment_changed();
 
         self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
     }
@@ -2134,6 +2140,28 @@ impl Console {
             KernelRequest::EstablishUiCommChannel(ref ui_comm_tx) => {
                 self.handle_establish_ui_comm_channel(ui_comm_tx.clone(), info)
             },
+            KernelRequest::CommOpen {
+                comm_id,
+                comm_name,
+                handler,
+                ctx,
+                done_tx,
+            } => {
+                self.comm_handle_open(comm_id, comm_name, handler, ctx);
+                done_tx.send(()).log_err();
+            },
+            KernelRequest::CommMsg {
+                comm_id,
+                msg,
+                done_tx,
+            } => {
+                self.comm_handle_msg(&comm_id, msg);
+                done_tx.send(()).log_err();
+            },
+            KernelRequest::CommClose { comm_id, done_tx } => {
+                self.comm_handle_close(&comm_id);
+                done_tx.send(()).log_err();
+            },
         };
     }
 
@@ -2617,10 +2645,6 @@ impl Console {
         graphics_device::on_process_idle_events();
     }
 
-    pub fn get_comm_event_tx(&self) -> &Sender<CommEvent> {
-        &self.comm_event_tx
-    }
-
     pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
         self.help_event_tx = Some(help_event_tx);
         self.help_port = Some(help_port);
@@ -2859,12 +2883,13 @@ impl Console {
         self.debug_stop();
     }
 
-    pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
+    pub(crate) fn set_debug_selected_frame_id(&mut self, frame_id: Option<i64>) {
         self.debug_selected_frame_id.set(frame_id);
 
         // Signal listeners (e.g. the Variables pane) that they can update state
         if frame_id.is_some() {
             EVENTS.environment_changed.emit(());
+            self.comm_notify_environment_changed();
         }
     }
 
