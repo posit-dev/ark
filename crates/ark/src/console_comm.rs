@@ -82,7 +82,7 @@ impl Console {
         }
     }
 
-    pub fn get_comm_event_tx(&self) -> &Sender<CommEvent> {
+    pub fn comm_event_tx(&self) -> &Sender<CommEvent> {
         &self.comm_event_tx
     }
 
