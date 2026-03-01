@@ -414,7 +414,7 @@ impl RVariables {
                 },
             };
 
-            let shapes = RDataExplorer::r_get_shape(table.clone())?;
+            let shapes = RDataExplorer::get_shape(table.clone())?;
 
             let column_schemas: Vec<String> = shapes
                 .columns
