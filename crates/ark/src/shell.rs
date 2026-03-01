@@ -6,7 +6,9 @@
 //
 
 use amalthea::comm::comm_channel::Comm;
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
+use amalthea::language::shell_handler::CommHandled;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
@@ -28,6 +30,7 @@ use amalthea::wire::language_info::LanguageInfoPositron;
 use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
 use bus::BusReader;
+use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
 use harp::environment::R_ENVS;
@@ -37,6 +40,7 @@ use harp::object::RObject;
 use harp::ParseResult;
 use log::*;
 use serde_json::json;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
@@ -247,6 +251,50 @@ impl ShellHandler for Shell {
             Comm::Help => handle_comm_open_help(comm),
             Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
             _ => Ok(false),
+        }
+    }
+
+    fn handle_comm_msg(
+        &mut self,
+        comm_id: &str,
+        comm_name: &str,
+        msg: CommMsg,
+    ) -> amalthea::Result<CommHandled> {
+        match comm_name {
+            "positron.dataExplorer" => {
+                let (done_tx, done_rx) = bounded(0);
+                self.kernel_request_tx
+                    .send(KernelRequest::CommMsg {
+                        comm_id: comm_id.to_string(),
+                        msg,
+                        done_tx,
+                    })
+                    .log_err();
+                done_rx.recv().log_err();
+                Ok(CommHandled::Handled)
+            },
+            _ => Ok(CommHandled::NotHandled),
+        }
+    }
+
+    fn handle_comm_close(
+        &mut self,
+        comm_id: &str,
+        comm_name: &str,
+    ) -> amalthea::Result<CommHandled> {
+        match comm_name {
+            "positron.dataExplorer" => {
+                let (done_tx, done_rx) = bounded(0);
+                self.kernel_request_tx
+                    .send(KernelRequest::CommClose {
+                        comm_id: comm_id.to_string(),
+                        done_tx,
+                    })
+                    .log_err();
+                done_rx.recv().log_err();
+                Ok(CommHandled::Handled)
+            },
+            _ => Ok(CommHandled::NotHandled),
         }
     }
 }
