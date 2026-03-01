@@ -137,7 +137,7 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
     let id = format!("reticulate-{}", Uuid::new_v4().to_string());
     ReticulateService::start(
         id,
-        console.get_comm_event_tx().clone(),
+        console.comm_event_tx().clone(),
         console.get_iopub_tx().clone(),
         input_code,
     )?;

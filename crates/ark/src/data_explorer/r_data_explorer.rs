@@ -1241,7 +1241,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
     let console = Console::get();
-    let comm_event_tx = console.get_comm_event_tx().clone();
+    let comm_event_tx = console.comm_event_tx().clone();
     let iopub_tx = console.get_iopub_tx().clone();
 
     // If an environment is provided, watch the variable in the environment
