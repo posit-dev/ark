@@ -193,7 +193,7 @@ impl RDataExplorer {
         binding: Option<DataObjectEnvInfo>,
     ) -> anyhow::Result<Self> {
         let table = Table::new(data);
-        let shape = Self::r_get_shape(table.get()?)?;
+        let shape = Self::get_shape(table.get()?)?;
         Ok(Self {
             title,
             table,
@@ -282,7 +282,7 @@ impl RDataExplorer {
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = match Self::r_get_shape(self.table.get()?.clone()) {
+        let new_shape = match Self::get_shape(self.table.get()?.clone()) {
             Ok(shape) => shape,
             Err(_) => {
                 // The most likely cause of this error is that the object is no
@@ -325,7 +325,7 @@ impl RDataExplorer {
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
             if self.sort_keys.len() > 0 {
-                self.sorted_indices = Some(self.r_sort_rows()?);
+                self.sorted_indices = Some(self.sort_rows()?);
             }
 
             // Recompute and apply filters and sorts.
@@ -387,7 +387,7 @@ impl RDataExplorer {
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 columns,
                 format_options,
-            }) => self.r_get_data_values(columns, format_options),
+            }) => self.get_data_values(columns, format_options),
 
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
@@ -399,7 +399,7 @@ impl RDataExplorer {
                 // indices; otherwise, sort the rows and save the result
                 self.sorted_indices = match keys.len() {
                     0 => None,
-                    _ => Some(self.r_sort_rows()?),
+                    _ => Some(self.sort_rows()?),
                 };
 
                 // Apply sorts to the filtered indices to create view indices
@@ -437,7 +437,7 @@ impl RDataExplorer {
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
 
-            DataExplorerBackendRequest::GetState => self.r_get_state(),
+            DataExplorerBackendRequest::GetState => self.get_state(),
 
             DataExplorerBackendRequest::OpenDataset(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
@@ -450,7 +450,7 @@ impl RDataExplorer {
             },
 
             DataExplorerBackendRequest::GetRowLabels(req) => {
-                let row_labels = self.r_get_row_labels(req.selection, &req.format_options)?;
+                let row_labels = self.get_row_labels(req.selection, &req.format_options)?;
                 Ok(DataExplorerBackendReply::GetRowLabelsReply(
                     TableRowLabels {
                         row_labels: vec![row_labels],
@@ -463,7 +463,7 @@ impl RDataExplorer {
                 format,
             }) => Ok(DataExplorerBackendReply::ExportDataSelectionReply(
                 ExportedData {
-                    data: self.r_export_data_selection(selection, format.clone())?,
+                    data: self.export_data_selection(selection, format.clone())?,
                     format,
                 },
             )),
@@ -496,7 +496,7 @@ impl CommHandler for RDataExplorer {
 }
 
 impl RDataExplorer {
-    pub(crate) fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
+    pub(crate) fn get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
         unsafe {
             let table = table.clone();
 
@@ -609,7 +609,7 @@ impl RDataExplorer {
     /// self.sort_keys.
     ///
     /// Returns a vector containing the sorted row indices.
-    fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
+    fn sort_rows(&self) -> anyhow::Result<Vec<i32>> {
         let mut order = RFunction::new("base", "order");
 
         // Allocate a vector to hold the sort order for each column
@@ -640,7 +640,7 @@ impl RDataExplorer {
     ///
     /// Returns a tuple containing a vector of all the row indices that pass the filters and
     /// a character vector of errors, where None means no error happened.
-    fn r_filter_rows(&self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
+    fn filter_rows(&self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
@@ -693,7 +693,7 @@ impl RDataExplorer {
             return Ok((None, None));
         }
 
-        let (indices, errors) = self.r_filter_rows()?;
+        let (indices, errors) = self.filter_rows()?;
         // this is called for the side-effect of updating the row_filters with validty status and
         // error messages
         let had_errors = Some(self.apply_filter_errors(errors)?);
@@ -963,7 +963,7 @@ impl RDataExplorer {
         }))
     }
 
-    fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
+    fn get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
         let row_names = RFunction::new("base", "row.names")
             .add(self.table.get()?)
             .call_in(ARK_ENVS.positron_ns)?;
@@ -1082,7 +1082,7 @@ impl RDataExplorer {
         Ok(DataExplorerBackendReply::GetStateReply(state))
     }
 
-    fn r_get_data_values(
+    fn get_data_values(
         &self,
         columns: Vec<ColumnSelection>,
         format_options: FormatOptions,
@@ -1109,7 +1109,7 @@ impl RDataExplorer {
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
     }
 
-    fn r_get_row_labels(
+    fn get_row_labels(
         &self,
         selection: ArraySelection,
         format_options: &FormatOptions,
@@ -1162,7 +1162,7 @@ impl RDataExplorer {
         }
     }
 
-    fn r_export_data_selection(
+    fn export_data_selection(
         &self,
         selection: TableSelection,
         format: ExportFormat,
@@ -1194,7 +1194,7 @@ impl RDataExplorer {
             .map(|b| b.name.as_str())
             .or_else(|| Some(self.title.as_str()));
 
-        // Resolve column names for sort keys using the same pattern as r_sort_rows()
+        // Resolve column names for sort keys using the same pattern as `sort_rows()`
         let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params
             .sort_keys
             .iter()
