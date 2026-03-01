@@ -104,7 +104,6 @@ use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
-use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
 /// A name/value binding pair in an environment.
@@ -114,8 +113,11 @@ use crate::variables::variable::WorkspaceVariableDisplayType;
 /// accordingly.
 pub struct DataObjectEnvInfo {
     pub name: String,
-    pub env: RThreadSafe<RObject>,
+    pub env: RObject,
 }
+
+// Safety: `DataObjectEnvInfo` is only ever created and accessed on the R thread.
+unsafe impl Send for DataObjectEnvInfo {}
 
 pub(crate) struct DataObjectShape {
     pub columns: Vec<ColumnSchema>,
@@ -182,7 +184,7 @@ impl RDataExplorer {
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
     ) -> anyhow::Result<Self> {
-        let table = Table::new(RThreadSafe::new(data));
+        let table = Table::new(data);
         let shape = Self::r_get_shape(table.get()?)?;
         Ok(Self {
             title,
@@ -242,7 +244,7 @@ impl RDataExplorer {
         }
 
         let binding = self.binding.as_ref().unwrap();
-        let env = binding.env.get().sexp;
+        let env = binding.env.sexp;
 
         let new = unsafe {
             let sym = r_symbol!(binding.name);
@@ -252,12 +254,12 @@ impl RDataExplorer {
         let changed = match self.table.get() {
             Err(_) => {
                 log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
-                self.table.set(RThreadSafe::new(RObject::new(new)));
+                self.table.set(RObject::new(new));
                 true
             },
             Ok(old) if new == old.sexp => false,
             Ok(_) => {
-                self.table.set(RThreadSafe::new(RObject::new(new)));
+                self.table.set(RObject::new(new));
                 true
             },
         };
@@ -1241,7 +1243,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         match String::try_from(var_obj.clone()) {
             Ok(var_name) => Some(DataObjectEnvInfo {
                 name: var_name,
-                env: RThreadSafe::new(RObject::new(env)),
+                env: RObject::new(env),
             }),
             Err(_) => {
                 // If the variable name can't be converted to a string, don't

@@ -366,7 +366,7 @@ impl RVariables {
 
             let binding = DataObjectEnvInfo {
                 name: name.to_string(),
-                env: RThreadSafe::new(env),
+                env,
             };
 
             let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))

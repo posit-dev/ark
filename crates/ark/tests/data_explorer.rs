@@ -70,7 +70,6 @@ use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::r_task::r_task;
-use ark::thread::RThreadSafe;
 use ark_test::dummy_jupyter_header;
 use ark_test::r_test_lock;
 use ark_test::socket_rpc_request;
@@ -122,7 +121,7 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
         let binding = match bind {
             Some(name) => Some(DataObjectEnvInfo {
                 name: name.to_string(),
-                env: RThreadSafe::new(RObject::view(R_ENVS.global)),
+                env: RObject::view(R_ENVS.global),
             }),
             None => None,
         };
