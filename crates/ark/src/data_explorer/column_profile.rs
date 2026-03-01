@@ -1,7 +1,7 @@
 //
 // column_profile.rs
 //
-// Copyright (C) 2024 by Posit Software, PBC
+// Copyright (C) 2024-2026 by Posit Software, PBC
 //
 //
 
@@ -18,7 +18,7 @@ use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::data_explorer_comm::FormatOptions;
 use amalthea::comm::data_explorer_comm::GetColumnProfilesParams;
 use amalthea::comm::data_explorer_comm::ReturnColumnProfilesParams;
-use amalthea::socket::comm::CommSocket;
+use amalthea::socket::comm::CommOutgoingTx;
 use anyhow::anyhow;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -42,7 +42,7 @@ pub struct ProcessColumnsProfilesParams {
 
 pub async fn handle_columns_profiles_requests(
     params: ProcessColumnsProfilesParams,
-    comm: CommSocket,
+    outgoing_tx: CommOutgoingTx,
 ) -> anyhow::Result<()> {
     let callback_id = params.request.callback_id;
     let n_profiles = params.request.profiles.len();
@@ -72,7 +72,7 @@ pub async fn handle_columns_profiles_requests(
     });
 
     let json_event = serde_json::to_value(event)?;
-    comm.outgoing_tx.send(CommMsg::Data(json_event))?;
+    outgoing_tx.send(CommMsg::Data(json_event))?;
     Ok(())
 }
 
