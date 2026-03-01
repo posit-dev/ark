@@ -369,13 +369,11 @@ impl RVariables {
                 env: RThreadSafe::new(env),
             };
 
-            let viewer_id = RDataExplorer::start(
-                name.clone(),
-                obj,
-                Some(binding),
-                self.comm_event_tx.clone(),
-                self.iopub_tx.clone(),
-            )?;
+            let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
+                .map_err(|err| harp::Error::Anyhow(err))?;
+            let viewer_id = explorer
+                .start(self.comm_event_tx.clone(), self.iopub_tx.clone())
+                .map_err(|err| harp::Error::Anyhow(err))?;
             Ok(Some(viewer_id))
         })
     }

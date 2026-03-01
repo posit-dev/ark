@@ -4,6 +4,8 @@
 // Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
+use std::sync::Mutex;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
@@ -59,17 +61,18 @@ use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
-use amalthea::comm::event::CommEvent;
-use amalthea::socket;
+use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
+use ark::comm_handler::CommHandler;
+use ark::comm_handler::CommHandlerContext;
 use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
-use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
 use ark::thread::RThreadSafe;
 use ark_test::dummy_jupyter_header;
+use ark_test::r_test_lock;
 use ark_test::socket_rpc_request;
 use ark_test::IOPubReceiverExt;
 use ark_test::RECV_TIMEOUT;
@@ -92,33 +95,28 @@ use stdext::assert_match;
 ///
 /// Returns a TestSetup that can be used to communicate with the data explorer.
 fn open_data_explorer(dataset: String) -> TestSetup {
-    // Create a dummy comm manager channel.
-    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
-    // Create a dummy iopub channel to receive responses.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    // Force the dataset to be loaded into the R environment.
-    r_task(|| unsafe {
-        let data = { RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv)) };
-        RDataExplorer::start(dataset, data, None, comm_event_tx, iopub_tx).unwrap();
+    let handler = r_task(|| unsafe {
+        let data = RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv));
+        RDataExplorer::new(dataset, data, None).unwrap()
     });
 
-    // Wait for the new comm to show up.
-    let msg = comm_event_rx.recv_timeout(RECV_TIMEOUT).unwrap();
-    match msg {
-        CommEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
-            TestSetup { socket, iopub_rx }
-        },
-        _ => panic!("Unexpected Comm Manager Event"),
+    let comm_id = uuid::Uuid::new_v4().to_string();
+    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+    let ctx = CommHandlerContext::new(outgoing_tx);
+
+    TestSetup {
+        inner: Mutex::new(handler),
+        ctx,
+        iopub_rx,
     }
 }
 
 fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<TestSetup> {
-    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    r_task(|| -> anyhow::Result<()> {
+    let handler = r_task(|| -> anyhow::Result<RDataExplorer> {
         let object = harp::parse_eval_global(expr)?;
 
         let binding = match bind {
@@ -128,48 +126,24 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
             }),
             None => None,
         };
-        RDataExplorer::start(
-            String::from("obj"),
-            object,
-            binding,
-            comm_event_tx,
-            iopub_tx,
-        )
-        .unwrap();
-        Ok(())
+        RDataExplorer::new(String::from("obj"), object, binding)
     })?;
 
-    // Release the R lock and wait for the new comm to show up.
-    let msg = comm_event_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+    let comm_id = uuid::Uuid::new_v4().to_string();
+    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+    let ctx = CommHandlerContext::new(outgoing_tx);
 
-    match msg {
-        CommEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
-            Ok(TestSetup { socket, iopub_rx })
-        },
-        _ => panic!("Unexpected Comm Manager Event"),
-    }
-}
-
-/// Helper method for sending a request to the data explorer and receiving a reply.
-///
-/// Parameters:
-/// - socket: The comm socket to use for communication.
-/// - iopub_rx: The IOPub receiver to get responses from.
-/// - req: The request to send.
-fn socket_rpc(
-    socket: &socket::comm::CommSocket,
-    iopub_rx: &Receiver<IOPubMessage>,
-    req: DataExplorerBackendRequest,
-) -> DataExplorerBackendReply {
-    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(
-        &socket, iopub_rx, req,
-    )
+    Ok(TestSetup {
+        inner: Mutex::new(handler),
+        ctx,
+        iopub_rx,
+    })
 }
 
 /// Test setup helper that reduces boilerplate for common test initialization
 struct TestSetup {
-    socket: socket::comm::CommSocket,
+    inner: Mutex<RDataExplorer>,
+    ctx: CommHandlerContext,
     iopub_rx: Receiver<IOPubMessage>,
 }
 
@@ -183,7 +157,37 @@ impl TestSetup {
     }
 
     fn rpc(&self, req: DataExplorerBackendRequest) -> DataExplorerBackendReply {
-        socket_rpc(&self.socket, &self.iopub_rx, req)
+        let id = uuid::Uuid::new_v4().to_string();
+        let json = serde_json::to_value(req).unwrap();
+        let msg = CommMsg::Rpc {
+            id,
+            parent_header: dummy_jupyter_header(),
+            data: json,
+        };
+        let inner = &self.inner;
+        let ctx = &self.ctx;
+        r_task(|| {
+            inner.lock().unwrap().handle_msg(msg, ctx);
+        });
+
+        let iopub_msg = self.iopub_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+        match iopub_msg {
+            IOPubMessage::CommOutgoing(_comm_id, CommMsg::Rpc { data: value, .. }) => {
+                serde_json::from_value(value).unwrap()
+            },
+            _ => panic!("Expected RPC response, got: {iopub_msg:?}"),
+        }
+    }
+
+    fn trigger_environment_change(&self) {
+        let inner = &self.inner;
+        let ctx = &self.ctx;
+        r_task(|| {
+            inner.lock().unwrap().handle_environment(ctx);
+        });
+        if self.ctx.is_closed() {
+            self.ctx.outgoing_tx.send(CommMsg::Close).unwrap();
+        }
     }
 }
 
@@ -751,20 +755,20 @@ fn expect_column_profile_results(
     req: DataExplorerBackendRequest,
     check: fn(Vec<ColumnProfileResult>),
 ) {
-    // Randomly generate a unique ID for this request.
     let id = uuid::Uuid::new_v4().to_string();
-
-    // Serialize the message for the wire
     let json = serde_json::to_value(req).unwrap();
     println!("--> {:?}", json);
 
-    // Convert the request to a CommMsg and send it.
     let msg = CommMsg::Rpc {
         id,
         parent_header: dummy_jupyter_header(),
         data: json,
     };
-    setup.socket.incoming_tx.send(msg).unwrap();
+    let inner = &setup.inner;
+    let ctx = &setup.ctx;
+    r_task(|| {
+        inner.lock().unwrap().handle_msg(msg, ctx);
+    });
 
     let msg = setup.iopub_rx.recv_comm_msg();
 
@@ -1271,7 +1275,7 @@ fn test_live_updates() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1313,7 +1317,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1343,7 +1347,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     });
 
     // Signal an environment change to trigger change detection
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // This should trigger a schema update event.
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1372,7 +1376,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     });
 
     // Signal an environment change to trigger change detection
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an close event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1423,7 +1427,7 @@ fn test_invalid_filters_preserved() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1451,12 +1455,11 @@ fn test_invalid_filters_preserved() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
-            // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
                 DataExplorerFrontendEvent::SchemaUpdate
             );
@@ -1479,12 +1482,11 @@ fn test_invalid_filters_preserved() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
-            // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
                 DataExplorerFrontendEvent::SchemaUpdate
             );
@@ -1662,7 +1664,7 @@ fn test_update_data_filters_reapplied() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     // Since only data changed, we expect a Data Update Event
@@ -1890,7 +1892,7 @@ fn test_data_update_num_rows() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
