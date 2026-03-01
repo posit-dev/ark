@@ -53,6 +53,7 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 }
 
 /// Represents requests to the kernel.
+#[derive(Debug)]
 pub enum KernelRequest {
     /// Establish a channel to the UI comm which forwards messages to the frontend
     EstablishUiCommChannel(Sender<UiCommMessage>),
@@ -78,27 +79,4 @@ pub enum KernelRequest {
         comm_id: String,
         done_tx: Sender<()>,
     },
-}
-
-// Manual impl to avoid requiring `Debug` as a supertrait of `CommHandler`.
-impl std::fmt::Debug for KernelRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::EstablishUiCommChannel(_) => f.debug_tuple("EstablishUiCommChannel").finish(),
-            Self::CommOpen {
-                comm_id, comm_name, ..
-            } => f
-                .debug_struct("CommOpen")
-                .field("comm_id", comm_id)
-                .field("comm_name", comm_name)
-                .finish(),
-            Self::CommMsg { comm_id, .. } => {
-                f.debug_struct("CommMsg").field("comm_id", comm_id).finish()
-            },
-            Self::CommClose { comm_id, .. } => f
-                .debug_struct("CommClose")
-                .field("comm_id", comm_id)
-                .finish(),
-        }
-    }
 }
