@@ -49,7 +49,7 @@ impl CommHandlerContext {
 /// Trait for comm handlers that run synchronously on the R thread.
 ///
 /// All methods are called from the R thread within `ReadConsole`, so R code
-/// can be called directly without `r_task()`.
+/// can be safely called from these handlers.
 pub trait CommHandler: Send + Debug {
     /// Initialise handler state on the R thread (initial scan, first event,
     /// etc.). Default is no-op.
@@ -74,8 +74,7 @@ pub struct RegisteredComm {
     pub comm_name: String,
 }
 
-/// Handle an RPC request from a `CommMsg`. This is the blocking-comm equivalent
-/// of `CommSocket::handle_request`.
+/// Handle an RPC request from a `CommMsg`.
 ///
 /// Non-RPC messages are logged and ignored. Requests that could not be
 /// handled cause an RPC error response.
