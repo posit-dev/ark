@@ -4,6 +4,9 @@
 // Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
+
+// TODO: Migrate these tests to ark_test
+
 use std::sync::Mutex;
 
 use amalthea::comm::comm_channel::CommMsg;
