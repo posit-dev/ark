@@ -170,6 +170,14 @@ struct Metadata {
     title: String,
 }
 
+impl std::fmt::Debug for RDataExplorer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RDataExplorer")
+            .field("title", &self.title)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for RDataExplorer {
     fn drop(&mut self) {
         // We guarantee that the table is deleted from the global store.

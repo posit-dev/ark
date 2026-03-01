@@ -50,7 +50,7 @@ impl CommHandlerContext {
 ///
 /// All methods are called from the R thread within `ReadConsole`, so R code
 /// can be called directly without `r_task()`.
-pub trait CommHandler: Send {
+pub trait CommHandler: Send + Debug {
     /// Initialise handler state on the R thread (initial scan, first event,
     /// etc.). Default is no-op.
     fn handle_open(&mut self, _ctx: &CommHandlerContext) {}
