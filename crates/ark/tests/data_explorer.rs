@@ -112,8 +112,7 @@ fn open_data_explorer(dataset: String) -> TestSetup {
     let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
     TestSetup {
-        inner: Mutex::new(handler),
-        ctx,
+        inner: Mutex::new((handler, ctx)),
         iopub_rx,
     }
 }
@@ -140,16 +139,14 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
     let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
     Ok(TestSetup {
-        inner: Mutex::new(handler),
-        ctx,
+        inner: Mutex::new((handler, ctx)),
         iopub_rx,
     })
 }
 
 /// Test setup helper that reduces boilerplate for common test initialization
 struct TestSetup {
-    inner: Mutex<RDataExplorer>,
-    ctx: CommHandlerContext,
+    inner: Mutex<(RDataExplorer, CommHandlerContext)>,
     iopub_rx: Receiver<IOPubMessage>,
 }
 
@@ -171,9 +168,9 @@ impl TestSetup {
             data: json,
         };
         let inner = &self.inner;
-        let ctx = &self.ctx;
         r_task(|| {
-            inner.lock().unwrap().handle_msg(msg, ctx);
+            let (handler, ctx) = &mut *inner.lock().unwrap();
+            handler.handle_msg(msg, ctx);
         });
 
         let iopub_msg = self.iopub_rx.recv_timeout(RECV_TIMEOUT).unwrap();
@@ -187,15 +184,14 @@ impl TestSetup {
 
     fn trigger_environment_change(&self) {
         let inner = &self.inner;
-        let ctx = &self.ctx;
-        r_task(|| {
-            inner
-                .lock()
-                .unwrap()
-                .handle_environment(EnvironmentChanged::Execution, ctx);
+        let closed = r_task(|| {
+            let (handler, ctx) = &mut *inner.lock().unwrap();
+            handler.handle_environment(EnvironmentChanged::Execution, ctx);
+            ctx.is_closed()
         });
-        if self.ctx.is_closed() {
-            self.ctx.outgoing_tx.send(CommMsg::Close).unwrap();
+        if closed {
+            let (_, ctx) = &*self.inner.lock().unwrap();
+            ctx.outgoing_tx.send(CommMsg::Close).unwrap();
         }
     }
 }
@@ -774,9 +770,9 @@ fn expect_column_profile_results(
         data: json,
     };
     let inner = &setup.inner;
-    let ctx = &setup.ctx;
     r_task(|| {
-        inner.lock().unwrap().handle_msg(msg, ctx);
+        let (handler, ctx) = &mut *inner.lock().unwrap();
+        handler.handle_msg(msg, ctx);
     });
 
     let msg = setup.iopub_rx.recv_comm_msg();

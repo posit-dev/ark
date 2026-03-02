@@ -109,9 +109,6 @@ pub struct DataObjectEnvInfo {
     pub env: RObject,
 }
 
-// Safety: `DataObjectEnvInfo` is only ever created and accessed on the R thread.
-unsafe impl Send for DataObjectEnvInfo {}
-
 pub(crate) struct DataObjectShape {
     pub columns: Vec<ColumnSchema>,
     pub num_rows: i32,
@@ -167,12 +164,9 @@ impl std::fmt::Debug for RDataExplorer {
     }
 }
 
-impl Drop for RDataExplorer {
-    fn drop(&mut self) {
-        // We guarantee that the table is deleted from the global store.
-        self.table.delete();
-    }
-}
+// Safety: `RDataExplorer` is only created and accessed on the R thread.
+// The `Send` bound comes from `CommHandler: Send`.
+unsafe impl Send for RDataExplorer {}
 
 impl RDataExplorer {
     /// Create a new data explorer. Must be called from the R thread.
@@ -182,7 +176,7 @@ impl RDataExplorer {
         binding: Option<DataObjectEnvInfo>,
     ) -> anyhow::Result<Self> {
         let table = Table::new(data);
-        let shape = Self::get_shape(table.get()?)?;
+        let shape = Self::get_shape(table.get().clone())?;
         Ok(Self {
             title,
             table,
@@ -215,17 +209,11 @@ impl RDataExplorer {
             Rf_findVarInFrame(env, sym)
         };
 
-        let changed = match self.table.get() {
-            Err(_) => {
-                log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
-                self.table.set(RObject::new(new));
-                true
-            },
-            Ok(old) if new == old.sexp => false,
-            Ok(_) => {
-                self.table.set(RObject::new(new));
-                true
-            },
+        let changed = if new == self.table.get().sexp {
+            false
+        } else {
+            self.table.set(RObject::new(new));
+            true
         };
 
         // No change to the value, so we're done
@@ -238,7 +226,7 @@ impl RDataExplorer {
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = match Self::get_shape(self.table.get()?.clone()) {
+        let new_shape = match Self::get_shape(self.table.get().clone()) {
             Ok(shape) => shape,
             Err(_) => {
                 // The most likely cause of this error is that the object is no
@@ -582,7 +570,7 @@ impl RDataExplorer {
         for key in &self.sort_keys {
             // Get the column to sort by
             order.add(tbl_get_column(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 key.column_index as i32,
                 self.shape.kind,
             )?);
@@ -628,7 +616,7 @@ impl RDataExplorer {
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
         let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
-            .param("table", self.table.get()?.sexp)
+            .param("table", self.table.get().sexp)
             .param("row_filters", filters)
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
@@ -928,7 +916,7 @@ impl RDataExplorer {
 
     fn get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
         let row_names = RFunction::new("base", "row.names")
-            .add(self.table.get()?)
+            .add(self.table.get().clone())
             .call_in(ARK_ENVS.positron_ns)?;
 
         let state = BackendState {
@@ -1053,7 +1041,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
         for selection in columns {
             let tbl = tbl_subset_with_view_indices(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 &self.view_indices,
                 Some(self.get_row_selection_indices(selection.spec)),
                 Some(vec![selection.column_index]),
@@ -1078,7 +1066,7 @@ impl RDataExplorer {
         format_options: &FormatOptions,
     ) -> anyhow::Result<Vec<String>> {
         let tbl = tbl_subset_with_view_indices(
-            self.table.get()?.sexp,
+            self.table.get().sexp,
             &self.view_indices,
             Some(self.get_row_selection_indices(selection)),
             Some(vec![]), // Use empty vec, because we only need the row names.
@@ -1131,7 +1119,7 @@ impl RDataExplorer {
         format: ExportFormat,
     ) -> anyhow::Result<String> {
         export_selection::export_selection(
-            self.table.get()?.sexp,
+            self.table.get().sexp,
             &self.view_indices,
             selection,
             format,
