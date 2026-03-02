@@ -37,8 +37,9 @@ impl Console {
         };
         reg.handler.handle_msg(msg, &reg.ctx);
         if reg.ctx.is_closed() {
-            let reg = self.comms.remove(comm_id).unwrap();
-            self.comm_notify_closed(comm_id, &reg);
+            if let Some(reg) = self.comms.remove(comm_id) {
+                self.comm_notify_closed(comm_id, &reg);
+            }
         }
     }
 
@@ -90,8 +91,9 @@ impl Console {
             }
         }
         for comm_id in closed_ids {
-            let reg = self.comms.remove(&comm_id).unwrap();
-            self.comm_notify_closed(&comm_id, &reg);
+            if let Some(reg) = self.comms.remove(&comm_id) {
+                self.comm_notify_closed(&comm_id, &reg);
+            }
         }
     }
 
