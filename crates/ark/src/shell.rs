@@ -38,7 +38,6 @@ use harp::object::RObject;
 use harp::ParseResult;
 use log::*;
 use serde_json::json;
-use stdext::result::ResultExt;
 use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
@@ -255,14 +254,19 @@ impl ShellHandler for Shell {
         match comm_name {
             "positron.dataExplorer" => {
                 let (done_tx, done_rx) = bounded(0);
+
                 self.kernel_request_tx
                     .send(KernelRequest::CommMsg {
                         comm_id: comm_id.to_string(),
                         msg,
                         done_tx,
                     })
-                    .log_err();
-                done_rx.recv().log_err();
+                    .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
+
+                done_rx
+                    .recv()
+                    .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
+
                 Ok(CommHandled::Handled)
             },
             _ => Ok(CommHandled::NotHandled),
@@ -282,8 +286,12 @@ impl ShellHandler for Shell {
                         comm_id: comm_id.to_string(),
                         done_tx,
                     })
-                    .log_err();
-                done_rx.recv().log_err();
+                    .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
+
+                done_rx
+                    .recv()
+                    .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
+
                 Ok(CommHandled::Handled)
             },
             _ => Ok(CommHandled::NotHandled),
