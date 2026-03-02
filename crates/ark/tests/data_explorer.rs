@@ -101,18 +101,19 @@ use stdext::assert_match;
 fn open_data_explorer(dataset: String) -> TestSetup {
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    let handler = r_task(|| unsafe {
-        let data = RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv));
-        RDataExplorer::new(dataset, data, None).unwrap()
-    });
-
     let comm_id = uuid::Uuid::new_v4().to_string();
     let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
     let (comm_event_tx, _) = bounded::<CommEvent>(10);
     let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
+    let inner = r_task(|| unsafe {
+        let data = RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv));
+        let handler = RDataExplorer::new(dataset, data, None).unwrap();
+        TestInner(handler, ctx)
+    });
+
     TestSetup {
-        inner: Mutex::new((handler, ctx)),
+        inner: Mutex::new(inner),
         iopub_rx,
     }
 }
@@ -120,7 +121,12 @@ fn open_data_explorer(dataset: String) -> TestSetup {
 fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<TestSetup> {
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    let handler = r_task(|| -> anyhow::Result<RDataExplorer> {
+    let comm_id = uuid::Uuid::new_v4().to_string();
+    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+    let (comm_event_tx, _) = bounded::<CommEvent>(10);
+    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
+
+    let inner = r_task(|| -> anyhow::Result<TestInner> {
         let object = harp::parse_eval_global(expr)?;
 
         let binding = match bind {
@@ -130,23 +136,25 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
             }),
             None => None,
         };
-        RDataExplorer::new(String::from("obj"), object, binding)
+        let handler = RDataExplorer::new(String::from("obj"), object, binding)?;
+        Ok(TestInner(handler, ctx))
     })?;
 
-    let comm_id = uuid::Uuid::new_v4().to_string();
-    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
-    let (comm_event_tx, _) = bounded::<CommEvent>(10);
-    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
-
     Ok(TestSetup {
-        inner: Mutex::new((handler, ctx)),
+        inner: Mutex::new(inner),
         iopub_rx,
     })
 }
 
+// Safety: The inner types contain `RObject` (`!Send`) and `Cell<bool>`
+// (`!Sync`), but in tests we only access them under the R test lock
+// via `r_task`, so cross-thread movement is safe.
+struct TestInner(RDataExplorer, CommHandlerContext);
+unsafe impl Send for TestInner {}
+
 /// Test setup helper that reduces boilerplate for common test initialization
 struct TestSetup {
-    inner: Mutex<(RDataExplorer, CommHandlerContext)>,
+    inner: Mutex<TestInner>,
     iopub_rx: Receiver<IOPubMessage>,
 }
 
@@ -169,7 +177,7 @@ impl TestSetup {
         };
         let inner = &self.inner;
         r_task(|| {
-            let (handler, ctx) = &mut *inner.lock().unwrap();
+            let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
             handler.handle_msg(msg, ctx);
         });
 
@@ -185,12 +193,12 @@ impl TestSetup {
     fn trigger_environment_change(&self) {
         let inner = &self.inner;
         let closed = r_task(|| {
-            let (handler, ctx) = &mut *inner.lock().unwrap();
+            let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
             handler.handle_environment(EnvironmentChanged::Execution, ctx);
             ctx.is_closed()
         });
         if closed {
-            let (_, ctx) = &*self.inner.lock().unwrap();
+            let TestInner(_, ctx) = &*self.inner.lock().unwrap();
             ctx.outgoing_tx.send(CommMsg::Close).unwrap();
         }
     }
@@ -771,7 +779,7 @@ fn expect_column_profile_results(
     };
     let inner = &setup.inner;
     r_task(|| {
-        let (handler, ctx) = &mut *inner.lock().unwrap();
+        let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
         handler.handle_msg(msg, ctx);
     });
 
