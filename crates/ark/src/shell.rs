@@ -253,20 +253,11 @@ impl ShellHandler for Shell {
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
             "positron.dataExplorer" => {
-                let (done_tx, done_rx) = bounded(0);
-
-                self.kernel_request_tx
-                    .send(KernelRequest::CommMsg {
-                        comm_id: comm_id.to_string(),
-                        msg,
-                        done_tx,
-                    })
-                    .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
-
-                done_rx
-                    .recv()
-                    .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
-
+                self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
+                    comm_id: comm_id.to_string(),
+                    msg,
+                    done_tx,
+                })?;
                 Ok(CommHandled::Handled)
             },
             _ => Ok(CommHandled::NotHandled),
@@ -280,22 +271,31 @@ impl ShellHandler for Shell {
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
             "positron.dataExplorer" => {
-                let (done_tx, done_rx) = bounded(0);
-                self.kernel_request_tx
-                    .send(KernelRequest::CommClose {
-                        comm_id: comm_id.to_string(),
-                        done_tx,
-                    })
-                    .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
-
-                done_rx
-                    .recv()
-                    .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
-
+                self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
+                    comm_id: comm_id.to_string(),
+                    done_tx,
+                })?;
                 Ok(CommHandled::Handled)
             },
             _ => Ok(CommHandled::NotHandled),
         }
+    }
+}
+
+impl Shell {
+    /// Send a `KernelRequest` to the R thread and block until it's processed.
+    fn dispatch_kernel_request(
+        &self,
+        build: impl FnOnce(Sender<()>) -> KernelRequest,
+    ) -> amalthea::Result<()> {
+        let (done_tx, done_rx) = bounded(0);
+        self.kernel_request_tx
+            .send(build(done_tx))
+            .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
+        done_rx
+            .recv()
+            .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
+        Ok(())
     }
 }
 
