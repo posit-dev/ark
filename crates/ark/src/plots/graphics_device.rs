@@ -27,11 +27,11 @@ use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::UpdateParams;
-use amalthea::wire::execute_request::CodeLocation;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
+use amalthea::wire::execute_request::CodeLocation;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
@@ -274,12 +274,24 @@ impl DeviceContext {
         self.source_context_stack.borrow().last().cloned()
     }
 
+    /// Eagerly capture the plot origin so it's available when `process_changes()` runs later.
+    /// Called when drawing first starts for a change set, since the source context stack
+    /// may be popped before we get a chance to consume it.
+    fn set_pending_origin(&self, origin: Option<PlotOrigin>) {
+        self.pending_origin.replace(Some(origin));
+    }
+
+    /// Clear any unconsumed pending origin.
+    fn clear_pending_origin(&self) {
+        self.pending_origin.replace(None);
+    }
+
     /// Create a new id for this new plot page (from Positron's perspective)
     /// and note that this is a new page
     fn new_positron_page(&self) {
         self.is_new_page.replace(true);
         self.id.replace(Self::new_id());
-        *self.pending_origin.borrow_mut() = None;
+        self.clear_pending_origin();
     }
 
     /// Should plot events be sent over [CommSocket]s to the frontend?
@@ -341,7 +353,7 @@ impl DeviceContext {
         if !old_has_changes && is_drawing {
             let ctx = self.capture_execution_context();
             let origin = self.capture_plot_origin(&ctx);
-            *self.pending_origin.borrow_mut() = Some(origin);
+            self.set_pending_origin(origin);
         }
     }
 
@@ -384,11 +396,10 @@ impl DeviceContext {
 
         // Fall back to getting context from Console (for edge cases).
         // This path does not provide code_location.
-        let (execution_id, code) =
-            Console::get().get_execution_context().unwrap_or_else(|| {
-                // No active request - might be during startup or from R code
-                (String::new(), String::new())
-            });
+        let (execution_id, code) = Console::get().get_execution_context().unwrap_or_else(|| {
+            // No active request - might be during startup or from R code
+            (String::new(), String::new())
+        });
 
         ExecutionContext {
             execution_id,
@@ -418,7 +429,9 @@ impl DeviceContext {
         }
 
         // Otherwise, use the code_location from the execute request
-        ctx.code_location.as_ref().map(Self::code_location_to_origin)
+        ctx.code_location
+            .as_ref()
+            .map(Self::code_location_to_origin)
     }
 
     /// Take the pending origin that was captured eagerly at drawing time.
@@ -1084,12 +1097,7 @@ pub(crate) fn on_did_execute_request() {
     DEVICE_CONTEXT.with_borrow(|cell| {
         cell.process_changes();
         cell.clear_execution_context();
-        // Clear any unconsumed pending origin so it doesn't leak into the
-        // next execute request. `process_changes()` above already consumed it
-        // if this execution produced a new plot; this handles the case where
-        // drawing occurred (e.g. `lines()` inside `source()`) but only as an
-        // update to an existing plot, leaving the pending origin unclaimed.
-        *cell.pending_origin.borrow_mut() = None;
+        cell.clear_pending_origin();
     });
 }
 
@@ -1288,11 +1296,7 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
         let metadata = cell.metadata.borrow();
         match metadata.get(&plot_id) {
             Some(info) => {
-                let origin_uri = info
-                    .origin
-                    .as_ref()
-                    .map(|o| o.uri.as_str())
-                    .unwrap_or("");
+                let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
 
                 // Create a list with the metadata values
                 let values: Vec<RObject> = vec![
