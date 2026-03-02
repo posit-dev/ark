@@ -83,11 +83,7 @@ async fn process_columns_profiles_requests(
     profiles: Vec<ColumnProfileRequest>,
     format_options: FormatOptions,
 ) -> anyhow::Result<Vec<ColumnProfileResult>> {
-    // This is an R thread, so we can actually get the data frame.
-    // If it fails we quickly return an empty result set and end the task.
-    // This might happen if the task was spawned but the data explorer windows
-    // was later closed, before the task actually executed.
-    let data = table.get()?;
+    let data = table.get().clone();
     let mut results: Vec<ColumnProfileResult> = Vec::with_capacity(profiles.len());
 
     for profile in profiles.into_iter() {
