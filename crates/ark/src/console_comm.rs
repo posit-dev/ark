@@ -23,16 +23,11 @@ impl Console {
     pub(crate) fn comm_handle_open(
         &mut self,
         comm_id: String,
-        comm_name: String,
         mut handler: Box<dyn CommHandler>,
         ctx: CommHandlerContext,
     ) {
         handler.handle_open(&ctx);
-        self.comms.insert(comm_id, ConsoleComm {
-            handler,
-            ctx,
-            comm_name,
-        });
+        self.comms.insert(comm_id, ConsoleComm { handler, ctx });
     }
 
     pub(crate) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
@@ -77,11 +72,8 @@ impl Console {
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
         handler.handle_open(&ctx);
 
-        self.comms.insert(comm_id.clone(), ConsoleComm {
-            handler,
-            ctx,
-            comm_name: String::from(comm_name),
-        });
+        self.comms
+            .insert(comm_id.clone(), ConsoleComm { handler, ctx });
 
         self.comm_event_tx
             .send(CommEvent::Opened(comm, open_metadata))?;
