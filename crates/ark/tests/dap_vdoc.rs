@@ -486,13 +486,16 @@ fn test_dap_vdoc_fn_name_repeated_debug() {
     frontend.debug_send_browser();
     dap.recv_stopped();
 
-    // Define function (inside browser, so it cycles stop_debug/start_debug)
-    frontend.debug_send_vdoc_step_command(
+    // Define function (inside browser, transient eval without visible result)
+    frontend.send_execute_request(
         "rpt <- eval(parse(text = 'function() {\n  1\n  2\n}', keep.source = FALSE))",
+        ExecuteRequestOptions::default(),
     );
-
-    dap.recv_continued();
-    dap.recv_stopped();
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_invalidated();
 
     // First debug session
     frontend.debug_enter_debugonce("debugonce(rpt); rpt()");
@@ -560,10 +563,9 @@ fn test_dap_vdoc_content_has_prefix() {
     let path = source.path.as_ref().unwrap();
 
     // Query the virtual document content
-    // This executes code in debug mode, generating DAP continued/stopped events
+    // Transient evals send Invalidated instead of Continued/Stopped
     let content = frontend.get_virtual_document(path);
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
     let content = content.expect("Virtual document should exist");
 
     // Verify the content starts with the prefix assignment
@@ -601,8 +603,7 @@ fn test_dap_vdoc_content_namespace_prefix() {
     let path = source.path.as_ref().unwrap();
 
     let content = frontend.get_virtual_document(path);
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
     let content = content.expect("Virtual document should exist");
 
     // For namespace-qualified calls, the prefix should use just the function name
@@ -644,8 +645,7 @@ fn test_dap_vdoc_content_backtick_prefix() {
     let path = source.path.as_ref().unwrap();
 
     let content = frontend.get_virtual_document(path);
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
     let content = content.expect("Virtual document should exist");
 
     // Non-syntactic names should be backtick-quoted in the prefix
@@ -684,8 +684,7 @@ fn test_dap_vdoc_content_double_colon_prefix() {
     let path = source.path.as_ref().unwrap();
 
     let content = frontend.get_virtual_document(path);
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
     let content = content.expect("Virtual document should exist");
 
     // For `pkg::fun` calls, the prefix should use just the function name
@@ -724,8 +723,7 @@ fn test_dap_vdoc_content_triple_colon_prefix() {
     let path = source.path.as_ref().unwrap();
 
     let content = frontend.get_virtual_document(path);
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
     let content = content.expect("Virtual document should exist");
 
     // For `pkg:::fun` calls, the prefix should use just the function name
@@ -769,8 +767,7 @@ fn test_dap_vdoc_content_dollar_no_prefix() {
     let path = source.path.as_ref().unwrap();
 
     let content = frontend.get_virtual_document(path);
-    dap.recv_continued();
-    dap.recv_stopped();
+    dap.recv_invalidated();
     let content = content.expect("Virtual document should exist");
 
     // For `obj$method` calls, there should be no prefix (starts directly with function)

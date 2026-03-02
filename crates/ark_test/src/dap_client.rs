@@ -23,6 +23,7 @@ use dap::requests::AttachRequestArguments;
 use dap::requests::Command;
 use dap::requests::ContinueArguments;
 use dap::requests::DisconnectArguments;
+use dap::requests::EvaluateArguments;
 use dap::requests::InitializeArguments;
 use dap::requests::NextArguments;
 use dap::requests::PauseArguments;
@@ -35,6 +36,7 @@ use dap::requests::StepInArguments;
 use dap::requests::VariablesArguments;
 use dap::responses::Response;
 use dap::responses::ResponseBody;
+use dap::responses::ResponseMessage;
 use dap::responses::StackTraceResponse;
 use dap::types::Breakpoint;
 use dap::types::Capabilities;
@@ -319,11 +321,7 @@ impl DapClient {
     /// Request a page of the stack trace, returning the full response
     /// including `total_frames`.
     #[track_caller]
-    pub fn stack_trace_paged(
-        &mut self,
-        start_frame: i64,
-        levels: i64,
-    ) -> StackTraceResponse {
+    pub fn stack_trace_paged(&mut self, start_frame: i64, levels: i64) -> StackTraceResponse {
         let seq = self
             .send(Command::StackTrace(StackTraceArguments {
                 thread_id: -1,
@@ -405,6 +403,53 @@ impl DapClient {
         match response.body {
             Some(ResponseBody::Variables(v)) => v.variables,
             other => panic!("Expected Variables response body, got {:?}", other),
+        }
+    }
+
+    /// Evaluate an expression and return the result.
+    #[track_caller]
+    pub fn evaluate(&mut self, expression: &str, frame_id: Option<i64>) -> String {
+        let seq = self
+            .send(Command::Evaluate(EvaluateArguments {
+                expression: expression.to_string(),
+                frame_id,
+                context: None,
+                format: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(response.success, "Evaluate request failed: {:?}", response);
+
+        match response.body {
+            Some(ResponseBody::Evaluate(e)) => e.result,
+            other => panic!("Expected Evaluate response body, got {:?}", other),
+        }
+    }
+
+    /// Evaluate an expression that is expected to fail, and return the error message.
+    #[track_caller]
+    pub fn evaluate_error(&mut self, expression: &str, frame_id: Option<i64>) -> String {
+        let seq = self
+            .send(Command::Evaluate(EvaluateArguments {
+                expression: expression.to_string(),
+                frame_id,
+                context: None,
+                format: None,
+            }))
+            .unwrap();
+
+        let response = self.recv_response(seq);
+        assert!(
+            !response.success,
+            "Evaluate request should have failed: {:?}",
+            response
+        );
+
+        match response.message {
+            Some(ResponseMessage::Error(msg)) => msg,
+            Some(other) => format!("{other:?}"),
+            None => String::new(),
         }
     }
 
@@ -641,23 +686,27 @@ impl DapClient {
         );
     }
 
+    /// Receive and assert the next message is an Invalidated event.
+    ///
+    /// This is sent after a transient evaluation in the debug console to signal
+    /// that variables should be refreshed without resetting the frame selection.
+    #[track_caller]
+    pub fn recv_invalidated(&mut self) {
+        let event = self.recv_event();
+        let Event::Invalidated(body) = &event else {
+            panic!("Expected Invalidated event, got {:?}", event);
+        };
+
+        // Verify that the event specifies Variables as the invalidated area
+        let areas = body.areas.as_ref().unwrap();
+        assert!(areas
+            .iter()
+            .any(|a| matches!(a, dap::types::InvalidatedAreas::Variables)));
+    }
+
     /// Receive and assert the next message is a Stopped event with default fields.
     #[track_caller]
     pub fn recv_stopped(&mut self) {
-        self.recv_stopped_impl(false);
-    }
-
-    /// Receive and assert the next message is a Stopped event with preserve_focus_hint set to true.
-    ///
-    /// This is expected when evaluating an expression in the debug console that
-    /// doesn't change the debug position (e.g., inspecting a variable).
-    #[track_caller]
-    pub fn recv_stopped_preserve_focus(&mut self) {
-        self.recv_stopped_impl(true);
-    }
-
-    #[track_caller]
-    fn recv_stopped_impl(&mut self, preserve_focus: bool) {
         let event = self.recv_event();
         assert!(
             matches!(
@@ -666,14 +715,13 @@ impl DapClient {
                     reason: StoppedEventReason::Step,
                     description: None,
                     thread_id: Some(-1),
-                    preserve_focus_hint: Some(pf),
+                    preserve_focus_hint: Some(false),
                     text: None,
                     all_threads_stopped: Some(true),
                     hit_breakpoint_ids: None,
-                }) if *pf == preserve_focus
+                })
             ),
-            "Expected Stopped event with preserve_focus_hint={}, got {:?}",
-            preserve_focus,
+            "Expected Stopped event, got {:?}",
             event
         );
     }

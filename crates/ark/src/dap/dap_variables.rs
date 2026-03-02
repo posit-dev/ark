@@ -82,6 +82,14 @@ impl RVariableBuilder {
 /// - A recursive child of a frame environment, if that child is:
 ///   - An environment
 ///   - A list (both classed and non-classed lists are allowed)
+pub(super) fn object_variable(name: String, x: SEXP) -> RVariable {
+    if r_is_object(x) {
+        object_variable_classed(name, x)
+    } else {
+        object_variable_bare(name, x)
+    }
+}
+
 pub(super) fn object_variables(x: SEXP) -> Vec<RVariable> {
     match r_typeof(x) {
         ENVSXP => env_variables(x),
@@ -147,14 +155,6 @@ fn list_variables(x: SEXP) -> Vec<RVariable> {
     }
 
     out
-}
-
-fn object_variable(name: String, x: SEXP) -> RVariable {
-    if r_is_object(x) {
-        object_variable_classed(name, x)
-    } else {
-        object_variable_bare(name, x)
-    }
 }
 
 fn object_variable_classed(name: String, x: SEXP) -> RVariable {

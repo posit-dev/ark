@@ -1,5 +1,5 @@
 initialize_hooks_source <- function() {
-    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+    base_bind(as.symbol(".ark_annotate_source"), .ark_annotate_source)
 
     # When:
     # - The input path is a file that has breakpoints

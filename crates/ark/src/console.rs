@@ -17,8 +17,6 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::result::Result::Ok;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::Poll;
@@ -138,14 +136,15 @@ use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 use crate::url::ExtUrl;
 
-pub static CAPTURE_CONSOLE_OUTPUT: AtomicBool = AtomicBool::new(false);
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
 /// All debug commands as documented in `?browser`
 const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "r", "Q"];
 
-// The subset of debug commands that continue execution
-const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont"];
+// Debug commands that exit the current browser: `n`, `f`, `c`, `cont` continue
+// execution past the current prompt, `Q` exits all nested browsers entirely.
+// These are not transient evals: they represent deliberate debugger navigation.
+const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
 
 /// An enum representing the different modes in which the R session can run.
 #[derive(PartialEq, Clone, Copy)]
@@ -247,6 +246,7 @@ pub struct Console {
     /// Channel to send and receive tasks from `RTask`s
     tasks_interrupt_rx: Receiver<RTask>,
     tasks_idle_rx: Receiver<RTask>,
+    tasks_idle_any_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo)>,
 
     /// Channel to communicate requests and events to the frontend
@@ -281,15 +281,17 @@ pub struct Console {
     /// Stored in `Console` to avoid memory leakage when `Rf_error()` jumps.
     r_error_buffer: Option<CString>,
 
-    /// `WriteConsole` output diverted from IOPub is stored here. This is only used
-    /// to return R output to the debugger.
-    pub(crate) captured_output: String,
+    /// When `Some`, console output is captured here instead of being sent to IOPub.
+    /// Interact with this via `ConsoleOutputCapture` from `start_capture()`.
+    pub(crate) captured_output: Option<String>,
 
-    /// Whether we should preserve focus when stopping in a debug session. We
-    /// should only preserve focus if we're explicitly stepping through code as
-    /// opposed to evaluating an expression in the debugger console.
+    /// Whether the current evaluation is transient within the debug session.
+    /// When `true`, the debug session state is preserved: no Continued/Stopped
+    /// events are emitted, frame IDs remain valid, and only an Invalidated
+    /// event is sent to refresh variables. Set to `true` for console
+    /// evaluations (as opposed to step commands like `n`, `c`, `f`).
     /// See https://github.com/posit-dev/positron/issues/3151.
-    debug_preserve_focus: bool,
+    pub(crate) debug_transient_eval: bool,
 
     /// Underlying dap state. Shared with the DAP server thread.
     pub(crate) debug_dap: Arc<Mutex<Dap>>,
@@ -311,12 +313,18 @@ pub struct Console {
     /// valid for a single session.
     pub(crate) debug_session_index: u32,
 
-    /// The current frame `id`. Unique across all frames within a single debug session.
-    /// Reset after `debug_stop()`, not between debug steps.
+    /// The current frame `id`. Monotonically increasing, unique across all
+    /// frames and debug sessions. It's important that each frame gets a unique
+    /// ID across the process lifetime so that we can invalidate stale requests.
     pub(crate) debug_current_frame_id: i64,
 
     /// Reason for entering the debugger. Used to determine which DAP event to send.
     pub(crate) debug_stopped_reason: Option<DebugStoppedReason>,
+
+    /// The frame ID selected by the user in the debugger UI.
+    /// When set, console evaluations happen in this frame's environment instead of the current frame.
+    /// Resolved to an environment via `debug_dap` state when needed.
+    pub(crate) debug_selected_frame_id: Cell<Option<i64>>,
 
     /// Saved JIT compiler level, to restore after a step-into command.
     /// Step-into disables JIT to prevent stepping into `compiler` internals.
@@ -338,17 +346,17 @@ pub struct Console {
     /// evaluation to reset things like `R_ConsoleIob`.
     read_console_nested_return: Cell<bool>,
 
-    /// Used to track an input to evaluate upon returning to `r_read_console()`,
-    /// after having returned a dummy input to reset `R_ConsoleIob` in R's REPL.
-    read_console_nested_return_next_input: Cell<Option<String>>,
+    /// Pending action to perform at the start of the next `r_read_console()` call.
+    read_console_pending_action: Cell<ReadConsolePendingAction>,
 
     /// We've received a Shutdown signal and need to return EOF from all nested
     /// consoles to get R to shut down
     read_console_shutdown: Cell<bool>,
 
-    /// Current topmost environment on the stack while waiting for input in ReadConsole.
+    /// Stack of topmost environments while waiting for input in ReadConsole.
+    /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
-    pub(crate) read_console_frame: RefCell<RObject>,
+    pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
 }
 
 /// Stack of pending inputs
@@ -541,6 +549,82 @@ pub(crate) enum ConsoleResult {
     Error(String),
 }
 
+/// Guard for capturing console output during idle tasks.
+///
+/// Created via `Console::start_capture()`, which sets `Console::captured_output`
+/// to `Some` so that all `write_console` output goes there instead of IOPub.
+/// When dropped, restores the previous state and logs any remaining output.
+///
+/// Use `take()` to retrieve captured output. Can be called multiple times to
+/// get output accumulated since the last take.
+pub struct ConsoleOutputCapture {
+    previous_output: Option<String>,
+    connected: bool,
+}
+
+impl ConsoleOutputCapture {
+    /// Create a dummy capture that doesn't interact with Console.
+    /// Used in test contexts where Console is not initialized.
+    pub(crate) fn dummy() -> Self {
+        Self {
+            previous_output: None,
+            connected: false,
+        }
+    }
+
+    /// Take the captured output so far, clearing the buffer.
+    /// Can be called multiple times; each call returns output accumulated since the last take.
+    pub fn take(&mut self) -> String {
+        if !self.connected {
+            return String::new();
+        }
+
+        if let Some(captured) = Console::get_mut().captured_output.as_mut() {
+            return std::mem::take(captured);
+        }
+
+        String::new()
+    }
+}
+
+impl Drop for ConsoleOutputCapture {
+    fn drop(&mut self) {
+        if !self.connected {
+            return;
+        }
+
+        let console = Console::get_mut();
+
+        // Log any remaining output that wasn't taken
+        if let Some(output) = console.captured_output.take() {
+            if !output.trim().is_empty() {
+                log::info!("[Captured idle output]\n{}", output.trim_end());
+            }
+        }
+
+        // Restore previous capture state
+        console.captured_output = self.previous_output.take();
+    }
+}
+
+/// Pending action to perform at the start of the next `r_read_console()` call.
+/// This is used to implement multi-step operations that require returning
+/// control to R between steps.
+#[derive(Default)]
+enum ReadConsolePendingAction {
+    /// No pending action, proceed with normal read-console logic.
+    #[default]
+    None,
+
+    /// We just evaluated `.ark_capture_current_environment()` to capture the
+    /// top-level environment into `.ark_current_env`. Now retrieve it and
+    /// push onto the frame stack.
+    CaptureEnv,
+
+    /// Execute a saved input upon re-entering `r_read_console()`.
+    ExecuteInput(String),
+}
+
 impl Console {
     /// Sets up the main R thread, initializes the `CONSOLE` singleton,
     /// and starts R. Does not return!
@@ -571,11 +655,12 @@ impl Console {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx) = r_task::take_receivers();
+        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             tasks_interrupt_rx,
             tasks_idle_rx,
+            tasks_idle_any_rx,
             comm_event_tx,
             r_request_rx,
             stdin_request_tx,
@@ -707,7 +792,7 @@ impl Console {
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
         r_task::spawn_interrupt({
             let dap_clone = console.debug_dap.clone();
-            || async move {
+            async move || {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
         });
@@ -810,6 +895,7 @@ impl Console {
     pub fn new(
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
+        tasks_idle_any_rx: Receiver<RTask>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -840,26 +926,27 @@ impl Console {
             debug_stopped_reason: None,
             tasks_interrupt_rx,
             tasks_idle_rx,
+            tasks_idle_any_rx,
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
             banner: None,
             r_error_buffer: None,
-            captured_output: String::new(),
+            captured_output: None,
             debug_call_text: DebugCallText::None,
             debug_last_line: None,
-            debug_preserve_focus: false,
+            debug_transient_eval: false,
             debug_last_stack: vec![],
             debug_session_index: 1,
             debug_current_frame_id: 0,
+            debug_selected_frame_id: Cell::new(None),
             debug_jit_level: None,
             pending_inputs: None,
             read_console_depth: Cell::new(0),
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
-            read_console_nested_return_next_input: Cell::new(None),
-            // Can't use `R_ENVS.global` here as it isn't initialised yet
-            read_console_frame: RefCell::new(RObject::new(unsafe { libr::R_GlobalEnv })),
+            read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
+            read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
         }
     }
@@ -917,6 +1004,17 @@ impl Console {
     /// Provides read-only access to `iopub_tx`
     pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
+    }
+
+    /// Start capturing console output.
+    /// Returns a guard that saves and restores the previous capture state on drop.
+    pub(crate) fn start_capture(&mut self) -> ConsoleOutputCapture {
+        let previous_output = self.captured_output.replace(String::new());
+
+        ConsoleOutputCapture {
+            previous_output,
+            connected: true,
+        }
     }
 
     /// Get the current execution context if an active request exists.
@@ -1040,7 +1138,7 @@ impl Console {
                     .debug_stopped_reason
                     .clone()
                     .unwrap_or(DebugStoppedReason::Step);
-                self.debug_start(self.debug_preserve_focus, reason);
+                self.debug_start(self.debug_transient_eval, reason);
             }
         }
 
@@ -1089,8 +1187,7 @@ impl Console {
             self.refresh_lsp();
         }
 
-        // Signal prompt
-        EVENTS.console_prompt.emit(());
+        EVENTS.environment_changed.emit(());
 
         self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
     }
@@ -1117,6 +1214,7 @@ impl Console {
         let kernel_request_rx = self.kernel_request_rx.clone();
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
+        let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
 
         // Process R's polled events regularly while waiting for console input.
         // We used to poll every 200ms but that lead to visible delays for the
@@ -1138,15 +1236,19 @@ impl Console {
 
         // Only process idle at top level. We currently don't want idle tasks
         // (e.g. for srcref generation) to run when the call stack is not empty.
-        // We could make this configurable though if needed, i.e. some idle
-        // tasks would be able to run in the browser. Those should be sent to a
-        // dedicated channel that would always be included in the set of recv
-        // channels.
         let tasks_idle_index = if matches!(info.kind, PromptKind::TopLevel) {
             Some(select.recv(&tasks_idle_rx))
         } else {
             None
         };
+
+        // "Idle any" tasks run at both top-level and browser prompts
+        let tasks_idle_any_index =
+            if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
+                Some(select.recv(&tasks_idle_any_rx))
+            } else {
+                None
+            };
 
         loop {
             // If an interrupt was signaled and we are in a user
@@ -1213,6 +1315,12 @@ impl Console {
                 // An idle task woke us up
                 i if Some(i) == tasks_idle_index => {
                     let task = oper.recv(&tasks_idle_rx).unwrap();
+                    self.handle_task(task);
+                },
+
+                // An "idle any" task woke us up
+                i if Some(i) == tasks_idle_any_index => {
+                    let task = oper.recv(&tasks_idle_any_rx).unwrap();
                     self.handle_task(task);
                 },
 
@@ -1546,15 +1654,14 @@ impl Console {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> ConsoleResult {
-        // Default: preserve current focus for evaluated expressions.
+        // Default: Mark evaluation as transient.
         // This only has an effect if we're debugging.
         // https://github.com/posit-dev/positron/issues/3151
-        self.debug_preserve_focus = true;
+        self.debug_transient_eval = true;
 
         if self.debug_is_debugging {
             // Try to interpret this pending input as a symbol (debug commands
-            // are entered as symbols). Whether or not it parses as a symbol,
-            // if we're currently debugging we must set `debug_preserve_focus`.
+            // are entered as symbols).
             if let Ok(sym) = harp::RSymbol::new(input.expr.sexp) {
                 let mut sym = String::from(sym);
 
@@ -1603,9 +1710,8 @@ impl Console {
         }
 
         if DEBUG_COMMANDS_CONTINUE.contains(&&cmd[..]) {
-            // For continue-like commands, we do not preserve focus,
-            // i.e. we let the cursor jump to the stopped position.
-            self.debug_preserve_focus = false;
+            // Navigation commands are not transient evals.
+            self.debug_transient_eval = false;
         }
 
         // Forward the command to R's base REPL.
@@ -1633,17 +1739,16 @@ impl Console {
 
     // SAFETY: Call this from a POD frame. Inputs must be protected.
     unsafe fn eval(
+        &self,
         expr: libr::SEXP,
         srcref: libr::SEXP,
         buf: *mut c_uchar,
         buflen: c_int,
         is_debugging: bool,
     ) {
-        let frame = harp::r_current_frame();
-
         // SAFETY: This may jump in case of error, keep this POD
         unsafe {
-            let frame = libr::Rf_protect(frame.into());
+            let frame = libr::Rf_protect(self.eval_frame().sexp);
 
             // The global source reference is stored in this global variable by
             // the R REPL before evaluation. We do the same here.
@@ -1695,6 +1800,24 @@ impl Console {
 
         // Unwrap safety: The input always fits in the buffer
         Self::on_console_input(buf, buflen, code).unwrap();
+    }
+
+    /// Resolve the frame in which to evaluate the current expression.
+    /// Uses the debug-selected frame if one has been set, otherwise the
+    /// captured environment from `read_console_env_stack`.
+    pub(crate) fn eval_frame(&self) -> harp::RObject {
+        let Some(frame_id) = self.debug_selected_frame_id.get() else {
+            return self.eval_env();
+        };
+
+        let state = self.debug_dap.lock().unwrap();
+        match state.frame_env(Some(frame_id)) {
+            Ok(env) => harp::RObject::view(env),
+            Err(err) => {
+                log::warn!("Failed to resolve selected frame {frame_id}: {err}");
+                self.eval_env()
+            },
+        }
     }
 
     /// Handle an `input_request` received outside of an `execute_request` context
@@ -2232,7 +2355,7 @@ impl Console {
             let kind = if in_injected_breakpoint { "in" } else { "at" };
             log::trace!("Auto-step expression reached ({kind}), moving to next expression");
 
-            self.debug_preserve_focus = false;
+            self.debug_transient_eval = false;
 
             Self::on_console_input(buf, buflen, String::from("n")).unwrap();
             return Some(ConsoleResult::NewInput);
@@ -2243,10 +2366,10 @@ impl Console {
 
     /// Invoked by R to write output to the console.
     fn write_console(buf: *const c_char, _buflen: i32, otype: i32) {
-        if CAPTURE_CONSOLE_OUTPUT.load(Ordering::SeqCst) {
-            Console::get_mut()
-                .captured_output
-                .push_str(&console_to_utf8(buf).unwrap());
+        let console = Console::get_mut();
+
+        if let Some(captured) = &mut console.captured_output {
+            captured.push_str(&console_to_utf8(buf).unwrap());
             return;
         }
 
@@ -2254,8 +2377,6 @@ impl Console {
             Ok(content) => content,
             Err(err) => panic!("Failed to read from R buffer: {err:?}"),
         };
-
-        let console = Console::get_mut();
 
         if !Console::is_initialized() {
             // During init, consider all output to be part of the startup banner
@@ -2608,9 +2729,73 @@ impl Console {
         }
     }
 
-    #[cfg(not(test))] // Avoid warnings in unit test
-    pub(crate) fn read_console_frame(&self) -> RObject {
-        self.read_console_frame.borrow().clone()
+    pub(crate) fn eval_env(&self) -> RObject {
+        self.read_console_env_stack
+            .borrow()
+            .last()
+            .cloned()
+            .unwrap_or_else(|| R_ENVS.global.into())
+    }
+
+    fn read_console_enter(&mut self, env: RObject) {
+        // Track nesting depth of ReadConsole REPLs
+        self.read_console_depth
+            .set(self.read_console_depth.get() + 1);
+
+        // Reset flag that helps us figure out when a nested REPL returns
+        self.read_console_nested_return.set(false);
+
+        // Reset flag that helps us figure out when an error occurred and needs
+        // a reset of `R_EvalDepth` and friends
+        self.read_console_threw_error.set(true);
+
+        // Push current frame environment
+        self.read_console_env_stack.borrow_mut().push(env);
+    }
+
+    fn read_console_exit(&mut self) {
+        // We're exiting, decrease depth of nested consoles
+        self.read_console_depth
+            .set(self.read_console_depth.get() - 1);
+
+        // Restore current frame
+        self.read_console_env_stack.borrow_mut().pop();
+
+        // Set flag so that parent read console, if any, can detect that a
+        // nested console returned (if it indeed returns instead of looping for
+        // another iteration)
+        self.read_console_nested_return.set(true);
+
+        // Always stop debug session when yielding back to R. This prevents
+        // the debug toolbar from lingering in situations like:
+        //
+        // ```r
+        // { local(browser()); Sys.sleep(10) }
+        // ```
+        //
+        // For a more practical example see Shiny app example in
+        // https://github.com/rstudio/rstudio/pull/14848
+        self.debug_stop();
+    }
+
+    pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
+        self.debug_selected_frame_id.set(frame_id);
+
+        // Signal listeners (e.g. the Variables pane) that they can update state
+        if frame_id.is_some() {
+            EVENTS.environment_changed.emit(());
+        }
+    }
+
+    /// Check if this is a browser prompt for which we need to capture the
+    /// evaluation environment
+    fn needs_browser_capture(&self, prompt: *const c_char) -> bool {
+        let prompt_str = unsafe { std::ffi::CStr::from_ptr(prompt) }.to_string_lossy();
+        let is_browser = RE_DEBUG_PROMPT.is_match(&prompt_str);
+
+        // Skip capture if there's a pending error, we need `read_console()` to
+        // process it via `take_exception()` first.
+        is_browser && self.last_error.is_none()
     }
 }
 
@@ -2644,6 +2829,14 @@ pub(crate) fn console_inputs() -> anyhow::Result<ConsoleInputs> {
     })
 }
 
+#[cfg_attr(not(test), no_mangle)]
+pub(crate) fn selected_env() -> RObject {
+    if !Console::is_initialized() {
+        return R_ENVS.global.into();
+    }
+    Console::get().eval_frame()
+}
+
 /// Data passed to the eval body callback via `R_withCallingErrorHandler`.
 #[repr(C)]
 struct EvalBodyData {
@@ -2666,19 +2859,13 @@ unsafe extern "C-unwind" fn eval_body_callback(data: *mut c_void) -> libr::SEXP 
 /// enters the error browser first. In all cases it saves the traceback
 /// and invokes the abort restart to jump to top level.
 unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_void) -> libr::SEXP {
-    // End current debug session (if any) so the error browser can start fresh
-    let console = Console::get_mut();
-    if console.debug_is_debugging {
-        console.debug_stop();
-    }
-
     // Call the R-side global error handler which sets the stopped reason,
-    // calls `browser()`, saves the backtrace, and invokes the abort restart
+    // calls `browser()`, saves the backtrace, and invokes the `abort` or
+    // `browser` restart.
     unsafe {
         let call = libr::Rf_lang2(r_symbol!(".ps.errors.globalErrorHandler"), err);
         libr::Rf_protect(call);
         libr::Rf_eval(call, ARK_ENVS.positron_ns);
-        // The handler longjumps via invok`eRestart("abort")`
     }
 
     unreachable!("globalErrorHandler longjumps via invokeRestart")
@@ -2688,7 +2875,6 @@ unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_v
 // These functions are hooked up as R frontend methods. They call into our
 // global `Console` singleton.
 
-#[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn r_read_console(
     prompt: *const c_char,
     buf: *mut c_uchar,
@@ -2711,13 +2897,63 @@ pub extern "C-unwind" fn r_read_console(
         return 0;
     }
 
-    // We've finished evaluating a dummy value to reset state in R's REPL,
-    // and are now ready to evaluate the actual input, which is typically
-    // just `.ark_last_value`.
-    if let Some(next_input) = console.read_console_nested_return_next_input.take() {
-        Console::on_console_input(buf, buflen, next_input).unwrap();
-        return 1;
-    }
+    // Handle any pending action from a previous `r_read_console` call.
+    // These are multi-step operations that required returning control to R.
+    let env: RObject = match console.read_console_pending_action.take() {
+        ReadConsolePendingAction::None => {
+            // Check if this is a browser prompt that needs environment capture.
+            // If so, return capture call WITHOUT doing any entry bookkeeping.
+            if console.needs_browser_capture(prompt) {
+                console
+                    .read_console_pending_action
+                    .set(ReadConsolePendingAction::CaptureEnv);
+
+                // For browser REPLs, we capture the top-level environment by
+                // returning an expression to R that basically does
+                // `parent.frame()` and store it in a base symbol. There is no
+                // way to reliably get this environment via regular evaluation:
+                //
+                // - Evaluating requires supplying an environment, which
+                //   interferes with approaches based on `parent.frame()`.
+                // - Looking at the call stack via `sys.frames()` does not work
+                //   when the browser is evaluating a promise or some other
+                //   C-level `Rf_eval()`.
+                let input = String::from("base::.ark_capture_current_environment()");
+                Console::on_console_input(buf, buflen, input).unwrap();
+                return 1;
+            }
+
+            // At top-level: Use global env
+            R_ENVS.global.into()
+        },
+
+        ReadConsolePendingAction::ExecuteInput(next_input) => {
+            // We've finished evaluating a dummy value to reset state in R's REPL,
+            // and are now ready to evaluate the actual input.
+            Console::on_console_input(buf, buflen, next_input).unwrap();
+            return 1;
+        },
+
+        ReadConsolePendingAction::CaptureEnv => {
+            // We just evaluated `.ark_capture_current_environment()`.
+            // Retrieve the captured environment from base namespace for entry
+            // bookkeeping below.
+            unsafe {
+                let sym = r_symbol!(".ark_current_env");
+                let env: RObject = libr::CDR(sym).into();
+
+                // Allow R to GC the environment again
+                libr::SETCDR(sym, libr::R_NilValue);
+
+                if r_typeof(env.sexp) == libr::ENVSXP {
+                    env
+                } else {
+                    log::warn!("Failed to capture browser environment, falling back");
+                    harp::r_current_frame()
+                }
+            }
+        },
+    };
 
     // In case of error, we haven't had a chance to evaluate ".ark_last_value".
     // So we return to the R REPL to give R a chance to run the state
@@ -2741,25 +2977,9 @@ pub extern "C-unwind" fn r_read_console(
         return 1;
     }
 
-    // Keep track of state that we care about
-
-    // - Track nesting depth of ReadConsole REPLs
-    console
-        .read_console_depth
-        .set(console.read_console_depth.get() + 1);
-
-    // - Set current frame environment
-    let old_current_frame = console.read_console_frame.replace(harp::r_current_frame());
-
-    // Keep track of state that we use for workarounds while interacting
-    // with the R REPL and force it to reset state
-
-    // - Reset flag that helps us figure out when a nested REPL returns
-    console.read_console_nested_return.set(false);
-
-    // - Reset flag that helps us figure out when an error occurred and needs a
-    //   reset of `R_EvalDepth` and friends
-    console.read_console_threw_error.set(true);
+    // Entry bookkeeping: increment depth, set flags, push frame.
+    // Cleanup happens in the exit branch of `exec_with_cleanup()`.
+    console.read_console_enter(env);
 
     exec_with_cleanup(
         || {
@@ -2772,31 +2992,7 @@ pub extern "C-unwind" fn r_read_console(
             result
         },
         || {
-            let console = Console::get_mut();
-
-            // We're exiting, decrease depth of nested consoles
-            console
-                .read_console_depth
-                .set(console.read_console_depth.get() - 1);
-
-            // Set flag so that parent read console, if any, can detect that a
-            // nested console returned (if it indeed returns instead of looping
-            // for another iteration)
-            console.read_console_nested_return.set(true);
-
-            // Restore current frame
-            console.read_console_frame.replace(old_current_frame);
-
-            // Always stop debug session when yielding back to R. This prevents
-            // the debug toolbar from lingering in situations like:
-            //
-            // ```r
-            // { local(browser()); Sys.sleep(10) }
-            // ```
-            //
-            // For a more practical example see Shiny app example in
-            // https://github.com/rstudio/rstudio/pull/14848
-            console.debug_stop();
+            Console::get_mut().read_console_exit();
         },
     )
 }
@@ -2828,7 +3024,7 @@ fn r_read_console_impl(
                 let expr = libr::Rf_protect(expr.into());
                 let srcref = libr::Rf_protect(srcref.into());
 
-                Console::eval(expr, srcref, buf, buflen, console.debug_is_debugging);
+                console.eval(expr, srcref, buf, buflen, console.debug_is_debugging);
 
                 // Check if a nested read_console() just returned. If that's the
                 // case, we need to reset the `R_ConsoleIob` by first returning
@@ -2836,8 +3032,8 @@ fn r_read_console_impl(
                 if console.read_console_nested_return.get() {
                     let next_input = Console::console_input(buf, buflen);
                     console
-                        .read_console_nested_return_next_input
-                        .set(Some(next_input));
+                        .read_console_pending_action
+                        .set(ReadConsolePendingAction::ExecuteInput(next_input));
 
                     // Evaluating a space causes a `PARSE_NULL` event. Don't
                     // evaluate a newline, that would cause a parent debug REPL
@@ -2935,7 +3131,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn_idle(|| async move {
+        r_task::spawn_idle(async move |_| {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }

@@ -1,5 +1,4 @@
 use std::ffi;
-use std::sync::atomic::Ordering;
 
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -7,7 +6,6 @@ use harp::utils::r_str_to_owned_utf8_unchecked;
 use harp::utils::r_typeof;
 
 use crate::console::Console;
-use crate::console::CAPTURE_CONSOLE_OUTPUT;
 
 // To ensure the compiler includes the C entry points in `debug.c` in the binary,
 // we store function pointers in global variables that are declared "used" (even
@@ -162,14 +160,14 @@ pub fn tidy_kind(kind: libr::SEXPTYPE) -> &'static str {
 /// This should only be used in a debugging context where leaking is not an
 /// issue.
 pub fn capture_console_output(cb: impl FnOnce()) -> *const ffi::c_char {
-    let old = CAPTURE_CONSOLE_OUTPUT.swap(true, Ordering::SeqCst);
+    let mut capture = Console::get_mut().start_capture();
 
-    // We protect from panics to correctly restore `CAPTURE_CONSOLE_OUTPUT`'s
-    // state. The panic is resumed right after.
+    // We protect from panics to correctly restore `captured_output`'s state.
+    // The panic is resumed right after.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| harp::try_catch(cb)));
 
-    CAPTURE_CONSOLE_OUTPUT.store(old, Ordering::SeqCst);
-    let mut out = std::mem::take(&mut Console::get_mut().captured_output);
+    let mut out = capture.take();
+    drop(capture);
 
     // Unwrap catch-unwind's result and resume panic if needed
     let result = match result {

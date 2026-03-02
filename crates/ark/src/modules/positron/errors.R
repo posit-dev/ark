@@ -27,11 +27,16 @@
     # This reproduces the behaviour of R's default error handler:
     # - Invoke `getOption("error")`
     # - Save backtrace for `traceback()`
-    # - Jump to top-level
+    # - Jump to top-level, or back to browser if we're in one
     defer({
         invoke_option_error_handler()
         poke_traceback()
-        invokeRestart("abort")
+
+        if (!is.null(findRestart("browser"))) {
+            invokeRestart("browser")
+        } else {
+            invokeRestart("abort")
+        }
     })
 
     if (!.ps.is_installed("rlang")) {
@@ -257,8 +262,7 @@ poke_traceback <- function() {
     # `traceback()` expects a pairlist
     traceback <- as.pairlist(traceback)
 
-    # The CDR corresponds to SYMVALUE
-    node_poke_cdr(as.symbol(".Traceback"), traceback)
+    base_bind(as.symbol(".Traceback"), traceback)
 }
 
 # Because this init function calls `globalCallingHandlers()`, it must be called

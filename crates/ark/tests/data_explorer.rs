@@ -1284,9 +1284,9 @@ fn test_live_updates() {
         harp::parse_eval_global("x[1, 1] <- 0").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1326,9 +1326,9 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         harp::parse_eval_global("x[1, 1] <- 3").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1357,8 +1357,8 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         harp::parse_eval_global("x <- data.frame(y = 'y', z = 'z', three = '3')").unwrap();
     });
 
-    // Emit a console prompt event to trigger change detection
-    EVENTS.console_prompt.emit(());
+    // Signal an environment change to trigger change detection
+    EVENTS.environment_changed.emit(());
 
     // This should trigger a schema update event.
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1386,8 +1386,8 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
         harp::parse_eval_global("rm(x)").unwrap();
     });
 
-    // Emit a console prompt event to trigger change detection
-    EVENTS.console_prompt.emit(());
+    // Signal an environment change to trigger change detection
+    EVENTS.environment_changed.emit(());
 
     // Wait for an close event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1437,9 +1437,9 @@ fn test_invalid_filters_preserved() {
         harp::parse_eval_global("test_df$x <- NULL").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1465,9 +1465,9 @@ fn test_invalid_filters_preserved() {
         harp::parse_eval_global("test_df$x <- c('','a', 'b')").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1493,9 +1493,9 @@ fn test_invalid_filters_preserved() {
         harp::parse_eval_global("test_df$x <- c(1, 2, 3)").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1681,9 +1681,9 @@ fn test_update_data_filters_reapplied() {
         harp::parse_eval_global("x$a <- c(3, 2, 1, 1)").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     // Since only data changed, we expect a Data Update Event
@@ -1915,9 +1915,9 @@ fn test_data_update_num_rows() {
         harp::parse_eval_global("x <- utils::tail(x, 2)").unwrap();
     });
 
-    // Emit a console prompt event; this should tickle the data explorer to
+    // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),

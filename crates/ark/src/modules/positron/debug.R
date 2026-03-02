@@ -9,12 +9,16 @@ initialize_debug <- function() {
     # Store `.ark_breakpoint` and friends in base namespace so they're maximally
     # reachable. We might want to do that for all symbols exported from the
     # Ark/Positron namespace.
-    node_poke_cdr(as.symbol(".ark_annotate_source"), .ark_annotate_source)
-    node_poke_cdr(as.symbol(".ark_auto_step"), .ark_auto_step)
-    node_poke_cdr(as.symbol(".ark_breakpoint"), .ark_breakpoint)
-    node_poke_cdr(
+    base_bind(as.symbol(".ark_annotate_source"), .ark_annotate_source)
+    base_bind(as.symbol(".ark_auto_step"), .ark_auto_step)
+    base_bind(as.symbol(".ark_breakpoint"), .ark_breakpoint)
+    base_bind(
         as.symbol(".ark_verify_breakpoints_range"),
         .ark_verify_breakpoints_range
+    )
+    base_bind(
+        as.symbol(".ark_capture_current_environment"),
+        .ark_capture_current_environment
     )
 }
 
@@ -58,7 +62,8 @@ debugger_stack_info <- function(
     context_srcref,
     fns,
     environments,
-    calls
+    calls,
+    current_env
 ) {
     n <- length(fns)
     if (n != length(environments) || n != length(calls)) {
@@ -125,6 +130,23 @@ debugger_stack_info <- function(
         intermediate_environments,
         intermediate_frame_calls
     )
+
+    # When `current_env` differs from `context_environment`, it means that (a) the
+    # current expression is evaluated from C, e.g. we might be forcing a promise
+    # via `list(...)`, and (b) we're adding a synthetic current environment based on
+    # the context srcref. Unfortunately, we don't have any srcref information
+    # for the R-level current frame in that case, as neither `R_Srcref` nor the last call
+    # in `sys.calls()` point to the location of the call. So we let it fall back
+    # to the virtual source from the function.
+    has_synthetic_current <- !is.null(current_env) &&
+        !identical(current_env, context_environment)
+    if (has_synthetic_current) {
+        current_srcref <- context_srcref
+        context_srcref <- NULL
+    } else {
+        current_srcref <- NULL
+    }
+
     last_frame_info <- context_frame_info(
         context_srcref,
         context_fn,
@@ -139,6 +161,21 @@ debugger_stack_info <- function(
         intermediate_frame_infos,
         list(last_frame_info)
     )
+
+    # If the captured current environment differs from the R-level top frame,
+    # append a synthetic frame. This happens when evaluating from C (e.g.
+    # promise forcing).
+    if (has_synthetic_current) {
+        current_frame_info <- frame_info_from_srcref(
+            source_name = "<current>.R",
+            frame_name = "<current>",
+            srcref = current_srcref,
+            environment = current_env
+        )
+        if (!is.null(current_frame_info)) {
+            out <- c(out, list(current_frame_info))
+        }
+    }
 
     out
 }
@@ -833,4 +870,11 @@ verify_breapoint <- function(uri, id) {
 #' @export
 .ark_verify_breakpoints_range <- function(uri, start_line, end_line) {
     .ps.Call("ps_verify_breakpoints_range", uri, start_line, end_line)
+}
+
+.ark_capture_current_environment <- function() {
+    invisible(base_bind(
+        as.symbol(".ark_current_env"),
+        parent.frame()
+    ))
 }

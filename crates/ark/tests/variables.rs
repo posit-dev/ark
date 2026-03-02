@@ -112,6 +112,22 @@ fn test_variables_list() {
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
     });
 
+    // Signal an environment change so `update()` picks up the new variable
+    EVENTS.environment_changed.emit(());
+    let msg = iopub_rx.recv_comm_msg();
+    let data = match msg {
+        CommMsg::Data(data) => data,
+        _ => panic!("Expected data message"),
+    };
+    let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
+    match evt {
+        VariablesFrontendEvent::Update(params) => {
+            assert_eq!(params.assigned.len(), 1);
+            assert_eq!(params.assigned[0].display_name, "everything");
+        },
+        _ => panic!("Expected update event"),
+    }
+
     // Request a list of variables
     let request = VariablesBackendRequest::List;
     let data = serde_json::to_value(request).unwrap();
@@ -170,8 +186,7 @@ fn test_variables_list() {
         r_envir_remove("everything", *test_env);
     });
 
-    // Simulate a prompt signal
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for the new list of variables to be delivered
     let msg = iopub_rx.recv_comm_msg();
@@ -264,8 +279,7 @@ fn test_variables_list() {
         Rf_defineVar(sym, Rf_ScalarInteger(43), *test_env);
     });
 
-    // Simulate a prompt signal
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     let msg = iopub_rx.recv_comm_msg();
     let data = match msg {
@@ -393,8 +407,7 @@ fn test_variables_last_value_enabled() {
         Rf_defineVar(sym, Rf_ScalarInteger(99), *test_env);
     });
 
-    // Simulate a prompt signal
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for the update event
     let msg = iopub_rx.recv_comm_msg();
@@ -525,8 +538,7 @@ fn test_variables_last_value_disabled() {
         Rf_defineVar(sym, Rf_ScalarInteger(99), *test_env);
     });
 
-    // Simulate a prompt signal
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
 
     // Wait for the update event
     let msg = iopub_rx.recv_comm_msg();
@@ -616,9 +628,9 @@ fn test_query_table_summary() {
         harp::parse_eval_global(code).unwrap();
     });
 
-    // Simulate a prompt signal to refresh the variable list
+    // Signal an environment change to refresh the variable list
     // and consume the update event
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
     let _ = iopub_rx.recv_comm_msg();
 
     // --- TEST 1: Query summary for data.frame with summary_stats query type ---
@@ -769,9 +781,9 @@ fn test_query_table_summary() {
         harp::parse_eval_global(code).unwrap();
     });
 
-    // Simulate a prompt signal to refresh the variable list
+    // Signal an environment change to refresh the variable list
     // and consume the update event
-    EVENTS.console_prompt.emit(());
+    EVENTS.environment_changed.emit(());
     let _ = iopub_rx.recv_comm_msg();
 
     // Request table summary for non-table object

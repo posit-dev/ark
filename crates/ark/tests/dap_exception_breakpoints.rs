@@ -753,20 +753,32 @@ foo()
     );
 
     // Continue out of the error browser. `globalErrorHandler`'s defer block
-    // saves the traceback, invokes `options(error)`, and calls
-    // `invokeRestart("abort")` which jumps to top level.
+    // restarts the outer browser, returning us to the breakpoint.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_stop_debug();
     dap.recv_continued();
 
-    // The abort restart jumps to top level. The error is reported with a
-    // proper traceback (saved by `globalErrorHandler`).
+    // We're back at the breakpoint browser
+    frontend.recv_iopub_start_debug();
+    dap.recv_stopped();
+
+    // The error is reported with a proper traceback (saved by `globalErrorHandler`)
     let evalue = frontend.recv_iopub_execute_error();
     assert!(evalue.contains("nested error"));
     frontend.recv_iopub_idle();
-    frontend.recv_shell_execute_reply(); // source()
+
+    // Exit the breakpoint browser to top level
+    frontend.debug_send_quit();
+    dap.recv_continued();
+
+    // Remaining shell replies:
+    // - source() (exec 1): OK (consumed by debug_send_quit when entering browser)
+    // - stop('nested error') (exec 2): OK (entered error browser, no error recorded yet)
+    // - c (exec 3): exception (error recorded by handler before invokeRestart)
+    // - Q (exec 4): OK (exited breakpoint browser to top level)
     frontend.recv_shell_execute_reply(); // stop('nested error')
     frontend.recv_shell_execute_reply_exception(); // c
+    frontend.recv_shell_execute_reply(); // Q
 }
