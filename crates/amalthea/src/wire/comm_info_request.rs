@@ -13,7 +13,8 @@ use crate::wire::jupyter_message::MessageType;
 /// Represents a request from the frontend to show open comms
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CommInfoRequest {
-    pub target_name: String,
+    #[serde(default)]
+    pub target_name: Option<String>,
 }
 
 impl MessageType for CommInfoRequest {

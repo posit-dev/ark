@@ -149,9 +149,7 @@ fn test_amalthea_comms() {
     frontend.recv_iopub_idle();
     frontend.assert_no_incoming();
 
-    frontend.send_shell(CommInfoRequest {
-        target_name: "".to_string(),
-    });
+    frontend.send_shell(CommInfoRequest { target_name: None });
     frontend.recv_iopub_busy();
 
     assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
@@ -163,11 +161,25 @@ fn test_amalthea_comms() {
     frontend.recv_iopub_idle();
     frontend.assert_no_incoming();
 
+    // Empty string is treated as absent for backward compatibility
+    frontend.send_shell(CommInfoRequest {
+        target_name: Some("".to_string()),
+    });
+    frontend.recv_iopub_busy();
+
+    assert_matches!(frontend.recv_shell(), Message::CommInfoReply(request) => {
+        let comms = request.content.comms;
+        assert!(comms.contains_key(comm_id));
+    });
+
+    frontend.recv_iopub_idle();
+    frontend.assert_no_incoming();
+
     // Test requesting comm info and filtering by target name. We should get
     // back an empty list of comms, since we haven't opened any comms with
     // the target name "i-think-not".
     frontend.send_shell(CommInfoRequest {
-        target_name: "i-think-not".to_string(),
+        target_name: Some("i-think-not".to_string()),
     });
     frontend.recv_iopub_busy();
 
@@ -237,7 +249,7 @@ fn test_amalthea_comms() {
     // Test to see if the comm is still in the list of comms after closing it
     // (it should not be)
     frontend.send_shell(CommInfoRequest {
-        target_name: "variables".to_string(),
+        target_name: Some("variables".to_string()),
     });
     frontend.recv_iopub_busy();
 
@@ -286,7 +298,7 @@ fn test_amalthea_comm_open_from_kernel() {
     // the kernel is correctly tracking the list of comms regardless of where
     // they originated.
     frontend.send_shell(CommInfoRequest {
-        target_name: test_comm_name.clone(),
+        target_name: Some(test_comm_name.clone()),
     });
 
     frontend.recv_iopub_busy();
