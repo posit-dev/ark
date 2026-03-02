@@ -1218,9 +1218,6 @@ impl Console {
             self.refresh_lsp();
         }
 
-        EVENTS.environment_changed.emit(());
-        self.comm_notify_environment_changed();
-
         self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
     }
 
@@ -1517,27 +1514,44 @@ impl Console {
         // have an active request from a previous `read_console()` iteration. If
         // so, we `take()` and clear the `active_request` as we're about to
         // complete it and send a reply to unblock the active Shell request.
-        if let Some(req) = std::mem::take(&mut self.active_request) {
-            // Perform a refresh of the frontend state (Prompts, working
-            // directory, etc)
-            self.with_mut_ui_comm_tx(|ui_comm_tx| {
-                let input_prompt = info.input_prompt.clone();
-                let continuation_prompt = info.continuation_prompt.clone();
-
-                ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
-            });
-
-            // Check for pending graphics updates
-            // (Important that this occurs while in the "busy" state of this ExecuteRequest
-            // so that the `parent` message is set correctly in any Jupyter messages)
-            graphics_device::on_did_execute_request();
-
-            // Let frontend know the last request is complete. This turns us
-            // back to Idle.
-            Self::reply_execute_request(&self.iopub_tx, req, value);
-        } else {
+        let Some(req) = std::mem::take(&mut self.active_request) else {
             log::info!("No active request to handle, discarding: {value:?}");
-        }
+            return;
+        };
+
+        // Perform a refresh of the frontend state (Prompts, working
+        // directory, etc)
+        self.with_mut_ui_comm_tx(|ui_comm_tx| {
+            let input_prompt = info.input_prompt.clone();
+            let continuation_prompt = info.continuation_prompt.clone();
+
+            ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
+        });
+
+        // Check for pending graphics updates
+        // (Important that this occurs while in the "busy" state of this ExecuteRequest
+        // so that the `parent` message is set correctly in any Jupyter messages)
+        //
+        // TODO: Can probably be done via `comm_notify_environment_changed()`,
+        // even though this fires more often. We could add a parameter that lets
+        // the handler disambiguate between finished evaluations and frame
+        // selections.
+        graphics_device::on_did_execute_request();
+
+        // Send execute result/error on IOPub, get back the prepared reply.
+        let (reply, reply_tx) = Self::prepare_execute_reply(&self.iopub_tx, req, value);
+
+        // Notify comm handlers about environment changes. This must happen
+        // after the execute result goes on IOPub but before the reply
+        // unblocks Shell (which sends Idle). This ensures side effects like
+        // data explorer updates and closes arrive within the Busy/Idle
+        // window of the execute request that caused them.
+        EVENTS.environment_changed.emit(());
+        self.comm_notify_environment_changed();
+
+        // Now unblock Shell, which sends Idle
+        log::trace!("Sending `execute_reply`: {reply:?}");
+        reply_tx.send(reply).unwrap();
     }
 
     // Called from Ark's ReadConsole event loop when we get a new execute
@@ -2293,12 +2307,18 @@ impl Console {
         ))
     }
 
-    // Reply to the previously active request. The current prompt type and
-    // whether an error has occurred defines the reply kind.
-    fn reply_execute_request(
+    /// Send the execute result (or error) on IOPub and return the prepared
+    /// reply along with the channel to send it on. The caller is responsible
+    /// for sending the reply after any additional IOPub messages (e.g.
+    /// environment change notifications) have been queued. Sending the reply
+    /// unblocks Shell, which sends Idle.
+    fn prepare_execute_reply(
         iopub_tx: &Sender<IOPubMessage>,
         req: ActiveReadConsoleRequest,
         value: ConsoleValue,
+    ) -> (
+        amalthea::Result<ExecuteReply>,
+        Sender<amalthea::Result<ExecuteReply>>,
     ) {
         log::trace!("Completing execution after receiving prompt");
 
@@ -2340,8 +2360,7 @@ impl Console {
             iopub_tx.send(result).unwrap();
         }
 
-        log::trace!("Sending `execute_reply`: {reply:?}");
-        req.reply_tx.send(reply).unwrap();
+        (reply, req.reply_tx)
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
