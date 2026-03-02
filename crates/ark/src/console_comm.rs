@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::comm_handler::CommHandler;
 use crate::comm_handler::CommHandlerContext;
-use crate::comm_handler::RegisteredComm;
+use crate::comm_handler::ConsoleComm;
 use crate::console::Console;
 
 impl Console {
@@ -27,7 +27,7 @@ impl Console {
         ctx: CommHandlerContext,
     ) {
         handler.handle_open(&ctx);
-        self.comms.insert(comm_id, RegisteredComm {
+        self.comms.insert(comm_id, ConsoleComm {
             handler,
             ctx,
             comm_name,
@@ -76,7 +76,7 @@ impl Console {
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
         handler.handle_open(&ctx);
 
-        self.comms.insert(comm_id.clone(), RegisteredComm {
+        self.comms.insert(comm_id.clone(), ConsoleComm {
             handler,
             ctx,
             comm_name: String::from(comm_name),
@@ -109,8 +109,8 @@ impl Console {
         &self.comm_event_tx
     }
 
-    /// Backend-initiated close cleanup: notify frontend and amalthea.
-    fn comm_notify_closed(&self, comm_id: &str, comm: &RegisteredComm) {
+    /// Backend-initiated close cleanup: notify frontend via amalthea.
+    fn comm_notify_closed(&self, comm_id: &str, comm: &ConsoleComm) {
         comm.ctx.outgoing_tx.send(CommMsg::Close).log_err();
         comm.ctx
             .comm_event_tx
