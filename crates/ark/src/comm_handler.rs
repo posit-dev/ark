@@ -86,10 +86,9 @@ pub enum EnvironmentChanged {
 }
 
 /// A registered comm in the Console's comm table.
-pub struct ConsoleComm {
-    pub handler: Box<dyn CommHandler>,
-    pub ctx: CommHandlerContext,
-    pub comm_name: String,
+pub(crate) struct ConsoleComm {
+    pub(crate) handler: Box<dyn CommHandler>,
+    pub(crate) ctx: CommHandlerContext,
 }
 
 /// Handle an RPC request from a `CommMsg`.
