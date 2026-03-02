@@ -9,7 +9,6 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
-use crossbeam::channel::Sender;
 use stdext::result::ResultExt;
 use uuid::Uuid;
 
@@ -95,13 +94,6 @@ impl Console {
                 self.comm_notify_closed(&comm_id, &reg);
             }
         }
-    }
-
-    /// Temporary accessor for comms not yet migrated to the blocking
-    /// `CommHandler` path. Goes away once all comms are migrated (the
-    /// `comm_event_tx` then lives exclusively in `CommHandlerContext`).
-    pub fn comm_event_tx(&self) -> &Sender<CommEvent> {
-        &self.comm_event_tx
     }
 
     /// Backend-initiated close cleanup: notify frontend via amalthea.

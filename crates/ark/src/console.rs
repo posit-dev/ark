@@ -811,7 +811,7 @@ impl Console {
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
         graphics_device::init_graphics_device(
-            console.comm_event_tx().clone(),
+            console.comm_event_tx.clone(),
             console.get_iopub_tx().clone(),
             graphics_device_rx,
         );
