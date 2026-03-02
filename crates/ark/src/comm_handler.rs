@@ -70,10 +70,19 @@ pub trait CommHandler: Send + Debug {
     /// Handle comm close. Default is no-op.
     fn handle_close(&mut self, _ctx: &CommHandlerContext) {}
 
-    /// Called when the environment changes (e.g. after top-level execution,
-    /// entering/exiting debug, or when frame is selected in call stack).
+    /// Called when the environment changes. The `event` indicates what
+    /// triggered the change so handlers can decide whether to react.
     /// Default is no-op.
-    fn handle_environment(&mut self, _ctx: &CommHandlerContext) {}
+    fn handle_environment(&mut self, _event: EnvironmentChanged, _ctx: &CommHandlerContext) {}
+}
+
+/// Why the environment changed.
+#[derive(Debug, Clone, Copy)]
+pub enum EnvironmentChanged {
+    /// A top-level execution completed (user code, debug eval, etc.).
+    Execution,
+    /// The user selected a different frame in the call stack during debugging.
+    FrameSelected,
 }
 
 /// A registered comm in the Console's comm table.

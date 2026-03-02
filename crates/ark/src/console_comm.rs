@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::comm_handler::CommHandler;
 use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::ConsoleComm;
+use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 
 impl Console {
@@ -88,10 +89,10 @@ impl Console {
         Ok(comm_id)
     }
 
-    pub(crate) fn comm_notify_environment_changed(&mut self) {
+    pub(crate) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {
         let mut closed_ids = Vec::new();
         for (comm_id, reg) in self.comms.iter_mut() {
-            reg.handler.handle_environment(&reg.ctx);
+            reg.handler.handle_environment(event, &reg.ctx);
             if reg.ctx.is_closed() {
                 closed_ids.push(comm_id.clone());
             }
