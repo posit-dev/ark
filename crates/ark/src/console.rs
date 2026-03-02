@@ -97,7 +97,7 @@ use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use url::Url;
 use uuid::Uuid;
 
-use crate::comm_handler::RegisteredComm;
+use crate::comm_handler::ConsoleComm;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::console_filter::strip_step_lines;
@@ -362,7 +362,7 @@ pub struct Console {
     pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
-    pub(crate) comms: HashMap<String, RegisteredComm>,
+    pub(crate) comms: HashMap<String, ConsoleComm>,
 }
 
 /// Stack of pending inputs

@@ -71,7 +71,7 @@ pub trait CommHandler: Send + Debug {
 }
 
 /// A registered comm in the Console's comm table.
-pub struct RegisteredComm {
+pub struct ConsoleComm {
     pub handler: Box<dyn CommHandler>,
     pub ctx: CommHandlerContext,
     pub comm_name: String,
