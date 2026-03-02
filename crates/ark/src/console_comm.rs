@@ -62,8 +62,8 @@ impl Console {
         &mut self,
         comm_name: &str,
         mut handler: Box<dyn CommHandler>,
-        open_json: serde_json::Value,
     ) -> anyhow::Result<String> {
+        let open_metadata = handler.open_metadata();
         let comm_id = Uuid::new_v4().to_string();
 
         let comm = CommSocket::new(
@@ -83,7 +83,7 @@ impl Console {
         });
 
         self.comm_event_tx
-            .send(CommEvent::Opened(comm, open_json))?;
+            .send(CommEvent::Opened(comm, open_metadata))?;
 
         Ok(comm_id)
     }

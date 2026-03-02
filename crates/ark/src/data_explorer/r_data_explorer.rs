@@ -77,8 +77,6 @@ use harp::ColumnNames;
 use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
-use serde::Deserialize;
-use serde::Serialize;
 use stdext::result::ResultExt;
 use stdext::unwrap;
 use tracing::Instrument;
@@ -159,10 +157,6 @@ pub struct RDataExplorer {
     /// data viewer.
     view_indices: Option<Vec<i32>>,
 }
-#[derive(Deserialize, Serialize)]
-struct Metadata {
-    title: String,
-}
 
 impl std::fmt::Debug for RDataExplorer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -200,16 +194,6 @@ impl RDataExplorer {
             row_filters: vec![],
             col_filters: vec![],
         })
-    }
-
-    /// Register this data explorer with Console and notify amalthea.
-    /// Must be called from the R thread. Returns the comm ID.
-    pub fn start(self, console: &mut Console) -> anyhow::Result<String> {
-        let metadata = Metadata {
-            title: self.title.clone(),
-        };
-        let open_json = serde_json::to_value(metadata)?;
-        console.comm_register("positron.dataExplorer", Box::new(self), open_json)
     }
 
     /// Check the environment bindings for updates to the underlying value
@@ -449,6 +433,10 @@ impl RDataExplorer {
 }
 
 impl CommHandler for RDataExplorer {
+    fn open_metadata(&self) -> serde_json::Value {
+        serde_json::json!({ "title": self.title })
+    }
+
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
         handle_rpc_request(&ctx.outgoing_tx, "positron.dataExplorer", msg, |req| {
             self.handle_rpc(req, ctx)
@@ -1235,7 +1223,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     };
 
     let explorer = RDataExplorer::new(title, x, env_info)?;
-    explorer.start(Console::get_mut())?;
+    Console::get_mut().comm_register("positron.dataExplorer", Box::new(explorer))?;
 
     Ok(R_NilValue)
 }
