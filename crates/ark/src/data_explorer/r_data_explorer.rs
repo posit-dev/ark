@@ -61,15 +61,10 @@ use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableShape;
 use amalthea::comm::data_explorer_comm::TextSearchType;
-use amalthea::comm::event::CommEvent;
-use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommOutgoingTx;
-use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
-use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -87,7 +82,6 @@ use serde::Serialize;
 use stdext::result::ResultExt;
 use stdext::unwrap;
 use tracing::Instrument;
-use uuid::Uuid;
 
 use crate::comm_handler::handle_rpc_request;
 use crate::comm_handler::CommHandler;
@@ -210,35 +204,12 @@ impl RDataExplorer {
 
     /// Register this data explorer with Console and notify amalthea.
     /// Must be called from the R thread. Returns the comm ID.
-    pub fn start(
-        self,
-        comm_event_tx: Sender<CommEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-    ) -> anyhow::Result<String> {
-        let id = Uuid::new_v4().to_string();
-
-        let comm = CommSocket::new(
-            CommInitiator::BackEnd,
-            id.clone(),
-            String::from("positron.dataExplorer"),
-            iopub_tx,
-        );
-
-        let ctx = CommHandlerContext::new(comm.outgoing_tx.clone());
+    pub fn start(self, console: &mut Console) -> anyhow::Result<String> {
         let metadata = Metadata {
             title: self.title.clone(),
         };
         let open_json = serde_json::to_value(metadata)?;
-
-        Console::get_mut().comm_register(
-            id.clone(),
-            String::from("positron.dataExplorer"),
-            Box::new(self),
-            ctx,
-        );
-
-        comm_event_tx.send(CommEvent::Opened(comm, open_json))?;
-        Ok(id)
+        console.comm_register("positron.dataExplorer", Box::new(self), open_json)
     }
 
     /// Check the environment bindings for updates to the underlying value
@@ -1240,10 +1211,6 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     let title = RObject::new(title);
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
-    let console = Console::get();
-    let comm_event_tx = console.comm_event_tx().clone();
-    let iopub_tx = console.get_iopub_tx().clone();
-
     // If an environment is provided, watch the variable in the environment
     let env_info = if env != R_NilValue {
         let var_obj = RObject::new(var);
@@ -1268,7 +1235,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     };
 
     let explorer = RDataExplorer::new(title, x, env_info)?;
-    explorer.start(comm_event_tx, iopub_tx)?;
+    explorer.start(Console::get_mut())?;
 
     Ok(R_NilValue)
 }

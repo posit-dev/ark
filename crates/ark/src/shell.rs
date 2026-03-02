@@ -7,11 +7,9 @@
 
 use amalthea::comm::comm_channel::Comm;
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
 use amalthea::language::shell_handler::CommHandled;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
@@ -58,7 +56,6 @@ use crate::ui::UiComm;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
-    comm_event_tx: Sender<CommEvent>,
     r_request_tx: Sender<RRequest>,
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
@@ -76,7 +73,6 @@ pub enum REvent {
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub(crate) fn new(
-        comm_event_tx: Sender<CommEvent>,
         r_request_tx: Sender<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
@@ -85,7 +81,6 @@ impl Shell {
         console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
         Self {
-            comm_event_tx,
             r_request_tx,
             stdin_request_tx,
             kernel_request_tx,
@@ -237,10 +232,7 @@ impl ShellHandler for Shell {
     /// the UI has been disconnected and reconnected.
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
-            Comm::Variables => {
-                let iopub_tx = comm.outgoing_tx.iopub_tx().clone();
-                handle_comm_open_variables(comm, self.comm_event_tx.clone(), iopub_tx)
-            },
+            Comm::Variables => handle_comm_open_variables(comm),
             Comm::Ui => handle_comm_open_ui(
                 comm,
                 self.stdin_request_tx.clone(),
@@ -299,14 +291,10 @@ impl ShellHandler for Shell {
     }
 }
 
-fn handle_comm_open_variables(
-    comm: CommSocket,
-    comm_event_tx: Sender<CommEvent>,
-    iopub_tx: Sender<IOPubMessage>,
-) -> amalthea::Result<bool> {
+fn handle_comm_open_variables(comm: CommSocket) -> amalthea::Result<bool> {
     r_task(|| {
         let global_env = RObject::view(R_ENVS.global);
-        RVariables::start(global_env, comm, comm_event_tx, iopub_tx);
+        RVariables::start(global_env, comm);
         Ok(true)
     })
 }

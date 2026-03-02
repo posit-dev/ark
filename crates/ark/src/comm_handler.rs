@@ -5,14 +5,15 @@
 //
 //
 
+use std::cell::Cell;
 use std::fmt::Debug;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
 
 use amalthea::comm::base_comm::json_rpc_error;
 use amalthea::comm::base_comm::JsonRpcErrorCode;
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommOutgoingTx;
+use crossbeam::channel::Sender;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use stdext::result::ResultExt;
@@ -23,14 +24,16 @@ use stdext::result::ResultExt;
 #[derive(Debug)]
 pub struct CommHandlerContext {
     pub outgoing_tx: CommOutgoingTx,
-    closed: AtomicBool,
+    pub comm_event_tx: Sender<CommEvent>,
+    closed: Cell<bool>,
 }
 
 impl CommHandlerContext {
-    pub fn new(outgoing_tx: CommOutgoingTx) -> Self {
+    pub fn new(outgoing_tx: CommOutgoingTx, comm_event_tx: Sender<CommEvent>) -> Self {
         Self {
             outgoing_tx,
-            closed: AtomicBool::new(false),
+            comm_event_tx,
+            closed: Cell::new(false),
         }
     }
 
@@ -38,11 +41,11 @@ impl CommHandlerContext {
     /// returns. The handler can still send responses or events before and
     /// after calling this since cleanup is deferred.
     pub fn close_on_exit(&self) {
-        self.closed.store(true, Ordering::Relaxed);
+        self.closed.set(true);
     }
 
     pub fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Relaxed)
+        self.closed.get()
     }
 }
 

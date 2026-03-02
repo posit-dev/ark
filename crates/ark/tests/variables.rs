@@ -6,7 +6,6 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
 use amalthea::comm::variables_comm::ClearParams;
 use amalthea::comm::variables_comm::DeleteParams;
 use amalthea::comm::variables_comm::QueryTableSummaryParams;
@@ -70,17 +69,12 @@ fn test_variables_list() {
         iopub_tx.clone(),
     );
 
-    // Create a dummy comm manager channel that isn't actually used.
-    // It's required when opening a `RDataViewer` comm through `view()`, but
-    // we don't test that here.
-    let (comm_event_tx, _) = bounded::<CommEvent>(0);
-
     // Create a new environment handler and give it the test
     // environment we created.
     let incoming_tx = comm.incoming_tx.clone();
     r_task(|| {
         let test_env = test_env.get().clone();
-        RVariables::start(test_env, comm.clone(), comm_event_tx.clone(), iopub_tx);
+        RVariables::start(test_env, comm.clone());
     });
 
     // Ensure we get a list of variables after initialization
@@ -344,17 +338,9 @@ fn test_query_table_summary() {
     );
     let incoming_tx = comm.incoming_tx.clone();
 
-    // Simulate comm manager
-    let (comm_event_tx, _) = bounded::<CommEvent>(0);
-
     r_task(|| {
         // Create a new variables comm
-        RVariables::start(
-            RObject::from(R_ENVS.global),
-            comm.clone(),
-            comm_event_tx,
-            iopub_tx,
-        );
+        RVariables::start(RObject::from(R_ENVS.global), comm.clone());
 
         // Create test datasets
         let code = r#"

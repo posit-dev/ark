@@ -64,6 +64,7 @@ use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
+use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use ark::comm_handler::CommHandler;
@@ -106,7 +107,8 @@ fn open_data_explorer(dataset: String) -> TestSetup {
 
     let comm_id = uuid::Uuid::new_v4().to_string();
     let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
-    let ctx = CommHandlerContext::new(outgoing_tx);
+    let (comm_event_tx, _) = bounded::<CommEvent>(10);
+    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
     TestSetup {
         inner: Mutex::new(handler),
@@ -133,7 +135,8 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
 
     let comm_id = uuid::Uuid::new_v4().to_string();
     let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
-    let ctx = CommHandlerContext::new(outgoing_tx);
+    let (comm_event_tx, _) = bounded::<CommEvent>(10);
+    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
     Ok(TestSetup {
         inner: Mutex::new(handler),
