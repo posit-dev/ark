@@ -80,11 +80,20 @@ make_ark_source <- function(original_source) {
         # is not yet available (e.g. during development with mismatched builds).
         if (!is.null(source_uri)) {
             pushed <- tryCatch(
-                { .ps.Call("ps_graphics_push_source_context", source_uri); TRUE },
+                {
+                    .ps.Call("ps_graphics_push_source_context", source_uri)
+                    TRUE
+                },
                 error = function(e) FALSE
             )
             if (pushed) {
-                on.exit(tryCatch(.ps.Call("ps_graphics_pop_source_context"), error = function(e) NULL), add = TRUE)
+                on.exit(
+                    tryCatch(
+                        .ps.Call("ps_graphics_pop_source_context"),
+                        error = function(e) NULL
+                    ),
+                    add = TRUE
+                )
             }
         }
 

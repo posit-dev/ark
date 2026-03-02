@@ -421,5 +421,8 @@ bigrquery_connection_code <- function(con) {
         params <- c(params, sprintf('billing = "%s"', billing))
     }
 
-    sprintf("DBI::dbConnect(bigrquery::bigquery(), %s)", paste(params, collapse = ", "))
+    sprintf(
+        "DBI::dbConnect(bigrquery::bigquery(), %s)",
+        paste(params, collapse = ", ")
+    )
 }

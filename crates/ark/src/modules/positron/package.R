@@ -79,13 +79,21 @@
 
 get_package_addins <- function(pkg) {
     path <- system.file("rstudio", "addins.dcf", package = pkg)
-    if (!nzchar(path)) return(list())
+    if (!nzchar(path)) {
+        return(list())
+    }
 
     dcf <- tryCatch(read.dcf(path), error = function(cnd) {
-        log_error(sprintf("Failed to read addins.dcf for '%s': %s", pkg, conditionMessage(cnd)))
+        log_error(sprintf(
+            "Failed to read addins.dcf for '%s': %s",
+            pkg,
+            conditionMessage(cnd)
+        ))
         NULL
     })
-    if (is.null(dcf)) return(list())
+    if (is.null(dcf)) {
+        return(list())
+    }
 
     cols <- colnames(dcf)
     out <- lapply(seq_len(nrow(dcf)), function(i) {
@@ -96,7 +104,9 @@ get_package_addins <- function(pkg) {
 
 parse_addin_row <- function(dcf, row, cols, pkg) {
     binding <- dcf_field(dcf, row, "Binding", cols)
-    if (!nzchar(binding)) return(NULL)
+    if (!nzchar(binding)) {
+        return(NULL)
+    }
 
     list(
         name = dcf_field(dcf, row, "Name", cols),
@@ -120,7 +130,9 @@ parse_addin_row <- function(dcf, row, cols, pkg) {
 
 get_package_templates <- function(pkg) {
     path <- system.file("rmarkdown", "templates", package = pkg)
-    if (!nzchar(path)) return(list())
+    if (!nzchar(path)) {
+        return(list())
+    }
 
     dirs <- list.dirs(path, recursive = FALSE, full.names = TRUE)
     out <- lapply(dirs, function(dir) parse_template_dir(dir, pkg))
@@ -129,13 +141,21 @@ get_package_templates <- function(pkg) {
 
 parse_template_dir <- function(dir, pkg) {
     yaml_path <- file.path(dir, "template.yaml")
-    if (!file.exists(yaml_path)) return(NULL)
+    if (!file.exists(yaml_path)) {
+        return(NULL)
+    }
 
     meta <- tryCatch(yaml::read_yaml(yaml_path), error = function(cnd) {
-        log_error(sprintf("Failed to read template.yaml at '%s': %s", yaml_path, conditionMessage(cnd)))
+        log_error(sprintf(
+            "Failed to read template.yaml at '%s': %s",
+            yaml_path,
+            conditionMessage(cnd)
+        ))
         NULL
     })
-    if (is.null(meta)) return(NULL)
+    if (is.null(meta)) {
+        return(NULL)
+    }
 
     list(
         name = meta$name %||% basename(dir),

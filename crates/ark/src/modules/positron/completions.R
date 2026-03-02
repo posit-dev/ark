@@ -122,7 +122,9 @@ customCompletionHandlers <- new.env(parent = emptyenv())
     "Sys.setenv",
     "...",
     function(position) {
-        if (position != "name") return(NULL)
+        if (position != "name") {
+            return(NULL)
+        }
 
         .ps.completions.createCustomCompletions(
             values = names(Sys.getenv()),
@@ -180,8 +182,9 @@ customCompletionHandlers <- new.env(parent = emptyenv())
         )
 
         method <- eval(call, envir = globalenv())
-        if (is.function(method))
+        if (is.function(method)) {
             return(.ps.completions.formalNamesDefault(method))
+        }
     }
 }
 
