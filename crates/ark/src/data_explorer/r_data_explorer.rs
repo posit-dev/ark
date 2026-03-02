@@ -84,6 +84,7 @@ use tracing::Instrument;
 use crate::comm_handler::handle_rpc_request;
 use crate::comm_handler::CommHandler;
 use crate::comm_handler::CommHandlerContext;
+use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
 use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
@@ -443,7 +444,10 @@ impl CommHandler for RDataExplorer {
         });
     }
 
-    fn handle_environment(&mut self, ctx: &CommHandlerContext) {
+    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution = event else {
+            return;
+        };
         match self.update(ctx) {
             Ok(true) => {},
             Ok(false) => ctx.close_on_exit(),

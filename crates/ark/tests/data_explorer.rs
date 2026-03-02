@@ -69,6 +69,7 @@ use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use ark::comm_handler::CommHandler;
 use ark::comm_handler::CommHandlerContext;
+use ark::comm_handler::EnvironmentChanged;
 use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
@@ -188,7 +189,10 @@ impl TestSetup {
         let inner = &self.inner;
         let ctx = &self.ctx;
         r_task(|| {
-            inner.lock().unwrap().handle_environment(ctx);
+            inner
+                .lock()
+                .unwrap()
+                .handle_environment(EnvironmentChanged::Execution, ctx);
         });
         if self.ctx.is_closed() {
             self.ctx.outgoing_tx.send(CommMsg::Close).unwrap();

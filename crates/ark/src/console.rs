@@ -98,6 +98,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::comm_handler::ConsoleComm;
+use crate::comm_handler::EnvironmentChanged;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::console_filter::strip_step_lines;
@@ -1521,6 +1522,8 @@ impl Console {
 
         // Perform a refresh of the frontend state (Prompts, working
         // directory, etc)
+        // TODO: Once the UI comm is migrated to the `CommHandler` path, this
+        // becomes a `handle_environment` impl reacting to `Execution`.
         self.with_mut_ui_comm_tx(|ui_comm_tx| {
             let input_prompt = info.input_prompt.clone();
             let continuation_prompt = info.continuation_prompt.clone();
@@ -1531,11 +1534,6 @@ impl Console {
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
         // so that the `parent` message is set correctly in any Jupyter messages)
-        //
-        // TODO: Can probably be done via `comm_notify_environment_changed()`,
-        // even though this fires more often. We could add a parameter that lets
-        // the handler disambiguate between finished evaluations and frame
-        // selections.
         graphics_device::on_did_execute_request();
 
         // Send execute result/error on IOPub, get back the prepared reply.
@@ -1547,7 +1545,7 @@ impl Console {
         // data explorer updates and closes arrive within the Busy/Idle
         // window of the execute request that caused them.
         EVENTS.environment_changed.emit(());
-        self.comm_notify_environment_changed();
+        self.comm_notify_environment_changed(EnvironmentChanged::Execution);
 
         // Now unblock Shell, which sends Idle
         log::trace!("Sending `execute_reply`: {reply:?}");
@@ -2908,7 +2906,7 @@ impl Console {
         // Signal listeners (e.g. the Variables pane) that they can update state
         if frame_id.is_some() {
             EVENTS.environment_changed.emit(());
-            self.comm_notify_environment_changed();
+            self.comm_notify_environment_changed(EnvironmentChanged::FrameSelected);
         }
     }
 
