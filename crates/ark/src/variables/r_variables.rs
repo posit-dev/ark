@@ -359,8 +359,8 @@ impl RVariables {
 
             let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
                 .map_err(|err| harp::Error::Anyhow(err))?;
-            let viewer_id = explorer
-                .start(Console::get_mut())
+            let viewer_id = Console::get_mut()
+                .comm_register("positron.dataExplorer", Box::new(explorer))
                 .map_err(|err| harp::Error::Anyhow(err))?;
             Ok(Some(viewer_id))
         })
