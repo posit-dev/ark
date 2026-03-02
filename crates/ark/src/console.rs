@@ -2155,10 +2155,11 @@ impl Console {
             KernelRequest::CommOpen {
                 comm_id,
                 comm_name,
-                handler,
+                factory,
                 ctx,
                 done_tx,
             } => {
+                let handler = (factory.0)();
                 self.comm_handle_open(comm_id, comm_name, handler, ctx);
                 done_tx.send(()).log_err();
             },

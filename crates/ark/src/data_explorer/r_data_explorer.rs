@@ -164,10 +164,6 @@ impl std::fmt::Debug for RDataExplorer {
     }
 }
 
-// Safety: `RDataExplorer` is only created and accessed on the R thread.
-// The `Send` bound comes from `CommHandler: Send`.
-unsafe impl Send for RDataExplorer {}
-
 impl RDataExplorer {
     /// Create a new data explorer. Must be called from the R thread.
     pub fn new(

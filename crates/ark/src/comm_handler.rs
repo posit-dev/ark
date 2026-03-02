@@ -53,7 +53,7 @@ impl CommHandlerContext {
 ///
 /// All methods are called from the R thread within `ReadConsole`, so R code
 /// can be safely called from these handlers.
-pub trait CommHandler: Send + Debug {
+pub trait CommHandler: Debug {
     /// Metadata sent to the frontend in the `comm_open` message
     /// (backend-initiated comms). Default is empty object.
     fn open_metadata(&self) -> serde_json::Value {

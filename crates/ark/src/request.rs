@@ -5,6 +5,8 @@
 //
 //
 
+use std::fmt::Debug;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
@@ -52,17 +54,28 @@ pub fn debug_request_command(req: DebugRequest) -> String {
     })
 }
 
+/// Newtype mainly so `KernelRequest` can derive `Debug` despite holding a closure.
+pub struct CommHandlerFactory(pub Box<dyn FnOnce() -> Box<dyn CommHandler> + Send>);
+
+impl Debug for CommHandlerFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CommHandlerFactory(..)")
+    }
+}
+
 /// Represents requests to the kernel.
 #[derive(Debug)]
 pub enum KernelRequest {
     /// Establish a channel to the UI comm which forwards messages to the frontend
     EstablishUiCommChannel(Sender<UiCommMessage>),
 
-    /// Register a new comm handler on the R thread (frontend-initiated comms)
+    /// Register a new comm handler on the R thread (frontend-initiated comms).
+    /// Uses a factory closure so the handler (which may hold `RObject`s) is
+    /// created on the R thread rather than sent across threads.
     CommOpen {
         comm_id: String,
         comm_name: String,
-        handler: Box<dyn CommHandler>,
+        factory: CommHandlerFactory,
         ctx: CommHandlerContext,
         done_tx: Sender<()>,
     },
