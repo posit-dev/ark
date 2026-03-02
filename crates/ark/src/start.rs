@@ -87,7 +87,6 @@ pub fn start_kernel(
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Box::new(Shell::new(
-        comm_event_tx.clone(),
         r_request_tx.clone(),
         stdin_request_tx.clone(),
         kernel_init_rx,
