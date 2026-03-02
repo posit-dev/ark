@@ -75,9 +75,9 @@ pub struct DummyArkFrontend {
     variables_comm_id: RefCell<Option<String>>,
     /// Buffered variables comm events, auto-collected by `recv_iopub_next()`.
     /// Buffering is needed because variables events can race with Idle on
-    /// IOPub. Once https://github.com/posit-dev/ark/issues/689 is resolved,
-    /// we should be able to assert these deterministically in the message
-    /// sequence instead.
+    /// IOPub. Once variables are migrated to the blocking `CommHandler` path
+    /// (https://github.com/posit-dev/ark/issues/689), we should be able to
+    /// assert these deterministically in the message sequence instead.
     variables_events: RefCell<VecDeque<VariablesFrontendEvent>>,
     /// Auto-buffered data explorer state.
     data_explorer: DataExplorerBuffer,
@@ -91,12 +91,13 @@ enum DataExplorerMessage {
     Close(String),
 }
 
-/// Buffers data explorer comm messages that arrive asynchronously on IOPub.
+/// Buffers data explorer comm messages received on IOPub.
 ///
-/// The data explorer spawns a background thread that sends CommOpen, CommMsg
-/// (events), and CommClose independently of the execute request lifecycle.
-/// These can race with Idle and other messages, so we buffer them here and
-/// provide methods to consume them in tests.
+/// With the blocking `CommHandler` path, data explorer events and closes are
+/// now sent synchronously from the R thread and arrive deterministically
+/// before Idle. However, `CommOpen` for backend-initiated comms still goes
+/// through the `CommEvent` channel to Shell, so it arrives after Idle.
+/// Buffering is retained for now to handle that case and any stragglers.
 struct DataExplorerBuffer {
     /// Comm IDs of open data explorer comms.
     comm_ids: RefCell<Vec<String>>,
@@ -339,10 +340,9 @@ impl DummyArkFrontend {
     /// Try to buffer a known message (stream, variables comm, or data explorer comm).
     /// Traces the message if it was buffered. Returns `true` if the message was consumed.
     ///
-    /// Comm message buffering is needed because comm events can race with Idle
-    /// on IOPub. Once https://github.com/posit-dev/ark/issues/689 is resolved,
-    /// comm events should arrive deterministically in the message sequence and
-    /// this buffering can be removed.
+    /// Variables comm events still race with Idle (not yet migrated to
+    /// blocking `CommHandler` path). Data explorer events are now
+    /// deterministic but `CommOpen` still arrives after Idle.
     fn try_buffer_msg(&self, msg: &Message) -> bool {
         match msg {
             Message::Stream(ref data) => {
@@ -958,8 +958,8 @@ impl DummyArkFrontend {
     /// automatically buffered by `recv_iopub_next()` (parallel to how Stream
     /// and Variables messages are handled).
     ///
-    /// Note: The data explorer comm is opened asynchronously by a spawned thread,
-    /// so the CommOpen message may arrive after the execute request completes.
+    /// Note: `CommOpen` for backend-initiated comms goes through Shell's
+    /// `CommEvent` channel, so it arrives on IOPub after Idle.
     #[track_caller]
     pub fn open_data_explorer(&self, var_name: &str) -> String {
         self.send_execute_request(
@@ -971,8 +971,8 @@ impl DummyArkFrontend {
         self.recv_iopub_idle();
         self.recv_shell_execute_reply();
 
-        // The CommOpen is sent asynchronously by the data explorer thread,
-        // so we need to wait for it separately after the execute completes.
+        // CommOpen goes through Shell's comm event channel, so it arrives
+        // after Idle.
         let comm_open = self.recv_iopub_comm_open();
         assert_eq!(
             comm_open.target_name, "positron.dataExplorer",
