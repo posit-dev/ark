@@ -161,16 +161,13 @@ pub enum SessionMode {
     Background,
 }
 
+/// Debug call text captured from R's debug output.
 #[derive(Clone, Debug)]
 pub enum DebugCallText {
-    None,
-    Finalized(String, DebugCallTextKind),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum DebugCallTextKind {
-    Debug,
-    DebugAt,
+    /// `debug: <expr>` - emitted when stepping without srcrefs
+    Debug(String),
+    /// `debug at <path>#<line>: <expr>` - emitted when stepping with srcrefs
+    DebugAt(String),
 }
 
 #[derive(Debug, Clone)]
@@ -301,7 +298,7 @@ pub struct Console {
     pub(crate) debug_is_debugging: bool,
 
     /// The current call emitted by R as `debug: <call-text>`.
-    pub(crate) debug_call_text: DebugCallText,
+    pub(crate) debug_call_text: Option<DebugCallText>,
 
     /// The last known `start_line` for the active context frame.
     pub(crate) debug_last_line: Option<i64>,
@@ -938,7 +935,7 @@ impl Console {
             banner: None,
             r_error_buffer: None,
             captured_output: None,
-            debug_call_text: DebugCallText::None,
+            debug_call_text: None,
             debug_last_line: None,
             debug_transient_eval: false,
             debug_last_stack: vec![],
@@ -1138,7 +1135,7 @@ impl Console {
             self.emit_stdout(text);
         }
         if let Some(update) = debug_update {
-            self.debug_update_call_text(update);
+            self.debug_call_text = Some(update);
         }
 
         // Invariant: If we detect a browser prompt, `self.debug_is_debugging`
@@ -2383,7 +2380,7 @@ impl Console {
         // Did we just step onto an injected call (breakpoint or verify)?
         let at_auto_step = matches!(
             &self.debug_call_text,
-            DebugCallText::Finalized(text, DebugCallTextKind::DebugAt)
+            Some(DebugCallText::DebugAt(text))
                 if text.trim_start().starts_with("base::.ark_auto_step")
         );
 

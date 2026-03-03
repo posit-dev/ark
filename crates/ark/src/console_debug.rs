@@ -22,9 +22,7 @@ use url::Url;
 
 use crate::console::Console;
 use crate::console::DebugCallText;
-use crate::console::DebugCallTextKind;
 use crate::console::DebugStoppedReason;
-use crate::console_filter::DebugCallTextUpdate;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -138,7 +136,7 @@ impl Console {
         self.debug_is_debugging = false;
         self.debug_stopped_reason = None;
         self.debug_last_stack = vec![];
-        self.debug_call_text = DebugCallText::None;
+        self.debug_call_text = None;
         self.debug_last_line = None;
         self.debug_stop_session();
     }
@@ -152,24 +150,15 @@ impl Console {
         dap.stop_debug();
     }
 
-    /// Apply a debug call text update from the stream filter
-    pub(crate) fn debug_update_call_text(&mut self, update: DebugCallTextUpdate) {
-        match update {
-            DebugCallTextUpdate::Finalized(text, kind) => {
-                self.debug_call_text = DebugCallText::Finalized(text, kind);
-            },
-        }
-    }
-
     pub(crate) fn debug_stack_info(&mut self) -> Result<Vec<FrameInfo>> {
         // We leave finalized `call_text` in place rather than setting it to `None` here
         // in case the user executes an arbitrary expression in the debug R console, which
         // loops us back here without updating the `call_text` in any way, allowing us to
         // recreate the debugger state after their code execution.
-        let call_text = match self.debug_call_text.clone() {
-            DebugCallText::None => None,
-            DebugCallText::Finalized(call_text, DebugCallTextKind::Debug) => Some(call_text),
-            DebugCallText::Finalized(_, DebugCallTextKind::DebugAt) => None,
+        let call_text = match &self.debug_call_text {
+            None => None,
+            Some(DebugCallText::Debug(text)) => Some(text.clone()),
+            Some(DebugCallText::DebugAt(_)) => None,
         };
 
         let last_start_line = self.debug_last_line;

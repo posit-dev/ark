@@ -25,7 +25,7 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::console::DebugCallTextKind;
+use crate::console::DebugCallText;
 
 /// Patterns to filter from console output.
 /// Each pattern is matched at a line boundary.
@@ -227,12 +227,9 @@ impl ConsoleFilter {
     /// are emitted by R immediately before `do_browser()`, which always
     /// results in a browser `ReadConsole`. So `is_browser` alone is
     /// sufficient to identify real debug output.
-    pub fn on_read_console(
-        &mut self,
-        is_browser: bool,
-    ) -> (Option<String>, Option<DebugCallTextUpdate>) {
+    pub fn on_read_console(&mut self, is_browser: bool) -> (Option<String>, Option<DebugCallText>) {
         let mut emit: Option<String> = None;
-        let mut debug_update: Option<DebugCallTextUpdate> = None;
+        let mut debug_update: Option<DebugCallText> = None;
 
         // Process current state
         match std::mem::replace(&mut self.state, ConsoleFilterState::Passthrough {
@@ -309,34 +306,21 @@ fn try_match_prefix(content: &str) -> Option<MatchedPattern> {
     None
 }
 
-/// Update to apply to the Console's debug_call_text field
-#[derive(Debug)]
-pub enum DebugCallTextUpdate {
-    /// Set to Finalized with the given text and kind
-    Finalized(String, DebugCallTextKind),
-}
-
 /// Finalize a captured debug message and produce the appropriate debug state
 /// update. Nested prefixes are already resolved during accumulation (in
 /// `process_chunk`), so `pattern` always reflects the last prefix seen.
-fn finalize_capture(pattern: MatchedPattern, buffer: &str) -> Option<DebugCallTextUpdate> {
+fn finalize_capture(pattern: MatchedPattern, buffer: &str) -> Option<DebugCallText> {
     match pattern {
-        MatchedPattern::DebugAt => Some(extract_debug_at_update(buffer)),
-        MatchedPattern::Debug => Some(extract_debug_update(buffer)),
+        MatchedPattern::DebugAt => {
+            let text = match find_debug_at_expression_start(buffer) {
+                Some(start) => buffer[start..].to_string(),
+                None => String::new(),
+            };
+            Some(DebugCallText::DebugAt(text))
+        },
+        MatchedPattern::Debug => Some(DebugCallText::Debug(buffer.to_string())),
         MatchedPattern::CalledFrom => None,
     }
-}
-
-fn extract_debug_at_update(after_prefix: &str) -> DebugCallTextUpdate {
-    let expr = match find_debug_at_expression_start(after_prefix) {
-        Some(start) => after_prefix[start..].to_string(),
-        None => String::new(),
-    };
-    DebugCallTextUpdate::Finalized(expr, DebugCallTextKind::DebugAt)
-}
-
-fn extract_debug_update(after_prefix: &str) -> DebugCallTextUpdate {
-    DebugCallTextUpdate::Finalized(after_prefix.to_string(), DebugCallTextKind::Debug)
 }
 
 /// Find the start of the expression in a `debug at` buffer
