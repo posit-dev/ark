@@ -75,8 +75,6 @@ enum ConsoleFilterState {
         pattern: MatchedPattern,
         buffer: String,
         timestamp: Instant,
-        /// Whether the console was in a debug session when this match started.
-        was_debugging: bool,
     },
 }
 
@@ -84,9 +82,6 @@ enum ConsoleFilterState {
 pub struct ConsoleFilter {
     state: ConsoleFilterState,
     timeout: Duration,
-    /// Whether we're currently inside a debug session. Updated by the
-    /// console so the filter can record context when entering `Filtering`.
-    is_debugging: bool,
     /// Whether to suppress confirmed debug output. When `false`, the
     /// filter still extracts debug info for auto-stepping but emits
     /// the content instead of dropping it.
@@ -108,7 +103,6 @@ impl ConsoleFilter {
                 at_line_start: true,
             },
             timeout: get_timeout(),
-            is_debugging: false,
             suppress: true,
         }
     }
@@ -120,13 +114,8 @@ impl ConsoleFilter {
                 at_line_start: true,
             },
             timeout,
-            is_debugging: false,
             suppress: true,
         }
-    }
-
-    pub fn set_debugging(&mut self, is_debugging: bool) {
-        self.is_debugging = is_debugging;
     }
 
     pub fn set_suppress(&mut self, suppress: bool) {
@@ -170,7 +159,6 @@ impl ConsoleFilter {
                                 pattern,
                                 buffer: String::new(),
                                 timestamp: Instant::now(),
-                                was_debugging: self.is_debugging,
                             };
                             (None, prefix_len)
                         },
@@ -235,17 +223,10 @@ impl ConsoleFilter {
     /// The `is_browser` parameter indicates whether this is a browser prompt
     /// (debug mode) or a top-level prompt (normal execution). This is the key
     /// signal for distinguishing real debug messages from adversarial user
-    /// output:
-    ///
-    /// When `was_debugging || is_browser`, the content is suppressed as
-    /// real debug output. Otherwise it is emitted back to the user.
-    ///
-    /// - `was_debugging`: the prefix was matched while already in a debug
-    ///   session, so it's debug machinery output.
-    /// - `is_browser`: we weren't debugging but we've now landed on a
-    ///   browser prompt, so this is debug-entry output like `Called from:`.
-    /// - Neither: user output at top level that happened to match a
-    ///   prefix -- emit it.
+    /// output: all real debug prefixes (`Called from:`, `debug at`, `debug:`)
+    /// are emitted by R immediately before `do_browser()`, which always
+    /// results in a browser `ReadConsole`. So `is_browser` alone is
+    /// sufficient to identify real debug output.
     pub fn on_read_console(
         &mut self,
         is_browser: bool,
@@ -259,15 +240,12 @@ impl ConsoleFilter {
         }) {
             ConsoleFilterState::Passthrough { .. } => {},
             ConsoleFilterState::Filtering {
-                pattern,
-                buffer,
-                was_debugging,
-                ..
+                pattern, buffer, ..
             } => {
-                if was_debugging || is_browser {
+                if is_browser {
                     debug_update = finalize_capture(pattern, &buffer);
                 }
-                if !(was_debugging || is_browser) || !self.suppress {
+                if !is_browser || !self.suppress {
                     let text = format!("{}{}", pattern.prefix(), buffer);
                     emit = Some(text);
                 }
@@ -660,7 +638,6 @@ mod tests {
     fn test_exiting_from_passes_through() {
         // "exiting from:" is no longer filtered, it passes through immediately.
         let mut filter = ConsoleFilter::new();
-        filter.set_debugging(true);
         let emits = filter.feed("exiting from: f()\n");
         assert_eq!(collect_emitted(&emits), "exiting from: f()\n");
     }
@@ -669,7 +646,6 @@ mod tests {
     fn test_debugging_in_passes_through() {
         // "debugging in:" is no longer filtered, it passes through immediately.
         let mut filter = ConsoleFilter::new();
-        filter.set_debugging(true);
         let emits = filter.feed("debugging in: f()\n");
         assert_eq!(collect_emitted(&emits), "debugging in: f()\n");
     }
@@ -680,7 +656,6 @@ mod tests {
         // is still extracted for auto-stepping.
         let mut filter = ConsoleFilter::new();
         filter.set_suppress(false);
-        filter.set_debugging(true);
         let emits = filter.feed("debug at file.R#10: x <- 1\n");
         assert!(emits.is_empty());
 
@@ -694,7 +669,6 @@ mod tests {
         // "exiting from:" is no longer filtered regardless of suppress flag.
         let mut filter = ConsoleFilter::new();
         filter.set_suppress(false);
-        filter.set_debugging(true);
         let emits = filter.feed("exiting from: f()\n");
         assert_eq!(collect_emitted(&emits), "exiting from: f()\n");
     }

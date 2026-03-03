@@ -675,10 +675,7 @@ fn test_multiline_printvalue_truncated_from_autoprint() {
 
 /// When `c` (continue) is used in a debugged function, user cat() output
 /// matching a debug prefix is deferred by the stream filter but ultimately
-/// emitted, because `filter.set_debugging(false)` fires when the browser's
-/// ReadConsole returns "c". So during the function body, `was_debugging` is
-/// false, and at the top-level ReadConsole the filter emits the content
-/// (was_debugging=false, is_browser=false).
+/// emitted at the top-level ReadConsole (`is_browser=false`).
 ///
 /// `exiting from: f()` reaches autoprint at n_frame=0. Since `exiting from:`
 /// is not filtered, it appears in the execute_result alongside the return value.
@@ -705,8 +702,6 @@ fn test_continue_prefix_cat_preserved() {
     frontend.recv_shell_execute_reply();
 
     // Continue with "c" - executes entire function body without stopping.
-    // `filter.set_debugging(false)` fires when the browser's ReadConsole
-    // returns "c", so all cat() output during execution has was_debugging=false.
     frontend.send_execute_request("c", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
@@ -714,8 +709,8 @@ fn test_continue_prefix_cat_preserved() {
     let streams = frontend.drain_streams();
 
     // All three cat() lines survive: the prefix-matching line is deferred
-    // by the stream filter but emitted at the top-level ReadConsole because
-    // was_debugging=false and is_browser=false.
+    // by the stream filter but emitted at the top-level ReadConsole
+    // (`is_browser=false`).
     assert!(
         streams.stdout().contains("line1"),
         "line1 should survive, got: {:?}",
