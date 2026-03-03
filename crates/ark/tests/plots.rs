@@ -515,3 +515,74 @@ fn test_plot_from_source_dynamic() {
     }
     frontend.recv_shell_execute_reply();
 }
+
+/// Test that nested source() calls attribute plots to the correct file.
+///
+/// When file A sources file B, and file B creates a plot, the plot's origin
+/// should point to file B (the innermost source context), not file A.
+/// This verifies that the source context stack correctly tracks nesting.
+#[test]
+fn test_plot_source_context_stacking() {
+    let frontend = DummyArkFrontend::lock();
+
+    // File B creates a plot
+    let file_b = SourceFile::new("plot(1:10)\n");
+
+    // File A sources file B, then creates its own plot
+    let file_a_code = format!("source('{}')\nplot(1:5)\n", file_b.path);
+    let file_a = SourceFile::new(&file_a_code);
+
+    // Source file A from the console
+    let code = format!("source('{}')", file_a.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // First plot (from file B, sourced by file A)
+    let display_id_b = frontend.recv_iopub_display_data_id();
+    assert!(!display_id_b.is_empty());
+
+    // Second plot (from file A itself)
+    let display_id_a = frontend.recv_iopub_display_data_id();
+    assert!(!display_id_a.is_empty());
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Query metadata for the first plot (created by file B)
+    let query_b = format!(".ps.graphics.get_metadata('{display_id_b}')");
+    frontend.send_execute_request(&query_b, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result_b = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // The origin_uri should point to file B, not file A
+    assert!(
+        result_b.contains(&file_b.uri),
+        "Plot from file B should have origin_uri pointing to file B '{}', got:\n{result_b}",
+        file_b.uri,
+    );
+    assert!(
+        !result_b.contains(&file_a.uri),
+        "Plot from file B should NOT have origin_uri pointing to file A '{}', got:\n{result_b}",
+        file_a.uri,
+    );
+
+    // Query metadata for the second plot (created by file A)
+    let query_a = format!(".ps.graphics.get_metadata('{display_id_a}')");
+    frontend.send_execute_request(&query_a, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result_a = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // The origin_uri should point to file A
+    assert!(
+        result_a.contains(&file_a.uri),
+        "Plot from file A should have origin_uri pointing to file A '{}', got:\n{result_a}",
+        file_a.uri,
+    );
+}
