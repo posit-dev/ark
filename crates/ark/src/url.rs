@@ -5,53 +5,158 @@
 //
 //
 
+use std::fmt;
+
+use amalthea::wire::execute_request::CodeLocation;
 use url::Url;
 
 /// Extended URL utilities for ark.
 ///
-/// File URIs can have different representations of the same file:
-/// - On Windows, Positron sends `file:///c%3A/...` (URL-encoded colon,
-///   lowercase drive) in execute requests and LSP notifications.
-/// - On macOS, `/var/folders` is a symlink to `/private/var/folders`, and R's
-///   `normalizePath()` resolves symlinks.
+/// # The multi-source URI reconciliation problem
 ///
-/// These variants can be problematic when URI paths are used as HashMap keys.
+/// File URIs for the same file arrive from four independent sources, each
+/// with its own representation:
 ///
-/// This module provides normalized URI construction and parsing to ensure
-/// consistent identity across subsystems (DAP breakpoints, LSP documents,
-/// R code locations).
+/// - **DAP (SetBreakpoints)**: Receives raw file paths from the frontend,
+///   converted to URIs via `UrlId::from_file_path`. These are stored as
+///   HashMap keys for breakpoint lookup.
 ///
-/// Use `ExtUrl` methods instead of `Url` methods when working with file URIs
-/// that will be used as keys or need to match across different sources.
-pub struct ExtUrl;
+/// - **LSP (didChange, etc.)**: Receives URIs directly from the editor
+///   client, which may use non-canonical forms (e.g. percent-encoded
+///   colons on Windows, or symlinked paths on macOS).
+///
+/// - **Execute requests**: Positron attaches a `code_location` URI that
+///   comes straight from the editor's document model, again potentially
+///   non-canonical.
+///
+/// - **R runtime**: When R evaluates `source()` or annotates code, it
+///   passes URIs that went through R's `normalizePath()`, which resolves
+///   symlinks to their canonical target (e.g. `/tmp` resolves to `/private/tmp`
+///   on macOS), producing a path the editor never sent. More generally,
+///   arbitrary R code can create source references that we may end up
+///   consuming for breakpoint or debug purposes, and the paths in those
+///   references may or may not be canonical.
+///
+/// All four sources must agree on file identity. For instance breakpoints set
+/// via DAP are looked up in a HashMap keyed by URI when code is executed or
+/// sourced, and invalidated when documents change via LSP.
+///
+/// # Design decision
+///
+/// We solve this by canonicalizing URIs into [`UrlId`] at every entry
+/// point, rather than interning paths into opaque IDs (as rust-analyzer
+/// does with its VFS `FileId` approach). Interning would be a larger
+/// architectural change and is not warranted here since we only need
+/// canonical keys at a handful of call sites.
+///
+/// Canonicalization uses `std::fs::canonicalize()` to resolve symlinks
+/// (e.g. `/tmp` to `/private/tmp` on macOS), round-trips through the
+/// filesystem path to normalize encoding variants (e.g. `%3A` to `:` on
+/// Windows), and uppercases drive letters on Windows. When the file does
+/// not exist on disk, we fall back to the original URI.
+///
+/// # Important: canonical URIs must not leak
+///
+/// [`UrlId`] is strictly for internal identity. When a URI flows back
+/// to R (e.g. in `#line` directives or injected breakpoint calls) or to
+/// the frontend (e.g. in DAP stack frames), always use the original raw
+/// URI. The frontend (and possibly R code) expects their own URI
+/// representation, and a canonical URI (e.g. `/private/tmp/...` instead of
+/// `/tmp/...`) could be treated as a different file (e.g. open a new editor in
+/// the frontend instead of an existing one).
 
-impl ExtUrl {
-    /// Parse a URL string and normalize file URIs for consistent comparison.
-    pub fn parse(s: &str) -> Result<Url, url::ParseError> {
-        let url = Url::parse(s)?;
-        Ok(Self::normalize(url))
+/// A canonicalized file URI for use as a stable identity key.
+///
+/// Wraps a [`Url`] that has been canonicalized to resolve symlinks,
+/// normalize encoding variants, and uppercase drive letters on Windows.
+/// Use this type in HashMaps and anywhere file identity matters.
+///
+/// Construct via [`UrlId::from_url`], [`UrlId::from_file_path`], or
+/// [`UrlId::parse`].
+///
+/// On Windows, `std::fs::canonicalize()` returns extended-length paths
+/// prefixed with `\\?\` (e.g. `\\?\C:\Users\...`). Projects like Ruff
+/// use the `dunce` crate to strip this prefix, but we don't need it
+/// because `Url::from_file_path` already handles
+/// `Prefix::VerbatimDisk` and produces a clean `file:///C:/...` URI.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UrlId(Url);
+
+impl UrlId {
+    /// Canonicalize a [`Url`] into a [`UrlId`].
+    ///
+    /// Resolves symlinks via `std::fs::canonicalize()` and normalizes
+    /// encoding variants (e.g. `%3A` to `:` on Windows). On Windows, also
+    /// uppercases the drive letter. Falls back to the original URI for
+    /// non-file schemes or when the path can't be resolved.
+    pub fn from_url(uri: Url) -> Self {
+        if uri.scheme() != "file" {
+            return Self(uri);
+        }
+
+        let Ok(path) = uri.to_file_path() else {
+            log::warn!("Failed to normalize file URI: {uri}");
+            return Self(uri);
+        };
+
+        let path = match std::fs::canonicalize(&path) {
+            Ok(p) => p,
+            Err(err) => {
+                log::trace!("Failed to canonicalize path {path:?}: {err:?}");
+                path
+            },
+        };
+
+        let uri = Url::from_file_path(&path).unwrap_or(uri);
+
+        #[cfg(windows)]
+        let uri = uppercase_windows_drive_in_uri(uri);
+
+        Self(uri)
     }
 
-    /// Convert a file path to a normalized file URI.
+    /// Convert a file path to a canonical [`UrlId`].
     ///
-    /// Canonicalizes the path to resolve symlinks (e.g., `/var/folders` ->
+    /// Canonicalizes the path to resolve symlinks (e.g. `/var/folders` to
     /// `/private/var/folders` on macOS) so the URI matches what R's
     /// `normalizePath()` produces. Falls back to the original path if
     /// canonicalization fails.
-    pub fn from_file_path(path: impl AsRef<std::path::Path>) -> Result<Url, ()> {
-        let path = path.as_ref();
-
-        // Canonicalize to resolve symlinks. This is necessary because R's
-        // `normalizePath()` resolves symlinks, and the URI must match.
-        let path = std::fs::canonicalize(path).unwrap_or_else(|err| {
-            log::trace!("Failed to canonicalize path {path:?}: {err:?}");
-            path.to_path_buf()
-        });
-
-        let url = Url::from_file_path(path)?;
-        Ok(Self::normalize(url))
+    pub fn from_file_path(path: impl AsRef<std::path::Path>) -> Result<Self, ()> {
+        let url = Url::from_file_path(path.as_ref())?;
+        Ok(Self::from_url(url))
     }
 
+    /// Parse a URI string into a canonical [`UrlId`].
+    pub fn parse(s: &str) -> Result<Self, url::ParseError> {
+        let url = Url::parse(s)?;
+        Ok(Self::from_url(url))
+    }
+
+    /// Extract a canonical [`UrlId`] from a [`CodeLocation`].
+    pub fn from_code_location(loc: &CodeLocation) -> Self {
+        Self::from_url(loc.uri.clone())
+    }
+
+    /// Access the inner [`Url`].
+    pub fn as_url(&self) -> &Url {
+        &self.0
+    }
+}
+
+impl fmt::Display for UrlId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Extended URL utilities.
+///
+/// These operate on raw `Url` values and don't require canonicalization.
+/// For identity-sensitive operations (HashMap keys, breakpoint matching),
+/// use [`UrlId`] instead.
+pub struct ExtUrl;
+
+impl ExtUrl {
     /// Whether this URI should be indexed. Currently uses an exclude list:
     /// only `ark://` virtual documents are excluded since they show foreign
     /// code the user can't edit.
@@ -70,37 +175,6 @@ impl ExtUrl {
     /// vdocs showing foreign code).
     pub fn is_ark_virtual_doc(uri: &Url) -> bool {
         uri.scheme() == "ark"
-    }
-
-    /// Normalize a file URI for consistent comparison.
-    ///
-    /// On Windows, Positron sends URIs like `file:///c%3A/...` (URL-encoded
-    /// colon, lowercase drive letter). By round-tripping through the filesystem
-    /// path representation, we normalize encoding variants. We then uppercase
-    /// the drive letter.
-    #[cfg(windows)]
-    pub fn normalize(uri: Url) -> Url {
-        if uri.scheme() != "file" {
-            return uri;
-        }
-
-        // Round-trip through filesystem path to get canonical form.
-        // This decodes URL-encoded characters like %3A -> :
-        let Some(uri) = uri
-            .to_file_path()
-            .ok()
-            .and_then(|path| Url::from_file_path(&path).ok())
-        else {
-            log::warn!("Failed to normalize file URI: {uri}");
-            return uri;
-        };
-        uppercase_windows_drive_in_uri(uri)
-    }
-
-    /// No-op on non-Windows platforms.
-    #[cfg(not(windows))]
-    pub fn normalize(uri: Url) -> Url {
-        uri
     }
 }
 
@@ -131,16 +205,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_normalize_non_file_unchanged() {
+    fn test_non_file_unchanged() {
         let uri = Url::parse("ark://namespace/test.R").unwrap();
-        let normalized = ExtUrl::normalize(uri.clone());
-        assert_eq!(normalized, uri);
+        let id = UrlId::from_url(uri.clone());
+        assert_eq!(*id.as_url(), uri);
     }
 
     #[test]
-    fn test_ext_url_parse_non_file() {
-        let uri = ExtUrl::parse("ark://namespace/test.R").unwrap();
-        assert_eq!(uri.as_str(), "ark://namespace/test.R");
+    fn test_parse_non_file() {
+        let id = UrlId::parse("ark://namespace/test.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "ark://namespace/test.R");
     }
 
     #[test]
@@ -177,89 +251,122 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
-    fn test_normalize_is_noop_on_non_windows() {
-        // On non-Windows, normalize just returns the input unchanged
-        let uri = Url::parse("file:///home/user/test.R").unwrap();
-        let normalized = ExtUrl::normalize(uri.clone());
-        assert_eq!(normalized, uri);
+    fn test_equality() {
+        let id1 = UrlId::parse("file:///home/user/test.R").unwrap();
+        let id2 = UrlId::parse("file:///home/user/test.R").unwrap();
+        assert_eq!(id1, id2);
+
+        let id3 = UrlId::parse("file:///home/user/other.R").unwrap();
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_display() {
+        let id = UrlId::parse("file:///home/user/test.R").unwrap();
+        assert_eq!(format!("{id}"), "file:///home/user/test.R");
     }
 
     #[test]
     #[cfg(not(windows))]
-    fn test_ext_url_from_file_path_unix() {
-        let uri = ExtUrl::from_file_path("/home/user/test.R").unwrap();
-        assert_eq!(uri.as_str(), "file:///home/user/test.R");
+    fn test_fallback_for_nonexistent_path() {
+        // For paths that don't exist, canonicalization falls back to the
+        // original path so the URI is unchanged.
+        let uri = Url::parse("file:///nonexistent/path/test.R").unwrap();
+        let id = UrlId::from_url(uri.clone());
+        assert_eq!(*id.as_url(), uri);
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_resolves_tmp_symlink() {
+        // On macOS, `/tmp` is a symlink to `/private/tmp`. `UrlId` should
+        // resolve it so that URIs from different sources match.
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let file = dir.path().join("test.R");
+        std::fs::write(&file, "").unwrap();
+
+        let non_canonical = Url::from_file_path(&file).unwrap();
+        assert!(non_canonical.path().starts_with("/tmp/"));
+
+        let id = UrlId::from_url(non_canonical);
+        assert!(id.as_url().path().starts_with("/private/tmp/"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn test_from_file_path_unix() {
+        let id = UrlId::from_file_path("/home/user/test.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "file:///home/user/test.R");
     }
 
     // Windows-specific tests
 
     #[test]
     #[cfg(windows)]
-    fn test_normalize_decodes_percent_encoded_colon() {
+    fn test_decodes_percent_encoded_colon() {
         // Positron sends URIs with encoded colon
         let uri = Url::parse("file:///c%3A/Users/test/file.R").unwrap();
-        let normalized = ExtUrl::normalize(uri);
-        assert_eq!(normalized.as_str(), "file:///C:/Users/test/file.R");
+        let id = UrlId::from_url(uri);
+        assert_eq!(id.as_url().as_str(), "file:///C:/Users/test/file.R");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_normalize_decodes_percent_encoded_colon_lowercase_hex() {
+    fn test_decodes_percent_encoded_colon_lowercase_hex() {
         // %3a (lowercase hex) variant
         let uri = Url::parse("file:///c%3a/Users/test/file.R").unwrap();
-        let normalized = ExtUrl::normalize(uri);
-        assert_eq!(normalized.as_str(), "file:///C:/Users/test/file.R");
+        let id = UrlId::from_url(uri);
+        assert_eq!(id.as_url().as_str(), "file:///C:/Users/test/file.R");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_normalize_uppercases_drive_letter() {
+    fn test_uppercases_drive_letter() {
         let uri = Url::parse("file:///c:/Users/test/file.R").unwrap();
-        let normalized = ExtUrl::normalize(uri);
-        assert_eq!(normalized.as_str(), "file:///C:/Users/test/file.R");
+        let id = UrlId::from_url(uri);
+        assert_eq!(id.as_url().as_str(), "file:///C:/Users/test/file.R");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_normalize_preserves_uppercase_drive() {
+    fn test_preserves_uppercase_drive() {
         let uri = Url::parse("file:///C:/Users/test/file.R").unwrap();
-        let normalized = ExtUrl::normalize(uri.clone());
-        assert_eq!(normalized, uri);
+        let id = UrlId::from_url(uri.clone());
+        assert_eq!(*id.as_url(), uri);
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_normalize_preserves_spaces_encoding() {
+    fn test_preserves_spaces_encoding() {
         // Spaces should remain percent-encoded after round-trip
         let uri = Url::parse("file:///C:/Users/test%20user/my%20file.R").unwrap();
-        let normalized = ExtUrl::normalize(uri);
+        let id = UrlId::from_url(uri);
         assert_eq!(
-            normalized.as_str(),
+            id.as_url().as_str(),
             "file:///C:/Users/test%20user/my%20file.R"
         );
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_normalize_decodes_colon_preserves_spaces() {
+    fn test_decodes_colon_preserves_spaces() {
         // Both encoded colon and spaces
         let uri = Url::parse("file:///c%3A/Users/test%20user/file.R").unwrap();
-        let normalized = ExtUrl::normalize(uri);
-        assert_eq!(normalized.as_str(), "file:///C:/Users/test%20user/file.R");
+        let id = UrlId::from_url(uri);
+        assert_eq!(id.as_url().as_str(), "file:///C:/Users/test%20user/file.R");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_ext_url_parse() {
-        let uri = ExtUrl::parse("file:///c%3A/Users/test/file.R").unwrap();
-        assert_eq!(uri.as_str(), "file:///C:/Users/test/file.R");
+    fn test_parse_windows() {
+        let id = UrlId::parse("file:///c%3A/Users/test/file.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "file:///C:/Users/test/file.R");
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_ext_url_from_file_path() {
-        let uri = ExtUrl::from_file_path("C:\\Users\\test\\file.R").unwrap();
-        assert_eq!(uri.as_str(), "file:///C:/Users/test/file.R");
+    fn test_from_file_path_windows() {
+        let id = UrlId::from_file_path("C:\\Users\\test\\file.R").unwrap();
+        assert_eq!(id.as_url().as_str(), "file:///C:/Users/test/file.R");
     }
 }

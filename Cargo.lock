@@ -430,6 +430,7 @@ dependencies = [
  "tempfile",
  "tower-lsp",
  "tree-sitter",
+ "url",
  "uuid",
 ]
 
