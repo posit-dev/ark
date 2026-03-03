@@ -99,7 +99,7 @@ impl RHtmlHelp {
         let mut headers = x.select(&selector);
 
         // Do any have a usage section?
-        headers.any(|header| header.html() == "<h3>Usage</h3>")
+        headers.any(|header| elt_text(header).trim() == "Usage")
     }
 
     pub fn topic(&self) -> Option<String> {
@@ -192,7 +192,7 @@ impl RHtmlHelp {
         let selector = Selector::parse("h3").unwrap();
         let mut headers = self.html.select(&selector);
         let header = headers
-            .find(|node| node.html() == "<h3>Arguments</h3>")
+            .find(|node| elt_text(*node).trim() == "Arguments")
             .into_result()?;
 
         let mut elt = header;
