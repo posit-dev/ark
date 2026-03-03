@@ -79,19 +79,17 @@ make_ark_source <- function(original_source) {
         # Use tryCatch so that source() still works if the native function
         # is not yet available (e.g. during development with mismatched builds).
         if (!is.null(uri)) {
-            pushed <- tryCatch(
+            tryCatch(
                 {
                     .ps.Call("ps_graphics_push_source_context", uri)
+                    defer(tryCatch(
+                        .ps.Call("ps_graphics_pop_source_context"),
+                        error = function(e) NULL
+                    ))
                     TRUE
                 },
                 error = function(e) FALSE
             )
-            if (pushed) {
-                defer(tryCatch(
-                    .ps.Call("ps_graphics_pop_source_context"),
-                    error = function(e) NULL
-                ))
-            }
         }
 
         # DRY: Promise for calling `original_source` with all arguments.
