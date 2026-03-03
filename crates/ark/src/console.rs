@@ -297,6 +297,10 @@ pub struct Console {
     /// Whether or not we are currently in a debugging state.
     pub(crate) debug_is_debugging: bool,
 
+    /// Filter for debug console output. Removes R's internal debug messages
+    /// from user-visible console output.
+    pub(crate) debug_filter: ConsoleFilter,
+
     /// The current call emitted by R as `debug: <call-text>`.
     pub(crate) debug_call_text: Option<DebugCallText>,
 
@@ -355,10 +359,6 @@ pub struct Console {
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
     pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
-
-    /// Filter for debug console output. Removes R's internal debug messages
-    /// from user-visible console output.
-    pub(crate) filter: ConsoleFilter,
 }
 
 /// Stack of pending inputs
@@ -950,7 +950,7 @@ impl Console {
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
             read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
-            filter: ConsoleFilter::new(),
+            debug_filter: ConsoleFilter::new(),
         }
     }
 
@@ -1114,7 +1114,7 @@ impl Console {
         let is_browser = matches!(info.kind, PromptKind::Browser);
 
         let suppress = filter_debug_output();
-        self.filter.set_suppress(suppress);
+        self.debug_filter.set_suppress(suppress);
 
         // Debug prefixes (`Called from:`, `debug at`, `debug:`) reach
         // autoprint when stepping in top-level braced expressions. We only
@@ -1130,7 +1130,7 @@ impl Console {
         // A browser prompt means filtered content was real debug output (which
         // we suppress). Top-level prompt means it was user output matching a
         // prefix (which we emit).
-        let (emit, debug_update) = self.filter.on_read_console(is_browser);
+        let (emit, debug_update) = self.debug_filter.on_read_console(is_browser);
         if let Some(text) = emit {
             self.emit_stdout(text);
         }
@@ -2486,7 +2486,7 @@ impl Console {
 
         if stream == Stream::Stderr {
             // Flush any buffered stdout so it appears before this stderr
-            if let Some(text) = console.filter.flush() {
+            if let Some(text) = console.debug_filter.flush() {
                 console.emit_stdout(text);
             }
 
@@ -2499,7 +2499,7 @@ impl Console {
             return;
         }
 
-        let emits = console.filter.feed(&content);
+        let emits = console.debug_filter.feed(&content);
         for text in emits {
             console.emit_stdout(text);
         }
@@ -2572,7 +2572,7 @@ impl Console {
         // accumulated content is emitted. This allows user code to produce
         // output that looks like debug lines emitted by R without them getting
         // filtered out or held up too long.
-        if let Some(text) = self.filter.check_timeout() {
+        if let Some(text) = self.debug_filter.check_timeout() {
             self.emit_stdout(text);
         }
 
