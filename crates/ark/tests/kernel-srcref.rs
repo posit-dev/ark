@@ -278,6 +278,185 @@ $end
     });
 }
 
+/// Verify that the srcfile created by our `#line` annotation has properly
+/// split lines so that `getSrcLines()` returns individual lines.
+/// Packages like reprex use `getSrcLines()` to retrieve source code from
+/// srcrefs, and they break when lines aren't split into separate elements.
+/// https://github.com/posit-dev/positron/issues/11578
+#[test]
+fn test_execute_request_srcref_getsrclines() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Execute multiline code with an empty line, from the "editor" (with
+    // location info). This triggers `#line` annotation and creates a srcfile.
+    let code = "f <- function() {\n  1\n\n  2\n}; NULL";
+    let code_location = JupyterPositronLocation {
+        uri: "file:///path/to/file.R".to_owned(),
+        range: JupyterPositronRange {
+            start: JupyterPositronPosition {
+                line: 0,
+                character: 0,
+            },
+            end: JupyterPositronPosition {
+                line: 4,
+                character: 7,
+            },
+        },
+    };
+    frontend.execute_request_with_location(code, |_| (), code_location);
+
+    // The annotated code prepends a `#line` directive, producing 6 lines:
+    //   1: #line 1 "file:///path/to/file.R"
+    //   2: f <- function() {
+    //   3:   1
+    //   4:           (empty)
+    //   5:   2
+    //   6: }; NULL
+    // `getSrcLines()` must return one element per line.
+    frontend.execute_request(
+        "srcref <- attr(f, 'srcref')
+srcfile <- attr(srcref, 'srcfile')
+lines <- getSrcLines(srcfile, 1, 6)
+length(lines)",
+        |result| {
+            assert_eq!(result, "[1] 6");
+        },
+    );
+
+    // The empty line between `1` and `2` must be preserved
+    frontend.execute_request("identical(lines[4], '')", |result| {
+        assert_eq!(result, "[1] TRUE");
+    });
+}
+
+/// Inline the core logic of reprex's `stringify_expression()` to verify that
+/// source lines retrieved via srcrefs from `#line`-annotated code preserve
+/// empty lines and match what you'd get without annotation.
+///
+/// Reprex builds a merged srcref spanning first-to-last child of a `{ }`
+/// block, then calls `as.character(srcref, useSource = TRUE)` which uses
+/// `getSrcLines()` with parse line numbers (entries 7 and 8 of the srcref).
+/// https://github.com/posit-dev/positron/issues/11578
+#[test]
+fn test_execute_request_srcref_reprex_stringify() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Inline reimplementation of reprex's `stringify_expression()`.
+    // Captures its argument's expression via `substitute()` (as reprex does),
+    // builds a merged srcref spanning first-to-last child, retrieves source
+    // lines, and strips the leading `{` line.
+    frontend.execute_request_invisibly(
+        "stringify_expr <- function(x) {
+  expr <- substitute(x)
+  src_list <- utils::getSrcref(expr)
+  if (is.null(src_list)) return(deparse(expr))
+  first_src <- src_list[[1]]
+  last_src  <- src_list[[length(src_list)]]
+  srcfile   <- attr(first_src, 'srcfile')
+  src <- srcref(srcfile, c(
+    first_src[[1]], first_src[[2]], last_src[[3]], last_src[[4]],
+    first_src[[5]], last_src[[6]], first_src[[7]], last_src[[8]]
+  ))
+  lines <- as.character(src, useSource = TRUE)
+  lines[[1L]] <- sub('^[{]', '', lines[[1L]])
+  if (!nzchar(lines[[1L]])) lines <- lines[-1L]
+  lines
+}",
+    );
+
+    // Call from the "editor" with location info to trigger `#line` annotation.
+    // The `{ }` block has an empty line between two expressions.
+    let code = "result <- stringify_expr({\n  1 + 1\n\n  1 + 1\n}); NULL";
+    let code_location = JupyterPositronLocation {
+        uri: "file:///path/to/test.R".to_owned(),
+        range: JupyterPositronRange {
+            start: JupyterPositronPosition {
+                line: 0,
+                character: 0,
+            },
+            end: JupyterPositronPosition {
+                line: 4,
+                character: 7,
+            },
+        },
+    };
+    frontend.execute_request_with_location(code, |_| (), code_location);
+
+    // Also run without location (no #line annotation) for comparison
+    frontend.execute_request_invisibly("result_no_loc <- stringify_expr({\n  1 + 1\n\n  1 + 1\n})");
+
+    // The output with location should match the output without location:
+    // 3 lines: "  1 + 1", "", "  1 + 1"
+    frontend.execute_request("identical(result, result_no_loc)", |result| {
+        assert_eq!(result, "[1] TRUE");
+    });
+
+    // Must be exactly 3 lines with the empty line preserved
+    frontend.execute_request("length(result)", |result| {
+        assert_eq!(result, "[1] 3");
+    });
+    frontend.execute_request("identical(result[2], '')", |result| {
+        assert_eq!(result, "[1] TRUE");
+    });
+}
+
+/// Same as above but with a non-zero line offset (code at line 10 in the
+/// document). This was the scenario that originally triggered the reprex
+/// bug: `getSrcLocation(srcref, which = "line")` returned the virtual line
+/// from the `#line` directive, causing `getSrcLines()` to read past the
+/// end of the srcfile.
+/// https://github.com/posit-dev/positron/issues/11578
+#[test]
+fn test_execute_request_srcref_reprex_stringify_with_offset() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.execute_request_invisibly(
+        "stringify_expr <- function(x) {
+  expr <- substitute(x)
+  src_list <- utils::getSrcref(expr)
+  if (is.null(src_list)) return(deparse(expr))
+  first_src <- src_list[[1]]
+  last_src  <- src_list[[length(src_list)]]
+  srcfile   <- attr(first_src, 'srcfile')
+  src <- srcref(srcfile, c(
+    first_src[[1]], first_src[[2]], last_src[[3]], last_src[[4]],
+    first_src[[5]], last_src[[6]], first_src[[7]], last_src[[8]]
+  ))
+  lines <- as.character(src, useSource = TRUE)
+  lines[[1L]] <- sub('^[{]', '', lines[[1L]])
+  if (!nzchar(lines[[1L]])) lines <- lines[-1L]
+  lines
+}",
+    );
+
+    // Code at line 10 (0-based 9) in the document
+    let code = "result <- stringify_expr({\n  1 + 1\n\n  1 + 1\n}); NULL";
+    let code_location = JupyterPositronLocation {
+        uri: "file:///path/to/test.R".to_owned(),
+        range: JupyterPositronRange {
+            start: JupyterPositronPosition {
+                line: 9,
+                character: 0,
+            },
+            end: JupyterPositronPosition {
+                line: 13,
+                character: 7,
+            },
+        },
+    };
+    frontend.execute_request_with_location(code, |_| (), code_location);
+
+    // Must be 3 lines with the empty line preserved, even with a large
+    // line offset that causes virtual lines (10+) to diverge from parse
+    // lines (1-5).
+    frontend.execute_request("length(result)", |result| {
+        assert_eq!(result, "[1] 3");
+    });
+    frontend.execute_request("identical(result[2], '')", |result| {
+        assert_eq!(result, "[1] TRUE");
+    });
+}
+
 #[test]
 fn test_execute_request_srcref_location_invalid_end_character() {
     let frontend = DummyArkFrontend::lock();
