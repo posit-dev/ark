@@ -47,6 +47,9 @@ pub enum DefaultRepos {
 
     /// Use the repositories specified in the given configuration file.
     ConfFile(PathBuf),
+
+    /// Set the CRAN repository to a custom URL.
+    CranRepo(url::Url),
 }
 
 pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
@@ -97,6 +100,12 @@ pub fn apply_default_repos(repos: DefaultRepos) -> anyhow::Result<()> {
             );
             let mut repos = HashMap::new();
             repos.insert("CRAN".to_string(), get_ppm_binary_package_repo(Some(url)));
+            apply_repos(repos)
+        },
+        DefaultRepos::CranRepo(url) => {
+            log::info!("Setting default CRAN repository to: {}", url);
+            let mut repos = HashMap::new();
+            repos.insert("CRAN".to_string(), url.to_string());
             apply_repos(repos)
         },
     }

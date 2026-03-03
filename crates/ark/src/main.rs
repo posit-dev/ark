@@ -50,6 +50,7 @@ Available options:
 --repos-conf                 Set the default repositories to use from a configuration file
                              containing a list of named repositories (`name = url`)
 --default-ppm-repo           Set the default repositories to a custom Posit Package Manager URL.
+--default-cran-repo          Set the default CRAN repository to a custom URL.
 --version                    Print the version of Ark
 --log FILE                   Log to the given file (if not specified, stdout/stderr
                              will be used)
@@ -159,7 +160,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(repos) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
                         return Err(anyhow::anyhow!(
-                            "Only one of `--default-repos`, `--repos-conf`, or `--default-ppm-repo` can be specified."
+                            "Only one of `--default-repos`, `--repos-conf`, `--default-ppm-repo`, or `--default-cran-repo` can be specified."
                         ));
                     }
                     default_repos = match repos.as_str() {
@@ -182,7 +183,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(repos) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
                         return Err(anyhow::anyhow!(
-                            "Only one of `--default-repos`, `--repos-conf`, or `--default-ppm-repo` can be specified."
+                            "Only one of `--default-repos`, `--repos-conf`, `--default-ppm-repo`, or `--default-cran-repo` can be specified."
                         ));
                     }
                     let path = std::path::PathBuf::from(repos.clone());
@@ -204,7 +205,7 @@ fn main() -> anyhow::Result<()> {
                 if let Some(url) = argv.next() {
                     if default_repos != DefaultRepos::Auto {
                         return Err(anyhow::anyhow!(
-                            "Only one of `--default-repos`, `--repos-conf`, or `--default-ppm-repo` can be specified."
+                            "Only one of `--default-repos`, `--repos-conf`, `--default-ppm-repo`, or `--default-cran-repo` can be specified."
                         ));
                     }
                     let parsed =
@@ -225,6 +226,22 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     return Err(anyhow::anyhow!(
                         "The `--default-ppm-repo` option must be followed by a repository URL."
+                    ));
+                }
+            },
+            "--default-cran-repo" => {
+                if let Some(url) = argv.next() {
+                    if default_repos != DefaultRepos::Auto {
+                        return Err(anyhow::anyhow!(
+                            "Only one of `--default-repos`, `--repos-conf`, `--default-ppm-repo`, or `--default-cran-repo` can be specified."
+                        ));
+                    }
+                    let parsed =
+                        url::Url::parse(&url).context("Failed to parse --default-cran-repo URL")?;
+                    default_repos = DefaultRepos::CranRepo(parsed)
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "The `--default-cran-repo` option must be followed by a URL."
                     ));
                 }
             },
