@@ -81,6 +81,13 @@ enum ConsoleFilterState {
 /// Filter for debug console output
 pub struct ConsoleFilter {
     state: ConsoleFilterState,
+    /// Safety timeout for accumulated content. If user code produces output
+    /// matching a debug prefix but doesn't reach `ReadConsole` within this
+    /// duration (e.g., during a long computation or a server-like situation
+    /// where `ReadConsole` may never come), we emit the content rather than
+    /// holding all subsequent output indefinitely. This is part of our
+    /// guarantee that output is never swallowed if the user doesn't drop in
+    /// the debugger.
     timeout: Duration,
     /// Whether to suppress confirmed debug output. When `false`, the
     /// filter still extracts debug info for auto-stepping but emits
@@ -88,21 +95,19 @@ pub struct ConsoleFilter {
     suppress: bool,
 }
 
-fn get_timeout() -> Duration {
-    if stdext::IS_TESTING {
-        Duration::from_millis(500)
-    } else {
-        Duration::from_millis(50)
-    }
-}
-
 impl ConsoleFilter {
     pub fn new() -> Self {
+        let timeout = if stdext::IS_TESTING {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_millis(50)
+        };
+
         Self {
             state: ConsoleFilterState::Passthrough {
                 at_line_start: true,
             },
-            timeout: get_timeout(),
+            timeout,
             suppress: true,
         }
     }
