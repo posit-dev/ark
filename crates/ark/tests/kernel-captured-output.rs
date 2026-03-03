@@ -5,27 +5,7 @@
 //
 // Integration tests verifying that pending async idle tasks don't swallow
 // console output. See the `captured_output` save/restore mechanism in
-// `poll_task`.
-//
-// The flow exercised here:
-//
-// 1. `.Call("ps_test_spawn_pending_task")` spawns an async idle task that
-//    holds a `ConsoleOutputCapture` and awaits a oneshot channel.
-//
-// 2. On the next event-loop iteration the task is polled, `captured_output`
-//    is set, and the future stays `Pending`. `poll_task` saves the capture
-//    into `pending_futures` and clears `captured_output`. The task sets
-//    the R option `ark.test.task_polled` to `TRUE` so the test can detect
-//    when the poll has happened.
-//
-// 3. The test busy-loops with `getOption("ark.test.task_polled")` until it
-//    sees `TRUE`, confirming the idle task has been polled.
-//
-// 4. A subsequent execute request produces stream output that must reach
-//    IOPub (not be swallowed by the suspended capture).
-//
-// 5. `.Call("ps_test_complete_pending_task")` unblocks the oneshot so the
-//    idle task finishes cleanly.
+// `poll_task` and the test helpers in `r_task.rs` for the full flow.
 
 use std::time::Duration;
 use std::time::Instant;
