@@ -529,4 +529,3 @@ render_path <- function(id, format) {
     file <- paste0("render-", id, ".", format)
     file.path(directory, file)
 }
-

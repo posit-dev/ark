@@ -70,6 +70,28 @@ make_ark_source <- function(original_source) {
             args$catch.aborts <- NULL
         }
 
+        # Try to resolve the file URI early so we can attribute plots to this
+        # source file. This is best-effort; if it fails we proceed without attribution.
+        uri <- tryCatch(path_to_file_uri(file), error = function(e) NULL)
+
+        # Push source context for plot attribution (if we have a URI).
+        # The defer ensures we always pop, even if source() errors.
+        # Use tryCatch so that source() still works if the native function
+        # is not yet available (e.g. during development with mismatched builds).
+        if (!is.null(uri)) {
+            tryCatch(
+                {
+                    .ps.Call("ps_graphics_push_source_context", uri)
+                    defer(tryCatch(
+                        .ps.Call("ps_graphics_pop_source_context"),
+                        error = function(e) NULL
+                    ))
+                    TRUE
+                },
+                error = function(e) FALSE
+            )
+        }
+
         # DRY: Promise for calling `original_source` with all arguments.
         # Evaluated lazily only when needed for fallback paths.
         eval(bquote(
@@ -97,7 +119,6 @@ make_ark_source <- function(original_source) {
             return(fall_back)
         }
 
-        uri <- path_to_file_uri(file)
         if (is.null(uri)) {
             return(fall_back)
         }

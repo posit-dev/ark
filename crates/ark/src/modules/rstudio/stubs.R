@@ -55,8 +55,9 @@
 #' @export
 .rs.api.viewer <- function(url, height = NULL) {
     # Validate arguments
-    if (!is.character(url) || (length(url) != 1))
+    if (!is.character(url) || (length(url) != 1)) {
         stop("url must be a single element character vector.")
+    }
     height <- .ps.validate.viewer.height(height)
 
     if (!is_http_url(url)) {
