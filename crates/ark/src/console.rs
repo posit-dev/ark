@@ -94,7 +94,6 @@ use serde_json::json;
 use stdext::result::ResultExt;
 use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
-use url::Url;
 use uuid::Uuid;
 
 use crate::console_annotate::annotate_input;
@@ -136,7 +135,7 @@ use crate::startup;
 use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
-use crate::url::ExtUrl;
+use crate::url::UrlId;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -181,7 +180,7 @@ pub enum DebugStoppedReason {
 #[derive(Debug)]
 pub enum ConsoleNotification {
     /// Notification that a document has changed, requiring breakpoint invalidation.
-    DidChangeDocument(Url),
+    DidChangeDocument(UrlId),
 }
 
 // --- Globals ---
@@ -1072,12 +1071,7 @@ impl Console {
             }
         }
 
-        let loc = req.code_location().log_err().flatten().map(|mut loc| {
-            // Normalize URI for Windows compatibility. Positron sends URIs like
-            // `file:///c%3A/...` which do not match DAP's breakpoint path keys.
-            loc.uri = ExtUrl::normalize(loc.uri);
-            loc
-        });
+        let loc = req.code_location().log_err().flatten();
 
         // Return the code to the R console to be evaluated and the corresponding exec count
         (
@@ -1596,10 +1590,11 @@ impl Console {
 
                 // Keep the DAP lock while we are updating breakpoints
                 let mut dap_guard = self.debug_dap.lock().unwrap();
-                let uri = loc.as_ref().map(|l| l.uri.clone());
-                let breakpoints = uri
+
+                let uri_id = loc.as_ref().map(UrlId::from_code_location);
+                let breakpoints = uri_id
                     .as_ref()
-                    .and_then(|uri| dap_guard.breakpoints.get_mut(uri))
+                    .and_then(|uri_id| dap_guard.breakpoints.get_mut(uri_id))
                     .map(|(_, v)| v.as_mut_slice());
 
                 match PendingInputs::read(&code, loc, breakpoints) {
@@ -1618,9 +1613,9 @@ impl Console {
 
                 // Notify frontend about any breakpoints marked invalid during annotation.
                 // Remove disabled breakpoints.
-                if let Some(uri) = &uri {
-                    dap_guard.notify_invalid_breakpoints(uri);
-                    dap_guard.remove_disabled_breakpoints(uri);
+                if let Some(uri_id) = &uri_id {
+                    dap_guard.notify_invalid_breakpoints(uri_id);
+                    dap_guard.remove_disabled_breakpoints(uri_id);
                 }
 
                 drop(dap_guard);

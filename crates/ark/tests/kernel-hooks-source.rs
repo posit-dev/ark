@@ -224,10 +224,10 @@ fn test_ark_annotate_source_returns_annotated_code_with_breakpoints() {
     assert_eq!(breakpoints.len(), 1);
 
     // .ark_annotate_source should return non-NULL annotated code
-    // Note: URI must match what was used for set_breakpoints (use file.uri)
+    // Note: URI must match what was used for set_breakpoints
     let code = format!(
         r#"!is.null(base::.ark_annotate_source("foo <- function() {{\n    1\n}}", "{}"))"#,
-        file.uri
+        file.uri_id
     );
     frontend.execute_request(&code, |result| {
         assert_eq!(result, "[1] TRUE");
@@ -266,7 +266,7 @@ x + 41
     let code = format!(
         r#"eval(parse(text = base::.ark_annotate_source("{}", "{}")))"#,
         source.replace('\n', "\\n"),
-        file.uri
+        file.uri_id
     );
     frontend.execute_request(&code, |result| {
         assert_eq!(result, "[1] 42");

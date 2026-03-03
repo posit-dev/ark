@@ -49,7 +49,7 @@ use crate::r_task::spawn_idle_any_prompt;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
-use crate::url::ExtUrl;
+use crate::url::UrlId;
 
 const THREAD_ID: i64 = -1;
 
@@ -441,8 +441,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        // `ExtUrl::from_file_path` canonicalizes the path to resolve symlinks.
-        let uri = match ExtUrl::from_file_path(path) {
+        let uri = match UrlId::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}'");
