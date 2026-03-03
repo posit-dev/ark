@@ -384,15 +384,13 @@ impl DeviceContext {
     /// and edge cases). The fallback path does not include `code_location`.
     fn capture_execution_context(&self) -> ExecutionContext {
         // Check if we have a stored execution context from on_execute_request()
-        let stored = self.execution_context.borrow();
-        if let Some(ctx) = stored.as_ref() {
+        if let Some(ctx) = self.execution_context.borrow().as_ref() {
             return ExecutionContext {
                 execution_id: ctx.execution_id.clone(),
                 code: ctx.code.clone(),
                 code_location: ctx.code_location.clone(),
             };
         }
-        drop(stored);
 
         // Fall back to getting context from Console (for edge cases).
         // This path does not provide code_location.
