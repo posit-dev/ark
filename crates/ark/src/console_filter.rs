@@ -284,21 +284,18 @@ impl ConsoleFilter {
     /// Replace the current state with Passthrough and return any accumulated
     /// content. Returns `None` when already in Passthrough.
     fn drain(&mut self) -> Option<String> {
-        let prev = std::mem::replace(&mut self.state, ConsoleFilterState::Passthrough {
-            at_line_start: true,
-        });
-        let text = match prev {
-            ConsoleFilterState::Passthrough { .. } => return None,
+        match &self.state {
+            ConsoleFilterState::Passthrough { .. } => None,
             ConsoleFilterState::Filtering {
                 pattern, buffer, ..
             } => {
-                format!("{}{}", pattern.prefix(), buffer)
+                let text = format!("{}{}", pattern.prefix(), buffer);
+                self.state = ConsoleFilterState::Passthrough {
+                    at_line_start: text.ends_with('\n'),
+                };
+                Some(text)
             },
-        };
-        self.state = ConsoleFilterState::Passthrough {
-            at_line_start: text.ends_with('\n'),
-        };
-        Some(text)
+        }
     }
 }
 
