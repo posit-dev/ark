@@ -326,13 +326,13 @@ pub extern "C-unwind" fn ark_log_error(msg: SEXP) -> harp::error::Result<SEXP> {
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;
-    use libr::CLOENV;
+    use harp::fn_env;
 
     use crate::r_task;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();
-        let ns = unsafe { CLOENV(fun) };
+        let ns = fn_env(fun);
         Environment::view(ns)
     }
 

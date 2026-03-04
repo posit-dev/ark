@@ -30,6 +30,7 @@ use crate::object::r_str_blank;
 use crate::object::r_str_na;
 use crate::object::RObject;
 use crate::protect::RProtect;
+use crate::r::fn_formals;
 use crate::r_char;
 use crate::r_lang;
 use crate::r_null;
@@ -330,7 +331,7 @@ pub fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     r_assert_type(*object, &[CLOSXP])?;
 
     // get the formals
-    let mut formals = unsafe { FORMALS(*object) };
+    let mut formals = fn_formals(*object);
 
     // iterate through the entries
     let mut arguments = Vec::new();
