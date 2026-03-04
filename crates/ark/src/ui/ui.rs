@@ -19,6 +19,7 @@ use amalthea::wire::input_request::UiCommFrontendRequest;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use crossbeam::select;
+use harp::eval::parse_eval_global;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -242,10 +243,7 @@ impl UiComm {
         log::trace!("Evaluating code: {}", params.code);
 
         let result = r_task(|| {
-            let parsed = RFunction::from("parse")
-                .param("text", params.code)
-                .call()?;
-            let evaluated = RFunction::from("eval").add(parsed).call()?;
+            let evaluated = parse_eval_global(&params.code)?;
             Value::try_from(evaluated)
         })?;
 
