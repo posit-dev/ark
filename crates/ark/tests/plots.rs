@@ -3,9 +3,9 @@ use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
+use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
-use ark_test::RECV_TIMEOUT;
 
 #[test]
 fn test_basic_plot() {
@@ -490,12 +490,12 @@ fn test_plot_from_source_dynamic() {
     let mut got_idle = false;
 
     while !got_plot_comm || !got_idle {
-        if std::time::Instant::now() > deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let Some(msg) = frontend.recv_iopub_with_timeout(remaining) else {
             panic!(
                 "Timed out waiting for plot (got_plot_comm={got_plot_comm}, got_idle={got_idle})"
             );
-        }
-        let msg = frontend.recv_iopub();
+        };
         match msg {
             amalthea::wire::jupyter_message::Message::CommOpen(data) => {
                 assert_eq!(data.content.target_name, "positron.plot");
