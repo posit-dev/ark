@@ -226,6 +226,8 @@ functions::generate! {
 
     pub fn ATTRIB(x: SEXP) -> SEXP;
 
+    pub fn SET_ATTRIB(x: SEXP, v: SEXP);
+
     pub fn CADDDR(e: SEXP) -> SEXP;
 
     pub fn CADDR(e: SEXP) -> SEXP;
@@ -334,11 +336,25 @@ functions::generate! {
 
     pub fn CLOENV(x: SEXP) -> SEXP;
 
+    pub fn SET_CLOENV(x: SEXP, v: SEXP);
+
     pub fn BODY(x: SEXP) -> SEXP;
 
     pub fn SET_BODY(x: SEXP, v: SEXP);
 
+    pub fn SET_FORMALS(x: SEXP, v: SEXP);
+
+    pub fn Rf_allocSExp(t: SEXPTYPE) -> SEXP;
+
+    pub fn R_ClosureBody(x: SEXP) -> SEXP;
+
+    pub fn R_ClosureEnv(x: SEXP) -> SEXP;
+
     pub fn R_ClosureExpr(x: SEXP) -> SEXP;
+
+    pub fn R_ClosureFormals(x: SEXP) -> SEXP;
+
+    pub fn R_mkClosure(formals: SEXP, body: SEXP, env: SEXP) -> SEXP;
 
     pub fn Rf_PrintValue(x: SEXP);
 

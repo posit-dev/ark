@@ -20,6 +20,9 @@ use crate::environment::R_ENVS;
 use crate::list_get;
 use crate::object::r_chr_get;
 use crate::object::r_length;
+use crate::r::fn_body;
+use crate::r::fn_env;
+use crate::r::fn_formals;
 use crate::r_is_altrep;
 use crate::r_symbol;
 use crate::r_typeof;
@@ -306,16 +309,7 @@ fn obj_size_tree(
         // Functions
         CLOSXP => {
             size += obj_size_tree(
-                unsafe { libr::FORMALS(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
-            // BODY is either an expression or byte code
-            size += obj_size_tree(
-                unsafe { libr::BODY(x) },
+                fn_formals(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -323,7 +317,15 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::CLOENV(x) },
+                fn_body(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
+            size += obj_size_tree(
+                fn_env(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,

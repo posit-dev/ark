@@ -1,6 +1,10 @@
 use libr::SEXP;
 
 use crate::object::r_length;
+use crate::r::fn_body;
+use crate::r::fn_env;
+use crate::r::fn_formals;
+use crate::r::new_function;
 use crate::r_null;
 use crate::r_symbol;
 use crate::RObject;
@@ -18,12 +22,26 @@ pub fn zap_srcref(x: SEXP) -> RObject {
 
 fn zap_srcref_fn(x: SEXP) -> RObject {
     unsafe {
-        let x = RObject::view(x).shallow_duplicate();
+        let formals = fn_formals(x);
+        let body = fn_body(x);
+        let env = fn_env(x);
 
-        x.set_attribute("srcref", r_null());
-        libr::SET_BODY(x.sexp, zap_srcref(libr::R_ClosureExpr(x.sexp)).sexp);
+        let new_body = zap_srcref(body);
+        let out = RObject::new(new_function(formals, new_body.sexp, env));
 
-        x
+        // Copy attributes from the original, but zap `srcref`
+        let attrib = libr::ATTRIB(x);
+        if attrib != r_null() {
+            if libr::Rf_getAttrib(x, r_symbol!("srcref")) == r_null() {
+                libr::SET_ATTRIB(out.sexp, attrib);
+            } else {
+                let attrib = RObject::new(libr::Rf_duplicate(attrib));
+                libr::SET_ATTRIB(out.sexp, attrib.sexp);
+                libr::Rf_setAttrib(out.sexp, r_symbol!("srcref"), r_null());
+            }
+        }
+
+        out
     }
 }
 

@@ -76,7 +76,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
 
     for b in ns.iter().filter_map(Result::ok) {
         span.in_scope(|| {
-            match generate_source(&b, vdoc.len(), &uri) {
+            match generate_source(&b, ns.inner.sexp, vdoc.len(), &uri) {
                 Ok(Some(mut lines)) => {
                     n_ok = n_ok + 1;
 
@@ -122,6 +122,7 @@ fn ark_ns_uri(ns_name: &str) -> String {
 #[tracing::instrument(level = "trace", skip_all, fields(name = %binding.name))]
 fn generate_source(
     binding: &Binding,
+    ns_env: SEXP,
     line: usize,
     uri: &String,
 ) -> anyhow::Result<Option<Vec<String>>> {
@@ -162,8 +163,8 @@ fn generate_source(
     unsafe {
         // First replace the body which contains expressions tagged with srcrefs
         // such as calls to `{`. Compiled functions are a little more tricky.
+        let body = harp::fn_body(old.sexp);
 
-        let body = BODY(old.sexp);
         if r_typeof(body) == BCODESXP {
             // This is a compiled function. We could recompile the fresh
             // function we just created but the compiler is very slow. Instead,
@@ -179,16 +180,35 @@ fn generate_source(
                 // Inject new body instrumented with source references
                 SET_VECTOR_ELT(consts, 0, R_ClosureExpr(new));
             }
-        } else {
-            SET_BODY(old.sexp, BODY(new));
-        }
 
-        // Finally push the srcref attribute for the whole function
-        Rf_setAttrib(
-            old.sexp,
-            r_symbol!("srcref"),
-            Rf_getAttrib(new, r_symbol!("srcref")),
-        );
+            Rf_setAttrib(
+                old.sexp,
+                r_symbol!("srcref"),
+                Rf_getAttrib(new, r_symbol!("srcref")),
+            );
+        } else {
+            let new_body = harp::fn_body(new);
+            let out = RObject::new(harp::new_function(
+                harp::fn_formals(old.sexp),
+                new_body,
+                harp::fn_env(old.sexp),
+            ));
+
+            // TODO: Avoid `ATTRIB()`
+            let attrib = ATTRIB(old.sexp);
+            if attrib != R_NilValue {
+                let attrib = RObject::new(Rf_shallow_duplicate(attrib));
+                SET_ATTRIB(out.sexp, attrib.sexp);
+            }
+
+            Rf_setAttrib(
+                out.sexp,
+                r_symbol!("srcref"),
+                Rf_getAttrib(new, r_symbol!("srcref")),
+            );
+
+            harp::env_bind_force(ns_env, binding.name.sexp, out.sexp);
+        }
     }
 
     let text: Vec<String> = RObject::view(text).try_into()?;
