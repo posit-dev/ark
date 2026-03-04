@@ -126,11 +126,11 @@ pub fn r_is_altrep(object: SEXP) -> bool {
 }
 
 pub fn r_is_object(object: SEXP) -> bool {
-    unsafe { libr::OBJECT(object) != 0 }
+    unsafe { libr::Rf_isObject(object) != 0 }
 }
 
 pub fn r_is_s4(object: SEXP) -> bool {
-    unsafe { libr::IS_S4_OBJECT(object) != 0 }
+    unsafe { libr::Rf_isS4(object) != 0 }
 }
 
 pub fn r_is_unbound(object: SEXP) -> bool {
