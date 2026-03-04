@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
 use amalthea::comm::ui_comm::EditorContextChangedParams;
+use amalthea::comm::ui_comm::EvaluateCodeParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -154,6 +155,7 @@ impl UiComm {
             UiBackendRequest::EditorContextChanged(params) => {
                 self.handle_editor_context_changed(params)
             },
+            UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
         }
     }
 
@@ -231,6 +233,23 @@ impl UiComm {
             params.is_execution_source
         );
         Ok(UiBackendReply::EditorContextChangedReply())
+    }
+
+    fn handle_evaluate_code(
+        &self,
+        params: EvaluateCodeParams,
+    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+        log::trace!("Evaluating code: {}", params.code);
+
+        let result = r_task(|| {
+            let parsed = RFunction::from("parse")
+                .param("text", params.code)
+                .call()?;
+            let evaluated = RFunction::from("eval").add(parsed).call()?;
+            Value::try_from(evaluated)
+        })?;
+
+        Ok(UiBackendReply::EvaluateCodeReply(result))
     }
 
     /**

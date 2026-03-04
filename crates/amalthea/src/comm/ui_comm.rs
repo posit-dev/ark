@@ -166,6 +166,13 @@ pub struct CallMethodParams {
 	pub params: Vec<Param>,
 }
 
+/// Parameters for the EvaluateCode method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EvaluateCodeParams {
+	/// The code string to evaluate
+	pub code: String,
+}
+
 /// Parameters for the EditorContextChanged method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContextChangedParams {
@@ -414,6 +421,12 @@ pub enum UiBackendRequest {
 	#[serde(rename = "call_method")]
 	CallMethod(CallMethodParams),
 
+	/// Evaluate a statement in the interpreter
+	///
+	/// Execute a code fragment silently and return a JSON-serialized result.
+	#[serde(rename = "evaluate_code")]
+	EvaluateCode(EvaluateCodeParams),
+
 	/// Active editor context changed
 	///
 	/// This notification is sent from the frontend to the backend when the
@@ -436,6 +449,9 @@ pub enum UiBackendReply {
 
 	/// The method result
 	CallMethodReply(CallMethodResult),
+
+	/// The result of evaluating the code
+	EvaluateCodeReply(serde_json::Value),
 
 	/// Unused response to notification
 	EditorContextChangedReply(),
