@@ -1019,6 +1019,15 @@ impl Console {
         &self.comm_event_tx
     }
 
+    /// Run a closure while capturing console output.
+    /// Returns the closure's result paired with any captured output.
+    pub(crate) fn with_capture<T>(f: impl FnOnce() -> T) -> (T, String) {
+        let mut capture = Console::get_mut().start_capture();
+        let result = f();
+        let output = capture.take();
+        (result, output)
+    }
+
     /// Start capturing console output.
     /// Returns a guard that saves and restores the previous capture state on drop.
     pub(crate) fn start_capture(&mut self) -> ConsoleOutputCapture {

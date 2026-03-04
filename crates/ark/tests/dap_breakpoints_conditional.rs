@@ -208,7 +208,85 @@ foo()
     assert_eq!(breakpoints.len(), 1);
 
     // The condition errors, so the breakpoint should fire (treated as TRUE)
-    frontend.source_file_and_hit_breakpoint(&file);
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Inline the breakpoint-hit flow so we can assert stderr before idle
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stderr_contains("```breakpoint");
+    frontend.assert_stream_stderr_contains("#> nonexistent_variable_xyz");
+    frontend.assert_stream_stderr_contains("Error: object 'nonexistent_variable_xyz' not found");
+    frontend.assert_stream_stderr_contains("```");
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_stdout_contains("debug at");
+    frontend.recv_iopub_idle();
+
+    dap.recv_breakpoint_verified();
+    dap.recv_stopped();
+    dap.assert_top_frame("foo()");
+    dap.assert_top_frame_line(3);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a condition that calls `stop()` reports the error cleanly.
+///
+/// The stderr output should show the user's error message without
+/// internal wrappers like `as.logical()` or R backtraces.
+#[test]
+fn test_dap_conditional_breakpoint_stop_in_condition() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  x <- 1
+  x + 1
+}
+foo()
+",
+    );
+
+    let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "stop(\"oops\")")]);
+    assert_eq!(breakpoints.len(), 1);
+
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_start_debug();
+
+    // Should show clean error without `as.logical()` wrapper or backtrace
+    frontend.assert_stream_stderr_contains("```breakpoint");
+    frontend.assert_stream_stderr_contains("#> stop(\"oops\")");
+    frontend.assert_stream_stderr_contains("Error: oops");
+    frontend.assert_stream_stderr_contains("```");
+
+    // Must NOT contain internal wrappers
+    let streams = frontend.drain_streams();
+    let stderr = streams.stderr();
+    assert!(
+        !stderr.contains("as.logical"),
+        "stderr should not expose as.logical() wrapper, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("backtrace"),
+        "stderr should not contain backtrace, got: {stderr}"
+    );
+
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_stdout_contains("debug at");
+    frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
     dap.recv_stopped();
@@ -294,7 +372,19 @@ foo()
     let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "'hello'")]);
     assert_eq!(breakpoints.len(), 1);
 
-    frontend.source_file_and_hit_breakpoint(&file);
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stderr_contains("Breakpoint condition `'hello'`:");
+    frontend.assert_stream_stderr_contains("Condition evaluated to NA, stopping");
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_stdout_contains("debug at");
+    frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
     dap.recv_stopped();
@@ -327,7 +417,19 @@ foo()
     let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "environment()")]);
     assert_eq!(breakpoints.len(), 1);
 
-    frontend.source_file_and_hit_breakpoint(&file);
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_start_debug();
+    frontend.assert_stream_stderr_contains("Breakpoint condition `environment()`:");
+    frontend.assert_stream_stderr_contains("Condition error, stopping:");
+    frontend.assert_stream_stdout_contains("Called from:");
+    frontend.assert_stream_stdout_contains("debug at");
+    frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
     dap.recv_stopped();

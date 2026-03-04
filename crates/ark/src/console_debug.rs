@@ -3,6 +3,10 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
+
+use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use anyhow::anyhow;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -536,7 +540,10 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
-    let condition = dap.breakpoint_condition(&uri, id).map(String::from);
+    let (bp_line, condition) = match dap.breakpoint_condition(&uri, id) {
+        Some((line, cond)) => (line, Some(cond.to_string())),
+        None => (0, None),
+    };
 
     log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}");
 
@@ -549,41 +556,215 @@ pub unsafe extern "C-unwind" fn ps_should_break(
 
     let should_break = match &condition {
         None => true,
-        Some(condition) => eval_condition(condition, env),
+        Some(condition) => {
+            let ((should_break, diagnostic), captured_output) =
+                Console::with_capture(|| eval_condition(condition, env));
+
+            emit_condition_output(
+                &uri,
+                bp_line,
+                condition,
+                &captured_output,
+                diagnostic.as_deref(),
+            );
+            should_break
+        },
     };
 
     Ok(RObject::from(should_break).sexp)
 }
 
+/// Emit any output or diagnostics from condition evaluation to stderr.
+fn emit_condition_output(
+    uri: &Url,
+    line: u32,
+    condition: &str,
+    captured: &str,
+    diagnostic: Option<&str>,
+) {
+    let Some(text) = format_condition_output(uri, line, condition, captured, diagnostic) else {
+        return;
+    };
+
+    Console::get_mut()
+        .get_iopub_tx()
+        .send(IOPubMessage::Stream(StreamOutput {
+            name: Stream::Stderr,
+            text,
+        }))
+        .unwrap();
+}
+
+fn format_condition_output(
+    uri: &Url,
+    line: u32,
+    condition: &str,
+    captured: &str,
+    diagnostic: Option<&str>,
+) -> Option<String> {
+    let has_captured = !captured.trim().is_empty();
+    let has_diagnostic = diagnostic.is_some();
+
+    if !has_captured && !has_diagnostic {
+        return None;
+    }
+
+    let filename = uri
+        .path_segments()
+        .and_then(|s| s.last())
+        .unwrap_or("unknown");
+    let display_line = line + 1;
+    let label = ansi_file_link(uri, line, &format!("{filename}#{display_line}"));
+
+    let mut text = format!("```breakpoint {label}\n#> {condition}\n");
+
+    if has_captured {
+        text.push_str(captured);
+        if !captured.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+
+    if let Some(diagnostic) = diagnostic {
+        text.push_str(diagnostic);
+        text.push('\n');
+    }
+
+    text.push_str("```\n");
+
+    Some(text)
+}
+
+/// Format an OSC 8 hyperlink pointing to a file location.
+/// Terminals that support OSC 8 render `display` as a clickable link.
+fn ansi_file_link(uri: &Url, line: u32, display: &str) -> String {
+    let display_line = line + 1;
+    format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
+}
+
+#[cfg(test)]
+mod tests_condition_output {
+    use super::*;
+
+    fn test_uri(path: &str) -> Url {
+        Url::parse(&format!("file:///project/{path}")).unwrap()
+    }
+
+    #[test]
+    fn test_format_condition_output_nothing() {
+        let uri = test_uri("test.R");
+        assert_eq!(format_condition_output(&uri, 2, "x > 1", "", None), None);
+        assert_eq!(
+            format_condition_output(&uri, 2, "x > 1", "  \n", None),
+            None
+        );
+    }
+
+    #[test]
+    fn test_format_condition_output_diagnostic_only() {
+        let uri = test_uri("test.R");
+        let result =
+            format_condition_output(&uri, 2, "x > 1", "", Some("Expected TRUE or FALSE, got 42"));
+        let link = ansi_file_link(&uri, 2, "test.R#3");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        #> x > 1
+        Expected TRUE or FALSE, got 42
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_captured_only() {
+        let uri = test_uri("test.R");
+        let result = format_condition_output(&uri, 4, "x > 1", "Warning: something\n", None);
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
+        ```breakpoint <test.R#5>
+        #> x > 1
+        Warning: something
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_both() {
+        let uri = test_uri("analysis.R");
+        let result = format_condition_output(
+            &uri,
+            9,
+            "nrow(df)",
+            "Warning message:\ncoercion applied\n",
+            Some("Expected TRUE or FALSE, got 5"),
+        );
+        let link = ansi_file_link(&uri, 9, "analysis.R#10");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
+        ```breakpoint <analysis.R#10>
+        #> nrow(df)
+        Warning message:
+        coercion applied
+        Expected TRUE or FALSE, got 5
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_captured_no_trailing_newline() {
+        let uri = test_uri("test.R");
+        let result = format_condition_output(&uri, 0, "x > 1", "Warning: oops", None);
+        let link = ansi_file_link(&uri, 0, "test.R#1");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
+        ```breakpoint <test.R#1>
+        #> x > 1
+        Warning: oops
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_ansi_file_link() {
+        let uri = Url::parse("file:///path/to/test.R").unwrap();
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        assert_eq!(
+            link,
+            "\x1b]8;line=5;file:///path/to/test.R\x07test.R#5\x1b]8;;\x07"
+        );
+    }
+}
+
 /// Evaluate a condition expression in a given environment.
-/// Returns `true` if the condition is met or if evaluation errors,
-/// so that a typo in the condition causes a visible stop rather than
-/// a silently ignored breakpoint.
-fn eval_condition(condition: &str, envir: RObject) -> bool {
+///
+/// Returns `(should_break, diagnostic)`. When evaluation fails or produces
+/// a non-logical result, `should_break` is `true` so that typos in
+/// conditions cause a visible stop rather than a silently ignored breakpoint.
+/// The diagnostic message (if any) is emitted to stderr by the caller.
+fn eval_condition(condition: &str, envir: RObject) -> (bool, Option<String>) {
     // Wrap in `as.logical()` so R's truthy/falsy coercion applies,
     // e.g. `0` → FALSE, `1` → TRUE, `nrow(df)` → logical
     let code = format!("as.logical({condition})");
 
     let result = match harp::parse_eval0(&code, envir) {
         Ok(val) => val,
+        Err(harp::Error::TryCatchError { message, .. }) => {
+            return (true, Some(format!("Error: {message}")));
+        },
         Err(err) => {
-            log::info!("DAP: Condition evaluation error for {condition:?}: {err:?}");
-            return true;
+            return (true, Some(format!("Error: {err}")));
         },
     };
 
     match Option::<bool>::try_from(result) {
-        Ok(Some(val)) => val,
-        Ok(None) => {
-            log::info!("DAP: Condition {condition:?} evaluated to NA, treating as TRUE");
-            true
-        },
-        Err(_) => {
-            log::info!(
-                "DAP: Condition {condition:?} did not evaluate to scalar logical, treating as TRUE"
-            );
-            true
-        },
+        Ok(Some(val)) => (val, None),
+        Ok(None) => (
+            true,
+            Some(String::from("Condition evaluated to NA, stopping")),
+        ),
+        Err(_) => (
+            true,
+            Some(String::from(
+                "Condition did not evaluate to scalar logical, stopping",
+            )),
+        ),
     }
 }
 
