@@ -13,6 +13,7 @@ use std::u32;
 use libc::c_double;
 use libr::*;
 
+use crate::environment::r_env_parent;
 use crate::environment::BindingValue;
 use crate::environment::Environment;
 use crate::environment::R_ENVS;
@@ -294,7 +295,7 @@ fn obj_size_tree(
             }
 
             size += obj_size_tree(
-                unsafe { libr::ENCLOS(x) },
+                r_env_parent(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,

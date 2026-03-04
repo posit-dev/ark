@@ -7,6 +7,7 @@
 
 use std::fs::DirEntry;
 
+use harp::environment::r_env_parent;
 use harp::r_symbol;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote;
@@ -19,7 +20,6 @@ use harp::utils::r_typeof;
 use libr::R_UnboundValue;
 use libr::Rf_findVarInFrame;
 use libr::Rf_isFunction;
-use libr::ENCLOS;
 use libr::PROMSXP;
 use libr::PRVALUE;
 use libr::SEXP;
@@ -480,7 +480,7 @@ pub(super) unsafe fn completion_item_from_namespace(
     };
 
     // Otherwise, try the imports environment.
-    let imports = ENCLOS(namespace);
+    let imports = r_env_parent(namespace);
     let error_imports = match completion_item_from_symbol(
         name,
         imports,

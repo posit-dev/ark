@@ -76,16 +76,14 @@ impl Environment {
     }
 
     pub fn parent(&self) -> Option<Environment> {
-        unsafe {
-            let parent = ENCLOS(self.inner.sexp);
-            if parent == R_ENVS.empty {
-                None
-            } else {
-                Some(Self::new_filtered(
-                    RObject::new(parent),
-                    self.filter.clone(),
-                ))
-            }
+        let parent = r_env_parent(self.inner.sexp);
+        if parent == R_ENVS.empty {
+            None
+        } else {
+            Some(Self::new_filtered(
+                RObject::new(parent),
+                self.filter.clone(),
+            ))
         }
     }
 
@@ -250,6 +248,18 @@ impl Environment {
             // TODO: Respect the future hidden flag
             .param("all.names", true)
             .call_in(R_ENVS.base)
+    }
+}
+
+/// Returns the parent (enclosing) environment. Uses `R_ParentEnv` on
+/// R >= 4.5 where `ENCLOS` is hidden, with fallback to `ENCLOS` for older R.
+pub fn r_env_parent(env: SEXP) -> SEXP {
+    unsafe {
+        if libr::has::R_ParentEnv() {
+            libr::R_ParentEnv(env)
+        } else {
+            libr::ENCLOS(env)
+        }
     }
 }
 
