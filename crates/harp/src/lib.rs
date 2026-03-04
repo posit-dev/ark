@@ -81,7 +81,6 @@ pub use harp::weak_ref::RWeakRef;
 pub use harp_macros::register;
 
 // Allow `crate::` references within the crate
-use crate::error::*;
 use crate::utils::*;
 
 pub fn initialize() {
