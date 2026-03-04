@@ -62,6 +62,10 @@ functions::generate! {
 
     pub fn R_ExternalPtrAddr(s: SEXP) -> *mut std::ffi::c_void;
 
+    pub fn R_ExternalPtrProtected(s: SEXP) -> SEXP;
+
+    pub fn R_ExternalPtrTag(s: SEXP) -> SEXP;
+
     pub fn R_MakeExternalPtr(p: *mut std::ffi::c_void, tag: SEXP, prot: SEXP) -> SEXP;
 
     pub fn R_MakeWeakRefC(key: SEXP, val: SEXP, fin: R_CFinalizer_t, onexit: Rboolean) -> SEXP;
