@@ -1,6 +1,8 @@
 use libr::SEXP;
 
 use crate::object::r_length;
+use crate::r::attrib_poke;
+use crate::r::attrib_poke_from;
 use crate::r::fn_body;
 use crate::r::fn_env;
 use crate::r::fn_formals;
@@ -30,16 +32,8 @@ fn zap_srcref_fn(x: SEXP) -> RObject {
         let out = RObject::new(new_function(formals, new_body.sexp, env));
 
         // Copy attributes from the original, but zap `srcref`
-        let attrib = libr::ATTRIB(x);
-        if attrib != r_null() {
-            if libr::Rf_getAttrib(x, r_symbol!("srcref")) == r_null() {
-                libr::SET_ATTRIB(out.sexp, attrib);
-            } else {
-                let attrib = RObject::new(libr::Rf_duplicate(attrib));
-                libr::SET_ATTRIB(out.sexp, attrib.sexp);
-                libr::Rf_setAttrib(out.sexp, r_symbol!("srcref"), r_null());
-            }
-        }
+        attrib_poke_from(out.sexp, x);
+        attrib_poke(out.sexp, r_symbol!("srcref"), r_null());
 
         out
     }

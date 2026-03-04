@@ -1,5 +1,7 @@
 use libr::SEXP;
 
+// --- Closure accessors ---
+
 pub fn fn_formals(x: SEXP) -> SEXP {
     unsafe { libr::FORMALS(x) }
 }
@@ -23,6 +25,16 @@ pub fn fn_env(x: SEXP) -> SEXP {
         }
     }
 }
+
+pub unsafe fn new_function(formals: SEXP, body: SEXP, env: SEXP) -> SEXP {
+    if libr::has::R_mkClosure() {
+        libr::R_mkClosure(formals, body, env)
+    } else {
+        compat::alloc_closure(formals, body, env)
+    }
+}
+
+// --- Environment bindings ---
 
 pub fn env_binding_is_locked(env: SEXP, sym: SEXP) -> bool {
     unsafe { libr::R_BindingIsLocked(sym, env) != 0 }
@@ -54,14 +66,59 @@ pub fn env_bind_force(env: SEXP, sym: SEXP, value: SEXP) {
     }
 }
 
-/// Creates a closure.
-pub unsafe fn new_function(formals: SEXP, body: SEXP, env: SEXP) -> SEXP {
-    if libr::has::R_mkClosure() {
-        libr::R_mkClosure(formals, body, env)
-    } else {
-        compat::alloc_closure(formals, body, env)
+// --- Attributes ---
+
+/// Gets an attribute from `x`.
+pub fn attrib_get(x: SEXP, tag: SEXP) -> SEXP {
+    unsafe { libr::Rf_getAttrib(x, tag) }
+}
+
+pub fn attrib_poke(x: SEXP, tag: SEXP, value: SEXP) {
+    unsafe {
+        libr::Rf_setAttrib(x, tag, value);
     }
 }
+
+/// Returns `true` if `x` has any attributes.
+pub fn attrib_has_any(x: SEXP) -> bool {
+    unsafe {
+        if libr::has::ANY_ATTRIB() {
+            libr::ANY_ATTRIB(x) != 0
+        } else {
+            libr::ATTRIB(x) != libr::R_NilValue
+        }
+    }
+}
+
+/// Iterates over the attributes of `x`, calling `f(tag, value)` for each.
+pub fn attrib_for_each<F: FnMut(SEXP, SEXP)>(x: SEXP, mut f: F) {
+    unsafe {
+        if libr::has::R_mapAttrib() {
+            unsafe extern "C-unwind" fn trampoline<F: FnMut(SEXP, SEXP)>(
+                tag: SEXP,
+                val: SEXP,
+                data: *mut std::ffi::c_void,
+            ) -> SEXP {
+                let f = &mut *(data as *mut F);
+                f(tag, val);
+                std::ptr::null_mut()
+            }
+            let data = &mut f as *mut F as *mut std::ffi::c_void;
+            libr::R_mapAttrib(x, Some(trampoline::<F>), data);
+        } else {
+            compat::map_attrib(x, &mut f);
+        }
+    }
+}
+
+/// Copies all attributes from `src` to `dst`.
+pub fn attrib_poke_from(dst: SEXP, src: SEXP) {
+    attrib_for_each(src, |tag, val| unsafe {
+        libr::Rf_setAttrib(dst, tag, val);
+    });
+}
+
+// --- Compat polyfills for older R ---
 
 mod compat {
     use libr::SEXP;
@@ -72,5 +129,13 @@ mod compat {
         libr::SET_BODY(out, body);
         libr::SET_CLOENV(out, env);
         out
+    }
+
+    pub unsafe fn map_attrib<F: FnMut(SEXP, SEXP)>(x: SEXP, f: &mut F) {
+        let mut node = libr::ATTRIB(x);
+        while node != libr::R_NilValue {
+            f(libr::TAG(node), libr::CAR(node));
+            node = libr::CDR(node);
+        }
     }
 }

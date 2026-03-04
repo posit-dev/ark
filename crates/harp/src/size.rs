@@ -20,6 +20,8 @@ use crate::environment::R_ENVS;
 use crate::list_get;
 use crate::object::r_chr_get;
 use crate::object::r_length;
+use crate::r::attrib_for_each;
+use crate::r::attrib_has_any;
 use crate::r::fn_body;
 use crate::r::fn_env;
 use crate::r::fn_formals;
@@ -117,15 +119,12 @@ fn obj_size_tree(
         return size;
     }
 
-    if r_typeof(x) != CHARSXP {
-        size += obj_size_tree(
-            unsafe { libr::ATTRIB(x) },
-            base_env,
-            sizeof_node,
-            sizeof_vector,
-            seen,
-            depth + 1,
-        );
+    if r_typeof(x) != CHARSXP && attrib_has_any(x) {
+        attrib_for_each(x, |tag, val| {
+            size += sizeof_node;
+            size += obj_size_tree(tag, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+            size += obj_size_tree(val, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+        });
     }
 
     match r_typeof(x) {
