@@ -221,8 +221,8 @@ foo()
     frontend.assert_stream_stderr_contains("#> nonexistent_variable_xyz");
     frontend.assert_stream_stderr_contains("Error: object 'nonexistent_variable_xyz' not found");
     frontend.assert_stream_stderr_contains("```");
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    // "Called from:" and "debug at" are filtered from console output
+    frontend.drain_streams();
     frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
@@ -284,14 +284,73 @@ foo()
         "stderr should not contain backtrace, got: {stderr}"
     );
 
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    // "Called from:" and "debug at" are filtered from console output
     frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
     dap.recv_stopped();
     dap.assert_top_frame("foo()");
     dap.assert_top_frame_line(3);
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that warnings, messages, and `cat()` output in condition expressions
+/// are all captured and displayed in the fenced stderr block.
+///
+/// Warnings are captured via `withCallingHandlers` (R defers them by default).
+/// Messages are captured the same way. `cat()` output is captured via
+/// `Console::with_capture`. All three appear in the same fenced block with
+/// appropriate prefixes, in signalling order.
+#[test]
+fn test_dap_conditional_breakpoint_output_captured() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function(n) {
+  x <- n * 10
+  x
+}
+foo(5)
+",
+    );
+
+    // Condition that produces a warning, a message, cat() output, then returns TRUE
+    let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(
+        3,
+        "cat('n is', n, '\\n'); warning('heads up'); message('info'); n > 3",
+    )]);
+    assert_eq!(breakpoints.len(), 1);
+
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_start_debug();
+
+    // All output should be captured in the fenced stderr block
+    frontend.assert_stream_stderr_contains("```breakpoint");
+    // cat() goes through Console::with_capture
+    frontend.assert_stream_stderr_contains("n is 5");
+    // Warning captured via withCallingHandlers, prefixed
+    frontend.assert_stream_stderr_contains("Warning: heads up");
+    // Message captured via withCallingHandlers, prefixed
+    frontend.assert_stream_stderr_contains("Message: info");
+    frontend.assert_stream_stderr_contains("```");
+
+    // "Called from:" and "debug at" are filtered from console output
+    frontend.drain_streams();
+    frontend.recv_iopub_idle();
+
+    dap.recv_breakpoint_verified();
+    dap.recv_stopped();
 
     frontend.debug_send_quit();
     dap.recv_continued();
@@ -380,10 +439,12 @@ foo()
     frontend.recv_iopub_execute_input();
 
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stderr_contains("Breakpoint condition `'hello'`:");
+    frontend.assert_stream_stderr_contains("```breakpoint");
+    frontend.assert_stream_stderr_contains("#> 'hello'");
     frontend.assert_stream_stderr_contains("Condition evaluated to NA, stopping");
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_stderr_contains("```");
+    // "Called from:" and "debug at" are filtered from console output
+    frontend.drain_streams();
     frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
@@ -425,10 +486,12 @@ foo()
     frontend.recv_iopub_execute_input();
 
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_stderr_contains("Breakpoint condition `environment()`:");
-    frontend.assert_stream_stderr_contains("Condition error, stopping:");
-    frontend.assert_stream_stdout_contains("Called from:");
-    frontend.assert_stream_stdout_contains("debug at");
+    frontend.assert_stream_stderr_contains("```breakpoint");
+    frontend.assert_stream_stderr_contains("#> environment()");
+    frontend.assert_stream_stderr_contains("Error:");
+    frontend.assert_stream_stderr_contains("```");
+    // "Called from:" and "debug at" are filtered from console output
+    frontend.drain_streams();
     frontend.recv_iopub_idle();
 
     dap.recv_breakpoint_verified();
