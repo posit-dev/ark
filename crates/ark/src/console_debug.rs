@@ -744,11 +744,9 @@ mod tests_condition_output {
 /// so that typos in conditions cause a visible stop rather than a silently ignored
 /// breakpoint.
 fn eval_condition(condition: &str, envir: RObject) -> (bool, String, Option<String>) {
-    // Call `.ark_eval_capture(CONDITION)` which captures warnings via
-    // `withCallingHandlers` (R defers warnings by default) and returns
-    // a list of (raw_result, warnings). We coerce to logical separately
-    // so that coercion warnings are also captured.
-    let code = format!("base::.ark_eval_capture(as.logical({{ {condition} }}))");
+    // `if` coerces via `asLogicalNoNA` (not the generic `as.logical`)
+    // and errors on NA, length != 1, and non-coercible types.
+    let code = format!("base::.ark_eval_capture(if ({{ {condition} }}) TRUE else FALSE)");
 
     let result = match harp::parse_eval0(&code, envir) {
         Ok(val) => val,
@@ -764,24 +762,13 @@ fn eval_condition(condition: &str, envir: RObject) -> (bool, String, Option<Stri
     let list_result = harp::list_get(result.sexp, 0);
     let list_conditions = harp::list_get(result.sexp, 1);
 
-    // Format conditions (warnings and messages) as a single string
     let conditions = format_captured_conditions(list_conditions);
 
-    let logical_result = RObject::view(list_result);
-    match Option::<bool>::try_from(logical_result) {
-        Ok(Some(val)) => (val, conditions, None),
-        Ok(None) => (
-            true,
-            conditions,
-            Some(String::from("Condition evaluated to NA, stopping")),
-        ),
-        Err(_) => (
-            true,
-            conditions,
-            Some(String::from(
-                "Condition did not evaluate to scalar logical, stopping",
-            )),
-        ),
+    // `if` guarantees the result is TRUE or FALSE (never NA, never non-scalar),
+    // so a failed conversion here is unexpected.
+    match bool::try_from(RObject::view(list_result)) {
+        Ok(val) => (val, conditions, None),
+        Err(err) => (true, conditions, Some(format!("Error: {err}"))),
     }
 }
 

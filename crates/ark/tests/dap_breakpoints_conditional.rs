@@ -238,7 +238,7 @@ foo()
 /// Test that a condition that calls `stop()` reports the error cleanly.
 ///
 /// The stderr output should show the user's error message without
-/// internal wrappers like `as.logical()` or R backtraces.
+/// internal wrappers or R backtraces.
 #[test]
 fn test_dap_conditional_breakpoint_stop_in_condition() {
     let frontend = DummyArkFrontend::lock();
@@ -266,19 +266,15 @@ foo()
 
     frontend.recv_iopub_start_debug();
 
-    // Should show clean error without `as.logical()` wrapper or backtrace
+    // Should show clean error without internal wrappers or backtrace
     frontend.assert_stream_stderr_contains("```breakpoint");
     frontend.assert_stream_stderr_contains("#> stop(\"oops\")");
     frontend.assert_stream_stderr_contains("Error: oops");
     frontend.assert_stream_stderr_contains("```");
 
-    // Must NOT contain internal wrappers
+    // Must NOT contain backtrace noise
     let streams = frontend.drain_streams();
     let stderr = streams.stderr();
-    assert!(
-        !stderr.contains("as.logical"),
-        "stderr should not expose as.logical() wrapper, got: {stderr}"
-    );
     assert!(
         !stderr.contains("backtrace"),
         "stderr should not contain backtrace, got: {stderr}"
@@ -410,8 +406,10 @@ foo()
     frontend.recv_shell_execute_reply();
 }
 
-/// Test that a condition returning a non-logical value (e.g. a number)
+/// Test that a condition returning a non-coercible value (e.g. a string)
 /// is treated as TRUE and the breakpoint fires.
+///
+/// `if` coercion produces R's native "argument is not interpretable as logical" error.
 #[test]
 fn test_dap_conditional_breakpoint_non_logical_condition_stops() {
     let frontend = DummyArkFrontend::lock();
@@ -427,7 +425,7 @@ foo()
 ",
     );
 
-    // Condition evaluates to the string "hello", not a logical
+    // `if ("hello")` errors: argument is not interpretable as logical
     let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "'hello'")]);
     assert_eq!(breakpoints.len(), 1);
 
@@ -441,7 +439,7 @@ foo()
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stderr_contains("```breakpoint");
     frontend.assert_stream_stderr_contains("#> 'hello'");
-    frontend.assert_stream_stderr_contains("Condition evaluated to NA, stopping");
+    frontend.assert_stream_stderr_contains("Error: argument is not interpretable as logical");
     frontend.assert_stream_stderr_contains("```");
     // "Called from:" and "debug at" are filtered from console output
     frontend.drain_streams();
@@ -458,7 +456,9 @@ foo()
 }
 
 /// Test that a condition returning a value not coercible to logical (e.g. an
-/// environment) errors during `as.logical()` and is treated as TRUE.
+/// environment) is treated as TRUE.
+///
+/// `if` coercion produces R's native "argument is of length zero" error.
 #[test]
 fn test_dap_conditional_breakpoint_non_coercible_condition_stops() {
     let frontend = DummyArkFrontend::lock();
@@ -474,7 +474,7 @@ foo()
 ",
     );
 
-    // `as.logical(environment())` errors: cannot coerce type 'environment' to logical
+    // `if (environment())` errors: argument is of length zero
     let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "environment()")]);
     assert_eq!(breakpoints.len(), 1);
 
@@ -488,7 +488,7 @@ foo()
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stderr_contains("```breakpoint");
     frontend.assert_stream_stderr_contains("#> environment()");
-    frontend.assert_stream_stderr_contains("Error:");
+    frontend.assert_stream_stderr_contains("Error: argument is of length zero");
     frontend.assert_stream_stderr_contains("```");
     // "Called from:" and "debug at" are filtered from console output
     frontend.drain_streams();
@@ -520,7 +520,7 @@ foo()
 ",
     );
 
-    // `0` coerces to FALSE via `as.logical()`
+    // `0` coerces to FALSE (numeric zero is falsy, same as R's `if`)
     let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "0")]);
     assert_eq!(breakpoints.len(), 1);
     let bp_id = breakpoints[0].id;
@@ -555,7 +555,7 @@ foo()
 ",
     );
 
-    // `42` coerces to TRUE via `as.logical()`
+    // `42` coerces to TRUE (non-zero numeric is truthy, same as R's `if`)
     let breakpoints = dap.set_conditional_breakpoints(&file.path, &[(3, "42")]);
     assert_eq!(breakpoints.len(), 1);
 
