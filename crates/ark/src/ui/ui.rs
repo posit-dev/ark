@@ -245,9 +245,20 @@ impl UiComm {
         let result = r_task(|| {
             let evaluated = parse_eval_global(&params.code)?;
             Value::try_from(evaluated)
-        })?;
+        });
 
-        Ok(UiBackendReply::EvaluateCodeReply(result))
+        match result {
+            Ok(value) => Ok(UiBackendReply::EvaluateCodeReply(value)),
+            Err(err) => {
+                let message = match &err {
+                    harp::Error::TryCatchError { message, .. } => message.clone(),
+                    harp::Error::ParseError { message, .. } => message.clone(),
+                    harp::Error::ParseSyntaxError { message } => message.clone(),
+                    _ => format!("{err}"),
+                };
+                Err(anyhow::anyhow!("{message}"))
+            },
+        }
     }
 
     /**
