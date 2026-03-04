@@ -18,6 +18,7 @@ use harp::session::r_sys_calls;
 use harp::session::r_sys_frames;
 use harp::session::r_sys_functions;
 use harp::srcref::SrcRef;
+use harp::utils::r_inherits;
 use harp::utils::r_is_null;
 use libr::SEXP;
 use regex::Regex;
@@ -557,16 +558,19 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     let should_break = match &condition {
         None => true,
         Some(condition) => {
-            let ((should_break, diagnostic), captured_output) =
+            let ((should_break, warnings, diagnostic), captured_output) =
                 Console::with_capture(|| eval_condition(condition, env));
 
-            emit_condition_output(
-                &uri,
-                bp_line,
-                condition,
-                &captured_output,
-                diagnostic.as_deref(),
-            );
+            // Combine captured console output (cat, message) with R warnings
+            let all_output = if captured_output.is_empty() {
+                warnings
+            } else if warnings.is_empty() {
+                captured_output
+            } else {
+                format!("{captured_output}{warnings}")
+            };
+
+            emit_condition_output(&uri, bp_line, condition, &all_output, diagnostic.as_deref());
             should_break
         },
     };
@@ -734,38 +738,87 @@ mod tests_condition_output {
 
 /// Evaluate a condition expression in a given environment.
 ///
-/// Returns `(should_break, diagnostic)`. When evaluation fails or produces
-/// a non-logical result, `should_break` is `true` so that typos in
-/// conditions cause a visible stop rather than a silently ignored breakpoint.
-/// The diagnostic message (if any) is emitted to stderr by the caller.
-fn eval_condition(condition: &str, envir: RObject) -> (bool, Option<String>) {
-    // Wrap in `as.logical()` so R's truthy/falsy coercion applies,
-    // e.g. `0` → FALSE, `1` → TRUE, `nrow(df)` → logical
-    let code = format!("as.logical({condition})");
+/// Returns `(should_break, warnings, diagnostic)`. Warnings are captured via
+/// `withCallingHandlers` in R since R defers warnings until the prompt by default.
+/// When evaluation fails or produces a non-logical result, `should_break` is `true`
+/// so that typos in conditions cause a visible stop rather than a silently ignored
+/// breakpoint.
+fn eval_condition(condition: &str, envir: RObject) -> (bool, String, Option<String>) {
+    // Call `.ark_eval_capture(CONDITION)` which captures warnings via
+    // `withCallingHandlers` (R defers warnings by default) and returns
+    // a list of (raw_result, warnings). We coerce to logical separately
+    // so that coercion warnings are also captured.
+    let code = format!("base::.ark_eval_capture(as.logical({{ {condition} }}))");
 
     let result = match harp::parse_eval0(&code, envir) {
         Ok(val) => val,
         Err(harp::Error::TryCatchError { message, .. }) => {
-            return (true, Some(format!("Error: {message}")));
+            return (true, String::new(), Some(format!("Error: {message}")));
         },
         Err(err) => {
-            return (true, Some(format!("Error: {err}")));
+            return (true, String::new(), Some(format!("Error: {err}")));
         },
     };
 
-    match Option::<bool>::try_from(result) {
-        Ok(Some(val)) => (val, None),
+    // Parse the list: [[1]] is the logical result, [[2]] is list of condition objects
+    let list_result = harp::list_get(result.sexp, 0);
+    let list_conditions = harp::list_get(result.sexp, 1);
+
+    // Format conditions (warnings and messages) as a single string
+    let conditions = format_captured_conditions(list_conditions);
+
+    let logical_result = RObject::view(list_result);
+    match Option::<bool>::try_from(logical_result) {
+        Ok(Some(val)) => (val, conditions, None),
         Ok(None) => (
             true,
+            conditions,
             Some(String::from("Condition evaluated to NA, stopping")),
         ),
         Err(_) => (
             true,
+            conditions,
             Some(String::from(
                 "Condition did not evaluate to scalar logical, stopping",
             )),
         ),
     }
+}
+
+/// Format a list of captured R condition objects into a display string.
+/// Each condition is prefixed with "Warning:" or "Message:" depending on its class.
+fn format_captured_conditions(conditions: SEXP) -> String {
+    let n = harp::r_length(conditions);
+
+    if n == 0 {
+        return String::new();
+    }
+
+    let mut lines = Vec::new();
+
+    for i in 0..n {
+        let cond = harp::list_get(conditions, i);
+
+        // Conditions are named lists with a `message` element
+        let msg = match String::try_from(RObject::view(harp::list_get(cond, 0))) {
+            Ok(msg) => msg,
+            Err(_) => continue,
+        };
+
+        if r_inherits(cond, "warning") {
+            lines.push(format!("Warning: {msg}"));
+        } else {
+            // message() appends a trailing newline to the message text
+            let msg = msg.trim_end_matches('\n');
+            lines.push(format!("Message: {msg}"));
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    lines.join("\n") + "\n"
 }
 
 /// Verify a single breakpoint by ID.
