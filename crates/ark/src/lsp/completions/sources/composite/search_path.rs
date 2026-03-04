@@ -5,6 +5,7 @@
 //
 //
 
+use harp::environment::r_env_parent;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_env_is_pkg_env;
@@ -14,7 +15,6 @@ use harp::vector::Vector;
 use harp::RObject;
 use libr::R_EmptyEnv;
 use libr::R_lsInternal;
-use libr::ENCLOS;
 use tower_lsp::lsp_types::CompletionItem;
 
 use crate::console;
@@ -113,7 +113,7 @@ fn completions_from_search_path(
             }
 
             // Get the next environment.
-            env = ENCLOS(env);
+            env = r_env_parent(env);
         }
 
         // Include installed packages as well.
