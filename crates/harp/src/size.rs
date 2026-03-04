@@ -13,7 +13,6 @@ use std::u32;
 use libc::c_double;
 use libr::*;
 
-use crate::environment::r_env_parent;
 use crate::environment::BindingValue;
 use crate::environment::Environment;
 use crate::environment::R_ENVS;
@@ -22,6 +21,7 @@ use crate::object::r_chr_get;
 use crate::object::r_length;
 use crate::r::attrib_for_each;
 use crate::r::attrib_has_any;
+use crate::r::env_parent;
 use crate::r::fn_body;
 use crate::r::fn_env;
 use crate::r::fn_formals;
@@ -297,7 +297,7 @@ fn obj_size_tree(
             }
 
             size += obj_size_tree(
-                r_env_parent(x),
+                env_parent(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,

@@ -66,6 +66,17 @@ pub fn env_bind_force(env: SEXP, sym: SEXP, value: SEXP) {
     }
 }
 
+/// Returns the parent (enclosing) environment.
+pub fn env_parent(env: SEXP) -> SEXP {
+    unsafe {
+        if libr::has::R_ParentEnv() {
+            libr::R_ParentEnv(env)
+        } else {
+            libr::ENCLOS(env)
+        }
+    }
+}
+
 // --- Attributes ---
 
 /// Gets an attribute from `x`.
