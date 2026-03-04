@@ -181,10 +181,10 @@ fn generate_source(
                 SET_VECTOR_ELT(consts, 0, R_ClosureExpr(new));
             }
 
-            Rf_setAttrib(
+            harp::attrib_poke(
                 old.sexp,
                 r_symbol!("srcref"),
-                Rf_getAttrib(new, r_symbol!("srcref")),
+                harp::attrib_get(new, r_symbol!("srcref")),
             );
         } else {
             let new_body = harp::fn_body(new);
@@ -194,17 +194,11 @@ fn generate_source(
                 harp::fn_env(old.sexp),
             ));
 
-            // TODO: Avoid `ATTRIB()`
-            let attrib = ATTRIB(old.sexp);
-            if attrib != R_NilValue {
-                let attrib = RObject::new(Rf_shallow_duplicate(attrib));
-                SET_ATTRIB(out.sexp, attrib.sexp);
-            }
-
-            Rf_setAttrib(
+            harp::attrib_poke_from(out.sexp, old.sexp);
+            harp::attrib_poke(
                 out.sexp,
                 r_symbol!("srcref"),
-                Rf_getAttrib(new, r_symbol!("srcref")),
+                harp::attrib_get(new, r_symbol!("srcref")),
             );
 
             harp::env_bind_force(ns_env, binding.name.sexp, out.sexp);

@@ -228,6 +228,14 @@ functions::generate! {
 
     pub fn SET_ATTRIB(x: SEXP, v: SEXP);
 
+    pub fn ANY_ATTRIB(x: SEXP) -> std::ffi::c_int;
+
+    pub fn R_mapAttrib(
+        x: SEXP,
+        fun: Option<unsafe extern "C-unwind" fn(tag: SEXP, val: SEXP, data: *mut std::ffi::c_void) -> SEXP>,
+        data: *mut std::ffi::c_void
+    ) -> SEXP;
+
     pub fn CADDDR(e: SEXP) -> SEXP;
 
     pub fn CADDR(e: SEXP) -> SEXP;
