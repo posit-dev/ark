@@ -175,7 +175,7 @@ impl DummyArkFrontend {
     /// Receive from IOPub with a timeout.
     /// Returns `None` if the timeout expires before a message arrives.
     #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-    fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
+    pub fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
         let timeout_ms = timeout.as_millis() as i64;
         if self.guard.iopub_socket.poll_incoming(timeout_ms).unwrap() {
             Some(Message::read_from_socket(&self.guard.iopub_socket).unwrap())
@@ -190,7 +190,7 @@ impl DummyArkFrontend {
     /// On Windows ARM, ZMQ poll with timeout blocks forever instead of
     /// respecting the timeout. Use non-blocking poll with manual timing.
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-    fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
+    pub fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
         let start = std::time::Instant::now();
 
         loop {
@@ -1085,16 +1085,15 @@ impl DummyArkFrontend {
             };
             match &msg {
                 Message::CommMsg(data) => {
-                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str())
-                    {
+                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str()) {
                         if method == "prompt_state" {
                             got_prompt_state = true;
                         }
                     }
                 },
                 Message::Status(ref data)
-                    if data.content.execution_state
-                        == amalthea::wire::status::ExecutionState::Idle =>
+                    if data.content.execution_state ==
+                        amalthea::wire::status::ExecutionState::Idle =>
                 {
                     idle_count += 1;
                 },
