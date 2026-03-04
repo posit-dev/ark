@@ -360,7 +360,7 @@ fn obj_size_tree(
         EXTPTRSXP => {
             size += size_of::<*mut c_void>(); // the actual pointer
             size += obj_size_tree(
-                unsafe { libr::EXTPTR_PROT(x) },
+                unsafe { libr::R_ExternalPtrProtected(x) },
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -368,7 +368,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::EXTPTR_TAG(x) },
+                unsafe { libr::R_ExternalPtrTag(x) },
                 base_env,
                 sizeof_node,
                 sizeof_vector,
