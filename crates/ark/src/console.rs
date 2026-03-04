@@ -1583,11 +1583,7 @@ impl Console {
                 });
 
                 // Push execution context to graphics device for plot attribution.
-                // Extract code_location from the execute request for source file origin.
-                let code_location = exec_req.code_location().log_err().flatten().map(|mut loc| {
-                    loc.uri = ExtUrl::normalize(loc.uri);
-                    loc
-                });
+                let code_location = exec_req.code_location().log_err().flatten();
                 graphics_device::on_execute_request(
                     originator.header.msg_id.clone(),
                     exec_req.code.clone(),
