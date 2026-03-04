@@ -328,10 +328,6 @@ functions::generate! {
 
     pub fn GEinitDisplayList(dd: pGEDevDesc);
 
-    pub fn ENVFLAGS(x: SEXP) -> std::ffi::c_int;
-
-    pub fn SET_ENVFLAGS(x: SEXP, v: std::ffi::c_int);
-
     pub fn R_LockEnvironment(env: SEXP, bindings: Rboolean);
 
     pub fn R_EnvironmentIsLocked(env: SEXP) -> Rboolean;
