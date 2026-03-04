@@ -172,6 +172,10 @@ functions::generate! {
 
     pub fn Rf_isInteger(arg1: SEXP) -> Rboolean;
 
+    pub fn Rf_isObject(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isS4(arg1: SEXP) -> Rboolean;
+
     pub fn Rf_isMatrix(arg1: SEXP) -> Rboolean;
 
     pub fn Rf_isNumeric(arg1: SEXP) -> Rboolean;
