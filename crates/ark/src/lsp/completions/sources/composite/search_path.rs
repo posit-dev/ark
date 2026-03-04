@@ -5,7 +5,7 @@
 //
 //
 
-use harp::environment::r_env_parent;
+use harp::env_parent;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_env_is_pkg_env;
@@ -113,7 +113,7 @@ fn completions_from_search_path(
             }
 
             // Get the next environment.
-            env = r_env_parent(env);
+            env = env_parent(env);
         }
 
         // Include installed packages as well.

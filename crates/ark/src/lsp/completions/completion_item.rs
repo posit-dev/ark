@@ -7,7 +7,6 @@
 
 use std::fs::DirEntry;
 
-use harp::environment::r_env_parent;
 use harp::r_symbol;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote;
@@ -480,7 +479,7 @@ pub(super) unsafe fn completion_item_from_namespace(
     };
 
     // Otherwise, try the imports environment.
-    let imports = r_env_parent(namespace);
+    let imports = harp::env_parent(namespace);
     let error_imports = match completion_item_from_symbol(
         name,
         imports,
