@@ -13,7 +13,10 @@ use crate::wire::jupyter_message::MessageType;
 /// Represents a request from the frontend for execution history.
 ///
 /// The protocol defines three access types (`range`, `tail`, `search`)
-/// with different fields for each.
+/// with different fields for each. All fields are defaulted because the
+/// spec notes that most history options are not used by Jupyter frontends
+/// and many kernels don't implement them, so clients may send incomplete
+/// requests.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(tag = "hist_access_type")]
 pub enum HistoryRequest {
