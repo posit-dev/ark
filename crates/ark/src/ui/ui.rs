@@ -255,7 +255,9 @@ impl UiComm {
             RFunction::from("sink").call()?;
 
             // Retrieve captured output as a string
-            let raw_bytes = RFunction::from("rawConnectionValue").add(con.clone()).call()?;
+            let raw_bytes = RFunction::from("rawConnectionValue")
+                .add(con.clone())
+                .call()?;
             let output_obj = RFunction::from("rawToChar").add(raw_bytes).call()?;
             let output = String::try_from(output_obj).unwrap_or_default();
 
@@ -270,17 +272,15 @@ impl UiComm {
         });
 
         match result {
-            Ok((value, output)) => {
-                Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
-                    result: value,
-                    output,
-                }))
-            },
+            Ok((value, output)) => Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
+                result: value,
+                output,
+            })),
             Err(err) => {
-                let message = match &err {
-                    harp::Error::TryCatchError { message, .. } => message.clone(),
-                    harp::Error::ParseError { message, .. } => message.clone(),
-                    harp::Error::ParseSyntaxError { message } => message.clone(),
+                let message = match err {
+                    harp::Error::TryCatchError { message, .. } => message,
+                    harp::Error::ParseError { message, .. } => message,
+                    harp::Error::ParseSyntaxError { message } => message,
                     _ => format!("{err}"),
                 };
                 Err(anyhow::anyhow!("{message}"))
@@ -510,12 +510,7 @@ mod tests {
 
         // Test 2: Code that prints output but also returns a value
         // isTRUE(cat("oatmeal")) evaluates to FALSE and prints "oatmeal"
-        let reply = send_evaluate_code(
-            &comm_socket,
-            &iopub_rx,
-            "eval-2",
-            "isTRUE(cat('oatmeal'))",
-        );
+        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-2", "isTRUE(cat('oatmeal'))");
         assert_eq!(
             reply,
             UiBackendReply::EvaluateCodeReply(EvalResult {
@@ -525,8 +520,7 @@ mod tests {
         );
 
         // Test 3: Code that only prints, with an invisible NULL result
-        let reply =
-            send_evaluate_code(&comm_socket, &iopub_rx, "eval-3", "cat('hello\\nworld')");
+        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-3", "cat('hello\\nworld')");
         assert_eq!(
             reply,
             UiBackendReply::EvaluateCodeReply(EvalResult {
