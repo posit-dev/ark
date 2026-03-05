@@ -665,6 +665,17 @@ impl Dap {
         breakpoints.iter().find(|bp| bp.id == id)
     }
 
+    /// Reset per-execution breakpoint state (hit counts).
+    /// Called when `ReadConsole` returns to a top-level (non-browser) prompt,
+    /// meaning the execution that may have hit breakpoints is complete.
+    pub(crate) fn reset(&mut self) {
+        for (_, (_, breakpoints)) in self.breakpoints.iter_mut() {
+            for bp in breakpoints.iter_mut() {
+                bp.hit_count = 0;
+            }
+        }
+    }
+
     /// Increment the hit count for a breakpoint and return the new count.
     pub(crate) fn increment_hit_count(&mut self, uri: &Url, id: i64) -> u64 {
         let Some((_, breakpoints)) = self.breakpoints.get_mut(uri) else {

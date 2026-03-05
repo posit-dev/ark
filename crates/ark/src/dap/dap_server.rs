@@ -542,7 +542,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         condition: bp.condition.clone(),
                         log_message: bp.log_message.clone(),
                         hit_condition: bp.hit_condition.clone(),
-                        hit_count: old_bp.hit_count,
+                        hit_count: 0,
                     });
                 } else {
                     // New breakpoints always start as Unverified, until they get evaluated once
@@ -579,7 +579,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         condition: old_bp.condition.clone(),
                         log_message: old_bp.log_message.clone(),
                         hit_condition: old_bp.hit_condition,
-                        hit_count: old_bp.hit_count,
+                        hit_count: 0,
                     });
                 }
             }

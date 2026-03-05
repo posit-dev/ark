@@ -66,7 +66,70 @@ foo()
     frontend.recv_shell_execute_reply();
 }
 
-/// Hit count of 0 behaves like an unconditional breakpoint (fires on every hit).
+/// Hit counts reset between runs. Sourcing the same file twice should
+/// apply the threshold fresh each time, stopping at the same iteration.
+#[test]
+fn test_dap_hit_count_resets_between_runs() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  for (i in 1:5) {
+    x <- i * 2
+  }
+}
+foo()
+",
+    );
+
+    let breakpoints = dap.set_hit_count_breakpoints(&file.path, &[(4, "3")]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    // First run: stops at i=3 (3rd hit)
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    frontend.recv_iopub_breakpoint_hit();
+    dap.recv_stopped();
+
+    let frame_id = dap.stack_trace()[0].id;
+    assert_eq!(dap.evaluate("i", Some(frame_id)), "3L");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+
+    // Second run: if hit counts weren't reset, the counter would start
+    // at 6 (from previous run) and fire immediately at i=1. Instead it
+    // should start fresh and stop at i=3 again.
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    frontend.recv_iopub_breakpoint_hit();
+    dap.recv_stopped();
+
+    let frame_id = dap.stack_trace()[0].id;
+    assert_eq!(dap.evaluate("i", Some(frame_id)), "3L");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
 #[test]
 fn test_dap_hit_count_threshold_zero() {
     let frontend = DummyArkFrontend::lock();
