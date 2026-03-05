@@ -443,6 +443,8 @@ pub enum UiBackendReply {
 	/// The results of evaluating the statement
 	EvaluateCodeReply(EvalResult),
 
+	/// Unused response to notification
+	FrontendReadyReply(),
 }
 
 /**
