@@ -1021,7 +1021,6 @@ mod execution_tests {
     use harp::DataFrame;
 
     use super::*;
-    use crate::fixtures::r_test_lock;
     use crate::r_task::r_task;
 
     /// Helper function to execute generated convert-to-code output and assign the
@@ -1043,8 +1042,6 @@ mod execution_tests {
 
     #[test]
     fn test_convert_to_code_execution_basic_filter() {
-        let _r_lock = r_test_lock();
-
         // Check if dplyr is available, skip test if not
         let has_dplyr = r_task(|| harp::parse_eval_global("library(dplyr)").is_ok());
         if !has_dplyr {

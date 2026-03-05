@@ -16,8 +16,6 @@ pub mod tracing;
 pub use ark::fixtures::package_is_installed;
 pub use ark::fixtures::point_and_offset_from_cursor;
 pub use ark::fixtures::point_from_cursor;
-pub use ark::fixtures::r_test_init;
-pub use ark::fixtures::r_test_lock;
 pub use comm::*;
 pub use dap_assert::*;
 pub use dap_client::*;

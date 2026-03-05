@@ -5,22 +5,12 @@
 //
 //
 
-use std::sync::Mutex;
-use std::sync::MutexGuard;
 use std::sync::Once;
 
 use tree_sitter::Point;
 
 use crate::modules;
 use crate::modules::ARK_ENVS;
-
-// Lock for tests that can't be run concurrently. Only needed for tests that can't
-// be wrapped in an `r_task()`.
-static TEST_LOCK: Mutex<()> = Mutex::new(());
-
-pub fn r_test_lock() -> MutexGuard<'static, ()> {
-    TEST_LOCK.lock().unwrap()
-}
 
 static INIT: Once = Once::new();
 
