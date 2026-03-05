@@ -9,6 +9,7 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
 use amalthea::comm::ui_comm::EditorContextChangedParams;
+use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
@@ -243,12 +244,38 @@ impl UiComm {
         log::trace!("Evaluating code: {}", params.code);
 
         let result = r_task(|| {
-            let evaluated = parse_eval_global(&params.code)?;
-            Value::try_from(evaluated)
+            // Set up a raw connection to capture printed output via sink().
+            let con = parse_eval_global("rawConnection(raw(0), open = 'w')")?;
+            RFunction::from("sink").add(con.clone()).call()?;
+
+            // Evaluate the user's code
+            let eval_result = parse_eval_global(&params.code);
+
+            // Always restore sink, even on error
+            RFunction::from("sink").call()?;
+
+            // Retrieve captured output as a string
+            let raw_bytes = RFunction::from("rawConnectionValue").add(con.clone()).call()?;
+            let output_obj = RFunction::from("rawToChar").add(raw_bytes).call()?;
+            let output = String::try_from(output_obj).unwrap_or_default();
+
+            // Close the connection
+            RFunction::from("close").add(con).call()?;
+
+            // Now handle the eval result
+            let evaluated = eval_result?;
+            let value = Value::try_from(evaluated)?;
+
+            Ok((value, output))
         });
 
         match result {
-            Ok(value) => Ok(UiBackendReply::EvaluateCodeReply(value)),
+            Ok((value, output)) => {
+                Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
+                    result: value,
+                    output,
+                }))
+            },
             Err(err) => {
                 let message = match &err {
                     harp::Error::TryCatchError { message, .. } => message.clone(),
@@ -278,6 +305,8 @@ mod tests {
     use amalthea::comm::comm_channel::CommMsg;
     use amalthea::comm::ui_comm::BusyParams;
     use amalthea::comm::ui_comm::CallMethodParams;
+    use amalthea::comm::ui_comm::EvalResult;
+    use amalthea::comm::ui_comm::EvaluateCodeParams;
     use amalthea::comm::ui_comm::UiBackendReply;
     use amalthea::comm::ui_comm::UiBackendRequest;
     use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -288,6 +317,7 @@ mod tests {
     use ark_test::dummy_jupyter_header;
     use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
+    use crossbeam::channel::Sender;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
     use harp::object::RObject;
@@ -411,6 +441,101 @@ mod tests {
 
         // Mark not busy (this prevents the frontend comm from being closed due to
         // the Sender being dropped)
+        ui_comm_tx
+            .send(UiCommMessage::Event(UiFrontendEvent::Busy(BusyParams {
+                busy: false,
+            })))
+            .unwrap();
+    }
+
+    /// Helper to set up a UiComm and return the pieces needed for testing
+    fn setup_ui_comm() -> (
+        CommSocket,
+        crossbeam::channel::Receiver<IOPubMessage>,
+        Sender<UiCommMessage>,
+    ) {
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+        let comm_socket = CommSocket::new(
+            CommInitiator::FrontEnd,
+            String::from("test-eval-comm-id"),
+            String::from("positron.UI"),
+            iopub_tx,
+        );
+        let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
+        let (graphics_device_tx, _graphics_device_rx) =
+            tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
+        let ui_comm_tx = UiComm::start(comm_socket.clone(), stdin_request_tx, graphics_device_tx);
+        (comm_socket, iopub_rx, ui_comm_tx)
+    }
+
+    /// Send an evaluate_code RPC and return the reply
+    fn send_evaluate_code(
+        comm_socket: &CommSocket,
+        iopub_rx: &crossbeam::channel::Receiver<IOPubMessage>,
+        id: &str,
+        code: &str,
+    ) -> UiBackendReply {
+        let request = UiBackendRequest::EvaluateCode(EvaluateCodeParams {
+            code: String::from(code),
+        });
+        comm_socket
+            .incoming_tx
+            .send(CommMsg::Rpc {
+                id: String::from(id),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(request).unwrap(),
+            })
+            .unwrap();
+
+        let response = iopub_rx.recv_comm_msg();
+        match response {
+            CommMsg::Rpc { data, .. } => serde_json::from_value::<UiBackendReply>(data).unwrap(),
+            _ => panic!("Unexpected response: {:?}", response),
+        }
+    }
+
+    #[test]
+    fn test_evaluate_code() {
+        let (comm_socket, iopub_rx, ui_comm_tx) = setup_ui_comm();
+
+        // Test 1: Pure result with no output (e.g. 1 + 1)
+        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-1", "1 + 1");
+        assert_eq!(
+            reply,
+            UiBackendReply::EvaluateCodeReply(EvalResult {
+                result: Value::from(2.0),
+                output: String::from(""),
+            })
+        );
+
+        // Test 2: Code that prints output but also returns a value
+        // isTRUE(cat("oatmeal")) evaluates to FALSE and prints "oatmeal"
+        let reply = send_evaluate_code(
+            &comm_socket,
+            &iopub_rx,
+            "eval-2",
+            "isTRUE(cat('oatmeal'))",
+        );
+        assert_eq!(
+            reply,
+            UiBackendReply::EvaluateCodeReply(EvalResult {
+                result: Value::from(false),
+                output: String::from("oatmeal"),
+            })
+        );
+
+        // Test 3: Code that only prints, with an invisible NULL result
+        let reply =
+            send_evaluate_code(&comm_socket, &iopub_rx, "eval-3", "cat('hello\\nworld')");
+        assert_eq!(
+            reply,
+            UiBackendReply::EvaluateCodeReply(EvalResult {
+                result: Value::Null,
+                output: String::from("hello\nworld"),
+            })
+        );
+
+        // Keep the comm alive
         ui_comm_tx
             .send(UiCommMessage::Event(UiFrontendEvent::Busy(BusyParams {
                 busy: false,

@@ -18,6 +18,16 @@ pub type Param = serde_json::Value;
 /// The method result
 pub type CallMethodResult = serde_json::Value;
 
+/// The results of evaluating the statement
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EvalResult {
+	/// The result value
+	pub result: serde_json::Value,
+
+	/// The output, if any, emitted during evaluation
+	pub output: String
+}
+
 /// Editor metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContext {
@@ -450,8 +460,8 @@ pub enum UiBackendReply {
 	/// The method result
 	CallMethodReply(CallMethodResult),
 
-	/// The result of evaluating the code
-	EvaluateCodeReply(serde_json::Value),
+	/// The results of evaluating the statement
+	EvaluateCodeReply(EvalResult),
 
 	/// Unused response to notification
 	EditorContextChangedReply(),
