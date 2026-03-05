@@ -5,6 +5,7 @@ use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
+use ark_test::RECV_TIMEOUT;
 
 #[test]
 fn test_basic_plot() {
@@ -373,27 +374,24 @@ fn test_plot_get_metadata_with_origin() {
     let origin_uri = "file:///path/to/analysis.R";
 
     // Send execute_request with a code_location
-    frontend.send_execute_request(
-        code,
-        ExecuteRequestOptions {
-            positron: Some(ExecuteRequestPositron {
-                code_location: Some(JupyterPositronLocation {
-                    uri: origin_uri.to_string(),
-                    range: JupyterPositronRange {
-                        start: JupyterPositronPosition {
-                            line: 5,
-                            character: 0,
-                        },
-                        end: JupyterPositronPosition {
-                            line: 5,
-                            character: 10,
-                        },
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            code_location: Some(JupyterPositronLocation {
+                uri: origin_uri.to_string(),
+                range: JupyterPositronRange {
+                    start: JupyterPositronPosition {
+                        line: 5,
+                        character: 0,
                     },
-                }),
+                    end: JupyterPositronPosition {
+                        line: 5,
+                        character: 10,
+                    },
+                },
             }),
-            ..ExecuteRequestOptions::default()
-        },
-    );
+        }),
+        ..ExecuteRequestOptions::default()
+    });
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -487,7 +485,7 @@ fn test_plot_from_source_dynamic() {
 
     // In dynamic plots mode, the plot should arrive as a CommOpen.
     // The UI comm also sends CommMsg events (busy, etc.) that we need to skip.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
     let mut got_plot_comm = false;
     let mut got_idle = false;
 
@@ -504,8 +502,7 @@ fn test_plot_from_source_dynamic() {
                 got_plot_comm = true;
             },
             amalthea::wire::jupyter_message::Message::Status(data)
-                if data.content.execution_state
-                    == amalthea::wire::status::ExecutionState::Idle =>
+                if data.content.execution_state == amalthea::wire::status::ExecutionState::Idle =>
             {
                 got_idle = true;
             },

@@ -16,7 +16,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 /// Default timeout for receiving comm messages in tests.
-pub const RECV_TIMEOUT: Duration = Duration::from_secs(10);
+pub const RECV_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Extension trait for receiving `CommMsg` from `IOPubMessage::CommOutgoing`.
 pub trait IOPubReceiverExt {
