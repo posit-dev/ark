@@ -13,6 +13,7 @@ use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
 use amalthea::comm::ui_comm::EditorContextChangedParams;
 use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
+use amalthea::comm::ui_comm::FrontendReadyParams;
 use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
@@ -33,6 +34,7 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
+use crate::r_task;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
 
@@ -91,6 +93,7 @@ impl UiComm {
                 self.handle_editor_context_changed(params)
             },
             UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
+            UiBackendRequest::FrontendReady(params) => self.handle_frontend_ready(params),
         }
     }
 
@@ -193,6 +196,24 @@ impl UiComm {
                 Err(anyhow::anyhow!("{message}"))
             },
         }
+    }
+
+    fn handle_frontend_ready(
+        &self,
+        params: FrontendReadyParams,
+    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+        log::info!("Frontend ready: is_new_session={}", params.is_new_session);
+
+        if let Err(err) = r_task(|| -> anyhow::Result<()> {
+            RFunction::from(".ps.run_session_init_hooks")
+                .param("is_new_session", params.is_new_session)
+                .call()?;
+            Ok(())
+        }) {
+            log::warn!("Failed to execute session init hooks: {err:?}");
+        }
+
+        Ok(UiBackendReply::FrontendReadyReply())
     }
 
     fn refresh(&mut self, input_prompt: &str, continuation_prompt: &str, ctx: &CommHandlerContext) {
