@@ -154,6 +154,7 @@ lock_environments <- function() {
 # `initialize_errors()` is called separately in an unsafe context because it
 # doesn't support being called with condition handlers on the stack
 initialize <- function() {
+    initialize_eval()
     initialize_debug()
     initialize_hooks()
     initialize_hooks_source()

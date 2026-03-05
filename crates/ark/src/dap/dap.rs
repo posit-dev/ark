@@ -74,6 +74,10 @@ pub struct Breakpoint {
     /// We keep this as a string instead of a parsed expression for safety,
     /// since breakpoint state is also inspected by the DAP server thread.
     pub condition: Option<String>,
+    /// Optional log message template (DAP "logpoint"). When set, the
+    /// breakpoint evaluates `{expression}` placeholders in the template,
+    /// prints the result to the debug console, and does not stop execution.
+    pub log_message: Option<String>,
 }
 
 impl Breakpoint {
@@ -86,6 +90,7 @@ impl Breakpoint {
             state,
             injected: false,
             condition: None,
+            log_message: None,
         }
     }
 
@@ -651,10 +656,9 @@ impl Dap {
         Ok(obj.get().sexp)
     }
 
-    pub(crate) fn breakpoint_condition(&self, uri: &UrlId, id: i64) -> Option<(u32, &str)> {
+    pub(crate) fn get_breakpoint(&self, uri: &UrlId, id: i64) -> Option<&Breakpoint> {
         let (_, breakpoints) = self.breakpoints.get(uri)?;
-        let bp = breakpoints.iter().find(|bp| bp.id == id)?;
-        Some((bp.line, bp.condition.as_deref()?))
+        breakpoints.iter().find(|bp| bp.id == id)
     }
 }
 
