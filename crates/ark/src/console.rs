@@ -1220,6 +1220,7 @@ impl Console {
         // here, but only containing high-level information such as `search()`
         // contents and `ls(rho)`.
         if !self.debug_is_debugging && !matches!(info.kind, PromptKind::InputRequest) {
+            self.debug_dap.lock().unwrap().reset();
             self.refresh_lsp();
         }
 
