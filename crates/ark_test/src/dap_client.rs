@@ -253,6 +253,30 @@ impl DapClient {
         self.send_set_breakpoints(path, breakpoints)
     }
 
+    /// Set log breakpoints (logpoints) for a source file.
+    ///
+    /// Takes a file path and a list of `(line, log_message)` pairs.
+    /// Returns the breakpoints as reported by the server.
+    #[track_caller]
+    pub fn set_log_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: &[(i64, &str)],
+    ) -> Vec<Breakpoint> {
+        let breakpoints: Vec<SourceBreakpoint> = breakpoints
+            .iter()
+            .map(|&(line, log_message)| SourceBreakpoint {
+                line,
+                column: None,
+                condition: None,
+                hit_condition: None,
+                log_message: Some(log_message.to_string()),
+            })
+            .collect();
+
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
     /// Set breakpoints from raw `SourceBreakpoint` objects.
     ///
     /// Useful for mixed scenarios where some breakpoints have conditions
