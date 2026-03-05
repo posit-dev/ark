@@ -53,18 +53,6 @@ use crate::object::RObject;
 ///           {"a": 1, "b": true, "c": "applesauce"}
 /// - Named lists with duplicate keys have the values combined into an array
 ///   - e.g.: list(a = 1L, a = 2L, a = 3L) -> {"a": [1, 2, 3]}
-/// Returns the names of an R object, or `None` if the object has no names or
-/// all names are empty/NA. This is used to decide whether a vector should be
-/// serialized as a JSON object (when names are present) or as an array.
-fn non_empty_names(obj: &RObject) -> Option<Vec<Option<String>>> {
-    let names = obj.names()?;
-    let all_empty = names.iter().all(|name| match name {
-        Some(name) => name.is_empty(),
-        None => true,
-    });
-    if all_empty { None } else { Some(names) }
-}
-
 impl TryFrom<RObject> for Value {
     type Error = crate::error::Error;
     fn try_from(obj: RObject) -> Result<Self, Self::Error> {
@@ -175,41 +163,17 @@ impl TryFrom<RObject> for Value {
                     Ok(Value::String(str))
                 },
 
-                // With multiple values, convert to a string array or object
+                // With multiple values, convert to a string array
                 _ => {
-                    let names = non_empty_names(&obj);
-
+                    let mut arr = Vec::<Value>::with_capacity(obj.length().try_into().unwrap());
                     let n = obj.length();
-
-                    match names {
-                        Some(names) => {
-                            let mut map = Map::new();
-                            let n = min(n, names.len().try_into().unwrap());
-                            for i in 0..n {
-                                let key = match &names[i as usize] {
-                                    Some(name) => name.clone(),
-                                    None => String::new(),
-                                };
-                                let val = match obj.get_string(i)? {
-                                    Some(str) => Value::String(str),
-                                    None => Value::Null,
-                                };
-                                map.insert(key, val);
-                            }
-                            Ok(Value::Object(map))
-                        },
-                        None => {
-                            let mut arr =
-                                Vec::<Value>::with_capacity(n.try_into().unwrap());
-                            for i in 0..n {
-                                arr.push(match obj.get_string(i)? {
-                                    Some(str) => Value::String(str),
-                                    None => Value::Null,
-                                });
-                            }
-                            Ok(Value::Array(arr))
-                        },
+                    for i in 0..n {
+                        arr.push(match obj.get_string(i)? {
+                            Some(str) => Value::String(str),
+                            None => Value::Null,
+                        });
                     }
+                    Ok(serde_json::Value::Array(arr))
                 },
             },
 
@@ -222,7 +186,24 @@ impl TryFrom<RObject> for Value {
                     // See whether the object's values have names. We will try
                     // to convert named values into a JSON object (map); unnamed
                     // values become an array.
-                    let names = non_empty_names(&obj);
+                    let mut names = obj.names();
+
+                    // Check to see if all the names are empty. We want to treat
+                    // this identically to an unnamed list.
+                    let mut all_empty = true;
+                    if let Some(names) = &names {
+                        for name in names {
+                            if let Some(name) = name {
+                                if !name.is_empty() {
+                                    all_empty = false;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if all_empty {
+                        names = None;
+                    }
 
                     match names {
                         Some(names) => {
@@ -452,27 +433,6 @@ mod tests {
         crate::r_task(|| {
             assert_r_matches_json("c(1L, 2L, 3L)", "[1,2,3]");
             assert_r_matches_json("c('one', 'two')", "[\"one\", \"two\"]");
-        })
-    }
-
-    #[test]
-    #[allow(non_snake_case)]
-    fn test_json_named_character_vectors() {
-        crate::r_task(|| {
-            // Named character vectors should serialize to JSON objects
-            assert_r_matches_json(
-                "c(a = 'one', b = 'two', c = 'three')",
-                "{\"a\": \"one\", \"b\": \"two\", \"c\": \"three\"}",
-            );
-
-            // Unnamed character vectors should still serialize to arrays
-            assert_r_matches_json("c('one', 'two', 'three')", "[\"one\", \"two\", \"three\"]");
-
-            // Character vectors with all-empty names should serialize to arrays
-            assert_r_matches_json(
-                "x <- c('a', 'b'); names(x) <- c('', ''); x",
-                "[\"a\", \"b\"]",
-            );
         })
     }
 
