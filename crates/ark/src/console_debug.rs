@@ -538,22 +538,52 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     let id: i64 = id.parse()?;
 
     let console = Console::get_mut();
-    let dap = console.debug_dap.lock().unwrap();
+    let mut dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
     let bp = dap.get_breakpoint(&uri, id);
     let bp_line = bp.map_or(0, |bp| bp.line);
     let condition = bp.and_then(|bp| bp.condition.clone());
     let log_message = bp.and_then(|bp| bp.log_message.clone());
+    let hit_condition = bp.and_then(|bp| bp.hit_condition.clone());
 
-    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}, log_message: {log_message:?}");
+    log::trace!(
+        "DAP: Breakpoint {id} for {uri} \
+         enabled: {enabled}, \
+         hit_count: {hit_count}, \
+         hit_condition: {hit_condition:?}, \
+         condition: {condition:?}, \
+         log_message: {log_message:?}",
+        hit_count = bp.map_or(0, |bp| bp.hit_count)
+    );
 
     if !enabled {
         return Ok(RObject::from(false).sexp);
     }
 
+    let hit_count = dap.increment_hit_count(&uri, id);
+
     // Must drop before calling back into R to avoid deadlock
     drop(dap);
+
+    if let Some(ref hit_condition) = hit_condition {
+        match hit_condition.trim().parse::<u64>() {
+            Ok(threshold) => {
+                if hit_count < threshold {
+                    return Ok(RObject::from(false).sexp);
+                }
+            },
+            Err(err) => {
+                emit_breakpoint_output(
+                    &uri,
+                    bp_line,
+                    Some(hit_condition),
+                    "",
+                    Some(&format!("Expected a positive integer: {err}")),
+                );
+            },
+        }
+    }
 
     // Evaluate condition first as it applies to all breakpoints, including log
     // and hit-count breakpoints

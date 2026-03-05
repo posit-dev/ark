@@ -78,6 +78,12 @@ pub struct Breakpoint {
     /// breakpoint evaluates `{expression}` placeholders in the template,
     /// prints the result to the debug console, and does not stop execution.
     pub log_message: Option<String>,
+    /// Optional hit count condition. When set, the breakpoint only fires
+    /// once the location has been reached at least this many times (`>=`
+    /// semantics). Stored as the raw DAP string and parsed at hit time.
+    pub hit_condition: Option<String>,
+    /// Number of times this breakpoint location has been reached.
+    pub hit_count: u64,
 }
 
 impl Breakpoint {
@@ -91,6 +97,8 @@ impl Breakpoint {
             injected: false,
             condition: None,
             log_message: None,
+            hit_condition: None,
+            hit_count: 0,
         }
     }
 
@@ -655,6 +663,18 @@ impl Dap {
     pub(crate) fn get_breakpoint(&self, uri: &Url, id: i64) -> Option<&Breakpoint> {
         let (_, breakpoints) = self.breakpoints.get(uri)?;
         breakpoints.iter().find(|bp| bp.id == id)
+    }
+
+    /// Increment the hit count for a breakpoint and return the new count.
+    pub(crate) fn increment_hit_count(&mut self, uri: &Url, id: i64) -> u64 {
+        let Some((_, breakpoints)) = self.breakpoints.get_mut(uri) else {
+            return 0;
+        };
+        let Some(bp) = breakpoints.iter_mut().find(|bp| bp.id == id) else {
+            return 0;
+        };
+        bp.hit_count += 1;
+        bp.hit_count
     }
 }
 
