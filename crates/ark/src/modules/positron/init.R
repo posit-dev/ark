@@ -10,7 +10,6 @@ import_positron <- function(exprs) {
 
     # Namespace is created by the sourcer of this file
     ns <- parent.env(environment())
-    local_unlock(ns)
 
     source(exprs = exprs, local = ns)
     export(exprs, from = ns, to = as.environment("tools:positron"))
@@ -18,7 +17,6 @@ import_positron <- function(exprs) {
 
 import_positron_path <- function(path) {
     ns <- parent.env(environment())
-    local_unlock(ns)
 
     source(path, local = ns)
     export_path(path, from = ns, to = as.environment("tools:positron"))
@@ -32,14 +30,9 @@ init_positron <- function() {
 
     # Create environment for functions exported on the search path
     attach(list(), name = "tools:positron")
-
-    # Lock it, we'll unlock when updating
-    lockEnvironment(as.environment("tools:positron"))
 }
 
 export <- function(exprs, from, to) {
-    local_unlock(to)
-
     for (name in exported_names(exprs)) {
         to[[name]] <- from[[name]]
     }
@@ -79,7 +72,6 @@ import_rstudio <- function(exprs) {
     init_rstudio()
 
     env <- rstudio_ns()
-    local_unlock(env)
 
     source(exprs = exprs, local = env)
     export(exprs, from = env, to = as.environment("tools:rstudio"))
@@ -87,7 +79,6 @@ import_rstudio <- function(exprs) {
 
 import_rstudio_path <- function(path) {
     env <- rstudio_ns()
-    local_unlock(env)
 
     source(path, local = env)
     export_path(path, from = env, to = as.environment("tools:rstudio"))
@@ -108,10 +99,6 @@ init_rstudio <- function() {
     # Store the namespace there for convenience, so it survives sourcing
     # the modules file again.
     attach(list(.__rstudio_ns__. = rstudio_ns), name = "tools:rstudio")
-
-    # Lock environments, we'll unlock them before updating
-    lockEnvironment(rstudio_ns)
-    lockEnvironment(as.environment("tools:rstudio"))
 
     # Override `rstudioapi::isAvailable()` so it thinks it's running under RStudio
     setHook(
@@ -139,10 +126,6 @@ rstudio_ns <- function() {
     .Call(.NAME, ..., PACKAGE = "(embedding)")
 }
 
-env_unlock <- function(env) {
-    .ps.Call("ark_env_unlock", env)
-}
-
 defer <- function(expr, envir = parent.frame(), after = FALSE) {
     thunk <- as.call(list(function() expr))
     do.call(
@@ -150,13 +133,6 @@ defer <- function(expr, envir = parent.frame(), after = FALSE) {
         list(thunk, add = TRUE, after = after),
         envir = envir
     )
-}
-
-local_unlock <- function(env, frame = parent.frame()) {
-    if (environmentIsLocked(env)) {
-        env_unlock(env)
-        defer(lockEnvironment(env), envir = frame)
-    }
 }
 
 # Singleton for cached objects. Only create it if it doesn't exist because
@@ -167,6 +143,13 @@ if (!exists("the", inherits = FALSE)) {
     the$cli_version <- NULL
 }
 
+lock_environments <- function() {
+    ns <- parent.env(environment())
+    lockEnvironment(ns)
+    lockEnvironment(as.environment("tools:positron"))
+    lockEnvironment(rstudio_ns())
+    lockEnvironment(as.environment("tools:rstudio"))
+}
 
 # `initialize_errors()` is called separately in an unsafe context because it
 # doesn't support being called with condition handlers on the stack

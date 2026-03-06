@@ -17,6 +17,20 @@ macro_rules! debug_panic {
     };
 }
 
+#[macro_export]
+macro_rules! soft_assert {
+    ( $cond:expr $(,)? ) => {
+        if !$cond {
+            stdext::debug_panic!("assertion failed: {}", stringify!($cond));
+        }
+    };
+    ( $cond:expr, $($fmt_arg:tt)+ ) => {
+        if !$cond {
+            stdext::debug_panic!( $($fmt_arg)+ );
+        }
+    };
+}
+
 // From https://github.com/zed-industries/zed/blob/a910c594/crates/util/src/util.rs#L554
 pub trait ResultExt<E> {
     type Ok;

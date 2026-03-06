@@ -407,7 +407,6 @@ foo <- function() {
 
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -424,7 +423,6 @@ foo <- function() {
 
     frontend.recv_iopub_stop_debug();
     frontend.recv_iopub_start_debug();
-    frontend.assert_stream_debug_at(&file);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 

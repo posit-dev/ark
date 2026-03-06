@@ -25,7 +25,10 @@ apply_repo_defaults <- function(
             #
             # This is the only instance in which we replace an already-set
             # repository option with a default.
-            if (identical(repos[["CRAN"]], "@CRAN@") || isTRUE(attr(repos, "IDE"))) {
+            if (
+                identical(repos[["CRAN"]], "@CRAN@") ||
+                    isTRUE(attr(repos, "IDE"))
+            ) {
                 repos[["CRAN"]] <- defaults[["CRAN"]]
 
                 # Flag this CRAN repository as being set by the IDE. This flag is

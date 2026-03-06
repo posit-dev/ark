@@ -1,5 +1,11 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::wire::execute_request::ExecuteRequestPositron;
+use amalthea::wire::execute_request::JupyterPositronLocation;
+use amalthea::wire::execute_request::JupyterPositronPosition;
+use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::DummyArkFrontend;
+use ark_test::SourceFile;
+use ark_test::RECV_TIMEOUT;
 
 #[test]
 fn test_basic_plot() {
@@ -353,5 +359,227 @@ fn test_plot_get_metadata() {
     assert!(
         result.contains("$kind") && result.contains("\"plot\""),
         "Metadata should contain kind 'plot', got:\n{result}"
+    );
+}
+
+/// Test that plot metadata includes origin when code_location is provided.
+///
+/// This test verifies that when an execute_request includes a `positron.code_location`,
+/// the resulting plot's metadata includes the origin URI.
+#[test]
+fn test_plot_get_metadata_with_origin() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    let origin_uri = "file:///path/to/analysis.R";
+
+    // Send execute_request with a code_location
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            code_location: Some(JupyterPositronLocation {
+                uri: origin_uri.to_string(),
+                range: JupyterPositronRange {
+                    start: JupyterPositronPosition {
+                        line: 5,
+                        character: 0,
+                    },
+                    end: JupyterPositronPosition {
+                        line: 5,
+                        character: 10,
+                    },
+                },
+            }),
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // Receive display data and get the display_id
+    let display_id = frontend.recv_iopub_display_data_id();
+    assert!(!display_id.is_empty());
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Query the metadata using the display_id
+    let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query_code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Verify origin_uri is present in the metadata
+    assert!(
+        result.contains(origin_uri),
+        "Metadata should contain origin_uri '{origin_uri}', got:\n{result}"
+    );
+}
+
+/// Test that plots are emitted when created inside source().
+///
+/// This test verifies that when an R file containing plot() is sourced,
+/// the plot is still emitted as display_data on the IOPub channel.
+#[test]
+fn test_plot_from_source() {
+    let frontend = DummyArkFrontend::lock();
+
+    let file = SourceFile::new("plot(1:10)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // The sourced file creates a plot, so we should receive display_data
+    frontend.recv_iopub_display_data();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that multiple plots are emitted when created inside source().
+#[test]
+fn test_multiple_plots_from_source() {
+    let frontend = DummyArkFrontend::lock();
+
+    let file = SourceFile::new("plot(1:10)\nplot(1:5)\nplot(1:3)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // All three plots should be emitted as display_data
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_display_data();
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that plots are emitted during source() in dynamic plots mode (Positron).
+///
+/// When the UI comm is connected, plots use the Positron comm protocol
+/// (CommOpen) instead of Jupyter's display_data. This test verifies that
+/// plots created inside source() are properly emitted via comm protocol.
+#[test]
+fn test_plot_from_source_dynamic() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Open a UI comm to enable dynamic plots (Positron mode).
+    // This triggers some comm messages (prompt refresh, etc.) that we need to
+    // drain before proceeding.
+    frontend.open_ui_comm();
+
+    // Test source() with a plot in dynamic mode
+    let file = SourceFile::new("plot(1:10)\n");
+
+    let code = format!("source('{}')", file.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+
+    // In dynamic plots mode, the plot should arrive as a CommOpen.
+    // The UI comm also sends CommMsg events (busy, etc.) that we need to skip.
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
+    let mut got_plot_comm = false;
+    let mut got_idle = false;
+
+    while !got_plot_comm || !got_idle {
+        if std::time::Instant::now() > deadline {
+            panic!(
+                "Timed out waiting for plot (got_plot_comm={got_plot_comm}, got_idle={got_idle})"
+            );
+        }
+        let msg = frontend.recv_iopub();
+        match msg {
+            amalthea::wire::jupyter_message::Message::CommOpen(data) => {
+                assert_eq!(data.content.target_name, "positron.plot");
+                got_plot_comm = true;
+            },
+            amalthea::wire::jupyter_message::Message::Status(data)
+                if data.content.execution_state == amalthea::wire::status::ExecutionState::Idle =>
+            {
+                got_idle = true;
+            },
+            // Skip CommMsg (UI comm events), Status(Busy), ExecuteInput, Stream, etc.
+            _ => {},
+        }
+    }
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that nested source() calls attribute plots to the correct file.
+///
+/// When file A sources file B, and file B creates a plot, the plot's origin
+/// should point to file B (the innermost source context), not file A.
+/// This verifies that the source context stack correctly tracks nesting.
+#[test]
+fn test_plot_source_context_stacking() {
+    let frontend = DummyArkFrontend::lock();
+
+    // File B creates a plot
+    let file_b = SourceFile::new("plot(1:10)\n");
+
+    // File A sources file B, then creates its own plot
+    let file_a_code = format!("source('{}')\nplot(1:5)\n", file_b.path);
+    let file_a = SourceFile::new(&file_a_code);
+
+    // Source file A from the console
+    let code = format!("source('{}')", file_a.path);
+    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // First plot (from file B, sourced by file A)
+    let display_id_b = frontend.recv_iopub_display_data_id();
+    assert!(!display_id_b.is_empty());
+
+    // Second plot (from file A itself)
+    let display_id_a = frontend.recv_iopub_display_data_id();
+    assert!(!display_id_a.is_empty());
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Query metadata for the first plot (created by file B)
+    let query_b = format!(".ps.graphics.get_metadata('{display_id_b}')");
+    frontend.send_execute_request(&query_b, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result_b = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // The origin_uri should point to file B, not file A
+    assert!(
+        result_b.contains(&file_b.uri),
+        "Plot from file B should have origin_uri pointing to file B '{}', got:\n{result_b}",
+        file_b.uri,
+    );
+    assert!(
+        !result_b.contains(&file_a.uri),
+        "Plot from file B should NOT have origin_uri pointing to file A '{}', got:\n{result_b}",
+        file_a.uri,
+    );
+
+    // Query metadata for the second plot (created by file A)
+    let query_a = format!(".ps.graphics.get_metadata('{display_id_a}')");
+    frontend.send_execute_request(&query_a, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result_a = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // The origin_uri should point to file A
+    assert!(
+        result_a.contains(&file_a.uri),
+        "Plot from file A should have origin_uri pointing to file A '{}', got:\n{result_a}",
+        file_a.uri,
     );
 }

@@ -19,6 +19,12 @@ use crate::environment::R_ENVS;
 use crate::list_get;
 use crate::object::r_chr_get;
 use crate::object::r_length;
+use crate::r::attrib_for_each;
+use crate::r::attrib_has_any;
+use crate::r::env_parent;
+use crate::r::fn_body;
+use crate::r::fn_env;
+use crate::r::fn_formals;
 use crate::r_is_altrep;
 use crate::r_symbol;
 use crate::r_typeof;
@@ -113,15 +119,12 @@ fn obj_size_tree(
         return size;
     }
 
-    if r_typeof(x) != CHARSXP {
-        size += obj_size_tree(
-            unsafe { libr::ATTRIB(x) },
-            base_env,
-            sizeof_node,
-            sizeof_vector,
-            seen,
-            depth + 1,
-        );
+    if r_typeof(x) != CHARSXP && attrib_has_any(x) {
+        attrib_for_each(x, |tag, val| {
+            size += sizeof_node;
+            size += obj_size_tree(tag, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+            size += obj_size_tree(val, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+        });
     }
 
     match r_typeof(x) {
@@ -294,7 +297,7 @@ fn obj_size_tree(
             }
 
             size += obj_size_tree(
-                unsafe { libr::ENCLOS(x) },
+                env_parent(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -305,16 +308,7 @@ fn obj_size_tree(
         // Functions
         CLOSXP => {
             size += obj_size_tree(
-                unsafe { libr::FORMALS(x) },
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-                depth + 1,
-            );
-            // BODY is either an expression or byte code
-            size += obj_size_tree(
-                unsafe { libr::BODY(x) },
+                fn_formals(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -322,7 +316,15 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::CLOENV(x) },
+                fn_body(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
+            size += obj_size_tree(
+                fn_env(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -359,7 +361,7 @@ fn obj_size_tree(
         EXTPTRSXP => {
             size += size_of::<*mut c_void>(); // the actual pointer
             size += obj_size_tree(
-                unsafe { libr::EXTPTR_PROT(x) },
+                unsafe { libr::R_ExternalPtrProtected(x) },
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -367,7 +369,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::EXTPTR_TAG(x) },
+                unsafe { libr::R_ExternalPtrTag(x) },
                 base_env,
                 sizeof_node,
                 sizeof_vector,
