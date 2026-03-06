@@ -5,9 +5,8 @@
 #
 #
 
-# This file contains functions related to the packages pane.
-# pkg_list, pkg_search, and pkg_search_versions are called for a result using `callMethod`.
-# pkg_install, pkg_update_all, and pkg_uninstall are executed interactively in the console.
+# This file contains RPC functions for the packages pane.
+# These functions are called via callMethod from the Positron R extension.
 
 #' @export
 .ps.rpc.pkg_list <- function(method = c("pak", "base")) {
@@ -96,58 +95,4 @@
     }
     # Return as list to ensure it serializes as an array
     as.list(outdated[, "Package"])
-}
-
-
-#' @export
-.ps.rpc.pkg_install <- function(packages, method = c("pak", "base")) {
-    # Convert from list to character vector (JSON arrays arrive as lists)
-    packages <- unlist(packages)
-    method <- match.arg(method)
-    switch(
-        method,
-        pak = pak::pkg_install(packages, ask = FALSE),
-        base = utils::install.packages(packages)
-    )
-
-    # Return a value, void doesn't serialize
-    TRUE
-}
-
-#' @export
-.ps.rpc.pkg_uninstall <- function(packages, method = c("pak", "base")) {
-    # Convert from list to character vector (JSON arrays arrive as lists)
-    packages <- unlist(packages)
-    method <- match.arg(method)
-    switch(
-        method,
-        pak = pak::pkg_remove(packages),
-        base = utils::remove.packages(packages)
-    )
-    for (pkg in packages) {
-        try(unloadNamespace(pkg), silent = TRUE)
-    }
-
-    # Return a value, void doesn't serialize
-    TRUE
-}
-
-#' @export
-.ps.rpc.pkg_update_all <- function(method = c("pak", "base")) {
-    method <- match.arg(method)
-    switch(
-        method,
-        pak = {
-            old_opt <- options(pak.no_extra_messages = TRUE)
-            on.exit(options(old_opt), add = TRUE)
-            outdated <- utils::old.packages()[, "Package"]
-            if (length(outdated) > 0) {
-                pak::pkg_install(outdated, ask = FALSE)
-            }
-        },
-        base = utils::update.packages(ask = FALSE)
-    )
-
-    # Return a value, void doesn't serialize
-    TRUE
 }
