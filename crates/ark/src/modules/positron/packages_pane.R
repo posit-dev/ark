@@ -1,7 +1,7 @@
 #
 # packages_pane.R
 #
-# Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
+# Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 #
 #
 
