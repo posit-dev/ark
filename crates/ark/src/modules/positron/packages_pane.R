@@ -8,6 +8,7 @@
 # This file contains RPC functions for the packages pane.
 # These functions are called via callMethod from the Positron R extension.
 
+# Return a list of installed packages
 #' @export
 .ps.rpc.pkg_list <- function(method = c("pak", "base")) {
     method <- match.arg(method)
@@ -41,6 +42,7 @@
 }
 
 
+# Search the package repository using the given `query` and return a list of matching packages.
 #' @export
 .ps.rpc.pkg_search <- function(query, method = c("pak", "base")) {
     method <- match.arg(method)
@@ -79,6 +81,7 @@
     )
 }
 
+# Search the package repository for the given package name and return its version if found.
 #' @export
 .ps.rpc.pkg_search_versions <- function(name) {
     ap <- utils::available.packages()
@@ -87,6 +90,7 @@
     as.list(version)
 }
 
+# Return the list of outdated pacakages.
 #' @export
 .ps.rpc.pkg_outdated <- function() {
     outdated <- utils::old.packages()
