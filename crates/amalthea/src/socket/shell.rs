@@ -486,15 +486,15 @@ impl Shell {
 
         // Try to dispatch the message to the new handler API
         match shell_handler.handle_comm_msg(&msg.comm_id, &comm.comm_name, comm_msg.clone())? {
-            CommHandled::Handled => return Ok(()),
-            CommHandled::NotHandled => {},
+            CommHandled::Handled => Ok(()),
+            CommHandled::NotHandled => {
+                // Fall back to old approach for compatibility while we migrate comms
+                log::trace!("Sending message to comm '{}'", comm.comm_name);
+                comm.incoming_tx.send(comm_msg).log_err();
+
+                Ok(())
+            },
         }
-
-        // Fall back to old approach for compatibility while we migrate comms
-        log::trace!("Sending message to comm '{}'", comm.comm_name);
-        comm.incoming_tx.send(comm_msg).log_err();
-
-        Ok(())
     }
 
     /**

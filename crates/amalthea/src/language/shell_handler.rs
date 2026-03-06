@@ -83,10 +83,10 @@ pub trait ShellHandler: Send {
     /// * `comm` - The comm channel to use to communicate with the frontend
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> crate::Result<bool>;
 
-    /// Handle an incoming comm message (RPC or data) synchronously on the
-    /// kernel's main thread. Return `CommHandled::Handled` if the message was
-    /// processed, or `CommHandled::NotHandled` to fall back to the existing
-    /// async `incoming_tx` path.
+    /// Handle an incoming comm message (RPC or data). Return
+    /// `CommHandled::Handled` if the message was processed, or
+    /// `CommHandled::NotHandled` to fall back to the existing
+    /// `incoming_tx` path.
     ///
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name (e.g. `"positron.dataExplorer"`)
@@ -100,9 +100,9 @@ pub trait ShellHandler: Send {
         Ok(CommHandled::NotHandled)
     }
 
-    /// Handle a comm close synchronously on the kernel's main thread.
-    /// Return `CommHandled::Handled` if the close was processed, or
-    /// `CommHandled::NotHandled` to fall back to the historical path.
+    /// Handle a comm close. Return `CommHandled::Handled` if the close
+    /// was processed, or `CommHandled::NotHandled` to fall back to the
+    /// existing `incoming_tx` path.
     ///
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name
