@@ -1,13 +1,14 @@
 /*
  * shell_handler.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
 use async_trait::async_trait;
 
 use crate::comm::comm_channel::Comm;
+use crate::comm::comm_channel::CommMsg;
 use crate::socket::comm::CommSocket;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
@@ -20,6 +21,16 @@ use crate::wire::is_complete_request::IsCompleteRequest;
 use crate::wire::kernel_info_reply::KernelInfoReply;
 use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
+
+/// Result of a `handle_comm_msg` or `handle_comm_close` call on the
+/// `ShellHandler`. `Handled` means the kernel processed the message
+/// synchronously (blocking Shell until done). `NotHandled` means amalthea
+/// should fall back to the historical `incoming_tx` path. This fallback is
+/// temporary until all comms are migrated to the blocking path.
+pub enum CommHandled {
+    Handled,
+    NotHandled,
+}
 
 #[async_trait]
 pub trait ShellHandler: Send {
@@ -71,4 +82,35 @@ pub trait ShellHandler: Send {
     /// * `target` - The target name of the comm, such as `positron.variables`
     /// * `comm` - The comm channel to use to communicate with the frontend
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> crate::Result<bool>;
+
+    /// Handle an incoming comm message (RPC or data). Return
+    /// `CommHandled::Handled` if the message was processed, or
+    /// `CommHandled::NotHandled` to fall back to the existing
+    /// `incoming_tx` path.
+    ///
+    /// * `comm_id` - The comm's unique identifier
+    /// * `comm_name` - The comm's target name (e.g. `"positron.dataExplorer"`)
+    /// * `msg` - The parsed `CommMsg`
+    fn handle_comm_msg(
+        &mut self,
+        _comm_id: &str,
+        _comm_name: &str,
+        _msg: CommMsg,
+    ) -> crate::Result<CommHandled> {
+        Ok(CommHandled::NotHandled)
+    }
+
+    /// Handle a comm close. Return `CommHandled::Handled` if the close
+    /// was processed, or `CommHandled::NotHandled` to fall back to the
+    /// existing `incoming_tx` path.
+    ///
+    /// * `comm_id` - The comm's unique identifier
+    /// * `comm_name` - The comm's target name
+    fn handle_comm_close(
+        &mut self,
+        _comm_id: &str,
+        _comm_name: &str,
+    ) -> crate::Result<CommHandled> {
+        Ok(CommHandled::NotHandled)
+    }
 }

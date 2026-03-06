@@ -330,8 +330,8 @@ pub unsafe extern "C-unwind" fn ps_connection_opened(
 
     if let Err(err) = RConnection::start(
         metadata,
-        console.get_comm_event_tx().clone(),
-        console.get_iopub_tx().clone(),
+        console.comm_event_tx().clone(),
+        console.iopub_tx().clone(),
         id,
     ) {
         log::error!("Connection Pane: Failed to start connection: {err:?}");
@@ -346,7 +346,7 @@ pub unsafe extern "C-unwind" fn ps_connection_closed(id: SEXP) -> Result<SEXP, a
     let id = RObject::view(id).to::<String>()?;
 
     Console::get()
-        .get_comm_event_tx()
+        .comm_event_tx()
         .send(CommEvent::Message(id, CommMsg::Close))?;
 
     Ok(R_NilValue)
@@ -357,7 +357,7 @@ pub unsafe extern "C-unwind" fn ps_connection_updated(id: SEXP) -> Result<SEXP, 
     let comm_id: String = RObject::view(id).to::<String>()?;
     let event = ConnectionsFrontendEvent::Update;
 
-    Console::get().get_comm_event_tx().send(CommEvent::Message(
+    Console::get().comm_event_tx().send(CommEvent::Message(
         comm_id,
         CommMsg::Data(serde_json::to_value(event)?),
     ))?;
@@ -374,7 +374,7 @@ pub unsafe extern "C-unwind" fn ps_connection_focus(id: SEXP) -> Result<SEXP, an
     let comm_id: String = RObject::view(id).to::<String>()?;
     let event = ConnectionsFrontendEvent::Focus;
 
-    Console::get().get_comm_event_tx().send(CommEvent::Message(
+    Console::get().comm_event_tx().send(CommEvent::Message(
         comm_id,
         CommMsg::Data(serde_json::to_value(event)?),
     ))?;

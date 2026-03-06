@@ -40,6 +40,16 @@ pub enum Comm {
     Other(String),
 }
 
+/// Messages exchanged on a comm channel.
+///
+/// The `Open` and `Close` variants are lifecycle signals rather than wire
+/// content. They exist because the legacy comm path routes everything through
+/// a single `incoming_tx`/`outgoing_tx` channel pair. Once all comms are
+/// migrated to the blocking `CommHandler` path, these variants can be removed
+/// and `CommMsg` can be reduced to just `Rpc` and `Data`. `Open` is a
+/// special case: backend-initiated comms currently send it through
+/// `outgoing_tx` to trigger the `comm_open` IOPub message. Removing it
+/// would require a dedicated channel or method for that notification.
 #[derive(Clone, Debug)]
 pub enum CommMsg {
     /// A message indicating that the comm channel is being opened.

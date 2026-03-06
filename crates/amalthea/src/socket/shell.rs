@@ -23,6 +23,7 @@ use crate::comm::server_comm::ServerComm;
 use crate::comm::server_comm::ServerStartedMessage;
 use crate::error::Error;
 use crate::language::server_handler::ServerHandler;
+use crate::language::shell_handler::CommHandled;
 use crate::language::shell_handler::ShellHandler;
 use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
@@ -289,13 +290,13 @@ impl Shell {
                 let open_comms = &self.open_comms;
                 let header = req.header.clone();
                 Self::handle_notification(iopub_tx, req, |msg| {
-                    Self::handle_comm_msg(open_comms, header, msg)
+                    Self::handle_comm_msg(shell_handler, open_comms, header, msg)
                 })
             },
             Message::CommClose(req) => {
                 let open_comms = &mut self.open_comms;
                 Self::handle_notification(iopub_tx, req, |msg| {
-                    Self::handle_comm_close(open_comms, msg)
+                    Self::handle_comm_close(shell_handler, open_comms, msg)
                 })
             },
             Message::InspectRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
@@ -452,6 +453,7 @@ impl Shell {
     /// request from the frontend to deliver a message to a backend, often as
     /// the request side of a request/response pair.
     fn handle_comm_msg(
+        shell_handler: &mut Box<dyn ShellHandler>,
         open_comms: &[CommSocket],
         header: JupyterHeader,
         msg: &CommWireMsg,
@@ -474,7 +476,6 @@ impl Shell {
             CommMsg::Data(msg.data.clone())
         };
 
-        // Send the message to the comm
         let Some(comm) = open_comms.iter().find(|c| c.comm_id == msg.comm_id) else {
             log::warn!(
                 "Received message for unknown comm channel {}: {comm_msg:?}",
@@ -483,10 +484,17 @@ impl Shell {
             return Ok(());
         };
 
-        log::trace!("Sending message to comm '{}'", comm.comm_name);
-        comm.incoming_tx.send(comm_msg).log_err();
+        // Try to dispatch the message to the new handler API
+        match shell_handler.handle_comm_msg(&msg.comm_id, &comm.comm_name, comm_msg.clone())? {
+            CommHandled::Handled => Ok(()),
+            CommHandled::NotHandled => {
+                // Fall back to old approach for compatibility while we migrate comms
+                log::trace!("Sending message to comm '{}'", comm.comm_name);
+                comm.incoming_tx.send(comm_msg).log_err();
 
-        Ok(())
+                Ok(())
+            },
+        }
     }
 
     /**
@@ -667,7 +675,11 @@ impl Shell {
     }
 
     /// Handle a request to close a comm
-    fn handle_comm_close(open_comms: &mut Vec<CommSocket>, msg: &CommClose) -> crate::Result<()> {
+    fn handle_comm_close(
+        shell_handler: &mut Box<dyn ShellHandler>,
+        open_comms: &mut Vec<CommSocket>,
+        msg: &CommClose,
+    ) -> crate::Result<()> {
         let Some(idx) = open_comms.iter().position(|c| c.comm_id == msg.comm_id) else {
             log::warn!(
                 "Received close message for unknown comm channel {}",
@@ -676,11 +688,16 @@ impl Shell {
             return Ok(());
         };
 
-        // Notify the comm that it's being closed
-        open_comms[idx].incoming_tx.send(CommMsg::Close).log_err();
+        // Try to dispatch the message to the new handler API.
+        // Fall back to notifying via `incoming_tx` for comms not yet migrated.
+        match shell_handler.handle_comm_close(&msg.comm_id, &open_comms[idx].comm_name)? {
+            CommHandled::Handled => {},
+            CommHandled::NotHandled => {
+                open_comms[idx].incoming_tx.send(CommMsg::Close).log_err();
+            },
+        }
 
         open_comms.remove(idx);
-
         log::info!(
             "Comm channel closed; there are now {} open comms",
             open_comms.len()
