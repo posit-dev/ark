@@ -1261,10 +1261,10 @@ impl DummyArkFrontend {
     /// request to synchronize. After this call,
     /// `should_use_dynamic_plots()` returns true.
     #[track_caller]
-    pub fn open_ui_comm(&self) {
+    pub fn open_ui_comm(&self) -> String {
         let comm_id = uuid::Uuid::new_v4().to_string();
         self.send_shell(CommOpen {
-            comm_id,
+            comm_id: comm_id.clone(),
             target_name: String::from("positron.ui"),
             data: serde_json::json!({}),
         });
@@ -1318,6 +1318,8 @@ impl DummyArkFrontend {
             }
             // Discard late comm messages and other events
         }
+
+        comm_id
     }
 
     /// Source a file that was created with `SourceFile::new()`.
