@@ -217,7 +217,7 @@ pub struct Console {
     session_mode: SessionMode,
 
     /// Channel used to send along messages relayed on the open comms.
-    pub(crate) comm_event_tx: Sender<CommEvent>,
+    comm_event_tx: Sender<CommEvent>,
 
     /// Execution requests from the frontend. Processed from `ReadConsole()`.
     /// Requests for code execution provide input to that method.
@@ -814,7 +814,7 @@ impl Console {
         // instantiating an `Console` in unit tests as well.
         graphics_device::init_graphics_device(
             console.comm_event_tx.clone(),
-            console.get_iopub_tx().clone(),
+            console.iopub_tx().clone(),
             graphics_device_rx,
         );
 
@@ -1012,9 +1012,12 @@ impl Console {
         thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
     }
 
-    /// Provides read-only access to `iopub_tx`
-    pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
+    pub fn iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
+    }
+
+    pub fn comm_event_tx(&self) -> &Sender<CommEvent> {
+        &self.comm_event_tx
     }
 
     /// Start capturing console output.
