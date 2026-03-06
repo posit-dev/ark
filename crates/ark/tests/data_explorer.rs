@@ -76,8 +76,6 @@ use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
 use ark::r_task::r_task;
 use ark_test::dummy_jupyter_header;
-use ark_test::r_test_lock;
-use ark_test::socket_rpc_request;
 use ark_test::IOPubReceiverExt;
 use ark_test::RECV_TIMEOUT;
 use crossbeam::channel::bounded;
