@@ -3,6 +3,10 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
+
+use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use anyhow::anyhow;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -14,6 +18,7 @@ use harp::session::r_sys_calls;
 use harp::session::r_sys_frames;
 use harp::session::r_sys_functions;
 use harp::srcref::SrcRef;
+use harp::utils::r_inherits;
 use harp::utils::r_is_null;
 use libr::SEXP;
 use regex::Regex;
@@ -515,21 +520,292 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
     }
 }
 
+/// Check whether a breakpoint should actually stop execution.
+///
+/// Combines the enabled check with condition evaluation in a single call
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
+pub unsafe extern "C-unwind" fn ps_should_break(
     uri: SEXP,
     id: SEXP,
+    env: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let env = RObject::new(env);
+
     let uri: String = RObject::view(uri).try_into()?;
     let uri = Url::parse(&uri)?;
 
     let id: String = RObject::view(id).try_into()?;
+    let id: i64 = id.parse()?;
 
     let console = Console::get_mut();
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
-    Ok(RObject::from(enabled).sexp)
+    let (bp_line, condition) = match dap.breakpoint_condition(&uri, id) {
+        Some((line, cond)) => (line, Some(cond.to_string())),
+        None => (0, None),
+    };
+
+    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}");
+
+    if !enabled {
+        return Ok(RObject::from(false).sexp);
+    }
+
+    // Must drop before calling back into R to avoid deadlock
+    drop(dap);
+
+    let should_break = match &condition {
+        None => true,
+        Some(condition) => {
+            let ((should_break, warnings, diagnostic), captured_output) =
+                Console::with_capture(|| eval_condition(condition, env));
+
+            // Combine captured console output (cat, message) with R warnings
+            let all_output = if captured_output.is_empty() {
+                warnings
+            } else if warnings.is_empty() {
+                captured_output
+            } else {
+                format!("{captured_output}{warnings}")
+            };
+
+            emit_condition_output(&uri, bp_line, condition, &all_output, diagnostic.as_deref());
+            should_break
+        },
+    };
+
+    Ok(RObject::from(should_break).sexp)
+}
+
+/// Emit any output or diagnostics from condition evaluation to stderr.
+fn emit_condition_output(
+    uri: &Url,
+    line: u32,
+    condition: &str,
+    captured: &str,
+    diagnostic: Option<&str>,
+) {
+    let Some(text) = format_condition_output(uri, line, condition, captured, diagnostic) else {
+        return;
+    };
+
+    Console::get_mut()
+        .get_iopub_tx()
+        .send(IOPubMessage::Stream(StreamOutput {
+            name: Stream::Stderr,
+            text,
+        }))
+        .unwrap();
+}
+
+fn format_condition_output(
+    uri: &Url,
+    line: u32,
+    condition: &str,
+    captured: &str,
+    diagnostic: Option<&str>,
+) -> Option<String> {
+    let has_captured = !captured.trim().is_empty();
+    let has_diagnostic = diagnostic.is_some();
+
+    if !has_captured && !has_diagnostic {
+        return None;
+    }
+
+    let filename = uri
+        .path_segments()
+        .and_then(|s| s.last())
+        .unwrap_or("unknown");
+    let display_line = line + 1;
+    let label = ansi_file_link(uri, line, &format!("{filename}#{display_line}"));
+
+    let mut text = format!("```breakpoint {label}\n#> {condition}\n");
+
+    if has_captured {
+        text.push_str(captured);
+        if !captured.ends_with('\n') {
+            text.push('\n');
+        }
+    }
+
+    if let Some(diagnostic) = diagnostic {
+        text.push_str(diagnostic);
+        text.push('\n');
+    }
+
+    text.push_str("```\n");
+
+    Some(text)
+}
+
+/// Format an OSC 8 hyperlink pointing to a file location.
+/// Terminals that support OSC 8 render `display` as a clickable link.
+fn ansi_file_link(uri: &Url, line: u32, display: &str) -> String {
+    let display_line = line + 1;
+    format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
+}
+
+#[cfg(test)]
+mod tests_condition_output {
+    use super::*;
+
+    fn test_uri(path: &str) -> Url {
+        Url::parse(&format!("file:///project/{path}")).unwrap()
+    }
+
+    #[test]
+    fn test_format_condition_output_nothing() {
+        let uri = test_uri("test.R");
+        assert_eq!(format_condition_output(&uri, 2, "x > 1", "", None), None);
+        assert_eq!(
+            format_condition_output(&uri, 2, "x > 1", "  \n", None),
+            None
+        );
+    }
+
+    #[test]
+    fn test_format_condition_output_diagnostic_only() {
+        let uri = test_uri("test.R");
+        let result =
+            format_condition_output(&uri, 2, "x > 1", "", Some("Expected TRUE or FALSE, got 42"));
+        let link = ansi_file_link(&uri, 2, "test.R#3");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        #> x > 1
+        Expected TRUE or FALSE, got 42
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_captured_only() {
+        let uri = test_uri("test.R");
+        let result = format_condition_output(&uri, 4, "x > 1", "Warning: something\n", None);
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
+        ```breakpoint <test.R#5>
+        #> x > 1
+        Warning: something
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_both() {
+        let uri = test_uri("analysis.R");
+        let result = format_condition_output(
+            &uri,
+            9,
+            "nrow(df)",
+            "Warning message:\ncoercion applied\n",
+            Some("Expected TRUE or FALSE, got 5"),
+        );
+        let link = ansi_file_link(&uri, 9, "analysis.R#10");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
+        ```breakpoint <analysis.R#10>
+        #> nrow(df)
+        Warning message:
+        coercion applied
+        Expected TRUE or FALSE, got 5
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_captured_no_trailing_newline() {
+        let uri = test_uri("test.R");
+        let result = format_condition_output(&uri, 0, "x > 1", "Warning: oops", None);
+        let link = ansi_file_link(&uri, 0, "test.R#1");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
+        ```breakpoint <test.R#1>
+        #> x > 1
+        Warning: oops
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_ansi_file_link() {
+        let uri = Url::parse("file:///path/to/test.R").unwrap();
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        assert_eq!(
+            link,
+            "\x1b]8;line=5;file:///path/to/test.R\x07test.R#5\x1b]8;;\x07"
+        );
+    }
+}
+
+/// Evaluate a condition expression in a given environment.
+///
+/// Returns `(should_break, warnings, diagnostic)`. Warnings are captured via
+/// `withCallingHandlers` in R since R defers warnings until the prompt by default.
+/// When evaluation fails or produces a non-logical result, `should_break` is `true`
+/// so that typos in conditions cause a visible stop rather than a silently ignored
+/// breakpoint.
+fn eval_condition(condition: &str, envir: RObject) -> (bool, String, Option<String>) {
+    // `if` coerces via `asLogicalNoNA` (not the generic `as.logical`)
+    // and errors on NA, length != 1, and non-coercible types.
+    let code = format!("base::.ark_eval_capture(if ({{ {condition} }}) TRUE else FALSE)");
+
+    let result = match harp::parse_eval0(&code, envir) {
+        Ok(val) => val,
+        Err(harp::Error::TryCatchError { message, .. }) => {
+            return (true, String::new(), Some(format!("Error: {message}")));
+        },
+        Err(err) => {
+            return (true, String::new(), Some(format!("Error: {err}")));
+        },
+    };
+
+    // Parse the list: [[1]] is the logical result, [[2]] is list of condition objects
+    let list_result = harp::list_get(result.sexp, 0);
+    let list_conditions = harp::list_get(result.sexp, 1);
+
+    let conditions = format_captured_conditions(list_conditions);
+
+    // `if` guarantees the result is TRUE or FALSE (never NA, never non-scalar),
+    // so a failed conversion here is unexpected.
+    match bool::try_from(RObject::view(list_result)) {
+        Ok(val) => (val, conditions, None),
+        Err(err) => (true, conditions, Some(format!("Error: {err}"))),
+    }
+}
+
+/// Format a list of captured R condition objects into a display string.
+/// Each condition is prefixed with "Warning:" or "Message:" depending on its class.
+fn format_captured_conditions(conditions: SEXP) -> String {
+    let n = harp::r_length(conditions);
+
+    if n == 0 {
+        return String::new();
+    }
+
+    let mut lines = Vec::new();
+
+    for i in 0..n {
+        let cond = harp::list_get(conditions, i);
+
+        // Conditions are named lists with a `message` element
+        let msg = match String::try_from(RObject::view(harp::list_get(cond, 0))) {
+            Ok(msg) => msg,
+            Err(_) => continue,
+        };
+
+        if r_inherits(cond, "warning") {
+            lines.push(format!("Warning: {msg}"));
+        } else {
+            // message() appends a trailing newline to the message text
+            let msg = msg.trim_end_matches('\n');
+            lines.push(format!("Message: {msg}"));
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    lines.join("\n") + "\n"
 }
 
 /// Verify a single breakpoint by ID.
