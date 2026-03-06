@@ -26,11 +26,17 @@ pub fn fn_env(x: SEXP) -> SEXP {
     }
 }
 
-pub unsafe fn new_function(formals: SEXP, body: SEXP, env: SEXP) -> SEXP {
-    if libr::has::R_mkClosure() {
-        libr::R_mkClosure(formals, body, env)
-    } else {
-        compat::alloc_closure(formals, body, env)
+pub fn new_function(formals: SEXP, body: SEXP, env: SEXP) -> SEXP {
+    unsafe {
+        if libr::has::R_mkClosure() {
+            libr::R_mkClosure(formals, body, env)
+        } else {
+            let out = libr::Rf_allocSExp(libr::CLOSXP);
+            libr::SET_FORMALS(out, formals);
+            libr::SET_BODY(out, body);
+            libr::SET_CLOENV(out, env);
+            out
+        }
     }
 }
 
@@ -117,36 +123,21 @@ pub fn attrib_for_each<F: FnMut(SEXP, SEXP)>(x: SEXP, mut f: F) {
             let data = &mut f as *mut F as *mut std::ffi::c_void;
             libr::R_mapAttrib(x, Some(trampoline::<F>), data);
         } else {
-            compat::map_attrib(x, &mut f);
+            pub unsafe fn map_attrib<F: FnMut(SEXP, SEXP)>(x: SEXP, f: &mut F) {
+                let mut node = libr::ATTRIB(x);
+                while node != libr::R_NilValue {
+                    f(libr::TAG(node), libr::CAR(node));
+                    node = libr::CDR(node);
+                }
+            }
+            map_attrib(x, &mut f);
         }
     }
 }
 
-/// Copies all attributes from `src` to `dst`.
+/// Shallow-copies all attributes from `src` to `dst`.
 pub fn attrib_poke_from(dst: SEXP, src: SEXP) {
-    attrib_for_each(src, |tag, val| unsafe {
-        libr::Rf_setAttrib(dst, tag, val);
-    });
-}
-
-// --- Compat polyfills for older R ---
-
-mod compat {
-    use libr::SEXP;
-
-    pub unsafe fn alloc_closure(formals: SEXP, body: SEXP, env: SEXP) -> SEXP {
-        let out = libr::Rf_allocSExp(libr::CLOSXP);
-        libr::SET_FORMALS(out, formals);
-        libr::SET_BODY(out, body);
-        libr::SET_CLOENV(out, env);
-        out
-    }
-
-    pub unsafe fn map_attrib<F: FnMut(SEXP, SEXP)>(x: SEXP, f: &mut F) {
-        let mut node = libr::ATTRIB(x);
-        while node != libr::R_NilValue {
-            f(libr::TAG(node), libr::CAR(node));
-            node = libr::CDR(node);
-        }
+    unsafe {
+        libr::SHALLOW_DUPLICATE_ATTRIB(dst, src);
     }
 }
