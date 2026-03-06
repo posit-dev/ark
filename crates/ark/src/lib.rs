@@ -12,7 +12,6 @@ pub mod comm_handler;
 pub mod connections;
 pub mod console;
 pub mod console_annotate;
-pub mod console_comm;
 pub mod console_debug;
 pub mod console_filter;
 pub mod control;
