@@ -160,9 +160,11 @@ functions::generate! {
 
     pub fn Rf_getAttrib(arg1: SEXP, arg2: SEXP) -> SEXP;
 
-    pub fn Rf_duplicate(arg: SEXP) -> SEXP;
+    pub fn Rf_duplicate(s: SEXP) -> SEXP;
 
-    pub fn Rf_shallow_duplicate(arg: SEXP) -> SEXP;
+    pub fn Rf_shallow_duplicate(s: SEXP) -> SEXP;
+
+    pub fn SHALLOW_DUPLICATE_ATTRIB(to: SEXP, from: SEXP);
 
     pub fn Rf_inherits(arg1: SEXP, arg2: *const std::ffi::c_char) -> Rboolean;
 
@@ -218,15 +220,11 @@ functions::generate! {
 
     pub fn Rf_xlength(arg1: SEXP) -> R_xlen_t;
 
-    pub fn OBJECT(x: SEXP) -> std::ffi::c_int;
-
     pub fn ALTREP(x: SEXP) -> std::ffi::c_int;
 
     pub fn ALTREP_CLASS(x: SEXP) -> SEXP;
 
     pub fn ATTRIB(x: SEXP) -> SEXP;
-
-    pub fn SET_ATTRIB(x: SEXP, v: SEXP);
 
     pub fn ANY_ATTRIB(x: SEXP) -> std::ffi::c_int;
 
@@ -258,17 +256,7 @@ functions::generate! {
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
-    pub fn EXTPTR_PROT(x: SEXP) -> SEXP;
-
-    pub fn EXTPTR_TAG(x: SEXP) -> SEXP;
-
-    pub fn SET_ENCLOS(x: SEXP, v: SEXP) -> SEXP;
-
     pub fn FORMALS(x: SEXP) -> SEXP;
-
-    pub fn FRAME(x: SEXP) -> SEXP;
-
-    pub fn HASHTAB(x: SEXP) -> SEXP;
 
     pub fn INTEGER(x: SEXP) -> *mut std::ffi::c_int;
 
@@ -285,8 +273,6 @@ functions::generate! {
     pub fn PRINTNAME(x: SEXP) -> SEXP;
 
     pub fn PRVALUE(x: SEXP) -> SEXP;
-
-    pub fn IS_S4_OBJECT(x: SEXP) -> std::ffi::c_int;
 
     pub fn RAW(x: SEXP) -> *mut Rbyte;
 
