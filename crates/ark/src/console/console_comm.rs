@@ -66,7 +66,7 @@ impl Console {
             CommInitiator::BackEnd,
             comm_id.clone(),
             String::from(comm_name),
-            self.get_iopub_tx().clone(),
+            self.iopub_tx().clone(),
         );
 
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
