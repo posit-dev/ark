@@ -298,6 +298,9 @@ impl Shell {
                     Self::handle_comm_close(open_comms, msg)
                 })
             },
+            Message::HistoryRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
+                block_on(shell_handler.handle_history_request(msg))
+            }),
             Message::InspectRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
                 block_on(shell_handler.handle_inspect_request(msg))
             }),

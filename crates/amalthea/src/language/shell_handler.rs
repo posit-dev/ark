@@ -13,6 +13,8 @@ use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
 use crate::wire::execute_reply::ExecuteReply;
 use crate::wire::execute_request::ExecuteRequest;
+use crate::wire::history_reply::HistoryReply;
+use crate::wire::history_request::HistoryRequest;
 use crate::wire::inspect_reply::InspectReply;
 use crate::wire::inspect_request::InspectRequest;
 use crate::wire::is_complete_reply::IsCompleteReply;
@@ -61,6 +63,11 @@ pub trait ShellHandler: Send {
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#introspection
     async fn handle_inspect_request(&self, req: &InspectRequest) -> crate::Result<InspectReply>;
+
+    /// Handles a request for execution history.
+    ///
+    /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#history
+    async fn handle_history_request(&self, req: &HistoryRequest) -> crate::Result<HistoryReply>;
 
     /// Handles a request to open a comm.
     ///

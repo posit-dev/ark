@@ -21,6 +21,8 @@ use amalthea::wire::execute_input::ExecuteInput;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::execute_result::ExecuteResult;
+use amalthea::wire::history_reply::HistoryReply;
+use amalthea::wire::history_request::HistoryRequest;
 use amalthea::wire::input_reply::InputReply;
 use amalthea::wire::input_request::InputRequest;
 use amalthea::wire::input_request::ShellInputRequest;
@@ -240,6 +242,16 @@ impl ShellHandler for Shell {
             found: data != serde_json::Value::Null,
             data,
             metadata: json!({}),
+        })
+    }
+
+    async fn handle_history_request(
+        &self,
+        _req: &HistoryRequest,
+    ) -> amalthea::Result<HistoryReply> {
+        Ok(HistoryReply {
+            status: Status::Ok,
+            history: vec![],
         })
     }
 
