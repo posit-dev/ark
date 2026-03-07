@@ -395,8 +395,14 @@ impl Shell {
         let mut info = serde_json::Map::new();
 
         for comm in open_comms.iter() {
-            // Only include comms that match the target name, if one was specified
-            if req.target_name.is_empty() || req.target_name == comm.comm_name {
+            // Only include comms that match the target name, if one was specified.
+            // Also treat `""` as absent for backward compatibility, since the field
+            // was previously modeled as `String` (be liberal in what you accept).
+            if req
+                .target_name
+                .as_ref()
+                .is_none_or(|name| name.is_empty() || name == &comm.comm_name)
+            {
                 let comm_info_target = CommInfoTargetName {
                     target_name: comm.comm_name.clone(),
                 };
