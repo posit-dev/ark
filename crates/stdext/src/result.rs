@@ -38,6 +38,7 @@ pub trait ResultExt<E> {
     fn log_err(self) -> Option<Self::Ok>;
     /// Assert that this result should never be an error in development or tests
     fn debug_assert_ok(self, reason: &str) -> Self;
+    fn trace_on_err(self) -> Option<Self::Ok>;
     fn warn_on_err(self) -> Option<Self::Ok>;
     fn log_with_level(self, level: log::Level) -> Option<Self::Ok>;
     fn anyhow(self) -> anyhow::Result<Self::Ok>
@@ -54,6 +55,11 @@ where
     #[track_caller]
     fn log_err(self) -> Option<T> {
         self.log_with_level(log::Level::Error)
+    }
+
+    #[track_caller]
+    fn trace_on_err(self) -> Option<T> {
+        self.log_with_level(log::Level::Trace)
     }
 
     #[track_caller]
