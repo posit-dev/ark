@@ -8,6 +8,7 @@
 use std::fmt;
 
 use amalthea::wire::execute_request::CodeLocation;
+use stdext::result::ResultExt;
 use url::Url;
 
 /// Extended URL utilities for ark.
@@ -94,20 +95,15 @@ impl UrlId {
             return Self(uri);
         }
 
-        let Ok(path) = uri.to_file_path() else {
-            log::warn!("Failed to normalize file URI: {uri}");
+        let Some(path) = uri.to_file_path().warn_on_err() else {
             return Self(uri);
         };
 
-        let path = match std::fs::canonicalize(&path) {
-            Ok(p) => p,
-            Err(err) => {
-                log::trace!("Failed to canonicalize path {path:?}: {err:?}");
-                path
-            },
-        };
-
-        let uri = Url::from_file_path(&path).unwrap_or(uri);
+        let path = std::fs::canonicalize(&path).trace_on_err().unwrap_or(path);
+        let uri = Url::from_file_path(&path)
+            .map_err(|()| anyhow::anyhow!("Failed to convert path to URI: {path:?}"))
+            .warn_on_err()
+            .unwrap_or(uri);
 
         #[cfg(windows)]
         let uri = uppercase_windows_drive_in_uri(uri);
