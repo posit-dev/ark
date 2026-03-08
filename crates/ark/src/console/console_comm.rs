@@ -35,11 +35,7 @@ impl Console {
             return;
         };
         reg.handler.handle_msg(msg, &reg.ctx);
-        if reg.ctx.is_closed() {
-            if let Some(reg) = self.comms.remove(comm_id) {
-                self.comm_notify_closed(comm_id, &reg);
-            }
-        }
+        self.drain_closed();
     }
 
     pub(crate) fn comm_handle_close(&mut self, comm_id: &str) {
@@ -82,13 +78,21 @@ impl Console {
     }
 
     pub(crate) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {
-        let mut closed_ids = Vec::new();
-        for (comm_id, reg) in self.comms.iter_mut() {
+        for (_, reg) in self.comms.iter_mut() {
             reg.handler.handle_environment(event, &reg.ctx);
-            if reg.ctx.is_closed() {
-                closed_ids.push(comm_id.clone());
-            }
         }
+        self.drain_closed();
+    }
+
+    /// Remove all comms whose handler requested closing via `ctx.close_on_exit()`.
+    fn drain_closed(&mut self) {
+        let closed_ids: Vec<String> = self
+            .comms
+            .iter()
+            .filter(|(_, reg)| reg.ctx.is_closed())
+            .map(|(id, _)| id.clone())
+            .collect();
+
         for comm_id in closed_ids {
             if let Some(reg) = self.comms.remove(&comm_id) {
                 self.comm_notify_closed(&comm_id, &reg);
