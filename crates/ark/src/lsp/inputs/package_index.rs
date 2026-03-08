@@ -29,10 +29,7 @@ impl Index {
 
         let index_path = path.join("INDEX");
         if !index_path.is_file() {
-            return Err(anyhow::anyhow!(
-                "Can't load index as '{path}' does not contain an INDEX file",
-                path = path.to_string_lossy()
-            ));
+            return Ok(Self::default());
         }
 
         let contents = std::fs::read_to_string(&index_path)?;
@@ -148,16 +145,17 @@ Nelder_Mead             Nelder-Mead Optimization of Parameters,
     }
 
     #[test]
-    fn load_from_folder_returns_errors() {
-        // From a file
+    fn load_from_folder_returns_error_for_file() {
         let file = tempfile::NamedTempFile::new().unwrap();
         let result = Index::load_from_folder(file.path());
         assert!(result.is_err());
+    }
 
-        // From a dir without an INDEX file
+    #[test]
+    fn load_from_folder_returns_default_without_index() {
         let dir = tempdir().unwrap();
-        let result = Index::load_from_folder(dir.path());
-        assert!(result.is_err());
+        let idx = Index::load_from_folder(dir.path()).unwrap();
+        assert!(idx.names.is_empty());
     }
 
     #[test]
