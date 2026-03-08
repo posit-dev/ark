@@ -252,7 +252,7 @@ impl Dap {
     /// The DAP session is expected to always be connected (to receive breakpoint
     /// updates). The `start_debug` comm message is a hint for the frontend to
     /// show the debug toolbar, not a session lifecycle event.
-    pub fn start_debug(
+    pub(crate) fn start_debug(
         &mut self,
         mut stack: Vec<FrameInfo>,
         fallback_sources: HashMap<String, String>,

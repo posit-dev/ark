@@ -107,28 +107,25 @@ mod console_repl;
 use console_annotate::annotate_input;
 pub(crate) use console_debug::DebugCallText;
 pub(crate) use console_debug::DebugStoppedReason;
-pub use console_debug::FrameInfo;
+pub(crate) use console_debug::FrameInfo;
 use console_debug::FrameInfoId;
-pub use console_debug::FrameSource;
+pub(crate) use console_debug::FrameSource;
 use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
 #[cfg(test)]
 pub(crate) use console_repl::console_inputs;
-pub use console_repl::r_busy;
-pub use console_repl::r_polled_events;
-pub use console_repl::r_read_console;
-pub use console_repl::r_show_message;
-pub use console_repl::r_suicide;
-pub use console_repl::r_write_console;
+pub(crate) use console_repl::r_busy;
+pub(crate) use console_repl::r_polled_events;
+pub(crate) use console_repl::r_read_console;
+pub(crate) use console_repl::r_show_message;
+pub(crate) use console_repl::r_suicide;
+pub(crate) use console_repl::r_write_console;
 pub(crate) use console_repl::selected_env;
 use console_repl::ActiveReadConsoleRequest;
-pub use console_repl::ConsoleInput;
-pub use console_repl::ConsoleNotification;
-pub use console_repl::ConsoleOutputCapture;
-pub use console_repl::KernelInfo;
+pub(crate) use console_repl::ConsoleNotification;
+pub(crate) use console_repl::ConsoleOutputCapture;
+pub(crate) use console_repl::KernelInfo;
 use console_repl::PendingInputs;
-pub use console_repl::PromptInfo;
-pub use console_repl::PromptKind;
 use console_repl::ReadConsolePendingAction;
 pub use console_repl::SessionMode;
 
@@ -183,6 +180,8 @@ thread_local! {
 }
 
 pub struct Console {
+    pub positron_ns: Option<RObject>,
+
     kernel_request_rx: Receiver<KernelRequest>,
 
     /// Whether we are running in Console, Notebook, or Background mode.
@@ -242,8 +241,6 @@ pub struct Console {
     /// The kernel's copy of virtual documents to notify the LSP about when the LSP
     /// initially connects and after an LSP restart.
     lsp_virtual_documents: HashMap<String, String>,
-
-    pub positron_ns: Option<RObject>,
 
     pending_inputs: Option<PendingInputs>,
 

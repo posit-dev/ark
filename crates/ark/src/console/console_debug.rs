@@ -31,7 +31,7 @@ use crate::url::UrlId;
 
 /// Debug call text captured from R's debug output.
 #[derive(Clone, Debug)]
-pub enum DebugCallText {
+pub(crate) enum DebugCallText {
     /// `debug: <expr>` - emitted when stepping without srcrefs
     Debug(String),
     /// `debug at <path>#<line>: <expr>` - emitted when stepping with srcrefs
@@ -39,7 +39,7 @@ pub enum DebugCallText {
 }
 
 #[derive(Debug, Clone)]
-pub enum DebugStoppedReason {
+pub(crate) enum DebugStoppedReason {
     Step,
     Pause,
     Condition { class: String, message: String },
@@ -69,12 +69,12 @@ pub enum FrameSource {
 /// Version of `FrameInfo` that identifies the frame by value and doesn't keep a
 /// reference to the environment.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FrameInfoId {
-    pub source: FrameSource,
-    pub start_line: i64,
-    pub start_column: i64,
-    pub end_line: i64,
-    pub end_column: i64,
+pub(super) struct FrameInfoId {
+    source: FrameSource,
+    start_line: i64,
+    start_column: i64,
+    end_line: i64,
+    end_column: i64,
 }
 
 impl From<&FrameInfo> for FrameInfoId {
@@ -90,7 +90,7 @@ impl From<&FrameInfo> for FrameInfoId {
 }
 
 impl Console {
-    pub(crate) fn debug_start(
+    pub(super) fn debug_start(
         &mut self,
         transient_eval: bool,
         debug_stopped_reason: DebugStoppedReason,
@@ -143,7 +143,7 @@ impl Console {
         };
     }
 
-    pub(crate) fn debug_stop(&mut self) {
+    pub(super) fn debug_stop(&mut self) {
         // Preserve all state in case of transient eval. Only guard when
         // actually debugging, otherwise we skip resetting state like
         // `is_interrupting_for_debugger` that needs cleanup regardless.
@@ -168,7 +168,7 @@ impl Console {
         dap.stop_debug();
     }
 
-    pub(crate) fn debug_stack_info(&mut self) -> Result<Vec<FrameInfo>> {
+    fn debug_stack_info(&mut self) -> Result<Vec<FrameInfo>> {
         // We leave finalized `call_text` in place rather than setting it to `None` here
         // in case the user executes an arbitrary expression in the debug R console, which
         // loops us back here without updating the `call_text` in any way, allowing us to
@@ -192,7 +192,7 @@ impl Console {
         Ok(frames)
     }
 
-    pub(crate) fn debug_r_stack_info(
+    fn debug_r_stack_info(
         &mut self,
         context_call_text: Option<String>,
         context_last_start_line: Option<i64>,
@@ -275,7 +275,7 @@ impl Console {
         out
     }
 
-    pub(crate) fn ark_debug_uri(
+    pub(super) fn ark_debug_uri(
         debug_session_index: u32,
         source_name: &str,
         source: &str,
@@ -298,13 +298,13 @@ impl Console {
     }
 
     // Doesn't expect `ark:` scheme, used for checking keys in our vdoc map
-    pub(crate) fn is_ark_debug_path(uri: &str) -> bool {
+    pub(super) fn is_ark_debug_path(uri: &str) -> bool {
         static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
         let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
         re.is_match(uri)
     }
 
-    pub(crate) fn verify_breakpoints(&self, srcref: RObject) {
+    pub(super) fn verify_breakpoints(&self, srcref: RObject) {
         let Some(srcref) = SrcRef::try_from(srcref).warn_on_err() else {
             return;
         };

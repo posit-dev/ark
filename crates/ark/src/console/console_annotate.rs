@@ -173,7 +173,7 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 /// - Adds a `#line` directive to map the code back to its document location.
 /// - Adds leading whitespace to align with the original character offset.
 /// - Injects breakpoint calls if any breakpoints are set.
-pub(crate) fn annotate_input(
+pub(super) fn annotate_input(
     code: &str,
     location: CodeLocation,
     breakpoints: Option<&mut [Breakpoint]>,
@@ -234,7 +234,7 @@ pub(crate) fn annotate_input(
 /// - Injects verification calls (`.ark_auto_step(.ark_verify_breakpoints_range(...))`)
 ///   after expressions containing breakpoints.
 /// - `#line` directives after injected calls to restore correct line mapping.
-pub(crate) fn annotate_source(
+fn annotate_source(
     code: &str,
     uri: &Url,
     breakpoints: &mut [Breakpoint],
@@ -242,7 +242,7 @@ pub(crate) fn annotate_source(
     annotate_source_impl(code, uri, breakpoints, false)
 }
 
-pub(crate) fn annotate_source_with_visible(
+fn annotate_source_with_visible(
     code: &str,
     uri: &Url,
     breakpoints: &mut [Breakpoint],

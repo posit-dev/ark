@@ -19,7 +19,7 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 
 impl Console {
-    pub(crate) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
+    pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
         let Some(reg) = self.comms.get_mut(comm_id) else {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
@@ -28,7 +28,7 @@ impl Console {
         self.drain_closed();
     }
 
-    pub(crate) fn comm_handle_close(&mut self, comm_id: &str) {
+    pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
         let Some(mut reg) = self.comms.remove(comm_id) else {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
@@ -40,7 +40,7 @@ impl Console {
     ///
     /// Creates the `CommSocket` and `CommHandlerContext`, calls `handle_open`,
     /// sends `CommEvent::Opened` to amalthea, and returns the comm ID.
-    pub fn comm_register(
+    pub(crate) fn comm_register(
         &mut self,
         comm_name: &str,
         mut handler: Box<dyn CommHandler>,
@@ -67,7 +67,7 @@ impl Console {
         Ok(comm_id)
     }
 
-    pub(crate) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {
+    pub(super) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {
         for (_, reg) in self.comms.iter_mut() {
             reg.handler.handle_environment(event, &reg.ctx);
         }
