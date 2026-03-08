@@ -580,7 +580,7 @@ pub unsafe extern "C-unwind" fn ps_should_break(
 
 /// Emit any output or diagnostics from condition evaluation to stderr.
 fn emit_condition_output(
-    uri: &Url,
+    uri: &UrlId,
     line: u32,
     condition: &str,
     captured: &str,
@@ -591,7 +591,7 @@ fn emit_condition_output(
     };
 
     Console::get_mut()
-        .get_iopub_tx()
+        .iopub_tx()
         .send(IOPubMessage::Stream(StreamOutput {
             name: Stream::Stderr,
             text,
@@ -600,7 +600,7 @@ fn emit_condition_output(
 }
 
 fn format_condition_output(
-    uri: &Url,
+    uri: &UrlId,
     line: u32,
     condition: &str,
     captured: &str,
@@ -614,6 +614,7 @@ fn format_condition_output(
     }
 
     let filename = uri
+        .as_url()
         .path_segments()
         .and_then(|s| s.last())
         .unwrap_or("unknown");
@@ -641,7 +642,7 @@ fn format_condition_output(
 
 /// Format an OSC 8 hyperlink pointing to a file location.
 /// Terminals that support OSC 8 render `display` as a clickable link.
-fn ansi_file_link(uri: &Url, line: u32, display: &str) -> String {
+fn ansi_file_link(uri: &UrlId, line: u32, display: &str) -> String {
     let display_line = line + 1;
     format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
 }

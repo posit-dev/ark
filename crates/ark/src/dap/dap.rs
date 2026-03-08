@@ -651,7 +651,7 @@ impl Dap {
         Ok(obj.get().sexp)
     }
 
-    pub(crate) fn breakpoint_condition(&self, uri: &Url, id: i64) -> Option<(u32, &str)> {
+    pub(crate) fn breakpoint_condition(&self, uri: &UrlId, id: i64) -> Option<(u32, &str)> {
         let (_, breakpoints) = self.breakpoints.get(uri)?;
         let bp = breakpoints.iter().find(|bp| bp.id == id)?;
         Some((bp.line, bp.condition.as_deref()?))
