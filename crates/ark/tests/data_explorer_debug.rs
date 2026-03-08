@@ -37,7 +37,7 @@ fn test_data_explorer_stable_on_frame_selection() {
     let outer_frame_id = stack[1].id;
     dap.evaluate(".positron_selected_frame", Some(outer_frame_id));
 
-    // Data explorer should NOT have received any events
+    // Selecting a frame should not produce any IOPub messages
     frontend.assert_iopub_empty();
 
     // Clean exit
