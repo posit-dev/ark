@@ -8,6 +8,7 @@
 pub mod analysis;
 pub mod ark_comm;
 pub mod browser;
+pub mod comm_handler;
 pub mod connections;
 pub mod console;
 pub mod console_annotate;

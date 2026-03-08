@@ -1,10 +1,11 @@
 //
 // request.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
+use amalthea::comm::comm_channel::CommMsg;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::originator::Originator;
@@ -50,8 +51,21 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 }
 
 /// Represents requests to the kernel.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum KernelRequest {
     /// Establish a channel to the UI comm which forwards messages to the frontend
     EstablishUiCommChannel(Sender<UiCommMessage>),
+
+    /// Deliver an incoming comm message to the R thread
+    CommMsg {
+        comm_id: String,
+        msg: CommMsg,
+        done_tx: Sender<()>,
+    },
+
+    /// Notify the R thread that a comm has been closed by the frontend
+    CommClose {
+        comm_id: String,
+        done_tx: Sender<()>,
+    },
 }

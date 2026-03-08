@@ -6,10 +6,10 @@
 //
 
 use amalthea::comm::comm_channel::Comm;
-use amalthea::comm::event::CommEvent;
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::language::shell_handler::CommHandled;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
 use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
@@ -28,6 +28,7 @@ use amalthea::wire::language_info::LanguageInfoPositron;
 use amalthea::wire::originator::Originator;
 use async_trait::async_trait;
 use bus::BusReader;
+use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Sender;
 use harp::environment::R_ENVS;
@@ -44,6 +45,7 @@ use crate::ark_comm::ArkComm;
 use crate::console::Console;
 use crate::console::ConsoleNotification;
 use crate::console::KernelInfo;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
@@ -54,7 +56,6 @@ use crate::ui::UiComm;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
-    comm_event_tx: Sender<CommEvent>,
     r_request_tx: Sender<RRequest>,
     stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
@@ -72,7 +73,6 @@ pub enum REvent {
 impl Shell {
     /// Creates a new instance of the shell message handler.
     pub(crate) fn new(
-        comm_event_tx: Sender<CommEvent>,
         r_request_tx: Sender<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
@@ -81,7 +81,6 @@ impl Shell {
         console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
         Self {
-            comm_event_tx,
             r_request_tx,
             stdin_request_tx,
             kernel_request_tx,
@@ -233,10 +232,7 @@ impl ShellHandler for Shell {
     /// the UI has been disconnected and reconnected.
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
-            Comm::Variables => {
-                let iopub_tx = comm.outgoing_tx.iopub_tx().clone();
-                handle_comm_open_variables(comm, self.comm_event_tx.clone(), iopub_tx)
-            },
+            Comm::Variables => handle_comm_open_variables(comm),
             Comm::Ui => handle_comm_open_ui(
                 comm,
                 self.stdin_request_tx.clone(),
@@ -249,16 +245,65 @@ impl ShellHandler for Shell {
             _ => Ok(false),
         }
     }
+
+    fn handle_comm_msg(
+        &mut self,
+        comm_id: &str,
+        comm_name: &str,
+        msg: CommMsg,
+    ) -> amalthea::Result<CommHandled> {
+        match comm_name {
+            DATA_EXPLORER_COMM_NAME => {
+                self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
+                    comm_id: comm_id.to_string(),
+                    msg,
+                    done_tx,
+                })?;
+                Ok(CommHandled::Handled)
+            },
+            _ => Ok(CommHandled::NotHandled),
+        }
+    }
+
+    fn handle_comm_close(
+        &mut self,
+        comm_id: &str,
+        comm_name: &str,
+    ) -> amalthea::Result<CommHandled> {
+        match comm_name {
+            DATA_EXPLORER_COMM_NAME => {
+                self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
+                    comm_id: comm_id.to_string(),
+                    done_tx,
+                })?;
+                Ok(CommHandled::Handled)
+            },
+            _ => Ok(CommHandled::NotHandled),
+        }
+    }
 }
 
-fn handle_comm_open_variables(
-    comm: CommSocket,
-    comm_event_tx: Sender<CommEvent>,
-    iopub_tx: Sender<IOPubMessage>,
-) -> amalthea::Result<bool> {
+impl Shell {
+    /// Send a `KernelRequest` to the R thread and block until it's processed.
+    fn dispatch_kernel_request(
+        &self,
+        build: impl FnOnce(Sender<()>) -> KernelRequest,
+    ) -> amalthea::Result<()> {
+        let (done_tx, done_rx) = bounded(0);
+        self.kernel_request_tx
+            .send(build(done_tx))
+            .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
+        done_rx
+            .recv()
+            .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
+        Ok(())
+    }
+}
+
+fn handle_comm_open_variables(comm: CommSocket) -> amalthea::Result<bool> {
     r_task(|| {
         let global_env = RObject::view(R_ENVS.global);
-        RVariables::start(global_env, comm, comm_event_tx, iopub_tx);
+        RVariables::start(global_env, comm);
         Ok(true)
     })
 }

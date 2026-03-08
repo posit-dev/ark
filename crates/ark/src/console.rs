@@ -97,6 +97,10 @@ use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use url::Url;
 use uuid::Uuid;
 
+mod console_comm;
+
+use crate::comm_handler::ConsoleComm;
+use crate::comm_handler::EnvironmentChanged;
 use crate::console_annotate::annotate_input;
 use crate::console_debug::FrameInfoId;
 use crate::console_filter::strip_step_lines;
@@ -359,6 +363,9 @@ pub struct Console {
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
     pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
+
+    /// Comm handlers registered on the R thread (keyed by comm ID).
+    comms: HashMap<String, ConsoleComm>,
 }
 
 /// Stack of pending inputs
@@ -806,8 +813,8 @@ impl Console {
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
         graphics_device::init_graphics_device(
-            console.get_comm_event_tx().clone(),
-            console.get_iopub_tx().clone(),
+            console.comm_event_tx.clone(),
+            console.iopub_tx().clone(),
             graphics_device_rx,
         );
 
@@ -951,6 +958,7 @@ impl Console {
             read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
+            comms: HashMap::new(),
         }
     }
 
@@ -1004,9 +1012,12 @@ impl Console {
         thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
     }
 
-    /// Provides read-only access to `iopub_tx`
-    pub fn get_iopub_tx(&self) -> &Sender<IOPubMessage> {
+    pub fn iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
+    }
+
+    pub fn comm_event_tx(&self) -> &Sender<CommEvent> {
+        &self.comm_event_tx
     }
 
     /// Start capturing console output.
@@ -1212,8 +1223,6 @@ impl Console {
         if !self.debug_is_debugging && !matches!(info.kind, PromptKind::InputRequest) {
             self.refresh_lsp();
         }
-
-        EVENTS.environment_changed.emit(());
 
         self.run_event_loop(&info, buf, buflen, WaitFor::ExecuteRequest)
     }
@@ -1511,27 +1520,45 @@ impl Console {
         // have an active request from a previous `read_console()` iteration. If
         // so, we `take()` and clear the `active_request` as we're about to
         // complete it and send a reply to unblock the active Shell request.
-        if let Some(req) = std::mem::take(&mut self.active_request) {
-            // Perform a refresh of the frontend state (Prompts, working
-            // directory, etc)
-            self.with_mut_ui_comm_tx(|ui_comm_tx| {
-                let input_prompt = info.input_prompt.clone();
-                let continuation_prompt = info.continuation_prompt.clone();
-
-                ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
-            });
-
-            // Check for pending graphics updates
-            // (Important that this occurs while in the "busy" state of this ExecuteRequest
-            // so that the `parent` message is set correctly in any Jupyter messages)
-            graphics_device::on_did_execute_request();
-
-            // Let frontend know the last request is complete. This turns us
-            // back to Idle.
-            Self::reply_execute_request(&self.iopub_tx, req, value);
-        } else {
+        let Some(req) = std::mem::take(&mut self.active_request) else {
             log::info!("No active request to handle, discarding: {value:?}");
+            return;
+        };
+
+        // Perform a refresh of the frontend state (Prompts, working
+        // directory, etc)
+        // TODO: Once the UI comm is migrated to the `CommHandler` path, this
+        // becomes a `handle_environment` impl reacting to `Execution`.
+        self.with_mut_ui_comm_tx(|ui_comm_tx| {
+            let input_prompt = info.input_prompt.clone();
+            let continuation_prompt = info.continuation_prompt.clone();
+
+            ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
+        });
+
+        // Check for pending graphics updates
+        // (Important that this occurs while in the "busy" state of this ExecuteRequest
+        // so that the `parent` message is set correctly in any Jupyter messages)
+        graphics_device::on_did_execute_request();
+
+        let (reply, result) = Self::prepare_execute_reply(req.exec_count, value);
+
+        // Send execute result/error on IOPub
+        if let Some(result) = result {
+            self.iopub_tx.send(result).unwrap();
         }
+
+        // Notify comm handlers about environment changes. This must happen
+        // after the execute result goes on IOPub but before the reply
+        // unblocks Shell (which sends Idle). This ensures side effects like
+        // data explorer updates and closes arrive within the Busy/Idle
+        // window of the execute request that caused them.
+        EVENTS.environment_changed.emit(());
+        self.comm_notify_environment_changed(EnvironmentChanged::Execution);
+
+        // Now unblock Shell, which sends Idle
+        log::trace!("Sending `execute_reply`: {reply:?}");
+        req.reply_tx.send(reply).unwrap();
     }
 
     // Called from Ark's ReadConsole event loop when we get a new execute
@@ -2134,6 +2161,18 @@ impl Console {
             KernelRequest::EstablishUiCommChannel(ref ui_comm_tx) => {
                 self.handle_establish_ui_comm_channel(ui_comm_tx.clone(), info)
             },
+            KernelRequest::CommMsg {
+                comm_id,
+                msg,
+                done_tx,
+            } => {
+                self.comm_handle_msg(&comm_id, msg);
+                done_tx.send(()).log_err();
+            },
+            KernelRequest::CommClose { comm_id, done_tx } => {
+                self.comm_handle_close(&comm_id);
+                done_tx.send(()).log_err();
+            },
         };
     }
 
@@ -2265,18 +2304,13 @@ impl Console {
         ))
     }
 
-    // Reply to the previously active request. The current prompt type and
-    // whether an error has occurred defines the reply kind.
-    fn reply_execute_request(
-        iopub_tx: &Sender<IOPubMessage>,
-        req: ActiveReadConsoleRequest,
+    fn prepare_execute_reply(
+        exec_count: u32,
         value: ConsoleValue,
-    ) {
+    ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
         log::trace!("Completing execution after receiving prompt");
 
-        let exec_count = req.exec_count;
-
-        let (reply, result) = match value {
+        match value {
             ConsoleValue::Success(data) => {
                 let reply = Ok(ExecuteReply {
                     status: Status::Ok,
@@ -2306,14 +2340,7 @@ impl Console {
 
                 (reply, Some(result))
             },
-        };
-
-        if let Some(result) = result {
-            iopub_tx.send(result).unwrap();
         }
-
-        log::trace!("Sending `execute_reply`: {reply:?}");
-        req.reply_tx.send(reply).unwrap();
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
@@ -2617,10 +2644,6 @@ impl Console {
         graphics_device::on_process_idle_events();
     }
 
-    pub fn get_comm_event_tx(&self) -> &Sender<CommEvent> {
-        &self.comm_event_tx
-    }
-
     pub(crate) fn set_help_fields(&mut self, help_event_tx: Sender<HelpEvent>, help_port: u16) {
         self.help_event_tx = Some(help_event_tx);
         self.help_port = Some(help_port);
@@ -2859,12 +2882,13 @@ impl Console {
         self.debug_stop();
     }
 
-    pub(crate) fn set_debug_selected_frame_id(&self, frame_id: Option<i64>) {
+    pub(crate) fn set_debug_selected_frame_id(&mut self, frame_id: Option<i64>) {
         self.debug_selected_frame_id.set(frame_id);
 
         // Signal listeners (e.g. the Variables pane) that they can update state
         if frame_id.is_some() {
             EVENTS.environment_changed.emit(());
+            self.comm_notify_environment_changed(EnvironmentChanged::FrameSelected);
         }
     }
 
