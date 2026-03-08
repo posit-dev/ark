@@ -24,12 +24,26 @@ use regex::Regex;
 use stdext::result::ResultExt;
 
 use crate::console::Console;
-use crate::console::DebugCallText;
-use crate::console::DebugStoppedReason;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
 use crate::url::UrlId;
+
+/// Debug call text captured from R's debug output.
+#[derive(Clone, Debug)]
+pub enum DebugCallText {
+    /// `debug: <expr>` - emitted when stepping without srcrefs
+    Debug(String),
+    /// `debug at <path>#<line>: <expr>` - emitted when stepping with srcrefs
+    DebugAt(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum DebugStoppedReason {
+    Step,
+    Pause,
+    Condition { class: String, message: String },
+}
 
 #[derive(Debug)]
 pub struct FrameInfo {

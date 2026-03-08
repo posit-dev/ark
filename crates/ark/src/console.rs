@@ -105,6 +105,8 @@ mod console_filter;
 mod console_repl;
 
 use console_annotate::annotate_input;
+pub(crate) use console_debug::DebugCallText;
+pub(crate) use console_debug::DebugStoppedReason;
 pub use console_debug::FrameInfo;
 use console_debug::FrameInfoId;
 pub use console_debug::FrameSource;
@@ -168,24 +170,6 @@ use crate::sys::console::console_to_utf8;
 use crate::ui::UiCommMessage;
 use crate::ui::UiCommSender;
 use crate::url::UrlId;
-
-/// Debug call text captured from R's debug output.
-#[derive(Clone, Debug)]
-pub enum DebugCallText {
-    /// `debug: <expr>` - emitted when stepping without srcrefs
-    Debug(String),
-    /// `debug at <path>#<line>: <expr>` - emitted when stepping with srcrefs
-    DebugAt(String),
-}
-
-#[derive(Debug, Clone)]
-pub enum DebugStoppedReason {
-    Step,
-    Pause,
-    Condition { class: String, message: String },
-}
-
-
 
 thread_local! {
     /// The `Console` singleton.
@@ -355,4 +339,3 @@ pub struct Console {
     /// Comm handlers registered on the R thread (keyed by comm ID).
     comms: HashMap<String, ConsoleComm>,
 }
-
