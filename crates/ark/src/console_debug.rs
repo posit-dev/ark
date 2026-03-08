@@ -3,6 +3,10 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
+
+use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use anyhow::anyhow;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -515,21 +519,136 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
     }
 }
 
+/// Check whether a breakpoint should actually stop execution.
+///
+/// Combines the enabled check with condition evaluation in a single call
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
+pub unsafe extern "C-unwind" fn ps_should_break(
     uri: SEXP,
     id: SEXP,
+    env: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let env = RObject::new(env);
+
     let uri: String = RObject::view(uri).try_into()?;
     let uri = UrlId::parse(&uri)?;
 
     let id: String = RObject::view(id).try_into()?;
+    let id: i64 = id.parse()?;
 
     let console = Console::get_mut();
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
-    Ok(RObject::from(enabled).sexp)
+    let (bp_line, condition) = match dap.breakpoint_condition(&uri, id) {
+        Some((line, cond)) => (line, Some(cond.to_string())),
+        None => (0, None),
+    };
+
+    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}");
+
+    if !enabled {
+        return Ok(RObject::from(false).sexp);
+    }
+
+    // Must drop before calling back into R to avoid deadlock
+    drop(dap);
+
+    let should_break = match &condition {
+        None => true,
+        Some(condition) => {
+            let ((should_break, error), captured_output) =
+                Console::with_capture(|| eval_condition(condition, env));
+
+            if !captured_output.trim().is_empty() || error.is_some() {
+                let mut output = format!("Code: `{condition}`\n");
+                output.push_str(&captured_output);
+                if let Some(err) = error {
+                    output.push_str(&err);
+                }
+                emit_breakpoint_block(&uri, bp_line, &output);
+            }
+            should_break
+        },
+    };
+
+    Ok(RObject::from(should_break).sexp)
+}
+
+/// Emit a fenced breakpoint block to stderr.
+fn emit_breakpoint_block(uri: &UrlId, line: u32, content: &str) {
+    let Some(text) = format_breakpoint_block(uri, line, content) else {
+        return;
+    };
+
+    Console::get_mut()
+        .iopub_tx()
+        .send(IOPubMessage::Stream(StreamOutput {
+            name: Stream::Stderr,
+            text,
+        }))
+        .unwrap();
+}
+
+fn format_breakpoint_block(uri: &UrlId, line: u32, content: &str) -> Option<String> {
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    let filename = uri
+        .as_url()
+        .path_segments()
+        .and_then(|s| s.last())
+        .unwrap_or("unknown");
+    let display_line = line + 1;
+    let label = ansi_file_link(uri, line, &format!("{filename}#{display_line}"));
+
+    let mut text = format!("```breakpoint {label}\n");
+
+    text.push_str(content);
+    if !content.ends_with('\n') {
+        text.push('\n');
+    }
+
+    text.push_str("```\n");
+
+    Some(text)
+}
+
+/// Format an OSC 8 hyperlink pointing to a file location.
+/// Terminals that support OSC 8 render `display` as a clickable link.
+fn ansi_file_link(uri: &UrlId, line: u32, display: &str) -> String {
+    let display_line = line + 1;
+    format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
+}
+
+/// Evaluate a condition expression in a given environment.
+///
+/// Returns `(should_break, error)`. Warnings and messages are captured by
+/// `Console::with_capture` at the call site (which sets `warn = 1` so
+/// warnings are emitted immediately). When evaluation fails or
+/// produces a non-logical result, `should_break` is `true` so that typos
+/// in conditions cause a visible stop rather than a silently ignored
+/// breakpoint.
+fn eval_condition(condition: &str, envir: RObject) -> (bool, Option<String>) {
+    // `if` coerces via `asLogicalNoNA` (not the generic `as.logical`)
+    // and errors on NA, length != 1, and non-coercible types.
+    let code = format!("if ({{ {condition} }}) TRUE else FALSE");
+
+    let result = match harp::parse_eval0(&code, envir) {
+        Ok(val) => val,
+        Err(harp::Error::TryCatchError { message, .. }) => {
+            return (true, Some(format!("Error: {message}\n")));
+        },
+        Err(err) => {
+            return (true, Some(format!("Error: {err}\n")));
+        },
+    };
+
+    match bool::try_from(RObject::view(result.sexp)) {
+        Ok(val) => (val, None),
+        Err(err) => (true, Some(format!("Error: {err}\n"))),
+    }
 }
 
 /// Verify a single breakpoint by ID.
@@ -625,6 +744,8 @@ pub unsafe extern "C-unwind" fn ps_is_interrupting_for_debugger() -> anyhow::Res
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+
     use super::*;
 
     fn frame(name: &str) -> FrameInfo {
@@ -643,6 +764,10 @@ mod tests {
 
     fn names(frames: &[FrameInfo]) -> Vec<&str> {
         frames.iter().map(|f| f.frame_name.as_str()).collect()
+    }
+
+    fn test_uri(path: &str) -> UrlId {
+        UrlId::from_url(Url::parse(&format!("file:///project/{path}")).unwrap())
     }
 
     #[test]
@@ -800,5 +925,78 @@ mod tests {
             "internal()",
             "outer()"
         ]);
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_nothing() {
+        let uri = test_uri("test.R");
+        assert_eq!(format_breakpoint_block(&uri, 2, ""), None);
+        assert_eq!(format_breakpoint_block(&uri, 2, "  \n"), None);
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_error_only() {
+        let uri = test_uri("test.R");
+        let result =
+            format_breakpoint_block(&uri, 2, "Code: `x > 1`\nError: object 'x' not found\n");
+        let link = ansi_file_link(&uri, 2, "test.R#3");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        Code: `x > 1`
+        Error: object 'x' not found
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_warning_only() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 4, "Code: `x > 1`\nWarning: something\n");
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
+        ```breakpoint <test.R#5>
+        Code: `x > 1`
+        Warning: something
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_with_error() {
+        let uri = test_uri("analysis.R");
+        let content = "Code: `nrow(df)`\nWarning message:\ncoercion applied\nError: Expected TRUE or FALSE, got 5\n";
+        let result = format_breakpoint_block(&uri, 9, content);
+        let link = ansi_file_link(&uri, 9, "analysis.R#10");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
+        ```breakpoint <analysis.R#10>
+        Code: `nrow(df)`
+        Warning message:
+        coercion applied
+        Error: Expected TRUE or FALSE, got 5
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_no_trailing_newline() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 0, "Code: `x > 1`\nWarning: oops");
+        let link = ansi_file_link(&uri, 0, "test.R#1");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
+        ```breakpoint <test.R#1>
+        Code: `x > 1`
+        Warning: oops
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_ansi_file_link() {
+        let uri = test_uri("test.R");
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        assert_eq!(
+            link,
+            "\x1b]8;line=5;file:///project/test.R\x07test.R#5\x1b]8;;\x07"
+        );
     }
 }

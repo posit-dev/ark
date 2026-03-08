@@ -78,12 +78,14 @@ use harp::srcref::get_srcref_list;
 use harp::srcref::srcref_list_get;
 use harp::srcref::SrcFile;
 use harp::utils::r_is_data_frame;
+use harp::utils::r_poke_option;
 use harp::utils::r_typeof;
 use harp::CONSOLE_THREAD_ID;
 use libr::R_BaseNamespace;
 use libr::R_GlobalEnv;
 use libr::R_ProcessEvents;
 use libr::R_RunPendingFinalizers;
+use libr::Rf_ScalarInteger;
 use libr::Rf_error;
 use libr::Rf_findVarInFrame;
 use libr::Rf_onintr;
@@ -567,6 +569,7 @@ pub(crate) enum ConsoleResult {
 /// get output accumulated since the last take.
 pub struct ConsoleOutputCapture {
     previous_output: Option<String>,
+    previous_warn: libr::SEXP,
     connected: bool,
 }
 
@@ -576,6 +579,7 @@ impl ConsoleOutputCapture {
     pub(crate) fn dummy() -> Self {
         Self {
             previous_output: None,
+            previous_warn: unsafe { libr::R_NilValue },
             connected: false,
         }
     }
@@ -612,6 +616,7 @@ impl Drop for ConsoleOutputCapture {
 
         // Restore previous capture state
         console.captured_output = self.previous_output.take();
+        unsafe { r_poke_option(r_symbol!("warn"), self.previous_warn) };
     }
 }
 
@@ -1019,13 +1024,26 @@ impl Console {
         &self.comm_event_tx
     }
 
+    /// Run a closure while capturing console output.
+    /// Returns the closure's result paired with any captured output.
+    pub(crate) fn with_capture<T>(f: impl FnOnce() -> T) -> (T, String) {
+        let mut capture = Console::get_mut().start_capture();
+        let result = f();
+        let output = capture.take();
+        (result, output)
+    }
+
     /// Start capturing console output.
     /// Returns a guard that saves and restores the previous capture state on drop.
     pub(crate) fn start_capture(&mut self) -> ConsoleOutputCapture {
         let previous_output = self.captured_output.replace(String::new());
 
+        // Force immediate warning output so it gets captured instead of deferred
+        let previous_warn = unsafe { r_poke_option(r_symbol!("warn"), Rf_ScalarInteger(1)) };
+
         ConsoleOutputCapture {
             previous_output,
+            previous_warn,
             connected: true,
         }
     }
