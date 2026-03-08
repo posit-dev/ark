@@ -573,12 +573,10 @@ pub unsafe extern "C-unwind" fn ps_should_break(
                 }
             },
             Err(err) => {
-                emit_breakpoint_output(
+                emit_breakpoint_block(
                     &uri,
                     bp_line,
-                    Some(hit_condition),
-                    "",
-                    Some(&format!("Expected a positive integer: {err}")),
+                    &format!("Expected a positive integer: {err}"),
                 );
             },
         }

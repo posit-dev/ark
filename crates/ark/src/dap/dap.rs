@@ -681,7 +681,7 @@ impl Dap {
     }
 
     /// Increment the hit count for a breakpoint and return the new count.
-    pub(crate) fn increment_hit_count(&mut self, uri: &Url, id: i64) -> u64 {
+    pub(crate) fn increment_hit_count(&mut self, uri: &UrlId, id: i64) -> u64 {
         let Some((_, breakpoints)) = self.breakpoints.get_mut(uri) else {
             return 0;
         };
