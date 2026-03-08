@@ -44,6 +44,7 @@ use crate::console;
 use crate::console::Console;
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
@@ -360,7 +361,7 @@ impl RVariables {
             let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
                 .map_err(|err| harp::Error::Anyhow(err))?;
             let viewer_id = Console::get_mut()
-                .comm_register("positron.dataExplorer", Box::new(explorer))
+                .comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
                 .map_err(|err| harp::Error::Anyhow(err))?;
             Ok(Some(viewer_id))
         })

@@ -99,6 +99,8 @@ use crate::modules::ARK_ENVS;
 use crate::r_task;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
+pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
+
 /// A name/value binding pair in an environment.
 ///
 /// We use this to keep track of the data object that the data viewer is
@@ -423,7 +425,7 @@ impl CommHandler for RDataExplorer {
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        handle_rpc_request(&ctx.outgoing_tx, "positron.dataExplorer", msg, |req| {
+        handle_rpc_request(&ctx.outgoing_tx, DATA_EXPLORER_COMM_NAME, msg, |req| {
             self.handle_rpc(req, ctx)
         });
     }
@@ -1211,7 +1213,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     };
 
     let explorer = RDataExplorer::new(title, x, env_info)?;
-    Console::get_mut().comm_register("positron.dataExplorer", Box::new(explorer))?;
+    Console::get_mut().comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
     Ok(R_NilValue)
 }

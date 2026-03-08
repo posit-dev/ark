@@ -45,6 +45,7 @@ use crate::ark_comm::ArkComm;
 use crate::console::Console;
 use crate::console::ConsoleNotification;
 use crate::console::KernelInfo;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
@@ -252,7 +253,7 @@ impl ShellHandler for Shell {
         msg: CommMsg,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            "positron.dataExplorer" => {
+            DATA_EXPLORER_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
@@ -270,7 +271,7 @@ impl ShellHandler for Shell {
         comm_name: &str,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            "positron.dataExplorer" => {
+            DATA_EXPLORER_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
