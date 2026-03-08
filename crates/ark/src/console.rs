@@ -569,7 +569,7 @@ pub(crate) enum ConsoleResult {
 /// get output accumulated since the last take.
 pub struct ConsoleOutputCapture {
     previous_output: Option<String>,
-    previous_warn: libr::SEXP,
+    previous_warn: RObject,
     connected: bool,
 }
 
@@ -579,7 +579,7 @@ impl ConsoleOutputCapture {
     pub(crate) fn dummy() -> Self {
         Self {
             previous_output: None,
-            previous_warn: unsafe { libr::R_NilValue },
+            previous_warn: RObject::null(),
             connected: false,
         }
     }
@@ -616,7 +616,7 @@ impl Drop for ConsoleOutputCapture {
 
         // Restore previous capture state
         console.captured_output = self.previous_output.take();
-        unsafe { r_poke_option(r_symbol!("warn"), self.previous_warn) };
+        unsafe { r_poke_option(r_symbol!("warn"), self.previous_warn.sexp) };
     }
 }
 
@@ -1039,7 +1039,8 @@ impl Console {
         let previous_output = self.captured_output.replace(String::new());
 
         // Force immediate warning output so it gets captured instead of deferred
-        let previous_warn = unsafe { r_poke_option(r_symbol!("warn"), Rf_ScalarInteger(1)) };
+        let previous_warn =
+            RObject::new(unsafe { r_poke_option(r_symbol!("warn"), Rf_ScalarInteger(1)) });
 
         ConsoleOutputCapture {
             previous_output,

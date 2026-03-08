@@ -540,12 +540,12 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
-    let (bp_line, condition) = match dap.breakpoint_condition(&uri, id) {
-        Some((line, cond)) => (line, Some(cond.to_string())),
-        None => (0, None),
-    };
+    let bp = dap.get_breakpoint(&uri, id);
+    let bp_line = bp.map_or(0, |bp| bp.line);
+    let condition = bp.and_then(|bp| bp.condition.clone());
+    let log_message = bp.and_then(|bp| bp.log_message.clone());
 
-    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}");
+    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}, log_message: {log_message:?}");
 
     if !enabled {
         return Ok(RObject::from(false).sexp);
@@ -554,11 +554,13 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     // Must drop before calling back into R to avoid deadlock
     drop(dap);
 
+    // Evaluate condition first as it applies to all breakpoints, including log
+    // and hit-count breakpoints
     let should_break = match &condition {
         None => true,
         Some(condition) => {
             let ((should_break, error), captured_output) =
-                Console::with_capture(|| eval_condition(condition, env));
+                Console::with_capture(|| eval_condition(condition, env.clone()));
 
             if !captured_output.trim().is_empty() || error.is_some() {
                 let mut output = format!("Code: `{condition}`\n");
@@ -572,7 +574,26 @@ pub unsafe extern "C-unwind" fn ps_should_break(
         },
     };
 
-    Ok(RObject::from(should_break).sexp)
+    if !should_break {
+        return Ok(RObject::from(false).sexp);
+    }
+
+    // Log breakpoints evaluate the template and never stop
+    if let Some(log_message) = log_message {
+        let (output, captured_output) =
+            Console::with_capture(|| eval_log_message(&log_message, env));
+
+        let mut all_output = captured_output;
+        all_output.push_str(&output);
+        if !all_output.is_empty() && !all_output.ends_with('\n') {
+            all_output.push('\n');
+        }
+
+        emit_breakpoint_block(&uri, bp_line, &all_output);
+        return Ok(RObject::from(false).sexp);
+    }
+
+    Ok(RObject::from(true).sexp)
 }
 
 /// Emit a fenced breakpoint block to stderr.
@@ -595,13 +616,7 @@ fn format_breakpoint_block(uri: &UrlId, line: u32, content: &str) -> Option<Stri
         return None;
     }
 
-    let filename = uri
-        .as_url()
-        .path_segments()
-        .and_then(|s| s.last())
-        .unwrap_or("unknown");
-    let display_line = line + 1;
-    let label = ansi_file_link(uri, line, &format!("{filename}#{display_line}"));
+    let label = breakpoint_label(uri, line);
 
     let mut text = format!("```breakpoint {label}\n");
 
@@ -615,10 +630,29 @@ fn format_breakpoint_block(uri: &UrlId, line: u32, content: &str) -> Option<Stri
     Some(text)
 }
 
-/// Format an OSC 8 hyperlink pointing to a file location.
-/// Terminals that support OSC 8 render `display` as a clickable link.
-fn ansi_file_link(uri: &UrlId, line: u32, display: &str) -> String {
+/// Evaluate a DAP log message template. Uses `glue::glue()` for `{expression}`
+/// interpolation (mandated by DAP) if glue is installed, otherwise returns the
+/// template as-is.
+fn eval_log_message(template: &str, env: RObject) -> String {
+    match RFunction::new("base", ".ark_eval_log_message")
+        .add(RObject::from(template))
+        .call_in(env.sexp)
+    {
+        Ok(val) => String::try_from(val).unwrap_or_default(),
+        Err(harp::Error::TryCatchError { message, .. }) => format!("Error: {message}"),
+        Err(err) => format!("Error: {err}"),
+    }
+}
+
+/// Format a clickable `filename#line` label for breakpoint output.
+fn breakpoint_label(uri: &UrlId, line: u32) -> String {
+    let filename = uri
+        .as_url()
+        .path_segments()
+        .and_then(|s| s.last())
+        .unwrap_or("unknown");
     let display_line = line + 1;
+    let display = format!("{filename}#{display_line}");
     format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
 }
 
@@ -939,7 +973,7 @@ mod tests {
         let uri = test_uri("test.R");
         let result =
             format_breakpoint_block(&uri, 2, "Code: `x > 1`\nError: object 'x' not found\n");
-        let link = ansi_file_link(&uri, 2, "test.R#3");
+        let link = breakpoint_label(&uri, 2);
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
         ```breakpoint <test.R#3>
         Code: `x > 1`
@@ -952,7 +986,7 @@ mod tests {
     fn test_format_breakpoint_block_warning_only() {
         let uri = test_uri("test.R");
         let result = format_breakpoint_block(&uri, 4, "Code: `x > 1`\nWarning: something\n");
-        let link = ansi_file_link(&uri, 4, "test.R#5");
+        let link = breakpoint_label(&uri, 4);
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
         ```breakpoint <test.R#5>
         Code: `x > 1`
@@ -966,7 +1000,7 @@ mod tests {
         let uri = test_uri("analysis.R");
         let content = "Code: `nrow(df)`\nWarning message:\ncoercion applied\nError: Expected TRUE or FALSE, got 5\n";
         let result = format_breakpoint_block(&uri, 9, content);
-        let link = ansi_file_link(&uri, 9, "analysis.R#10");
+        let link = breakpoint_label(&uri, 9);
         insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
         ```breakpoint <analysis.R#10>
         Code: `nrow(df)`
@@ -981,7 +1015,7 @@ mod tests {
     fn test_format_breakpoint_block_no_trailing_newline() {
         let uri = test_uri("test.R");
         let result = format_breakpoint_block(&uri, 0, "Code: `x > 1`\nWarning: oops");
-        let link = ansi_file_link(&uri, 0, "test.R#1");
+        let link = breakpoint_label(&uri, 0);
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
         ```breakpoint <test.R#1>
         Code: `x > 1`
@@ -991,9 +1025,45 @@ mod tests {
     }
 
     #[test]
-    fn test_ansi_file_link() {
+    fn test_format_breakpoint_block_log_output() {
         let uri = test_uri("test.R");
-        let link = ansi_file_link(&uri, 4, "test.R#5");
+        let result = format_breakpoint_block(&uri, 2, "x is 42, y is hello\n");
+        let link = breakpoint_label(&uri, 2);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        x is 42, y is hello
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_log_output_no_trailing_newline() {
+        let uri = test_uri("script.R");
+        let result = format_breakpoint_block(&uri, 5, "iteration 3");
+        let link = breakpoint_label(&uri, 5);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<script.R#6>"), @r"
+        ```breakpoint <script.R#6>
+        iteration 3
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_log_error() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 2, "Error: object 'z' not found\n");
+        let link = breakpoint_label(&uri, 2);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        Error: object 'z' not found
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_breakpoint_label() {
+        let uri = test_uri("test.R");
+        let link = breakpoint_label(&uri, 4);
         assert_eq!(
             link,
             "\x1b]8;line=5;file:///project/test.R\x07test.R#5\x1b]8;;\x07"

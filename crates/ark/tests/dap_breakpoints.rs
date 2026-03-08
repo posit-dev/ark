@@ -207,3 +207,34 @@ bar <- function() {
     assert_eq!(breakpoints_b.len(), 1);
     assert_eq!(breakpoints_b[0].id, id_b);
 }
+
+/// Test that breakpoints set on a file that doesn't exist on disk (e.g. an
+/// untitled, unsaved editor) come back as unverified with a helpful message.
+#[test]
+fn test_dap_breakpoints_unsaved_file_unverified() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let path = std::env::temp_dir()
+        .join("nonexistent_file_for_test.R")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let breakpoints = dap.set_breakpoints(&path, &[1, 5]);
+    assert_eq!(breakpoints.len(), 2);
+
+    assert!(!breakpoints[0].verified);
+    assert_eq!(breakpoints[0].line, Some(1));
+    assert!(breakpoints[0]
+        .message
+        .as_ref()
+        .unwrap()
+        .contains("Can't read file"));
+
+    assert!(!breakpoints[1].verified);
+    assert_eq!(breakpoints[1].line, Some(5));
+    assert!(breakpoints[1]
+        .message
+        .as_ref()
+        .unwrap()
+        .contains("Can't read file"));
+}
