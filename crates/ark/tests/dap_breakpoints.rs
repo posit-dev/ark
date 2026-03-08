@@ -215,7 +215,11 @@ fn test_dap_breakpoints_unsaved_file_unverified() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
-    let breakpoints = dap.set_breakpoints("/tmp/nonexistent_file_for_test.R", &[1, 5]);
+    let path = std::env::temp_dir()
+        .join("nonexistent_file_for_test.R")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let breakpoints = dap.set_breakpoints(&path, &[1, 5]);
     assert_eq!(breakpoints.len(), 2);
 
     assert!(!breakpoints[0].verified);
