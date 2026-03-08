@@ -19,7 +19,6 @@ use harp::utils::r_typeof;
 use libr::R_UnboundValue;
 use libr::Rf_findVarInFrame;
 use libr::Rf_isFunction;
-use libr::ENCLOS;
 use libr::PROMSXP;
 use libr::PRVALUE;
 use libr::SEXP;
@@ -480,7 +479,7 @@ pub(super) unsafe fn completion_item_from_namespace(
     };
 
     // Otherwise, try the imports environment.
-    let imports = ENCLOS(namespace);
+    let imports = harp::env_parent(namespace);
     let error_imports = match completion_item_from_symbol(
         name,
         imports,

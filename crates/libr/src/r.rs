@@ -21,6 +21,8 @@ use crate::types::*;
 functions::generate! {
     pub fn R_NewEnv(enclos: SEXP, hash: std::ffi::c_int, size: std::ffi::c_int) -> SEXP;
 
+    pub fn R_ParentEnv(x: SEXP) -> SEXP;
+
     pub fn Rf_initialize_R(ac: std::ffi::c_int, av: *mut *mut std::ffi::c_char) -> std::ffi::c_int;
 
     pub fn run_Rmainloop();
@@ -59,6 +61,10 @@ functions::generate! {
     pub fn R_CheckUserInterrupt();
 
     pub fn R_ExternalPtrAddr(s: SEXP) -> *mut std::ffi::c_void;
+
+    pub fn R_ExternalPtrProtected(s: SEXP) -> SEXP;
+
+    pub fn R_ExternalPtrTag(s: SEXP) -> SEXP;
 
     pub fn R_MakeExternalPtr(p: *mut std::ffi::c_void, tag: SEXP, prot: SEXP) -> SEXP;
 
@@ -154,9 +160,11 @@ functions::generate! {
 
     pub fn Rf_getAttrib(arg1: SEXP, arg2: SEXP) -> SEXP;
 
-    pub fn Rf_duplicate(arg: SEXP) -> SEXP;
+    pub fn Rf_duplicate(s: SEXP) -> SEXP;
 
-    pub fn Rf_shallow_duplicate(arg: SEXP) -> SEXP;
+    pub fn Rf_shallow_duplicate(s: SEXP) -> SEXP;
+
+    pub fn SHALLOW_DUPLICATE_ATTRIB(to: SEXP, from: SEXP);
 
     pub fn Rf_inherits(arg1: SEXP, arg2: *const std::ffi::c_char) -> Rboolean;
 
@@ -165,6 +173,10 @@ functions::generate! {
     pub fn Rf_isFunction(arg1: SEXP) -> Rboolean;
 
     pub fn Rf_isInteger(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isObject(arg1: SEXP) -> Rboolean;
+
+    pub fn Rf_isS4(arg1: SEXP) -> Rboolean;
 
     pub fn Rf_isMatrix(arg1: SEXP) -> Rboolean;
 
@@ -208,13 +220,19 @@ functions::generate! {
 
     pub fn Rf_xlength(arg1: SEXP) -> R_xlen_t;
 
-    pub fn OBJECT(x: SEXP) -> std::ffi::c_int;
-
     pub fn ALTREP(x: SEXP) -> std::ffi::c_int;
 
     pub fn ALTREP_CLASS(x: SEXP) -> SEXP;
 
     pub fn ATTRIB(x: SEXP) -> SEXP;
+
+    pub fn ANY_ATTRIB(x: SEXP) -> std::ffi::c_int;
+
+    pub fn R_mapAttrib(
+        x: SEXP,
+        fun: Option<unsafe extern "C-unwind" fn(tag: SEXP, val: SEXP, data: *mut std::ffi::c_void) -> SEXP>,
+        data: *mut std::ffi::c_void
+    ) -> SEXP;
 
     pub fn CADDDR(e: SEXP) -> SEXP;
 
@@ -238,17 +256,7 @@ functions::generate! {
 
     pub fn ENCLOS(x: SEXP) -> SEXP;
 
-    pub fn EXTPTR_PROT(x: SEXP) -> SEXP;
-
-    pub fn EXTPTR_TAG(x: SEXP) -> SEXP;
-
-    pub fn SET_ENCLOS(x: SEXP, v: SEXP) -> SEXP;
-
     pub fn FORMALS(x: SEXP) -> SEXP;
-
-    pub fn FRAME(x: SEXP) -> SEXP;
-
-    pub fn HASHTAB(x: SEXP) -> SEXP;
 
     pub fn INTEGER(x: SEXP) -> *mut std::ffi::c_int;
 
@@ -265,8 +273,6 @@ functions::generate! {
     pub fn PRINTNAME(x: SEXP) -> SEXP;
 
     pub fn PRVALUE(x: SEXP) -> SEXP;
-
-    pub fn IS_S4_OBJECT(x: SEXP) -> std::ffi::c_int;
 
     pub fn RAW(x: SEXP) -> *mut Rbyte;
 
@@ -318,21 +324,31 @@ functions::generate! {
 
     pub fn GEinitDisplayList(dd: pGEDevDesc);
 
-    pub fn ENVFLAGS(x: SEXP) -> std::ffi::c_int;
-
-    pub fn SET_ENVFLAGS(x: SEXP, v: std::ffi::c_int);
-
     pub fn R_LockEnvironment(env: SEXP, bindings: Rboolean);
 
     pub fn R_EnvironmentIsLocked(env: SEXP) -> Rboolean;
 
     pub fn CLOENV(x: SEXP) -> SEXP;
 
+    pub fn SET_CLOENV(x: SEXP, v: SEXP);
+
     pub fn BODY(x: SEXP) -> SEXP;
 
     pub fn SET_BODY(x: SEXP, v: SEXP);
 
+    pub fn SET_FORMALS(x: SEXP, v: SEXP);
+
+    pub fn Rf_allocSExp(t: SEXPTYPE) -> SEXP;
+
+    pub fn R_ClosureBody(x: SEXP) -> SEXP;
+
+    pub fn R_ClosureEnv(x: SEXP) -> SEXP;
+
     pub fn R_ClosureExpr(x: SEXP) -> SEXP;
+
+    pub fn R_ClosureFormals(x: SEXP) -> SEXP;
+
+    pub fn R_mkClosure(formals: SEXP, body: SEXP, env: SEXP) -> SEXP;
 
     pub fn Rf_PrintValue(x: SEXP);
 

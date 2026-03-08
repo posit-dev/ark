@@ -7,6 +7,7 @@
 
 pub mod attrib;
 pub mod call;
+
 mod column_names;
 pub mod command;
 pub mod data_frame;
@@ -30,6 +31,7 @@ pub mod parse;
 pub mod parser;
 pub mod polled_events;
 pub mod protect;
+pub mod r;
 pub mod raii;
 pub mod routines;
 pub mod session;
@@ -55,6 +57,7 @@ pub use matrix::*;
 pub use object::*;
 pub use parse::*;
 pub use parser::*;
+pub use r::*;
 pub use source::*;
 pub use table::*;
 pub use vector::character_vector::*;
@@ -81,7 +84,6 @@ pub use harp::weak_ref::RWeakRef;
 pub use harp_macros::register;
 
 // Allow `crate::` references within the crate
-use crate::error::*;
 use crate::utils::*;
 
 pub fn initialize() {

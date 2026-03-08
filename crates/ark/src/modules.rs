@@ -6,7 +6,6 @@
 //
 
 use anyhow::anyhow;
-use harp::environment::Environment;
 use harp::environment::R_ENVS;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -92,12 +91,6 @@ pub fn initialize() -> anyhow::Result<RObject> {
         Ok(harp::source_str_in(source, namespace.sexp)?)
     })?;
 
-    // Lock the environment. It will be unlocked automatically when updating.
-    // Needs to happen after the `r_source_in()` above. We don't lock the
-    // bindings to make it easy to make updates by `source()`ing inside the
-    // temporarily unlocked environment.
-    Environment::view(namespace.sexp).lock(false);
-
     // Load the positron and rstudio namespaces and their exported functions
     for file in PositronModuleAsset::iter() {
         source_asset::<PositronModuleAsset>(&file, "import_positron", namespace.sexp)?;
@@ -157,6 +150,11 @@ pub fn initialize() -> anyhow::Result<RObject> {
     // be called without any condition handlers on the stack
     let init = RFunction::from("initialize_errors");
     unsafe { libr::Rf_eval(init.call.build().sexp, namespace.sexp) };
+
+    // Lock all module environments now that loading is complete. In debug
+    // builds we skip the lock so modules can be hot-reloaded by the watcher.
+    #[cfg(not(debug_assertions))]
+    RFunction::from("lock_environments").call_in(namespace.sexp)?;
 
     return Ok(namespace);
 }
@@ -328,18 +326,18 @@ pub extern "C-unwind" fn ark_log_error(msg: SEXP) -> harp::error::Result<SEXP> {
 #[cfg(test)]
 mod tests {
     use harp::environment::Environment;
-    use libr::CLOENV;
+    use harp::fn_env;
 
     use crate::r_task;
 
     fn get_namespace(exports: Environment, fun: &str) -> Environment {
         let fun = exports.find(fun).unwrap();
-        let ns = unsafe { CLOENV(fun) };
+        let ns = fn_env(fun);
         Environment::view(ns)
     }
 
     #[test]
-    fn test_environments_are_locked() {
+    fn test_environments_are_not_locked_in_debug() {
         r_task(|| {
             let positron_exports =
                 harp::parse_eval_base("as.environment('tools:positron')").unwrap();
@@ -348,14 +346,16 @@ mod tests {
             let positron_exports = Environment::new(positron_exports);
             let rstudio_exports = Environment::new(rstudio_exports);
 
-            assert!(positron_exports.is_locked());
-            assert!(rstudio_exports.is_locked());
+            // Environments are only locked in release builds. In debug
+            // builds they stay unlocked for hot-reloading.
+            assert!(!positron_exports.is_locked());
+            assert!(!rstudio_exports.is_locked());
 
             let positron_ns = get_namespace(positron_exports, ".ps.ark.version");
             let rstudio_ns = get_namespace(rstudio_exports, ".rs.api.versionInfo");
 
-            assert!(positron_ns.is_locked());
-            assert!(rstudio_ns.is_locked());
+            assert!(!positron_ns.is_locked());
+            assert!(!rstudio_ns.is_locked());
         })
     }
 }
