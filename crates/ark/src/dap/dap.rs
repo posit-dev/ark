@@ -25,7 +25,7 @@ use stdext::spawn;
 
 use crate::console::ConsoleOutputCapture;
 use crate::console::DebugStoppedReason;
-use crate::console_debug::FrameInfo;
+use crate::console::FrameInfo;
 use crate::dap::dap_server;
 use crate::dap::dap_variables::object_variable;
 use crate::dap::dap_variables::RVariable;

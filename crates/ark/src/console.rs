@@ -98,14 +98,20 @@ use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
+mod console_annotate;
 mod console_comm;
+mod console_debug;
+mod console_filter;
+
+use console_annotate::annotate_input;
+pub use console_debug::FrameInfo;
+use console_debug::FrameInfoId;
+pub use console_debug::FrameSource;
+use console_filter::strip_step_lines;
+use console_filter::ConsoleFilter;
 
 use crate::comm_handler::ConsoleComm;
 use crate::comm_handler::EnvironmentChanged;
-use crate::console_annotate::annotate_input;
-use crate::console_debug::FrameInfoId;
-use crate::console_filter::strip_step_lines;
-use crate::console_filter::ConsoleFilter;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
 use crate::errors::stack_overflow_occurred;
@@ -286,7 +292,7 @@ pub struct Console {
 
     /// When `Some`, console output is captured here instead of being sent to IOPub.
     /// Interact with this via `ConsoleOutputCapture` from `start_capture()`.
-    pub(crate) captured_output: Option<String>,
+    captured_output: Option<String>,
 
     /// Whether the current evaluation is transient within the debug session.
     /// When `true`, the debug session state is preserved: no Continued/Stopped
@@ -294,48 +300,48 @@ pub struct Console {
     /// event is sent to refresh variables. Set to `true` for console
     /// evaluations (as opposed to step commands like `n`, `c`, `f`).
     /// See https://github.com/posit-dev/positron/issues/3151.
-    pub(crate) debug_transient_eval: bool,
+    debug_transient_eval: bool,
 
     /// Underlying dap state. Shared with the DAP server thread.
-    pub(crate) debug_dap: Arc<Mutex<Dap>>,
+    debug_dap: Arc<Mutex<Dap>>,
 
     /// Whether or not we are currently in a debugging state.
-    pub(crate) debug_is_debugging: bool,
+    debug_is_debugging: bool,
 
     /// Filter for debug console output. Removes R's internal debug messages
     /// from user-visible console output.
-    pub(crate) debug_filter: ConsoleFilter,
+    debug_filter: ConsoleFilter,
 
     /// The current call emitted by R as `debug: <call-text>`.
-    pub(crate) debug_call_text: Option<DebugCallText>,
+    debug_call_text: Option<DebugCallText>,
 
     /// The last known `start_line` for the active context frame.
-    pub(crate) debug_last_line: Option<i64>,
+    debug_last_line: Option<i64>,
 
     /// The stack of frames we saw the last time we stopped. Used as a mostly
     /// reliable indication of whether we moved since last time.
-    pub(crate) debug_last_stack: Vec<FrameInfoId>,
+    debug_last_stack: Vec<FrameInfoId>,
 
     /// Ever increasing debug session index. Used to create URIs that are only
     /// valid for a single session.
-    pub(crate) debug_session_index: u32,
+    debug_session_index: u32,
 
     /// The current frame `id`. Monotonically increasing, unique across all
     /// frames and debug sessions. It's important that each frame gets a unique
     /// ID across the process lifetime so that we can invalidate stale requests.
-    pub(crate) debug_current_frame_id: i64,
+    debug_current_frame_id: i64,
 
     /// Reason for entering the debugger. Used to determine which DAP event to send.
-    pub(crate) debug_stopped_reason: Option<DebugStoppedReason>,
+    debug_stopped_reason: Option<DebugStoppedReason>,
 
     /// The frame ID selected by the user in the debugger UI.
     /// When set, console evaluations happen in this frame's environment instead of the current frame.
     /// Resolved to an environment via `debug_dap` state when needed.
-    pub(crate) debug_selected_frame_id: Cell<Option<i64>>,
+    debug_selected_frame_id: Cell<Option<i64>>,
 
     /// Saved JIT compiler level, to restore after a step-into command.
     /// Step-into disables JIT to prevent stepping into `compiler` internals.
-    pub(crate) debug_jit_level: Option<i32>,
+    debug_jit_level: Option<i32>,
 
     /// Tracks how many nested `r_read_console()` calls are on the stack.
     /// Incremented when entering `r_read_console(),` decremented on exit.
@@ -363,7 +369,7 @@ pub struct Console {
     /// Stack of topmost environments while waiting for input in ReadConsole.
     /// Pushed on entry to `r_read_console()`, popped on exit.
     /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
-    pub(crate) read_console_env_stack: RefCell<Vec<RObject>>,
+    read_console_env_stack: RefCell<Vec<RObject>>,
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
     comms: HashMap<String, ConsoleComm>,
@@ -387,7 +393,7 @@ enum ParseResult<T> {
 }
 
 impl PendingInputs {
-    pub(crate) fn read(
+    fn read(
         code: &str,
         location: Option<CodeLocation>,
         breakpoints: Option<&mut [Breakpoint]>,
@@ -452,11 +458,11 @@ impl PendingInputs {
         })))
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.index >= self.len
     }
 
-    pub(crate) fn pop(&mut self) -> Option<PendingInput> {
+    fn pop(&mut self) -> Option<PendingInput> {
         if self.is_empty() {
             return None;
         }
@@ -475,7 +481,7 @@ impl PendingInputs {
 }
 
 #[derive(Debug)]
-pub(crate) struct PendingInput {
+struct PendingInput {
     expr: RObject,
     srcref: RObject,
 }
@@ -551,7 +557,7 @@ pub enum ConsoleInput {
 }
 
 #[derive(Debug)]
-pub(crate) enum ConsoleResult {
+enum ConsoleResult {
     NewInput,
     NewPendingInput(PendingInput),
     Interrupt,
@@ -1869,7 +1875,7 @@ impl Console {
     /// Resolve the frame in which to evaluate the current expression.
     /// Uses the debug-selected frame if one has been set, otherwise the
     /// captured environment from `read_console_env_stack`.
-    pub(crate) fn eval_frame(&self) -> harp::RObject {
+    fn eval_frame(&self) -> harp::RObject {
         let Some(frame_id) = self.debug_selected_frame_id.get() else {
             return self.eval_env();
         };
@@ -1945,12 +1951,12 @@ impl Console {
     /// in duplicate virtual editors being opened on the client side.
     pub fn load_fallback_sources(
         &mut self,
-        stack: &Vec<crate::console_debug::FrameInfo>,
+        stack: &Vec<console_debug::FrameInfo>,
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
         for frame in stack.iter() {
-            if let crate::console_debug::FrameSource::Text(source) = &frame.source {
+            if let console_debug::FrameSource::Text(source) = &frame.source {
                 let uri = Self::ark_debug_uri(self.debug_session_index, &frame.source_name, source);
 
                 if self.has_virtual_document(&uri) {
