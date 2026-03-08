@@ -74,8 +74,8 @@ pub struct Breakpoint {
     /// We keep this as a string instead of a parsed expression for safety,
     /// since breakpoint state is also inspected by the DAP server thread.
     pub condition: Option<String>,
-    /// Optional log message template (DAP "logpoint"). When set, the
-    /// breakpoint evaluates `{expression}` placeholders in the template,
+    /// Optional log message template (DAP "logpoint"). When set, the breakpoint
+    /// interpolates `{expression}` placeholders in the template using glue,
     /// prints the result to the debug console, and does not stop execution.
     pub log_message: Option<String>,
 }
