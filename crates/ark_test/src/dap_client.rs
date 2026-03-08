@@ -277,6 +277,30 @@ impl DapClient {
         self.send_set_breakpoints(path, breakpoints)
     }
 
+    /// Set breakpoints with hit count thresholds for a source file.
+    ///
+    /// Takes a file path and a list of `(line, hit_condition)` pairs.
+    /// Returns the breakpoints as reported by the server.
+    #[track_caller]
+    pub fn set_hit_count_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: &[(i64, &str)],
+    ) -> Vec<Breakpoint> {
+        let breakpoints: Vec<SourceBreakpoint> = breakpoints
+            .iter()
+            .map(|&(line, hit_condition)| SourceBreakpoint {
+                line,
+                column: None,
+                condition: None,
+                hit_condition: Some(hit_condition.to_string()),
+                log_message: None,
+            })
+            .collect();
+
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
     /// Set breakpoints from raw `SourceBreakpoint` objects.
     ///
     /// Useful for mixed scenarios where some breakpoints have conditions

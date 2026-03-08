@@ -523,7 +523,7 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
 ///
 /// Combines the enabled check with condition evaluation in a single call
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_should_break(
+pub unsafe extern "C-unwind" fn ps_handle_breakpoint(
     uri: SEXP,
     id: SEXP,
     env: SEXP,
@@ -544,8 +544,17 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     let bp_line = bp.map_or(0, |bp| bp.line);
     let condition = bp.and_then(|bp| bp.condition.clone());
     let log_message = bp.and_then(|bp| bp.log_message.clone());
+    let hit_condition = bp.and_then(|bp| bp.hit_condition.clone());
 
-    log::trace!("DAP: Breakpoint {id} for {uri} enabled: {enabled}, condition: {condition:?}, log_message: {log_message:?}");
+    log::trace!(
+        "DAP: Breakpoint {id} for {uri} \
+         enabled: {enabled}, \
+         hit_count: {hit_count}, \
+         hit_condition: {hit_condition:?}, \
+         condition: {condition:?}, \
+         log_message: {log_message:?}",
+        hit_count = bp.map_or(0, |bp| bp.hit_count)
+    );
 
     if !enabled {
         return Ok(RObject::from(false).sexp);
@@ -555,7 +564,8 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     drop(dap);
 
     // Evaluate condition first as it applies to all breakpoints, including log
-    // and hit-count breakpoints
+    // and hit-count breakpoints. Per the DAP spec, `hitCondition` should only
+    // be evaluated (and the hit count incremented) if the `condition` is met.
     let should_break = match &condition {
         None => true,
         Some(condition) => {
@@ -576,6 +586,27 @@ pub unsafe extern "C-unwind" fn ps_should_break(
 
     if !should_break {
         return Ok(RObject::from(false).sexp);
+    }
+
+    if let Some(ref hit_condition) = hit_condition {
+        match hit_condition.trim().parse::<u64>() {
+            Ok(threshold) => {
+                let mut dap = Console::get_mut().debug_dap.lock().unwrap();
+                let hit_count = dap.increment_hit_count(&uri, id);
+                drop(dap);
+
+                if hit_count < threshold {
+                    return Ok(RObject::from(false).sexp);
+                }
+            },
+            Err(err) => {
+                emit_breakpoint_block(
+                    &uri,
+                    bp_line,
+                    &format!("Error: Expected a positive integer, {err}"),
+                );
+            },
+        }
     }
 
     // Log breakpoints evaluate the template and never stop
@@ -1056,6 +1087,22 @@ mod tests {
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
         ```breakpoint <test.R#3>
         Error: object 'z' not found
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_hit_condition_error() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(
+            &uri,
+            17,
+            "Error: Expected a positive integer, invalid digit found in string",
+        );
+        let link = breakpoint_label(&uri, 17);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#18>"), @r"
+        ```breakpoint <test.R#18>
+        Error: Expected a positive integer, invalid digit found in string
         ```
         ");
     }

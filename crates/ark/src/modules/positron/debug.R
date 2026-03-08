@@ -815,8 +815,8 @@ non_parseable_fixed_info <- function(pattern, replacement) {
     list(pattern = pattern, replacement = replacement, fixed = TRUE)
 }
 
-should_break <- function(uri, id, envir) {
-    .ps.Call("ps_should_break", uri, id, envir)
+handle_breakpoint <- function(uri, id, envir) {
+    .ps.Call("ps_handle_breakpoint", uri, id, envir)
 }
 
 
@@ -843,7 +843,7 @@ verify_breapoint <- function(uri, id) {
         verify_breapoint(uri, id)
 
         # Check if user condition allows breaking
-        if (!should_break(uri, id, parent.frame())) {
+        if (!handle_breakpoint(uri, id, parent.frame())) {
             return(invisible(NULL))
         }
 

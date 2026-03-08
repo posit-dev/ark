@@ -407,6 +407,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             ]),
             supports_evaluate_for_hovers: Some(true),
             supports_conditional_breakpoints: Some(true),
+            supports_hit_conditional_breakpoints: Some(true),
             supports_log_points: Some(true),
             ..Default::default()
         }));
@@ -512,6 +513,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         injected: false,
                         condition: bp.condition.clone(),
                         log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
                     }
                 })
                 .collect()
@@ -553,6 +556,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         injected,
                         condition: bp.condition.clone(),
                         log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
                     });
                 } else {
                     // New breakpoints always start as Unverified, until they get evaluated once
@@ -564,6 +569,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         injected: false,
                         condition: bp.condition.clone(),
                         log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
                     });
                 }
             }
@@ -586,6 +593,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         injected: true,
                         condition: old_bp.condition.clone(),
                         log_message: old_bp.log_message.clone(),
+                        hit_condition: old_bp.hit_condition,
+                        hit_count: 0,
                     });
                 }
             }
