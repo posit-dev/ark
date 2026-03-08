@@ -560,13 +560,14 @@ pub unsafe extern "C-unwind" fn ps_should_break(
             let ((should_break, error), captured_output) =
                 Console::with_capture(|| eval_condition(condition, env));
 
-            let output = match error {
-                Some(err) if captured_output.is_empty() => err,
-                Some(err) => format!("{captured_output}{err}\n"),
-                None => captured_output,
-            };
-
-            emit_condition_output(&uri, bp_line, condition, &output);
+            if !captured_output.trim().is_empty() || error.is_some() {
+                let mut output = format!("Code: `{condition}`\n");
+                output.push_str(&captured_output);
+                if let Some(err) = error {
+                    output.push_str(&err);
+                }
+                emit_breakpoint_block(&uri, bp_line, &output);
+            }
             should_break
         },
     };
@@ -574,9 +575,9 @@ pub unsafe extern "C-unwind" fn ps_should_break(
     Ok(RObject::from(should_break).sexp)
 }
 
-/// Emit any output from condition evaluation to stderr.
-fn emit_condition_output(uri: &UrlId, line: u32, condition: &str, captured: &str) {
-    let Some(text) = format_condition_output(uri, line, condition, captured) else {
+/// Emit a fenced breakpoint block to stderr.
+fn emit_breakpoint_block(uri: &UrlId, line: u32, content: &str) {
+    let Some(text) = format_breakpoint_block(uri, line, content) else {
         return;
     };
 
@@ -589,13 +590,8 @@ fn emit_condition_output(uri: &UrlId, line: u32, condition: &str, captured: &str
         .unwrap();
 }
 
-fn format_condition_output(
-    uri: &UrlId,
-    line: u32,
-    condition: &str,
-    captured: &str,
-) -> Option<String> {
-    if captured.trim().is_empty() {
+fn format_breakpoint_block(uri: &UrlId, line: u32, content: &str) -> Option<String> {
+    if content.trim().is_empty() {
         return None;
     }
 
@@ -607,10 +603,10 @@ fn format_condition_output(
     let display_line = line + 1;
     let label = ansi_file_link(uri, line, &format!("{filename}#{display_line}"));
 
-    let mut text = format!("```breakpoint {label}\n#> {condition}\n");
+    let mut text = format!("```breakpoint {label}\n");
 
-    text.push_str(captured);
-    if !captured.ends_with('\n') {
+    text.push_str(content);
+    if !content.ends_with('\n') {
         text.push('\n');
     }
 
@@ -932,51 +928,48 @@ mod tests {
     }
 
     #[test]
-    fn test_format_condition_output_nothing() {
+    fn test_format_breakpoint_block_nothing() {
         let uri = test_uri("test.R");
-        assert_eq!(format_condition_output(&uri, 2, "x > 1", ""), None);
-        assert_eq!(format_condition_output(&uri, 2, "x > 1", "  \n"), None);
+        assert_eq!(format_breakpoint_block(&uri, 2, ""), None);
+        assert_eq!(format_breakpoint_block(&uri, 2, "  \n"), None);
     }
 
     #[test]
-    fn test_format_condition_output_error_only() {
+    fn test_format_breakpoint_block_error_only() {
         let uri = test_uri("test.R");
-        let result = format_condition_output(&uri, 2, "x > 1", "Expected TRUE or FALSE, got 42\n");
+        let result =
+            format_breakpoint_block(&uri, 2, "Code: `x > 1`\nError: object 'x' not found\n");
         let link = ansi_file_link(&uri, 2, "test.R#3");
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
         ```breakpoint <test.R#3>
-        #> x > 1
-        Expected TRUE or FALSE, got 42
+        Code: `x > 1`
+        Error: object 'x' not found
         ```
         ");
     }
 
     #[test]
-    fn test_format_condition_output_captured_only() {
+    fn test_format_breakpoint_block_warning_only() {
         let uri = test_uri("test.R");
-        let result = format_condition_output(&uri, 4, "x > 1", "Warning: something\n");
+        let result = format_breakpoint_block(&uri, 4, "Code: `x > 1`\nWarning: something\n");
         let link = ansi_file_link(&uri, 4, "test.R#5");
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
         ```breakpoint <test.R#5>
-        #> x > 1
+        Code: `x > 1`
         Warning: something
         ```
         ");
     }
 
     #[test]
-    fn test_format_condition_output_with_error() {
+    fn test_format_breakpoint_block_with_error() {
         let uri = test_uri("analysis.R");
-        let result = format_condition_output(
-            &uri,
-            9,
-            "nrow(df)",
-            "Warning message:\ncoercion applied\nError: Expected TRUE or FALSE, got 5\n",
-        );
+        let content = "Code: `nrow(df)`\nWarning message:\ncoercion applied\nError: Expected TRUE or FALSE, got 5\n";
+        let result = format_breakpoint_block(&uri, 9, content);
         let link = ansi_file_link(&uri, 9, "analysis.R#10");
         insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
         ```breakpoint <analysis.R#10>
-        #> nrow(df)
+        Code: `nrow(df)`
         Warning message:
         coercion applied
         Error: Expected TRUE or FALSE, got 5
@@ -985,13 +978,13 @@ mod tests {
     }
 
     #[test]
-    fn test_format_condition_output_captured_no_trailing_newline() {
+    fn test_format_breakpoint_block_no_trailing_newline() {
         let uri = test_uri("test.R");
-        let result = format_condition_output(&uri, 0, "x > 1", "Warning: oops");
+        let result = format_breakpoint_block(&uri, 0, "Code: `x > 1`\nWarning: oops");
         let link = ansi_file_link(&uri, 0, "test.R#1");
         insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
         ```breakpoint <test.R#1>
-        #> x > 1
+        Code: `x > 1`
         Warning: oops
         ```
         ");

@@ -218,7 +218,7 @@ foo()
     // Inline the breakpoint-hit flow so we can assert stderr before idle
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stderr_contains("```breakpoint");
-    frontend.assert_stream_stderr_contains("#> nonexistent_variable_xyz");
+    frontend.assert_stream_stderr_contains("Code: `nonexistent_variable_xyz`");
     frontend.assert_stream_stderr_contains("Error: object 'nonexistent_variable_xyz' not found");
     frontend.assert_stream_stderr_contains("```");
     // "Called from:" and "debug at" are filtered from console output
@@ -268,7 +268,7 @@ foo()
 
     // Should show clean error without internal wrappers or backtrace
     frontend.assert_stream_stderr_contains("```breakpoint");
-    frontend.assert_stream_stderr_contains("#> stop(\"oops\")");
+    frontend.assert_stream_stderr_contains("Code: `stop(\"oops\")`");
     frontend.assert_stream_stderr_contains("Error: oops");
     frontend.assert_stream_stderr_contains("```");
 
@@ -438,7 +438,7 @@ foo()
 
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stderr_contains("```breakpoint");
-    frontend.assert_stream_stderr_contains("#> 'hello'");
+    frontend.assert_stream_stderr_contains("Code: `'hello'`");
     frontend.assert_stream_stderr_contains("Error: argument is not interpretable as logical");
     frontend.assert_stream_stderr_contains("```");
     // "Called from:" and "debug at" are filtered from console output
@@ -487,7 +487,7 @@ foo()
 
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stderr_contains("```breakpoint");
-    frontend.assert_stream_stderr_contains("#> environment()");
+    frontend.assert_stream_stderr_contains("Code: `environment()`");
     frontend.assert_stream_stderr_contains("Error: argument is of length zero");
     frontend.assert_stream_stderr_contains("```");
     // "Called from:" and "debug at" are filtered from console output
