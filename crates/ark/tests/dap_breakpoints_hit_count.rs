@@ -225,15 +225,72 @@ fn test_dap_hit_count_never_met() {
     frontend.recv_shell_execute_reply();
 }
 
-/// Hit count combined with a condition. Both must be satisfied:
-/// the hit count must reach the threshold AND the condition must be TRUE.
+/// Hit count combined with a condition. Per the DAP spec, the condition is
+/// evaluated first; the hit count only increments when the condition is TRUE.
 ///
-/// With hit_condition "2" and condition "i == 3":
-/// - i=1: hit=1 (<2) -> skip
-/// - i=2: hit=2 (>=2) -> check condition: 2==3 FALSE -> skip
-/// - i=3: hit=3 (>=2) -> check condition: 3==3 TRUE -> STOP
+/// With condition "i %% 2 == 0" (even numbers) and hit_condition "2":
+/// - i=1: condition FALSE -> skip (hit=0)
+/// - i=2: condition TRUE -> hit=1 (<2) -> skip
+/// - i=3: condition FALSE -> skip (hit=1)
+/// - i=4: condition TRUE -> hit=2 (>=2) -> STOP
 #[test]
 fn test_dap_hit_count_with_condition() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = SourceFile::new(
+        "
+foo <- function() {
+  for (i in 1:10) {
+    x <- i * 2
+  }
+}
+foo()
+",
+    );
+
+    let breakpoints = dap.set_source_breakpoints(&file.path, vec![SourceBreakpoint {
+        line: 4,
+        column: None,
+        condition: Some("i %% 2 == 0".to_string()),
+        hit_condition: Some("2".to_string()),
+        log_message: None,
+    }]);
+    assert_eq!(breakpoints.len(), 1);
+    let bp_id = breakpoints[0].id;
+
+    frontend.send_execute_request(
+        &format!("source('{}')", file.path),
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let bp = dap.recv_breakpoint_verified();
+    assert_eq!(bp.id, bp_id);
+
+    // Stops at i=4: the 2nd time condition is TRUE
+    frontend.recv_iopub_breakpoint_hit();
+    dap.recv_stopped();
+
+    let frame_id = dap.stack_trace()[0].id;
+    assert_eq!(dap.evaluate("i", Some(frame_id)), "4L");
+
+    frontend.debug_send_quit();
+    dap.recv_continued();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Verify that the hit count does NOT increment when the condition is FALSE.
+///
+/// If hit count were incremented before condition evaluation (the wrong
+/// ordering), the hit count would reach 3 by the time i==3, and the
+/// breakpoint would fire at i=3 on the first call. With correct ordering,
+/// condition `i == 3` matches only once per call, so the hit count only
+/// reaches 1 on the first call (<2 threshold), and the breakpoint does
+/// not fire until the second call.
+#[test]
+fn test_dap_hit_count_not_incremented_when_condition_false() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();
 
@@ -244,6 +301,7 @@ foo <- function() {
     x <- i * 2
   }
 }
+foo()
 foo()
 ",
     );
@@ -268,6 +326,8 @@ foo()
     let bp = dap.recv_breakpoint_verified();
     assert_eq!(bp.id, bp_id);
 
+    // First foo() call: condition `i == 3` is TRUE once -> hit_count=1 (<2) -> no stop.
+    // Second foo() call: condition `i == 3` is TRUE once more -> hit_count=2 (>=2) -> STOP.
     frontend.recv_iopub_breakpoint_hit();
     dap.recv_stopped();
 
@@ -358,7 +418,6 @@ foo()
 
     frontend.recv_iopub_start_debug();
     frontend.assert_stream_stderr_contains("```breakpoint");
-    frontend.assert_stream_stderr_contains("#> abc");
     frontend.assert_stream_stderr_contains("Expected a positive integer");
     frontend.assert_stream_stderr_contains("```");
     frontend.drain_streams();

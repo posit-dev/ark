@@ -80,7 +80,8 @@ pub struct Breakpoint {
     pub log_message: Option<String>,
     /// Optional hit count condition. When set, the breakpoint only fires
     /// once the location has been reached at least this many times (`>=`
-    /// semantics). Stored as the raw DAP string and parsed at hit time.
+    /// semantics). Stored as the raw DAP string and parsed at hit time so we
+    /// can report error in console.
     pub hit_condition: Option<String>,
     /// Number of times this breakpoint location has been reached.
     pub hit_count: u64,
