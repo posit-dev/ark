@@ -2161,17 +2161,6 @@ impl Console {
             KernelRequest::EstablishUiCommChannel(ref ui_comm_tx) => {
                 self.handle_establish_ui_comm_channel(ui_comm_tx.clone(), info)
             },
-            KernelRequest::CommOpen {
-                comm_id,
-                comm_name: _,
-                factory,
-                ctx,
-                done_tx,
-            } => {
-                let handler = (factory.0)();
-                self.comm_handle_open(comm_id, handler, ctx);
-                done_tx.send(()).log_err();
-            },
             KernelRequest::CommMsg {
                 comm_id,
                 msg,

@@ -19,16 +19,6 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 
 impl Console {
-    pub(crate) fn comm_handle_open(
-        &mut self,
-        comm_id: String,
-        mut handler: Box<dyn CommHandler>,
-        ctx: CommHandlerContext,
-    ) {
-        handler.handle_open(&ctx);
-        self.comms.insert(comm_id, ConsoleComm { handler, ctx });
-    }
-
     pub(crate) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
         let Some(reg) = self.comms.get_mut(comm_id) else {
             log::warn!("Received message for unknown registered comm {comm_id}");
