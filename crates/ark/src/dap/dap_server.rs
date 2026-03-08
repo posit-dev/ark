@@ -462,7 +462,23 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Err(err) => {
                 // TODO: What do we do with breakpoints in virtual documents?
                 log::warn!("Failed to read file '{path}': {err:?}");
-                let rsp = req.error(&format!("Failed to read file: {path}"));
+
+                let breakpoints = args
+                    .breakpoints
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|bp| dap::types::Breakpoint {
+                        id: Some(self.state.lock().unwrap().next_breakpoint_id()),
+                        verified: false,
+                        line: Some(bp.line),
+                        message: Some(String::from("Can't read file '{path}'")),
+                        ..Default::default()
+                    })
+                    .collect();
+
+                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints,
+                }));
                 return self.respond(rsp);
             },
         };
