@@ -646,96 +646,6 @@ fn ansi_file_link(uri: &Url, line: u32, display: &str) -> String {
     format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
 }
 
-#[cfg(test)]
-mod tests_condition_output {
-    use super::*;
-
-    fn test_uri(path: &str) -> Url {
-        Url::parse(&format!("file:///project/{path}")).unwrap()
-    }
-
-    #[test]
-    fn test_format_condition_output_nothing() {
-        let uri = test_uri("test.R");
-        assert_eq!(format_condition_output(&uri, 2, "x > 1", "", None), None);
-        assert_eq!(
-            format_condition_output(&uri, 2, "x > 1", "  \n", None),
-            None
-        );
-    }
-
-    #[test]
-    fn test_format_condition_output_diagnostic_only() {
-        let uri = test_uri("test.R");
-        let result =
-            format_condition_output(&uri, 2, "x > 1", "", Some("Expected TRUE or FALSE, got 42"));
-        let link = ansi_file_link(&uri, 2, "test.R#3");
-        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
-        ```breakpoint <test.R#3>
-        #> x > 1
-        Expected TRUE or FALSE, got 42
-        ```
-        ");
-    }
-
-    #[test]
-    fn test_format_condition_output_captured_only() {
-        let uri = test_uri("test.R");
-        let result = format_condition_output(&uri, 4, "x > 1", "Warning: something\n", None);
-        let link = ansi_file_link(&uri, 4, "test.R#5");
-        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
-        ```breakpoint <test.R#5>
-        #> x > 1
-        Warning: something
-        ```
-        ");
-    }
-
-    #[test]
-    fn test_format_condition_output_both() {
-        let uri = test_uri("analysis.R");
-        let result = format_condition_output(
-            &uri,
-            9,
-            "nrow(df)",
-            "Warning message:\ncoercion applied\n",
-            Some("Expected TRUE or FALSE, got 5"),
-        );
-        let link = ansi_file_link(&uri, 9, "analysis.R#10");
-        insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
-        ```breakpoint <analysis.R#10>
-        #> nrow(df)
-        Warning message:
-        coercion applied
-        Expected TRUE or FALSE, got 5
-        ```
-        ");
-    }
-
-    #[test]
-    fn test_format_condition_output_captured_no_trailing_newline() {
-        let uri = test_uri("test.R");
-        let result = format_condition_output(&uri, 0, "x > 1", "Warning: oops", None);
-        let link = ansi_file_link(&uri, 0, "test.R#1");
-        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
-        ```breakpoint <test.R#1>
-        #> x > 1
-        Warning: oops
-        ```
-        ");
-    }
-
-    #[test]
-    fn test_ansi_file_link() {
-        let uri = Url::parse("file:///path/to/test.R").unwrap();
-        let link = ansi_file_link(&uri, 4, "test.R#5");
-        assert_eq!(
-            link,
-            "\x1b]8;line=5;file:///path/to/test.R\x07test.R#5\x1b]8;;\x07"
-        );
-    }
-}
-
 /// Evaluate a condition expression in a given environment.
 ///
 /// Returns `(should_break, warnings, diagnostic)`. Warnings are captured via
@@ -921,6 +831,10 @@ mod tests {
         frames.iter().map(|f| f.frame_name.as_str()).collect()
     }
 
+    fn test_uri(path: &str) -> Url {
+        Url::parse(&format!("file:///project/{path}")).unwrap()
+    }
+
     #[test]
     fn test_filter_hidden_frames_empty() {
         let mut frames = vec![];
@@ -1076,5 +990,86 @@ mod tests {
             "internal()",
             "outer()"
         ]);
+    }
+
+    #[test]
+    fn test_format_condition_output_nothing() {
+        let uri = test_uri("test.R");
+        assert_eq!(format_condition_output(&uri, 2, "x > 1", "", None), None);
+        assert_eq!(
+            format_condition_output(&uri, 2, "x > 1", "  \n", None),
+            None
+        );
+    }
+
+    #[test]
+    fn test_format_condition_output_diagnostic_only() {
+        let uri = test_uri("test.R");
+        let result =
+            format_condition_output(&uri, 2, "x > 1", "", Some("Expected TRUE or FALSE, got 42"));
+        let link = ansi_file_link(&uri, 2, "test.R#3");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        #> x > 1
+        Expected TRUE or FALSE, got 42
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_captured_only() {
+        let uri = test_uri("test.R");
+        let result = format_condition_output(&uri, 4, "x > 1", "Warning: something\n", None);
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
+        ```breakpoint <test.R#5>
+        #> x > 1
+        Warning: something
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_both() {
+        let uri = test_uri("analysis.R");
+        let result = format_condition_output(
+            &uri,
+            9,
+            "nrow(df)",
+            "Warning message:\ncoercion applied\n",
+            Some("Expected TRUE or FALSE, got 5"),
+        );
+        let link = ansi_file_link(&uri, 9, "analysis.R#10");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
+        ```breakpoint <analysis.R#10>
+        #> nrow(df)
+        Warning message:
+        coercion applied
+        Expected TRUE or FALSE, got 5
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_condition_output_captured_no_trailing_newline() {
+        let uri = test_uri("test.R");
+        let result = format_condition_output(&uri, 0, "x > 1", "Warning: oops", None);
+        let link = ansi_file_link(&uri, 0, "test.R#1");
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
+        ```breakpoint <test.R#1>
+        #> x > 1
+        Warning: oops
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_ansi_file_link() {
+        let uri = Url::parse("file:///path/to/test.R").unwrap();
+        let link = ansi_file_link(&uri, 4, "test.R#5");
+        assert_eq!(
+            link,
+            "\x1b]8;line=5;file:///path/to/test.R\x07test.R#5\x1b]8;;\x07"
+        );
     }
 }
