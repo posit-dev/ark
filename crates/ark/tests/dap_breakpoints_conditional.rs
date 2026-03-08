@@ -296,10 +296,10 @@ foo()
 /// Test that warnings, messages, and `cat()` output in condition expressions
 /// are all captured and displayed in the fenced stderr block.
 ///
-/// Warnings are captured via `withCallingHandlers` (R defers them by default).
-/// Messages are captured the same way. `cat()` output is captured via
-/// `Console::with_capture`. All three appear in the same fenced block with
-/// appropriate prefixes, in signalling order.
+/// Warnings are printed immediately via `options(warn = 1)`. Messages go
+/// through R's stderr connection. `cat()` output is captured via
+/// `Console::with_capture`. All three appear in the same fenced block in
+/// signalling order.
 #[test]
 fn test_dap_conditional_breakpoint_output_captured() {
     let frontend = DummyArkFrontend::lock();
@@ -335,10 +335,10 @@ foo(5)
     frontend.assert_stream_stderr_contains("```breakpoint");
     // cat() goes through Console::with_capture
     frontend.assert_stream_stderr_contains("n is 5");
-    // Warning captured via withCallingHandlers, prefixed
+    // Warning printed immediately via `warn = 1`
     frontend.assert_stream_stderr_contains("Warning: heads up");
-    // Message captured via withCallingHandlers, prefixed
-    frontend.assert_stream_stderr_contains("Message: info");
+    // Message printed directly by R (no prefix)
+    frontend.assert_stream_stderr_contains("info");
     frontend.assert_stream_stderr_contains("```");
 
     // "Called from:" and "debug at" are filtered from console output
