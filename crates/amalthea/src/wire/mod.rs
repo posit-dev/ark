@@ -1,7 +1,7 @@
 /*
  * mod.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -25,6 +25,8 @@ pub mod handshake_reply;
 pub mod handshake_request;
 pub mod header;
 pub mod help_link;
+pub mod history_reply;
+pub mod history_request;
 pub mod input_reply;
 pub mod input_request;
 pub mod inspect_reply;

@@ -1,7 +1,7 @@
 /*
  * jupyter_message.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
@@ -36,6 +36,8 @@ use crate::wire::execute_reply_exception::ExecuteReplyException;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_result::ExecuteResult;
 use crate::wire::header::JupyterHeader;
+use crate::wire::history_reply::HistoryReply;
+use crate::wire::history_request::HistoryRequest;
 use crate::wire::input_reply::InputReply;
 use crate::wire::input_request::InputRequest;
 use crate::wire::inspect_reply::InspectReply;
@@ -93,6 +95,8 @@ pub enum Message {
     InspectRequest(JupyterMessage<InspectRequest>),
     IsCompleteReply(JupyterMessage<IsCompleteReply>),
     IsCompleteRequest(JupyterMessage<IsCompleteRequest>),
+    HistoryReply(JupyterMessage<HistoryReply>),
+    HistoryRequest(JupyterMessage<HistoryRequest>),
     CommInfoReply(JupyterMessage<CommInfoReply>),
     CommInfoRequest(JupyterMessage<CommInfoRequest>),
     CommRequest(JupyterMessage<UiFrontendRequest>),
@@ -163,6 +167,8 @@ impl TryFrom<&Message> for WireMessage {
             Message::InterruptRequest(msg) => WireMessage::try_from(msg),
             Message::IsCompleteReply(msg) => WireMessage::try_from(msg),
             Message::IsCompleteRequest(msg) => WireMessage::try_from(msg),
+            Message::HistoryReply(msg) => WireMessage::try_from(msg),
+            Message::HistoryRequest(msg) => WireMessage::try_from(msg),
             Message::KernelInfoReply(msg) => WireMessage::try_from(msg),
             Message::KernelInfoRequest(msg) => WireMessage::try_from(msg),
             Message::ShutdownReply(msg) => WireMessage::try_from(msg),
@@ -211,6 +217,12 @@ impl TryFrom<&WireMessage> for Message {
         }
         if kind == InspectRequest::message_type() {
             return Ok(Message::InspectRequest(JupyterMessage::try_from(msg)?));
+        }
+        if kind == HistoryRequest::message_type() {
+            return Ok(Message::HistoryRequest(JupyterMessage::try_from(msg)?));
+        }
+        if kind == HistoryReply::message_type() {
+            return Ok(Message::HistoryReply(JupyterMessage::try_from(msg)?));
         }
         if kind == InspectReply::message_type() {
             return Ok(Message::InspectReply(JupyterMessage::try_from(msg)?));
