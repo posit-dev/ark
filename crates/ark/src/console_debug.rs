@@ -523,7 +523,7 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
 ///
 /// Combines the enabled check with condition evaluation in a single call
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_should_break(
+pub unsafe extern "C-unwind" fn ps_handle_breakpoint(
     uri: SEXP,
     id: SEXP,
     env: SEXP,
