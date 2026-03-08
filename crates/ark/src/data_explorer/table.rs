@@ -7,23 +7,25 @@
 
 use harp::RObject;
 
-#[derive(Clone)]
-pub struct Table(RObject);
+use crate::thread::RThreadSafe;
 
-// Safety: `Table` is only accessed on the R thread (or in R idle tasks,
-// which also run on the R thread).
-unsafe impl Send for Table {}
+pub struct Table(RThreadSafe<RObject>);
 
 impl Table {
     pub fn new(data: RObject) -> Self {
-        Self(data)
+        Self(RThreadSafe::new(data))
     }
 
     pub fn get(&self) -> &RObject {
-        &self.0
+        self.0.get()
     }
 
     pub fn set(&mut self, data: RObject) {
-        self.0 = data;
+        self.0 = RThreadSafe::new(data);
+    }
+
+    /// Clone the table for use in an idle task. Must be called on the R thread.
+    pub fn clone_for_task(&self) -> Self {
+        Self(RThreadSafe::new(self.0.get().clone()))
     }
 }

@@ -538,7 +538,7 @@ impl RDataExplorer {
         let id = params.callback_id.clone();
 
         let params = ProcessColumnsProfilesParams {
-            table: self.table.clone(),
+            table: self.table.clone_for_task(),
             indices: self.filtered_indices.clone(),
             kind: self.shape.kind,
             request: params,
