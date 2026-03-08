@@ -436,7 +436,7 @@ impl Dap {
         }
     }
 
-    pub fn evaluate(
+    pub(crate) fn evaluate(
         &self,
         expression: &str,
         frame_id: Option<i64>,

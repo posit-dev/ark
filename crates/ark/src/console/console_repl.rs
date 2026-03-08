@@ -44,7 +44,7 @@ pub enum SessionMode {
 
 /// Notifications from other components (e.g., LSP) to the Console
 #[derive(Debug)]
-pub enum ConsoleNotification {
+pub(crate) enum ConsoleNotification {
     /// Notification that a document has changed, requiring breakpoint invalidation.
     DidChangeDocument(UrlId),
 }
@@ -182,16 +182,16 @@ pub(super) struct ActiveReadConsoleRequest {
 
 /// Represents kernel metadata (available after the kernel has fully started)
 #[derive(Debug, Clone)]
-pub struct KernelInfo {
-    pub version: String,
-    pub banner: String,
-    pub input_prompt: Option<String>,
-    pub continuation_prompt: Option<String>,
+pub(crate) struct KernelInfo {
+    pub(crate) version: String,
+    pub(crate) banner: String,
+    pub(crate) input_prompt: Option<String>,
+    pub(crate) continuation_prompt: Option<String>,
 }
 
 /// The kind of prompt we're handling in the REPL.
 #[derive(Clone, Debug, PartialEq)]
-pub enum PromptKind {
+enum PromptKind {
     /// A top-level REPL prompt
     TopLevel,
 
@@ -206,7 +206,7 @@ pub enum PromptKind {
 /// `ReadConsole()` methods. We need this information to determine what kind
 /// of prompt we are dealing with.
 #[derive(Clone)]
-pub struct PromptInfo {
+struct PromptInfo {
     /// The prompt string to be presented to the user. This does not
     /// necessarily correspond to `getOption("prompt")`, for instance in
     /// case of a browser prompt or a readline prompt.
@@ -225,7 +225,7 @@ pub struct PromptInfo {
     kind: PromptKind,
 }
 
-pub enum ConsoleInput {
+enum ConsoleInput {
     EOF,
     Input(String, Option<CodeLocation>),
 }
@@ -247,7 +247,7 @@ enum ConsoleResult {
 ///
 /// Use `take()` to retrieve captured output. Can be called multiple times to
 /// get output accumulated since the last take.
-pub struct ConsoleOutputCapture {
+pub(crate) struct ConsoleOutputCapture {
     previous_output: Option<String>,
     previous_warn: RObject,
     connected: bool,
@@ -284,7 +284,7 @@ impl ConsoleOutputCapture {
 
     /// Take the captured output so far, clearing the buffer.
     /// Can be called multiple times; each call returns output accumulated since the last take.
-    pub fn take(&mut self) -> String {
+    pub(crate) fn take(&mut self) -> String {
         if !self.connected {
             return String::new();
         }
@@ -525,7 +525,7 @@ impl Console {
     /// `R_common_command_line()` all modify the underlying array of C strings directly,
     /// invalidating our pointers, so we can't actually free these by reclaiming them with
     /// [CString::from_raw()]. It should be a very small memory leak though.
-    pub fn build_ark_c_args(args: &Vec<String>) -> Vec<*mut c_char> {
+    pub(crate) fn build_ark_c_args(args: &Vec<String>) -> Vec<*mut c_char> {
         let mut out = Vec::with_capacity(args.len() + 1);
 
         cfg_if::cfg_if! {
@@ -561,7 +561,7 @@ impl Console {
     /// # Safety
     ///
     /// Can only be called from the R thread, and only once.
-    pub fn complete_initialization(banner: Option<String>, mut kernel_init_tx: Bus<KernelInfo>) {
+    fn complete_initialization(banner: Option<String>, mut kernel_init_tx: Bus<KernelInfo>) {
         let version = unsafe {
             let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
             RObject::new(version).to::<String>().unwrap()
@@ -585,7 +585,7 @@ impl Console {
         R_INIT.set(()).expect("`R_INIT` can only be set once");
     }
 
-    pub fn new(
+    fn new(
         tasks_interrupt_rx: Receiver<RTask>,
         tasks_idle_rx: Receiver<RTask>,
         tasks_idle_any_rx: Receiver<RTask>,
@@ -646,16 +646,6 @@ impl Console {
         }
     }
 
-    /// Wait for complete R initialization
-    ///
-    /// Wait for R being ready to evaluate R code. Resolves as the same time as
-    /// the `Bus<KernelInfo>` init channel does.
-    ///
-    /// Thread-safe.
-    pub fn wait_initialized() {
-        R_INIT.wait();
-    }
-
     /// Has the `Console` singleton completed initialization.
     ///
     /// This can return true when R might still not have finished starting up.
@@ -663,14 +653,14 @@ impl Console {
     ///
     /// Thread-safe. But note you can only get access to the singleton on the R
     /// thread.
-    pub fn is_initialized() -> bool {
+    pub(crate) fn is_initialized() -> bool {
         R_INIT.get().is_some()
     }
 
     /// Access a reference to the singleton instance of this struct
     ///
     /// SAFETY: Accesses must occur after `Console::start()` initializes it.
-    pub fn get() -> &'static Self {
+    pub(crate) fn get() -> &'static Self {
         Console::get_mut()
     }
 
@@ -681,7 +671,7 @@ impl Console {
     /// have is that `CONSOLE` is only accessed from the R thread. If you're
     /// inspecting mutable state, or mutating state, you must reason the
     /// soundness by yourself.
-    pub fn get_mut() -> &'static mut Self {
+    pub(crate) fn get_mut() -> &'static mut Self {
         CONSOLE.with_borrow_mut(|cell| {
             let console_ref = cell.get_mut();
 
@@ -691,16 +681,16 @@ impl Console {
         })
     }
 
-    pub fn on_main_thread() -> bool {
+    pub(crate) fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
     }
 
-    pub fn iopub_tx(&self) -> &Sender<IOPubMessage> {
+    pub(crate) fn iopub_tx(&self) -> &Sender<IOPubMessage> {
         &self.iopub_tx
     }
 
-    pub fn comm_event_tx(&self) -> &Sender<CommEvent> {
+    pub(crate) fn comm_event_tx(&self) -> &Sender<CommEvent> {
         &self.comm_event_tx
     }
 
@@ -731,7 +721,7 @@ impl Console {
 
     /// Get the current execution context if an active request exists.
     /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
-    pub fn get_execution_context(&self) -> Option<(String, String)> {
+    pub(crate) fn get_execution_context(&self) -> Option<(String, String)> {
         self.active_request.as_ref().map(|req| {
             (
                 req.originator.header.msg_id.clone(),
@@ -1623,7 +1613,7 @@ impl Console {
     /// associated files (i.e. no `srcref` attribute). The `source` is the key to
     /// ensure that we don't insert the same function multiple times, which would result
     /// in duplicate virtual editors being opened on the client side.
-    pub fn load_fallback_sources(
+    pub(super) fn load_fallback_sources(
         &mut self,
         stack: &Vec<console_debug::FrameInfo>,
     ) -> HashMap<String, String> {
@@ -1645,7 +1635,7 @@ impl Console {
         sources
     }
 
-    pub fn clear_fallback_sources(&mut self) {
+    pub(super) fn clear_fallback_sources(&mut self) {
         // Find and close URIs associated with debug sessions. We go in two
         // steps here because we can't remove stuff from
         // `self.lsp_virtual_documents` while borrowing it to loop over it.
@@ -1888,11 +1878,11 @@ impl Console {
         });
     }
 
-    pub fn session_mode(&self) -> SessionMode {
+    pub(crate) fn session_mode(&self) -> SessionMode {
         self.session_mode
     }
 
-    pub fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
+    pub(crate) fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
         self.ui_comm_tx.as_ref()
     }
 
@@ -1928,7 +1918,7 @@ impl Console {
         }
     }
 
-    pub fn is_ui_comm_connected(&self) -> bool {
+    pub(crate) fn is_ui_comm_connected(&self) -> bool {
         self.get_ui_comm_tx().is_some()
     }
 
@@ -2419,7 +2409,7 @@ impl Console {
         }
     }
 
-    pub fn insert_virtual_document(&mut self, uri: String, contents: String) {
+    pub(crate) fn insert_virtual_document(&mut self, uri: String, contents: String) {
         log::trace!("Inserting vdoc for `{uri}`");
 
         // Strip scheme if any. We're only storing the path.
@@ -2437,7 +2427,7 @@ impl Console {
         ))
     }
 
-    pub fn remove_virtual_document(&mut self, uri: String) {
+    fn remove_virtual_document(&mut self, uri: String) {
         log::trace!("Removing vdoc for `{uri}`");
 
         // Strip scheme if any. We're only storing the path.
@@ -2450,17 +2440,20 @@ impl Console {
         ))
     }
 
-    pub fn has_virtual_document(&self, uri: &String) -> bool {
+    pub(crate) fn has_virtual_document(&self, uri: &String) -> bool {
         let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
         self.lsp_virtual_documents.contains_key(&uri)
     }
 
-    pub fn get_virtual_document(&self, uri: &str) -> Option<String> {
+    pub(crate) fn get_virtual_document(&self, uri: &str) -> Option<String> {
         let uri = uri.strip_prefix("ark:").unwrap_or(uri);
         self.lsp_virtual_documents.get(uri).cloned()
     }
 
-    pub fn call_frontend_method(&self, request: UiFrontendRequest) -> anyhow::Result<RObject> {
+    pub(crate) fn call_frontend_method(
+        &self,
+        request: UiFrontendRequest,
+    ) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method {request:?}");
 
         let ui_comm_tx = self.get_ui_comm_tx().ok_or_else(|| {

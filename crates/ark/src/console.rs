@@ -180,8 +180,8 @@ thread_local! {
     pub static CONSOLE: RefCell<UnsafeCell<Console>> = panic!("Must access `CONSOLE` from the R thread");
 }
 
-pub struct Console {
-    pub positron_ns: Option<RObject>,
+pub(crate) struct Console {
+    pub(crate) positron_ns: Option<RObject>,
 
     kernel_request_rx: Receiver<KernelRequest>,
 
@@ -229,7 +229,7 @@ pub struct Console {
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
-    pub(super) last_error: Option<Exception>,
+    last_error: Option<Exception>,
 
     /// Channel to communicate with the Help thread
     help_event_tx: Option<Sender<HelpEvent>>,
