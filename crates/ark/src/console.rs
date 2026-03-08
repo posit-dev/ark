@@ -1541,8 +1541,12 @@ impl Console {
         // so that the `parent` message is set correctly in any Jupyter messages)
         graphics_device::on_did_execute_request();
 
-        // Send execute result/error on IOPub, get back the prepared reply.
-        let (reply, reply_tx) = Self::prepare_execute_reply(&self.iopub_tx, req, value);
+        let (reply, result) = Self::prepare_execute_reply(req.exec_count, value);
+
+        // Send execute result/error on IOPub
+        if let Some(result) = result {
+            self.iopub_tx.send(result).unwrap();
+        }
 
         // Notify comm handlers about environment changes. This must happen
         // after the execute result goes on IOPub but before the reply
@@ -1554,7 +1558,7 @@ impl Console {
 
         // Now unblock Shell, which sends Idle
         log::trace!("Sending `execute_reply`: {reply:?}");
-        reply_tx.send(reply).unwrap();
+        req.reply_tx.send(reply).unwrap();
     }
 
     // Called from Ark's ReadConsole event loop when we get a new execute
@@ -2311,24 +2315,13 @@ impl Console {
         ))
     }
 
-    /// Send the execute result (or error) on IOPub and return the prepared
-    /// reply along with the channel to send it on. The caller is responsible
-    /// for sending the reply after any additional IOPub messages (e.g.
-    /// environment change notifications) have been queued. Sending the reply
-    /// unblocks Shell, which sends Idle.
     fn prepare_execute_reply(
-        iopub_tx: &Sender<IOPubMessage>,
-        req: ActiveReadConsoleRequest,
+        exec_count: u32,
         value: ConsoleValue,
-    ) -> (
-        amalthea::Result<ExecuteReply>,
-        Sender<amalthea::Result<ExecuteReply>>,
-    ) {
+    ) -> (amalthea::Result<ExecuteReply>, Option<IOPubMessage>) {
         log::trace!("Completing execution after receiving prompt");
 
-        let exec_count = req.exec_count;
-
-        let (reply, result) = match value {
+        match value {
             ConsoleValue::Success(data) => {
                 let reply = Ok(ExecuteReply {
                     status: Status::Ok,
@@ -2358,13 +2351,7 @@ impl Console {
 
                 (reply, Some(result))
             },
-        };
-
-        if let Some(result) = result {
-            iopub_tx.send(result).unwrap();
         }
-
-        (reply, req.reply_tx)
     }
 
     /// Sends a `Wait` message to IOPub, which responds when the IOPub thread
