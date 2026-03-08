@@ -16,7 +16,7 @@ pub mod coordinates;
 pub mod dap;
 pub mod data_explorer;
 pub mod debug;
-pub mod errors;
+
 pub mod fixtures;
 pub mod help;
 pub mod help_proxy;

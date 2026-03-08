@@ -1,7 +1,7 @@
 //
-// errors.rs
+// console_error.rs
 //
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -15,7 +15,7 @@ use libr::SEXP;
 use log::warn;
 use stdext::unwrap;
 
-use crate::console::Console;
+use super::Console;
 
 #[harp::register]
 unsafe extern "C-unwind" fn ps_record_error(evalue: SEXP, traceback: SEXP) -> anyhow::Result<SEXP> {
@@ -61,7 +61,7 @@ unsafe extern "C-unwind" fn ps_rust_backtrace() -> anyhow::Result<SEXP> {
     Ok(*RObject::from(trace))
 }
 
-pub(crate) fn stack_overflow_occurred() -> bool {
+pub(super) fn stack_overflow_occurred() -> bool {
     // Error handlers are not called on stack overflow so the error flag
     // isn't set. Instead we detect stack overflows by peeking at the error
     // buffer. The message is explicitly not translated to save stack space

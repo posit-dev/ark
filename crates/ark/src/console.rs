@@ -101,6 +101,7 @@ use uuid::Uuid;
 mod console_annotate;
 mod console_comm;
 mod console_debug;
+mod console_error;
 mod console_filter;
 mod console_repl;
 
@@ -110,6 +111,7 @@ pub(crate) use console_debug::DebugStoppedReason;
 pub(crate) use console_debug::FrameInfo;
 use console_debug::FrameInfoId;
 pub(crate) use console_debug::FrameSource;
+use console_error::stack_overflow_occurred;
 use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
 #[cfg(test)]
@@ -133,7 +135,6 @@ use crate::comm_handler::ConsoleComm;
 use crate::comm_handler::EnvironmentChanged;
 use crate::dap::dap::Breakpoint;
 use crate::dap::Dap;
-use crate::errors::stack_overflow_occurred;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
 use crate::lsp::events::EVENTS;
@@ -228,7 +229,7 @@ pub struct Console {
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
-    pub(crate) last_error: Option<Exception>,
+    pub(super) last_error: Option<Exception>,
 
     /// Channel to communicate with the Help thread
     help_event_tx: Option<Sender<HelpEvent>>,
