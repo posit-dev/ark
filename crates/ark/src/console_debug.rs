@@ -18,7 +18,6 @@ use harp::utils::r_is_null;
 use libr::SEXP;
 use regex::Regex;
 use stdext::result::ResultExt;
-use url::Url;
 
 use crate::console::Console;
 use crate::console::DebugCallText;
@@ -26,6 +25,7 @@ use crate::console::DebugStoppedReason;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
+use crate::url::UrlId;
 
 #[derive(Debug)]
 pub struct FrameInfo {
@@ -305,7 +305,7 @@ impl Console {
             return;
         }
 
-        let Some(uri) = Url::parse(&filename).warn_on_err() else {
+        let Some(uri) = UrlId::parse(&filename).warn_on_err() else {
             return;
         };
 
@@ -521,7 +521,7 @@ pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
     id: SEXP,
 ) -> anyhow::Result<SEXP> {
     let uri: String = RObject::view(uri).try_into()?;
-    let uri = Url::parse(&uri)?;
+    let uri = UrlId::parse(&uri)?;
 
     let id: String = RObject::view(id).try_into()?;
 
@@ -539,7 +539,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
     let uri: String = RObject::view(uri).try_into()?;
     let id: String = RObject::view(id).try_into()?;
 
-    let Some(uri) = Url::parse(&uri).log_err() else {
+    let Some(uri) = UrlId::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
@@ -569,7 +569,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     let start_line: i32 = RObject::view(start_line).try_into()?;
     let end_line: i32 = RObject::view(end_line).try_into()?;
 
-    let Some(uri) = Url::parse(&uri).log_err() else {
+    let Some(uri) = UrlId::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 

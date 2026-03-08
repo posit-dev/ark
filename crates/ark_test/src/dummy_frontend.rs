@@ -28,9 +28,10 @@ use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::stream::Stream;
 use ark::console::SessionMode;
 use ark::repos::DefaultRepos;
-use ark::url::ExtUrl;
+use ark::url::UrlId;
 use regex::Regex;
 use tempfile::NamedTempFile;
+use url::Url;
 
 use crate::comm::RECV_TIMEOUT;
 use crate::tracing::trace_iopub_msg;
@@ -174,7 +175,7 @@ impl DummyArkFrontend {
     /// Receive from IOPub with a timeout.
     /// Returns `None` if the timeout expires before a message arrives.
     #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-    fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
+    pub fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
         let timeout_ms = timeout.as_millis() as i64;
         if self.guard.iopub_socket.poll_incoming(timeout_ms).unwrap() {
             Some(Message::read_from_socket(&self.guard.iopub_socket).unwrap())
@@ -189,7 +190,7 @@ impl DummyArkFrontend {
     /// On Windows ARM, ZMQ poll with timeout blocks forever instead of
     /// respecting the timeout. Use non-blocking poll with manual timing.
     #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-    fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
+    pub fn recv_iopub_with_timeout(&self, timeout: Duration) -> Option<Message> {
         let start = std::time::Instant::now();
 
         loop {
@@ -1084,16 +1085,15 @@ impl DummyArkFrontend {
             };
             match &msg {
                 Message::CommMsg(data) => {
-                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str())
-                    {
+                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str()) {
                         if method == "prompt_state" {
                             got_prompt_state = true;
                         }
                     }
                 },
                 Message::Status(ref data)
-                    if data.content.execution_state
-                        == amalthea::wire::status::ExecutionState::Idle =>
+                    if data.content.execution_state ==
+                        amalthea::wire::status::ExecutionState::Idle =>
                 {
                     idle_count += 1;
                 },
@@ -1237,8 +1237,7 @@ impl DummyArkFrontend {
         // Use forward slashes for R compatibility on Windows (backslashes would be
         // interpreted as escape sequences in R strings)
         let path = file.path().to_string_lossy().replace('\\', "/");
-        let url = ExtUrl::from_file_path(file.path()).unwrap();
-        let uri = url.to_string();
+        let uri_id = UrlId::from_file_path(file.path()).unwrap().to_string();
         let filename = file
             .path()
             .file_name()
@@ -1264,7 +1263,7 @@ impl DummyArkFrontend {
             file,
             path,
             filename,
-            uri,
+            uri_id,
             line_count,
         }
     }
@@ -1518,7 +1517,7 @@ pub struct SourceFile {
     file: NamedTempFile,
     pub path: String,
     pub filename: String,
-    pub uri: String,
+    pub uri_id: String,
     line_count: u32,
 }
 
@@ -1536,8 +1535,8 @@ impl SourceFile {
         // Use forward slashes for R compatibility on Windows (backslashes would be
         // interpreted as escape sequences in R strings)
         let path = file.path().to_string_lossy().replace('\\', "/");
-        let url = ExtUrl::from_file_path(file.path()).unwrap();
-        let uri = url.to_string();
+        let url = UrlId::from_file_path(file.path()).unwrap();
+        let uri_id = url.to_string();
 
         // Extract file name
         let filename = file
@@ -1552,15 +1551,18 @@ impl SourceFile {
             file,
             path,
             filename,
-            uri,
+            uri_id,
             line_count,
         }
     }
 
     /// Get a `JupyterPositronLocation` pointing to this file.
+    ///
+    /// Uses the raw (non-canonical) path to simulate what Positron sends.
     pub fn location(&self) -> JupyterPositronLocation {
+        let uri = Url::from_file_path(&self.path).unwrap();
         JupyterPositronLocation {
-            uri: self.uri.clone(),
+            uri: uri.to_string(),
             range: JupyterPositronRange {
                 start: JupyterPositronPosition {
                     line: 0,
