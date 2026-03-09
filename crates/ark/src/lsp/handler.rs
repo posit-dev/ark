@@ -22,7 +22,7 @@ use super::backend;
 use crate::console::ConsoleNotification;
 use crate::console::KernelInfo;
 
-pub struct Lsp {
+pub(crate) struct Lsp {
     runtime: Arc<Runtime>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_initialized: bool,
@@ -30,7 +30,7 @@ pub struct Lsp {
 }
 
 impl Lsp {
-    pub fn new(
+    pub(crate) fn new(
         kernel_init_rx: BusReader<KernelInfo>,
         console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {

@@ -30,7 +30,7 @@ use crate::console::DebugCallText;
 /// Patterns to filter from console output.
 /// Each pattern is matched at a line boundary.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum MatchedPattern {
+enum MatchedPattern {
     /// `Called from: <expr>` - emitted by browser() before entering debug mode
     CalledFrom,
     /// `debug at <path>#<line>: <expr>` - emitted when stepping with srcrefs
@@ -79,7 +79,7 @@ enum ConsoleFilterState {
 }
 
 /// Filter for debug console output
-pub struct ConsoleFilter {
+pub(super) struct ConsoleFilter {
     state: ConsoleFilterState,
     /// Safety timeout for accumulated content. If user code produces output
     /// matching a debug prefix but doesn't reach `ReadConsole` within this
@@ -96,7 +96,7 @@ pub struct ConsoleFilter {
 }
 
 impl ConsoleFilter {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         let timeout = if stdext::IS_TESTING {
             Duration::from_millis(500)
         } else {
@@ -123,13 +123,13 @@ impl ConsoleFilter {
         }
     }
 
-    pub fn set_suppress(&mut self, suppress: bool) {
+    pub(super) fn set_suppress(&mut self, suppress: bool) {
         self.suppress = suppress;
     }
 
     /// Feed content through the filter.
     /// Returns stdout content to emit to IOPub.
-    pub fn feed(&mut self, content: &str) -> Vec<String> {
+    pub(super) fn feed(&mut self, content: &str) -> Vec<String> {
         let mut emits: Vec<String> = Vec::new();
 
         // Check current state timeout
@@ -232,7 +232,10 @@ impl ConsoleFilter {
     /// are emitted by R immediately before `do_browser()`, which always
     /// results in a browser `ReadConsole`. So `is_browser` alone is
     /// sufficient to identify real debug output.
-    pub fn on_read_console(&mut self, is_browser: bool) -> (Option<String>, Option<DebugCallText>) {
+    pub(super) fn on_read_console(
+        &mut self,
+        is_browser: bool,
+    ) -> (Option<String>, Option<DebugCallText>) {
         let mut emit: Option<String> = None;
         let mut debug_update: Option<DebugCallText> = None;
 
@@ -260,7 +263,7 @@ impl ConsoleFilter {
     /// Check for timeout and handle state transitions.
     /// Timeout means we didn't reach ReadConsole to confirm debug output,
     /// so we emit the accumulated content back to the user.
-    pub fn check_timeout(&mut self) -> Option<String> {
+    pub(super) fn check_timeout(&mut self) -> Option<String> {
         self.drain_on_timeout()
     }
 
@@ -277,7 +280,7 @@ impl ConsoleFilter {
     }
 
     /// Get any buffered content that should be emitted (for cleanup)
-    pub fn flush(&mut self) -> Option<String> {
+    pub(super) fn flush(&mut self) -> Option<String> {
         self.drain()
     }
 
@@ -364,7 +367,7 @@ fn find_debug_at_expression_start(buffer: &str) -> Option<usize> {
 ///
 /// Must only be called at browser prompts: at top level, user print
 /// methods could legitimately produce output matching these prefixes.
-pub fn strip_step_lines(text: &mut String) {
+pub(super) fn strip_step_lines(text: &mut String) {
     let mut pos = 0;
     for line in text.split_inclusive('\n') {
         let is_debug = line.starts_with(MatchedPattern::CalledFrom.prefix()) ||

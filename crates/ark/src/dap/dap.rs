@@ -25,7 +25,7 @@ use stdext::spawn;
 
 use crate::console::ConsoleOutputCapture;
 use crate::console::DebugStoppedReason;
-use crate::console_debug::FrameInfo;
+use crate::console::FrameInfo;
 use crate::dap::dap_server;
 use crate::dap::dap_variables::object_variable;
 use crate::dap::dap_variables::RVariable;
@@ -252,7 +252,7 @@ impl Dap {
     /// The DAP session is expected to always be connected (to receive breakpoint
     /// updates). The `start_debug` comm message is a hint for the frontend to
     /// show the debug toolbar, not a session lifecycle event.
-    pub fn start_debug(
+    pub(crate) fn start_debug(
         &mut self,
         mut stack: Vec<FrameInfo>,
         fallback_sources: HashMap<String, String>,
@@ -436,7 +436,7 @@ impl Dap {
         }
     }
 
-    pub fn evaluate(
+    pub(crate) fn evaluate(
         &self,
         expression: &str,
         frame_id: Option<i64>,

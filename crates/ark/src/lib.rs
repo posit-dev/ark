@@ -11,15 +11,12 @@ pub mod browser;
 pub mod comm_handler;
 pub mod connections;
 pub mod console;
-pub mod console_annotate;
-pub mod console_debug;
-pub mod console_filter;
 pub mod control;
 pub mod coordinates;
 pub mod dap;
 pub mod data_explorer;
 pub mod debug;
-pub mod errors;
+
 pub mod fixtures;
 pub mod help;
 pub mod help_proxy;
