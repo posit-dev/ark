@@ -4,6 +4,11 @@
 // Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
 //
 //
+
+// TODO: Migrate these tests to ark_test
+
+use std::sync::Mutex;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::data_explorer_comm::ArraySelection;
 use amalthea::comm::data_explorer_comm::ColumnDisplayType;
@@ -60,18 +65,17 @@ use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableSelectionKind;
 use amalthea::comm::data_explorer_comm::TextSearchType;
 use amalthea::comm::event::CommEvent;
-use amalthea::socket;
+use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
+use ark::comm_handler::CommHandler;
+use ark::comm_handler::CommHandlerContext;
+use ark::comm_handler::EnvironmentChanged;
 use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use ark::data_explorer::r_data_explorer::RDataExplorer;
-use ark::lsp::events::EVENTS;
 use ark::r_task::r_task;
-use ark::thread::RThreadSafe;
 use ark_test::dummy_jupyter_header;
-use ark_test::r_test_lock;
-use ark_test::socket_rpc_request;
 use ark_test::IOPubReceiverExt;
 use ark_test::RECV_TIMEOUT;
 use crossbeam::channel::bounded;
@@ -93,84 +97,62 @@ use stdext::assert_match;
 ///
 /// Returns a TestSetup that can be used to communicate with the data explorer.
 fn open_data_explorer(dataset: String) -> TestSetup {
-    // Create a dummy comm manager channel.
-    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
-    // Create a dummy iopub channel to receive responses.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    // Force the dataset to be loaded into the R environment.
-    r_task(|| unsafe {
-        let data = { RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv)) };
-        RDataExplorer::start(dataset, data, None, comm_event_tx, iopub_tx).unwrap();
+    let comm_id = uuid::Uuid::new_v4().to_string();
+    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+    let (comm_event_tx, _) = bounded::<CommEvent>(10);
+    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
+
+    let inner = r_task(|| unsafe {
+        let data = RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv));
+        let handler = RDataExplorer::new(dataset, data, None).unwrap();
+        TestInner(handler, ctx)
     });
 
-    // Wait for the new comm to show up.
-    let msg = comm_event_rx.recv_timeout(RECV_TIMEOUT).unwrap();
-    match msg {
-        CommEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
-            TestSetup { socket, iopub_rx }
-        },
-        _ => panic!("Unexpected Comm Manager Event"),
+    TestSetup {
+        inner: Mutex::new(inner),
+        iopub_rx,
     }
 }
 
 fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow::Result<TestSetup> {
-    let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-    r_task(|| -> anyhow::Result<()> {
+    let comm_id = uuid::Uuid::new_v4().to_string();
+    let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+    let (comm_event_tx, _) = bounded::<CommEvent>(10);
+    let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
+
+    let inner = r_task(|| -> anyhow::Result<TestInner> {
         let object = harp::parse_eval_global(expr)?;
 
         let binding = match bind {
             Some(name) => Some(DataObjectEnvInfo {
                 name: name.to_string(),
-                env: RThreadSafe::new(RObject::view(R_ENVS.global)),
+                env: RObject::view(R_ENVS.global),
             }),
             None => None,
         };
-        RDataExplorer::start(
-            String::from("obj"),
-            object,
-            binding,
-            comm_event_tx,
-            iopub_tx,
-        )
-        .unwrap();
-        Ok(())
+        let handler = RDataExplorer::new(String::from("obj"), object, binding)?;
+        Ok(TestInner(handler, ctx))
     })?;
 
-    // Release the R lock and wait for the new comm to show up.
-    let msg = comm_event_rx.recv_timeout(RECV_TIMEOUT).unwrap();
-
-    match msg {
-        CommEvent::Opened(socket, _value) => {
-            assert_eq!(socket.comm_name, "positron.dataExplorer");
-            Ok(TestSetup { socket, iopub_rx })
-        },
-        _ => panic!("Unexpected Comm Manager Event"),
-    }
+    Ok(TestSetup {
+        inner: Mutex::new(inner),
+        iopub_rx,
+    })
 }
 
-/// Helper method for sending a request to the data explorer and receiving a reply.
-///
-/// Parameters:
-/// - socket: The comm socket to use for communication.
-/// - iopub_rx: The IOPub receiver to get responses from.
-/// - req: The request to send.
-fn socket_rpc(
-    socket: &socket::comm::CommSocket,
-    iopub_rx: &Receiver<IOPubMessage>,
-    req: DataExplorerBackendRequest,
-) -> DataExplorerBackendReply {
-    socket_rpc_request::<DataExplorerBackendRequest, DataExplorerBackendReply>(
-        &socket, iopub_rx, req,
-    )
-}
+// Safety: The inner types contain `RObject` (`!Send`) and `Cell<bool>`
+// (`!Sync`), but in tests we only access them under the R test lock
+// via `r_task`, so cross-thread movement is safe.
+struct TestInner(RDataExplorer, CommHandlerContext);
+unsafe impl Send for TestInner {}
 
 /// Test setup helper that reduces boilerplate for common test initialization
 struct TestSetup {
-    socket: socket::comm::CommSocket,
+    inner: Mutex<TestInner>,
     iopub_rx: Receiver<IOPubMessage>,
 }
 
@@ -184,7 +166,39 @@ impl TestSetup {
     }
 
     fn rpc(&self, req: DataExplorerBackendRequest) -> DataExplorerBackendReply {
-        socket_rpc(&self.socket, &self.iopub_rx, req)
+        let id = uuid::Uuid::new_v4().to_string();
+        let json = serde_json::to_value(req).unwrap();
+        let msg = CommMsg::Rpc {
+            id,
+            parent_header: dummy_jupyter_header(),
+            data: json,
+        };
+        let inner = &self.inner;
+        r_task(|| {
+            let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
+            handler.handle_msg(msg, ctx);
+        });
+
+        let iopub_msg = self.iopub_rx.recv_timeout(RECV_TIMEOUT).unwrap();
+        match iopub_msg {
+            IOPubMessage::CommOutgoing(_comm_id, CommMsg::Rpc { data: value, .. }) => {
+                serde_json::from_value(value).unwrap()
+            },
+            _ => panic!("Expected RPC response, got: {iopub_msg:?}"),
+        }
+    }
+
+    fn trigger_environment_change(&self) {
+        let inner = &self.inner;
+        let closed = r_task(|| {
+            let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
+            handler.handle_environment(EnvironmentChanged::Execution, ctx);
+            ctx.is_closed()
+        });
+        if closed {
+            let TestInner(_, ctx) = &*self.inner.lock().unwrap();
+            ctx.outgoing_tx.send(CommMsg::Close).unwrap();
+        }
     }
 }
 
@@ -752,20 +766,20 @@ fn expect_column_profile_results(
     req: DataExplorerBackendRequest,
     check: fn(Vec<ColumnProfileResult>),
 ) {
-    // Randomly generate a unique ID for this request.
     let id = uuid::Uuid::new_v4().to_string();
-
-    // Serialize the message for the wire
     let json = serde_json::to_value(req).unwrap();
     println!("--> {:?}", json);
 
-    // Convert the request to a CommMsg and send it.
     let msg = CommMsg::Rpc {
         id,
         parent_header: dummy_jupyter_header(),
         data: json,
     };
-    setup.socket.incoming_tx.send(msg).unwrap();
+    let inner = &setup.inner;
+    r_task(|| {
+        let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
+        handler.handle_msg(msg, ctx);
+    });
 
     let msg = setup.iopub_rx.recv_comm_msg();
 
@@ -869,15 +883,12 @@ fn test_mtcars_sort(setup: &TestSetup, has_row_names: bool, display_name: String
 
 #[test]
 fn test_basic_mtcars() {
-    let _lock = r_test_lock();
     let setup = TestSetup::new("mtcars");
     test_mtcars_sort(&setup, true, String::from("mtcars"));
 }
 
 #[test]
 fn test_tibble_support() {
-    let _lock = r_test_lock();
-
     let has_tibble =
         r_task(|| harp::parse_eval_global("mtcars_tib <- tibble::as_tibble(mtcars)").is_ok());
     if !has_tibble {
@@ -894,7 +905,6 @@ fn test_tibble_support() {
 
 #[test]
 fn test_women_dataset() {
-    let _lock = r_test_lock();
     let setup = TestSetup::new("women");
 
     // Check initial data values (first 2 rows)
@@ -940,7 +950,6 @@ fn test_women_dataset() {
 
 #[test]
 fn test_matrix_support() {
-    let _lock = r_test_lock();
     let setup = TestSetup::new("volcano");
 
     // Verify volcano matrix has 61 columns
@@ -977,8 +986,6 @@ fn test_matrix_support() {
 
 #[test]
 fn test_data_table_support() {
-    let _lock = r_test_lock();
-
     let has_data_table =
         r_task(|| harp::parse_eval_global("mtcars_dt <- data.table::data.table(mtcars)").is_ok());
     if !has_data_table {
@@ -995,7 +1002,6 @@ fn test_data_table_support() {
 
 #[test]
 fn test_null_counts() {
-    let _lock = r_test_lock();
     let setup = TestSetup::from_expression(
         "fibo <- data.frame(col = c(1, NA, 2, 3, 5, NA, 13, 21, NA))",
         None,
@@ -1040,8 +1046,6 @@ fn test_null_counts() {
 
 #[test]
 fn test_summary_stats() {
-    let _lock = r_test_lock();
-
     // Create test data with mixed types for summary statistics
     r_task(|| {
         harp::parse_eval_global(
@@ -1096,8 +1100,6 @@ fn test_summary_stats() {
 
 #[test]
 fn test_search_filters() {
-    let _lock = r_test_lock();
-
     // Create test data with various text patterns
     r_task(|| {
         harp::parse_eval_global(
@@ -1271,8 +1273,6 @@ fn test_search_filters() {
 
 #[test]
 fn test_live_updates() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression(
         "x <- data.frame(y = c(3, 2, 1), z = c(4, 5, 6))",
         Some("x"),
@@ -1286,7 +1286,7 @@ fn test_live_updates() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1328,7 +1328,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1358,7 +1358,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     });
 
     // Signal an environment change to trigger change detection
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // This should trigger a schema update event.
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1387,7 +1387,7 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
     });
 
     // Signal an environment change to trigger change detection
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an close event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1399,7 +1399,6 @@ DataExplorerBackendReply::SetSortColumnsReply() => {});
 // Refer to https://github.com/posit-dev/positron/issues/3141 for more info.
 #[test]
 fn test_invalid_filters_preserved() {
-    let _lock = r_test_lock();
     let setup = open_data_explorer_from_expression(
         r#"test_df <- data.frame(x = c('','a', 'b'), y = c(1, 2, 3))"#,
         Some("test_df"),
@@ -1439,7 +1438,7 @@ fn test_invalid_filters_preserved() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1467,12 +1466,11 @@ fn test_invalid_filters_preserved() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
-            // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
                 DataExplorerFrontendEvent::SchemaUpdate
             );
@@ -1495,12 +1493,11 @@ fn test_invalid_filters_preserved() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
         CommMsg::Data(value) => {
-            // Make sure it's a data update event.
             assert_match!(serde_json::from_value::<DataExplorerFrontendEvent>(value).unwrap(),
                 DataExplorerFrontendEvent::SchemaUpdate
             );
@@ -1523,8 +1520,6 @@ fn test_invalid_filters_preserved() {
 
 #[test]
 fn test_data_explorer_special_values() {
-    let _lock = r_test_lock();
-
     let code = "x <- tibble::tibble(
             a = c(1, NA, NaN, Inf, -Inf),
             b = c('a', 'b', 'c', 'd', NA),
@@ -1571,7 +1566,6 @@ fn test_data_explorer_special_values() {
 // work with sorting/filtering the data and then exporting it.
 #[test]
 fn test_export_data() {
-    let _lock = r_test_lock();
     let setup = open_data_explorer_from_expression(
         r#"data.frame(
                 a = c(1, 3, 2),
@@ -1631,8 +1625,6 @@ fn test_export_data() {
 // A regression test for https://github.com/posit-dev/positron/issues/4170
 #[test]
 fn test_update_data_filters_reapplied() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression(
         r#"
             x <- data.frame(
@@ -1683,7 +1675,7 @@ fn test_update_data_filters_reapplied() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     // Since only data changed, we expect a Data Update Event
@@ -1761,8 +1753,6 @@ fn test_set_membership_helper(
 
 #[test]
 fn test_set_membership_filter() {
-    let _lock = r_test_lock();
-
     r_task(|| {
         harp::parse_eval_global(
             r#"categories <- data.frame(
@@ -1842,8 +1832,6 @@ fn test_set_membership_filter() {
 
 #[test]
 fn test_get_data_values_by_indices() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression(
         "data.frame(x = c(1:10), y = letters[1:10], z = seq(0,1, length.out = 10))",
         None,
@@ -1888,8 +1876,6 @@ fn test_get_data_values_by_indices() {
 
 #[test]
 fn test_data_update_num_rows() {
-    let _lock = r_test_lock();
-
     // Regression test for https://github.com/posit-dev/positron/issues/4286
     // We test that after sending the data update event we also correctly update the
     // new number of rows.
@@ -1917,7 +1903,7 @@ fn test_data_update_num_rows() {
 
     // Signal an environment change to tickle the data explorer to
     // check for changes.
-    EVENTS.environment_changed.emit(());
+    setup.trigger_environment_change();
 
     // Wait for an update event to arrive
     assert_match!(setup.iopub_rx.recv_comm_msg(),
@@ -1937,8 +1923,6 @@ fn test_data_update_num_rows() {
 
 #[test]
 fn test_histogram() {
-    let _lock = r_test_lock();
-
     let setup =
         open_data_explorer_from_expression("data.frame(x = rep(1:10, 10:1))", None).unwrap();
 
@@ -1963,8 +1947,6 @@ fn test_histogram() {
 
 #[test]
 fn test_histogram_single_bin_same_values() {
-    let _lock = r_test_lock();
-
     let setup = open_data_explorer_from_expression("data.frame(x = rep(5, 10))", None).unwrap();
 
     let histogram_req =
@@ -1993,8 +1975,6 @@ fn test_histogram_single_bin_same_values() {
 
 #[test]
 fn test_frequency_table() {
-    let _lock = r_test_lock();
-
     let setup =
         open_data_explorer_from_expression("data.frame(x = rep(letters[1:10], 10:1))", None)
             .unwrap();
@@ -2017,8 +1997,6 @@ fn test_frequency_table() {
 
 #[test]
 fn test_row_names_matrix() {
-    let _lock = r_test_lock();
-
     // Convert mtcars to a matrix
     let setup =
         open_data_explorer_from_expression("as.matrix(mtcars)", Some("mtcars_matrix")).unwrap();
@@ -2058,7 +2036,6 @@ fn test_row_names_matrix() {
 
 #[test]
 fn test_schema_identification() {
-    let _lock = r_test_lock();
     let setup = open_data_explorer_from_expression(
         "data.frame(
             a = c(1, 2, 3),
@@ -2099,7 +2076,6 @@ fn test_schema_identification() {
 
 #[test]
 fn test_search_schema_text_filters() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_search_test_dataframe().unwrap();
 
     // Schema: user_name(0), user_age(1), user_id(2), email_address(3), admin_email(4),
@@ -2189,7 +2165,6 @@ fn test_search_schema_text_filters() {
 
 #[test]
 fn test_search_schema_data_type_filters() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
 
     // Schema: name(0 - str), age(1 - int), score(2 - dbl), is_active(3 - lgl), date_joined(4 - Date)
@@ -2247,7 +2222,6 @@ fn test_search_schema_data_type_filters() {
 
 #[test]
 fn test_search_schema_sort_orders() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_sort_order_test_dataframe().unwrap();
 
     // Test original sort order (no filters)
@@ -2267,7 +2241,6 @@ fn test_search_schema_sort_orders() {
 
 #[test]
 fn test_search_schema_combined_filters() {
-    let _lock = r_test_lock();
     let setup = TestSetup::from_expression(
         "data.frame(
             user_name = c('Alice', 'Bob'),
@@ -2296,7 +2269,6 @@ fn test_search_schema_combined_filters() {
 
 #[test]
 fn test_search_schema_no_matches() {
-    let _lock = r_test_lock();
     let setup = TestSetup::from_expression(
         "data.frame(name = c('Alice', 'Bob'), age = c(25, 30))",
         None,
@@ -2315,8 +2287,6 @@ fn test_search_schema_no_matches() {
 
 #[test]
 fn test_search_schema_type_sort_orders() {
-    let _lock = r_test_lock();
-
     // Create a simpler dataframe with multiple columns of different types for type sorting tests
     let setup = TestSetup::from_expression(
         "data.frame(
@@ -2399,8 +2369,6 @@ fn test_search_schema_type_sort_orders() {
 
 #[test]
 fn test_search_schema_text_with_sort_orders() {
-    let _lock = r_test_lock();
-
     // Create a schema specifically for testing text search with sorting
     let setup = TestSetup::from_expression(
         "data.frame(
@@ -2464,7 +2432,6 @@ fn test_search_schema_text_with_sort_orders() {
 
 #[test]
 fn test_search_schema_edge_cases() {
-    let _lock = r_test_lock();
     let setup = TestDataBuilder::create_mixed_types_dataframe().unwrap();
 
     // Test empty search term
@@ -2531,8 +2498,6 @@ fn test_search_schema_edge_cases() {
 
 #[test]
 fn test_column_labels() {
-    let _lock = r_test_lock();
-
     // Create a data frame with column labels
     r_task(|| {
         harp::parse_eval_global(
@@ -2580,8 +2545,6 @@ fn test_column_labels() {
 
 #[test]
 fn test_column_labels_missing() {
-    let _lock = r_test_lock();
-
     // Create a data frame without column labels
     r_task(|| {
         harp::parse_eval_global(
@@ -2624,8 +2587,6 @@ fn test_column_labels_missing() {
 
 #[test]
 fn test_column_labels_haven_compatibility() {
-    let _lock = r_test_lock();
-
     // Test with haven::labelled vectors if haven is available
     r_task(|| {
         harp::parse_eval_global(
@@ -2681,8 +2642,6 @@ fn test_column_labels_haven_compatibility() {
 
 #[test]
 fn test_column_labels_edge_cases() {
-    let _lock = r_test_lock();
-
     // Test edge cases: empty labels, non-character labels, multiple labels, etc.
     r_task(|| {
         harp::parse_eval_global(
@@ -2905,8 +2864,6 @@ fn test_export_with_sort_order() {
 
 #[test]
 fn test_empty_data_frame_schema() {
-    let _lock = r_test_lock();
-
     // Test schema behavior with 0-row data frames for different column types
     let setup = open_data_explorer_from_expression(
         "data.frame(
@@ -2959,8 +2916,6 @@ fn test_empty_data_frame_schema() {
 
 #[test]
 fn test_empty_data_frame_data_values() {
-    let _lock = r_test_lock();
-
     // Test data values request behavior with 0-row data frames
     let setup = open_data_explorer_from_expression(
         "data.frame(
@@ -2987,8 +2942,6 @@ fn test_empty_data_frame_data_values() {
 
 #[test]
 fn test_empty_data_frame_state() {
-    let _lock = r_test_lock();
-
     // Test state request with 0-row data frame
     let setup =
         open_data_explorer_from_expression("data.frame(x = numeric(0), y = character(0))", None)
@@ -3006,8 +2959,6 @@ fn test_empty_data_frame_state() {
 
 #[test]
 fn test_empty_data_frame_column_profiles() {
-    let _lock = r_test_lock();
-
     // Test column profile requests (histograms, summary stats) with 0-row data frames
     let setup = open_data_explorer_from_expression(
         "data.frame(numbers = numeric(0), strings = character(0))",
@@ -3042,8 +2993,6 @@ fn test_empty_data_frame_column_profiles() {
 
 #[test]
 fn test_single_row_data_frame_column_profiles() {
-    let _lock = r_test_lock();
-
     // Test column profiles specifically for 1-row data frames to ensure sparklines work
     let setup = open_data_explorer_from_expression(
         "data.frame(

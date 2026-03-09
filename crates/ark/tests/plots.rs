@@ -3,6 +3,7 @@ use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
+use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 
@@ -373,27 +374,24 @@ fn test_plot_get_metadata_with_origin() {
     let origin_uri = "file:///path/to/analysis.R";
 
     // Send execute_request with a code_location
-    frontend.send_execute_request(
-        code,
-        ExecuteRequestOptions {
-            positron: Some(ExecuteRequestPositron {
-                code_location: Some(JupyterPositronLocation {
-                    uri: origin_uri.to_string(),
-                    range: JupyterPositronRange {
-                        start: JupyterPositronPosition {
-                            line: 5,
-                            character: 0,
-                        },
-                        end: JupyterPositronPosition {
-                            line: 5,
-                            character: 10,
-                        },
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            code_location: Some(JupyterPositronLocation {
+                uri: origin_uri.to_string(),
+                range: JupyterPositronRange {
+                    start: JupyterPositronPosition {
+                        line: 5,
+                        character: 0,
                     },
-                }),
+                    end: JupyterPositronPosition {
+                        line: 5,
+                        character: 10,
+                    },
+                },
             }),
-            ..ExecuteRequestOptions::default()
-        },
-    );
+        }),
+        ..ExecuteRequestOptions::default()
+    });
     frontend.recv_iopub_busy();
 
     let input = frontend.recv_iopub_execute_input();
@@ -487,25 +485,24 @@ fn test_plot_from_source_dynamic() {
 
     // In dynamic plots mode, the plot should arrive as a CommOpen.
     // The UI comm also sends CommMsg events (busy, etc.) that we need to skip.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + RECV_TIMEOUT;
     let mut got_plot_comm = false;
     let mut got_idle = false;
 
     while !got_plot_comm || !got_idle {
-        if std::time::Instant::now() > deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let Some(msg) = frontend.recv_iopub_with_timeout(remaining) else {
             panic!(
                 "Timed out waiting for plot (got_plot_comm={got_plot_comm}, got_idle={got_idle})"
             );
-        }
-        let msg = frontend.recv_iopub();
+        };
         match msg {
             amalthea::wire::jupyter_message::Message::CommOpen(data) => {
                 assert_eq!(data.content.target_name, "positron.plot");
                 got_plot_comm = true;
             },
             amalthea::wire::jupyter_message::Message::Status(data)
-                if data.content.execution_state
-                    == amalthea::wire::status::ExecutionState::Idle =>
+                if data.content.execution_state == amalthea::wire::status::ExecutionState::Idle =>
             {
                 got_idle = true;
             },
@@ -560,14 +557,14 @@ fn test_plot_source_context_stacking() {
 
     // The origin_uri should point to file B, not file A
     assert!(
-        result_b.contains(&file_b.uri),
+        result_b.contains(&file_b.uri_id),
         "Plot from file B should have origin_uri pointing to file B '{}', got:\n{result_b}",
-        file_b.uri,
+        file_b.uri_id,
     );
     assert!(
-        !result_b.contains(&file_a.uri),
+        !result_b.contains(&file_a.uri_id),
         "Plot from file B should NOT have origin_uri pointing to file A '{}', got:\n{result_b}",
-        file_a.uri,
+        file_a.uri_id,
     );
 
     // Query metadata for the second plot (created by file A)
@@ -581,8 +578,8 @@ fn test_plot_source_context_stacking() {
 
     // The origin_uri should point to file A
     assert!(
-        result_a.contains(&file_a.uri),
+        result_a.contains(&file_a.uri_id),
         "Plot from file A should have origin_uri pointing to file A '{}', got:\n{result_a}",
-        file_a.uri,
+        file_a.uri_id,
     );
 }

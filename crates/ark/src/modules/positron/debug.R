@@ -815,9 +815,10 @@ non_parseable_fixed_info <- function(pattern, replacement) {
     list(pattern = pattern, replacement = replacement, fixed = TRUE)
 }
 
-is_breakpoint_enabled <- function(uri, id) {
-    .ps.Call("ps_is_breakpoint_enabled", uri, id)
+handle_breakpoint <- function(uri, id, envir) {
+    .ps.Call("ps_handle_breakpoint", uri, id, envir)
 }
+
 
 verify_breapoint <- function(uri, id) {
     .ps.Call("ps_verify_breakpoint", uri, id)
@@ -841,18 +842,12 @@ verify_breapoint <- function(uri, id) {
         # breakpoint that appears invalid.
         verify_breapoint(uri, id)
 
-        enabled <- is_breakpoint_enabled(uri, id)
-        log_trace(sprintf(
-            "DAP: Breakpoint %s for %s enabled: %s",
-            id,
-            uri,
-            enabled
-        ))
-
-        # Force `browser()` call only if breakpoint is enabled
-        if (enabled) {
-            expr
+        # Check if user condition allows breaking
+        if (!handle_breakpoint(uri, id, parent.frame())) {
+            return(invisible(NULL))
         }
+
+        expr
     },
     class = "ark_breakpoint"
 )

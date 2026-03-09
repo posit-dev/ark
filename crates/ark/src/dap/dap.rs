@@ -22,16 +22,16 @@ use harp::environment::R_ENVS;
 use harp::object::RObject;
 use stdext::result::ResultExt;
 use stdext::spawn;
-use url::Url;
 
 use crate::console::ConsoleOutputCapture;
 use crate::console::DebugStoppedReason;
-use crate::console_debug::FrameInfo;
+use crate::console::FrameInfo;
 use crate::dap::dap_server;
 use crate::dap::dap_variables::object_variable;
 use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
+use crate::url::UrlId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakpointState {
@@ -69,6 +69,22 @@ pub struct Breakpoint {
     /// Whether this breakpoint was actually injected into code during annotation.
     /// Only injected breakpoints can be verified by range-based verification.
     pub injected: bool,
+    /// Optional condition expression. When set, the breakpoint only fires if
+    /// this R expression evaluates to `TRUE` in the breakpoint's environment.
+    /// We keep this as a string instead of a parsed expression for safety,
+    /// since breakpoint state is also inspected by the DAP server thread.
+    pub condition: Option<String>,
+    /// Optional log message template (DAP "logpoint"). When set, the breakpoint
+    /// interpolates `{expression}` placeholders in the template using glue,
+    /// prints the result to the debug console, and does not stop execution.
+    pub log_message: Option<String>,
+    /// Optional hit count condition. When set, the breakpoint only fires
+    /// once the location has been reached at least this many times (`>=`
+    /// semantics). Stored as the raw DAP string and parsed at hit time so we
+    /// can report error in console.
+    pub hit_condition: Option<String>,
+    /// Number of times this breakpoint location has been reached.
+    pub hit_count: u64,
 }
 
 impl Breakpoint {
@@ -80,6 +96,10 @@ impl Breakpoint {
             original_line: line,
             state,
             injected: false,
+            condition: None,
+            log_message: None,
+            hit_condition: None,
+            hit_count: 0,
         }
     }
 
@@ -146,8 +166,8 @@ pub struct Dap {
     /// Current call stack
     pub stack: Option<Vec<FrameInfo>>,
 
-    /// Known breakpoints keyed by URI, with document hash
-    pub breakpoints: HashMap<Url, (blake3::Hash, Vec<Breakpoint>)>,
+    /// Known breakpoints keyed by canonical URI, with document hash
+    pub breakpoints: HashMap<UrlId, (blake3::Hash, Vec<Breakpoint>)>,
 
     /// Filters for enabled condition breakpoints
     pub exception_breakpoint_filters: Vec<String>,
@@ -232,7 +252,7 @@ impl Dap {
     /// The DAP session is expected to always be connected (to receive breakpoint
     /// updates). The `start_debug` comm message is a hint for the frontend to
     /// show the debug toolbar, not a session lifecycle event.
-    pub fn start_debug(
+    pub(crate) fn start_debug(
         &mut self,
         mut stack: Vec<FrameInfo>,
         fallback_sources: HashMap<String, String>,
@@ -416,7 +436,7 @@ impl Dap {
         }
     }
 
-    pub fn evaluate(
+    pub(crate) fn evaluate(
         &self,
         expression: &str,
         frame_id: Option<i64>,
@@ -482,7 +502,7 @@ impl Dap {
     /// Loops over all breakpoints for the URI and verifies any unverified
     /// breakpoints that fall within the range [start_line, end_line).
     /// Sends a `BreakpointVerified` event for each newly verified breakpoint.
-    pub fn verify_breakpoints(&mut self, uri: &Url, start_line: u32, end_line: u32) {
+    pub fn verify_breakpoints(&mut self, uri: &UrlId, start_line: u32, end_line: u32) {
         let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
             return;
         };
@@ -522,7 +542,7 @@ impl Dap {
     ///
     /// Finds the breakpoint with the given ID for the URI and marks it as verified
     /// if it was previously unverified. Sends a `BreakpointVerified` event.
-    pub fn verify_breakpoint(&mut self, uri: &Url, id: &str) {
+    pub fn verify_breakpoint(&mut self, uri: &UrlId, id: &str) {
         let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
             return;
         };
@@ -550,10 +570,14 @@ impl Dap {
 
     /// Called when a document changes. Removes all breakpoints for the URI
     /// and sends unverified events for each one.
-    pub fn did_change_document(&mut self, uri: &Url) {
+    pub fn did_change_document(&mut self, uri: &UrlId) {
+        log::trace!("DAP: did_change_document for {uri}");
+
         let Some((_, breakpoints)) = self.breakpoints.remove(uri) else {
             return;
         };
+
+        log::trace!("DAP: Removing {} breakpoints for {uri}", breakpoints.len());
         let Some(tx) = &self.backend_events_tx else {
             return;
         };
@@ -571,7 +595,7 @@ impl Dap {
 
     /// Notify the frontend about breakpoints that were marked invalid during annotation.
     /// Sends a `BreakpointState` event with verified=false and a message for each.
-    pub fn notify_invalid_breakpoints(&self, uri: &Url) {
+    pub fn notify_invalid_breakpoints(&self, uri: &UrlId) {
         let Some(tx) = &self.backend_events_tx else {
             return;
         };
@@ -594,14 +618,14 @@ impl Dap {
     }
 
     /// Remove disabled breakpoints for a given URI.
-    pub fn remove_disabled_breakpoints(&mut self, uri: &Url) {
+    pub fn remove_disabled_breakpoints(&mut self, uri: &UrlId) {
         let Some((_, bps)) = self.breakpoints.get_mut(uri) else {
             return;
         };
         bps.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
-    pub(crate) fn is_breakpoint_enabled(&self, uri: &Url, id: String) -> bool {
+    pub(crate) fn is_breakpoint_enabled(&self, uri: &UrlId, id: i64) -> bool {
         let Some((_, breakpoints)) = self.breakpoints.get(uri) else {
             return false;
         };
@@ -610,7 +634,7 @@ impl Dap {
         // breakpoint in an expression that hasn't been evaluated yet (or hasn't
         // finished).
         breakpoints.iter().any(|bp| {
-            bp.id.to_string() == id &&
+            bp.id == id &&
                 matches!(
                     bp.state,
                     BreakpointState::Verified | BreakpointState::Unverified
@@ -639,6 +663,34 @@ impl Dap {
         };
 
         Ok(obj.get().sexp)
+    }
+
+    pub(crate) fn get_breakpoint(&self, uri: &UrlId, id: i64) -> Option<&Breakpoint> {
+        let (_, breakpoints) = self.breakpoints.get(uri)?;
+        breakpoints.iter().find(|bp| bp.id == id)
+    }
+
+    /// Reset per-execution breakpoint state (hit counts).
+    /// Called when `ReadConsole` returns to a top-level (non-browser) prompt,
+    /// meaning the execution that may have hit breakpoints is complete.
+    pub(crate) fn reset(&mut self) {
+        for (_, (_, breakpoints)) in self.breakpoints.iter_mut() {
+            for bp in breakpoints.iter_mut() {
+                bp.hit_count = 0;
+            }
+        }
+    }
+
+    /// Increment the hit count for a breakpoint and return the new count.
+    pub(crate) fn increment_hit_count(&mut self, uri: &UrlId, id: i64) -> u64 {
+        let Some((_, breakpoints)) = self.breakpoints.get_mut(uri) else {
+            return 0;
+        };
+        let Some(bp) = breakpoints.iter_mut().find(|bp| bp.id == id) else {
+            return 0;
+        };
+        bp.hit_count += 1;
+        bp.hit_count
     }
 }
 
@@ -689,8 +741,13 @@ impl ServerHandler for Dap {
 #[cfg(test)]
 mod tests {
     use crossbeam::channel::unbounded;
+    use url::Url;
 
     use super::*;
+
+    fn url_id(s: &str) -> UrlId {
+        UrlId::from_url(Url::parse(s).unwrap())
+    }
 
     fn create_test_dap() -> (Dap, crossbeam::channel::Receiver<DapBackendEvent>) {
         let (backend_events_tx, backend_events_rx) = unbounded();
@@ -720,7 +777,7 @@ mod tests {
     fn test_did_change_document_removes_breakpoints() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri = Url::parse("file:///test.R").unwrap();
+        let uri = url_id("file:///test.R");
         let hash = blake3::hash(b"test content");
 
         dap.breakpoints.insert(
@@ -756,7 +813,7 @@ mod tests {
     fn test_did_change_document_no_breakpoints_is_noop() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri = Url::parse("file:///test.R").unwrap();
+        let uri = url_id("file:///test.R");
 
         dap.did_change_document(&uri);
 
@@ -767,8 +824,8 @@ mod tests {
     fn test_did_change_document_only_affects_target_uri() {
         let (mut dap, rx) = create_test_dap();
 
-        let uri1 = Url::parse("file:///test1.R").unwrap();
-        let uri2 = Url::parse("file:///test2.R").unwrap();
+        let uri1 = url_id("file:///test1.R");
+        let uri2 = url_id("file:///test2.R");
         let hash1 = blake3::hash(b"content 1");
         let hash2 = blake3::hash(b"content 2");
 
@@ -824,7 +881,7 @@ mod tests {
             shared_self: None,
         };
 
-        let uri = Url::parse("file:///test.R").unwrap();
+        let uri = url_id("file:///test.R");
         let hash = blake3::hash(b"test content");
 
         dap.breakpoints.insert(

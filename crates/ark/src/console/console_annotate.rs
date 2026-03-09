@@ -26,6 +26,7 @@ use crate::console::Console;
 use crate::dap::dap::Breakpoint;
 use crate::dap::dap::BreakpointState;
 use crate::dap::dap::InvalidReason;
+use crate::url::UrlId;
 
 /// Function name used for auto-stepping over injected calls such as breakpoints
 const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
@@ -172,7 +173,7 @@ const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";
 /// - Adds a `#line` directive to map the code back to its document location.
 /// - Adds leading whitespace to align with the original character offset.
 /// - Injects breakpoint calls if any breakpoints are set.
-pub(crate) fn annotate_input(
+pub(super) fn annotate_input(
     code: &str,
     location: CodeLocation,
     breakpoints: Option<&mut [Breakpoint]>,
@@ -233,7 +234,7 @@ pub(crate) fn annotate_input(
 /// - Injects verification calls (`.ark_auto_step(.ark_verify_breakpoints_range(...))`)
 ///   after expressions containing breakpoints.
 /// - `#line` directives after injected calls to restore correct line mapping.
-pub(crate) fn annotate_source(
+fn annotate_source(
     code: &str,
     uri: &Url,
     breakpoints: &mut [Breakpoint],
@@ -241,7 +242,7 @@ pub(crate) fn annotate_source(
     annotate_source_impl(code, uri, breakpoints, false)
 }
 
-pub(crate) fn annotate_source_with_visible(
+fn annotate_source_with_visible(
     code: &str,
     uri: &Url,
     breakpoints: &mut [Breakpoint],
@@ -928,14 +929,19 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     let code: String = RObject::view(code).try_into()?;
     let with_visible: bool = RObject::view(with_visible).try_into()?;
 
+    // Parse the raw URI as-is for embedding in R code (`#line` directives,
+    // breakpoint calls). We must not use the canonical form here because
+    // R source references may flow back to the frontend, which expects its
+    // own URI representation.
     let uri = Url::parse(&uri)?;
+    let uri_id = UrlId::from_url(uri.clone());
 
     let mut dap_guard = Console::get().debug_dap.lock().unwrap();
 
     // If there are no breakpoints for this file, return NULL to signal no
     // annotation needed. Scope the mutable borrow so we can re-borrow after.
     let annotated = {
-        let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri) else {
+        let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri_id) else {
             return Ok(harp::r_null());
         };
         if breakpoints.is_empty() {
@@ -950,12 +956,12 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
     };
 
     // Notify frontend about any breakpoints marked invalid during annotation
-    dap_guard.notify_invalid_breakpoints(&uri);
+    dap_guard.notify_invalid_breakpoints(&uri_id);
 
     // Remove disabled breakpoints. Their verification state is now stale since
     // they weren't injected during this annotation. If the user re-enables
     // them, they'll be treated as new unverified breakpoints.
-    if let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri) {
+    if let Some((_, breakpoints)) = dap_guard.breakpoints.get_mut(&uri_id) {
         breakpoints.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 

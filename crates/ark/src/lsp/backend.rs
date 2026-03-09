@@ -516,7 +516,7 @@ impl Backend {
     }
 }
 
-pub fn start_lsp(
+pub(crate) fn start_lsp(
     runtime: Arc<Runtime>,
     server_start: ServerStartMessage,
     server_started_tx: Sender<ServerStartedMessage>,

@@ -39,8 +39,8 @@ use super::dap::BreakpointState;
 use super::dap::Dap;
 use super::dap::DapBackendEvent;
 use crate::console::Console;
-use crate::console_debug::FrameInfo;
-use crate::console_debug::FrameSource;
+use crate::console::FrameInfo;
+use crate::console::FrameSource;
 use crate::dap::dap::DapExceptionEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
@@ -49,7 +49,7 @@ use crate::r_task::spawn_idle_any_prompt;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
-use crate::url::ExtUrl;
+use crate::url::UrlId;
 
 const THREAD_ID: i64 = -1;
 
@@ -406,6 +406,9 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 },
             ]),
             supports_evaluate_for_hovers: Some(true),
+            supports_conditional_breakpoints: Some(true),
+            supports_hit_conditional_breakpoints: Some(true),
+            supports_log_points: Some(true),
             ..Default::default()
         }));
         self.respond(rsp)?;
@@ -441,8 +444,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // We currently only support "path" URIs as Positron never sends URIs.
         // In principle the DAP frontend can negotiate whether it sends URIs or
         // file paths via the `pathFormat` field of the `Initialize` request.
-        // `ExtUrl::from_file_path` canonicalizes the path to resolve symlinks.
-        let uri = match ExtUrl::from_file_path(path) {
+        let uri = match UrlId::from_file_path(path) {
             Ok(uri) => uri,
             Err(()) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}'");
@@ -461,7 +463,23 @@ impl<R: Read, W: Write> DapServer<R, W> {
             Err(err) => {
                 // TODO: What do we do with breakpoints in virtual documents?
                 log::warn!("Failed to read file '{path}': {err:?}");
-                let rsp = req.error(&format!("Failed to read file: {path}"));
+
+                let breakpoints = args
+                    .breakpoints
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|bp| dap::types::Breakpoint {
+                        id: Some(self.state.lock().unwrap().next_breakpoint_id()),
+                        verified: false,
+                        line: Some(bp.line),
+                        message: Some(String::from("Can't read file '{path}'")),
+                        ..Default::default()
+                    })
+                    .collect();
+
+                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints,
+                }));
                 return self.respond(rsp);
             },
         };
@@ -493,6 +511,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         original_line: line,
                         state: BreakpointState::Unverified,
                         injected: false,
+                        condition: bp.condition.clone(),
+                        log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
                     }
                 })
                 .collect()
@@ -532,6 +554,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         original_line: line,
                         state: new_state,
                         injected,
+                        condition: bp.condition.clone(),
+                        log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
                     });
                 } else {
                     // New breakpoints always start as Unverified, until they get evaluated once
@@ -541,6 +567,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         original_line: line,
                         state: BreakpointState::Unverified,
                         injected: false,
+                        condition: bp.condition.clone(),
+                        log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
                     });
                 }
             }
@@ -561,6 +591,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         original_line,
                         state: BreakpointState::Disabled,
                         injected: true,
+                        condition: old_bp.condition.clone(),
+                        log_message: old_bp.log_message.clone(),
+                        hit_condition: old_bp.hit_condition,
+                        hit_count: 0,
                     });
                 }
             }
@@ -801,7 +835,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
             let rsp = if expression == SELECTED_FRAME_EXPRESSION {
                 log::trace!("DAP: Received frame selection sentinel, frame_id: {frame_id:?}");
-                Console::get().set_debug_selected_frame_id(frame_id);
+                Console::get_mut().set_debug_selected_frame_id(frame_id);
                 req.success(ResponseBody::Evaluate(EvaluateResponse {
                     result: String::new(),
                     type_field: None,

@@ -22,7 +22,7 @@ use crate::socket::iopub::IOPubMessage;
 /// This wrapper ensures comm messages go through the same channel as other
 /// IOPub messages (like `ExecuteResult`), providing deterministic message
 /// ordering when emitted from the same thread.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CommOutgoingTx {
     comm_id: String,
     iopub_tx: Sender<IOPubMessage>,

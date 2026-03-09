@@ -3,6 +3,10 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
+
+use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::stream::Stream;
+use amalthea::wire::stream::StreamOutput;
 use anyhow::anyhow;
 use anyhow::Result;
 use harp::exec::RFunction;
@@ -18,14 +22,28 @@ use harp::utils::r_is_null;
 use libr::SEXP;
 use regex::Regex;
 use stdext::result::ResultExt;
-use url::Url;
 
 use crate::console::Console;
-use crate::console::DebugCallText;
-use crate::console::DebugStoppedReason;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
+use crate::url::UrlId;
+
+/// Debug call text captured from R's debug output.
+#[derive(Clone, Debug)]
+pub(crate) enum DebugCallText {
+    /// `debug: <expr>` - emitted when stepping without srcrefs
+    Debug(String),
+    /// `debug at <path>#<line>: <expr>` - emitted when stepping with srcrefs
+    DebugAt(String),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DebugStoppedReason {
+    Step,
+    Pause,
+    Condition { class: String, message: String },
+}
 
 #[derive(Debug)]
 pub struct FrameInfo {
@@ -51,12 +69,12 @@ pub enum FrameSource {
 /// Version of `FrameInfo` that identifies the frame by value and doesn't keep a
 /// reference to the environment.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FrameInfoId {
-    pub source: FrameSource,
-    pub start_line: i64,
-    pub start_column: i64,
-    pub end_line: i64,
-    pub end_column: i64,
+pub(super) struct FrameInfoId {
+    source: FrameSource,
+    start_line: i64,
+    start_column: i64,
+    end_line: i64,
+    end_column: i64,
 }
 
 impl From<&FrameInfo> for FrameInfoId {
@@ -72,7 +90,7 @@ impl From<&FrameInfo> for FrameInfoId {
 }
 
 impl Console {
-    pub(crate) fn debug_start(
+    pub(super) fn debug_start(
         &mut self,
         transient_eval: bool,
         debug_stopped_reason: DebugStoppedReason,
@@ -125,7 +143,7 @@ impl Console {
         };
     }
 
-    pub(crate) fn debug_stop(&mut self) {
+    pub(super) fn debug_stop(&mut self) {
         // Preserve all state in case of transient eval. Only guard when
         // actually debugging, otherwise we skip resetting state like
         // `is_interrupting_for_debugger` that needs cleanup regardless.
@@ -150,7 +168,7 @@ impl Console {
         dap.stop_debug();
     }
 
-    pub(crate) fn debug_stack_info(&mut self) -> Result<Vec<FrameInfo>> {
+    fn debug_stack_info(&mut self) -> Result<Vec<FrameInfo>> {
         // We leave finalized `call_text` in place rather than setting it to `None` here
         // in case the user executes an arbitrary expression in the debug R console, which
         // loops us back here without updating the `call_text` in any way, allowing us to
@@ -174,7 +192,7 @@ impl Console {
         Ok(frames)
     }
 
-    pub(crate) fn debug_r_stack_info(
+    fn debug_r_stack_info(
         &mut self,
         context_call_text: Option<String>,
         context_last_start_line: Option<i64>,
@@ -257,7 +275,7 @@ impl Console {
         out
     }
 
-    pub(crate) fn ark_debug_uri(
+    pub(super) fn ark_debug_uri(
         debug_session_index: u32,
         source_name: &str,
         source: &str,
@@ -280,13 +298,13 @@ impl Console {
     }
 
     // Doesn't expect `ark:` scheme, used for checking keys in our vdoc map
-    pub(crate) fn is_ark_debug_path(uri: &str) -> bool {
+    pub(super) fn is_ark_debug_path(uri: &str) -> bool {
         static RE_ARK_DEBUG_URI: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
         let re = RE_ARK_DEBUG_URI.get_or_init(|| Regex::new(r"^ark-\d+/debug/").unwrap());
         re.is_match(uri)
     }
 
-    pub(crate) fn verify_breakpoints(&self, srcref: RObject) {
+    pub(super) fn verify_breakpoints(&self, srcref: RObject) {
         let Some(srcref) = SrcRef::try_from(srcref).warn_on_err() else {
             return;
         };
@@ -305,7 +323,7 @@ impl Console {
             return;
         }
 
-        let Some(uri) = Url::parse(&filename).warn_on_err() else {
+        let Some(uri) = UrlId::parse(&filename).warn_on_err() else {
             return;
         };
 
@@ -515,21 +533,201 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
     }
 }
 
+/// Check whether a breakpoint should actually stop execution.
+///
+/// Combines the enabled check with condition evaluation in a single call
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_is_breakpoint_enabled(
+pub unsafe extern "C-unwind" fn ps_handle_breakpoint(
     uri: SEXP,
     id: SEXP,
+    env: SEXP,
 ) -> anyhow::Result<SEXP> {
+    let env = RObject::new(env);
+
     let uri: String = RObject::view(uri).try_into()?;
-    let uri = Url::parse(&uri)?;
+    let uri = UrlId::parse(&uri)?;
 
     let id: String = RObject::view(id).try_into()?;
+    let id: i64 = id.parse()?;
 
     let console = Console::get_mut();
     let dap = console.debug_dap.lock().unwrap();
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
-    Ok(RObject::from(enabled).sexp)
+    let bp = dap.get_breakpoint(&uri, id);
+    let bp_line = bp.map_or(0, |bp| bp.line);
+    let condition = bp.and_then(|bp| bp.condition.clone());
+    let log_message = bp.and_then(|bp| bp.log_message.clone());
+    let hit_condition = bp.and_then(|bp| bp.hit_condition.clone());
+
+    log::trace!(
+        "DAP: Breakpoint {id} for {uri} \
+         enabled: {enabled}, \
+         hit_count: {hit_count}, \
+         hit_condition: {hit_condition:?}, \
+         condition: {condition:?}, \
+         log_message: {log_message:?}",
+        hit_count = bp.map_or(0, |bp| bp.hit_count)
+    );
+
+    if !enabled {
+        return Ok(RObject::from(false).sexp);
+    }
+
+    // Must drop before calling back into R to avoid deadlock
+    drop(dap);
+
+    // Evaluate condition first as it applies to all breakpoints, including log
+    // and hit-count breakpoints. Per the DAP spec, `hitCondition` should only
+    // be evaluated (and the hit count incremented) if the `condition` is met.
+    let should_break = match &condition {
+        None => true,
+        Some(condition) => {
+            let ((should_break, error), captured_output) =
+                Console::with_capture(|| eval_condition(condition, env.clone()));
+
+            if !captured_output.trim().is_empty() || error.is_some() {
+                let mut output = format!("Code: `{condition}`\n");
+                output.push_str(&captured_output);
+                if let Some(err) = error {
+                    output.push_str(&err);
+                }
+                emit_breakpoint_block(&uri, bp_line, &output);
+            }
+            should_break
+        },
+    };
+
+    if !should_break {
+        return Ok(RObject::from(false).sexp);
+    }
+
+    if let Some(ref hit_condition) = hit_condition {
+        match hit_condition.trim().parse::<u64>() {
+            Ok(threshold) => {
+                let mut dap = Console::get_mut().debug_dap.lock().unwrap();
+                let hit_count = dap.increment_hit_count(&uri, id);
+                drop(dap);
+
+                if hit_count < threshold {
+                    return Ok(RObject::from(false).sexp);
+                }
+            },
+            Err(err) => {
+                emit_breakpoint_block(
+                    &uri,
+                    bp_line,
+                    &format!("Error: Expected a positive integer, {err}"),
+                );
+            },
+        }
+    }
+
+    // Log breakpoints evaluate the template and never stop
+    if let Some(log_message) = log_message {
+        let (output, captured_output) =
+            Console::with_capture(|| eval_log_message(&log_message, env));
+
+        let mut all_output = captured_output;
+        all_output.push_str(&output);
+        if !all_output.is_empty() && !all_output.ends_with('\n') {
+            all_output.push('\n');
+        }
+
+        emit_breakpoint_block(&uri, bp_line, &all_output);
+        return Ok(RObject::from(false).sexp);
+    }
+
+    Ok(RObject::from(true).sexp)
+}
+
+/// Emit a fenced breakpoint block to stderr.
+fn emit_breakpoint_block(uri: &UrlId, line: u32, content: &str) {
+    let Some(text) = format_breakpoint_block(uri, line, content) else {
+        return;
+    };
+
+    Console::get_mut()
+        .iopub_tx()
+        .send(IOPubMessage::Stream(StreamOutput {
+            name: Stream::Stderr,
+            text,
+        }))
+        .unwrap();
+}
+
+fn format_breakpoint_block(uri: &UrlId, line: u32, content: &str) -> Option<String> {
+    if content.trim().is_empty() {
+        return None;
+    }
+
+    let label = breakpoint_label(uri, line);
+
+    let mut text = format!("```breakpoint {label}\n");
+
+    text.push_str(content);
+    if !content.ends_with('\n') {
+        text.push('\n');
+    }
+
+    text.push_str("```\n");
+
+    Some(text)
+}
+
+/// Evaluate a DAP log message template. Uses `glue::glue()` for `{expression}`
+/// interpolation (mandated by DAP) if glue is installed, otherwise returns the
+/// template as-is.
+fn eval_log_message(template: &str, env: RObject) -> String {
+    match RFunction::new("base", ".ark_eval_log_message")
+        .add(RObject::from(template))
+        .call_in(env.sexp)
+    {
+        Ok(val) => String::try_from(val).unwrap_or_default(),
+        Err(harp::Error::TryCatchError { message, .. }) => format!("Error: {message}"),
+        Err(err) => format!("Error: {err}"),
+    }
+}
+
+/// Format a clickable `filename#line` label for breakpoint output.
+fn breakpoint_label(uri: &UrlId, line: u32) -> String {
+    let filename = uri
+        .as_url()
+        .path_segments()
+        .and_then(|s| s.last())
+        .unwrap_or("unknown");
+    let display_line = line + 1;
+    let display = format!("{filename}#{display_line}");
+    format!("\x1b]8;line={display_line};{uri}\x07{display}\x1b]8;;\x07")
+}
+
+/// Evaluate a condition expression in a given environment.
+///
+/// Returns `(should_break, error)`. Warnings and messages are captured by
+/// `Console::with_capture` at the call site (which sets `warn = 1` so
+/// warnings are emitted immediately). When evaluation fails or
+/// produces a non-logical result, `should_break` is `true` so that typos
+/// in conditions cause a visible stop rather than a silently ignored
+/// breakpoint.
+fn eval_condition(condition: &str, envir: RObject) -> (bool, Option<String>) {
+    // `if` coerces via `asLogicalNoNA` (not the generic `as.logical`)
+    // and errors on NA, length != 1, and non-coercible types.
+    let code = format!("if ({{ {condition} }}) TRUE else FALSE");
+
+    let result = match harp::parse_eval0(&code, envir) {
+        Ok(val) => val,
+        Err(harp::Error::TryCatchError { message, .. }) => {
+            return (true, Some(format!("Error: {message}\n")));
+        },
+        Err(err) => {
+            return (true, Some(format!("Error: {err}\n")));
+        },
+    };
+
+    match bool::try_from(RObject::view(result.sexp)) {
+        Ok(val) => (val, None),
+        Err(err) => (true, Some(format!("Error: {err}\n"))),
+    }
 }
 
 /// Verify a single breakpoint by ID.
@@ -539,7 +737,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoint(uri: SEXP, id: SEXP) -> any
     let uri: String = RObject::view(uri).try_into()?;
     let id: String = RObject::view(id).try_into()?;
 
-    let Some(uri) = Url::parse(&uri).log_err() else {
+    let Some(uri) = UrlId::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
@@ -569,7 +767,7 @@ pub unsafe extern "C-unwind" fn ps_verify_breakpoints_range(
     let start_line: i32 = RObject::view(start_line).try_into()?;
     let end_line: i32 = RObject::view(end_line).try_into()?;
 
-    let Some(uri) = Url::parse(&uri).log_err() else {
+    let Some(uri) = UrlId::parse(&uri).log_err() else {
         return Ok(libr::R_NilValue);
     };
 
@@ -625,6 +823,8 @@ pub unsafe extern "C-unwind" fn ps_is_interrupting_for_debugger() -> anyhow::Res
 
 #[cfg(test)]
 mod tests {
+    use url::Url;
+
     use super::*;
 
     fn frame(name: &str) -> FrameInfo {
@@ -643,6 +843,10 @@ mod tests {
 
     fn names(frames: &[FrameInfo]) -> Vec<&str> {
         frames.iter().map(|f| f.frame_name.as_str()).collect()
+    }
+
+    fn test_uri(path: &str) -> UrlId {
+        UrlId::from_url(Url::parse(&format!("file:///project/{path}")).unwrap())
     }
 
     #[test]
@@ -800,5 +1004,130 @@ mod tests {
             "internal()",
             "outer()"
         ]);
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_nothing() {
+        let uri = test_uri("test.R");
+        assert_eq!(format_breakpoint_block(&uri, 2, ""), None);
+        assert_eq!(format_breakpoint_block(&uri, 2, "  \n"), None);
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_error_only() {
+        let uri = test_uri("test.R");
+        let result =
+            format_breakpoint_block(&uri, 2, "Code: `x > 1`\nError: object 'x' not found\n");
+        let link = breakpoint_label(&uri, 2);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        Code: `x > 1`
+        Error: object 'x' not found
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_warning_only() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 4, "Code: `x > 1`\nWarning: something\n");
+        let link = breakpoint_label(&uri, 4);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#5>"), @r"
+        ```breakpoint <test.R#5>
+        Code: `x > 1`
+        Warning: something
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_with_error() {
+        let uri = test_uri("analysis.R");
+        let content = "Code: `nrow(df)`\nWarning message:\ncoercion applied\nError: Expected TRUE or FALSE, got 5\n";
+        let result = format_breakpoint_block(&uri, 9, content);
+        let link = breakpoint_label(&uri, 9);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<analysis.R#10>"), @r"
+        ```breakpoint <analysis.R#10>
+        Code: `nrow(df)`
+        Warning message:
+        coercion applied
+        Error: Expected TRUE or FALSE, got 5
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_no_trailing_newline() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 0, "Code: `x > 1`\nWarning: oops");
+        let link = breakpoint_label(&uri, 0);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#1>"), @r"
+        ```breakpoint <test.R#1>
+        Code: `x > 1`
+        Warning: oops
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_log_output() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 2, "x is 42, y is hello\n");
+        let link = breakpoint_label(&uri, 2);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        x is 42, y is hello
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_log_output_no_trailing_newline() {
+        let uri = test_uri("script.R");
+        let result = format_breakpoint_block(&uri, 5, "iteration 3");
+        let link = breakpoint_label(&uri, 5);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<script.R#6>"), @r"
+        ```breakpoint <script.R#6>
+        iteration 3
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_log_error() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(&uri, 2, "Error: object 'z' not found\n");
+        let link = breakpoint_label(&uri, 2);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#3>"), @r"
+        ```breakpoint <test.R#3>
+        Error: object 'z' not found
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_format_breakpoint_block_hit_condition_error() {
+        let uri = test_uri("test.R");
+        let result = format_breakpoint_block(
+            &uri,
+            17,
+            "Error: Expected a positive integer, invalid digit found in string",
+        );
+        let link = breakpoint_label(&uri, 17);
+        insta::assert_snapshot!(result.unwrap().replace(&link, "<test.R#18>"), @r"
+        ```breakpoint <test.R#18>
+        Error: Expected a positive integer, invalid digit found in string
+        ```
+        ");
+    }
+
+    #[test]
+    fn test_breakpoint_label() {
+        let uri = test_uri("test.R");
+        let link = breakpoint_label(&uri, 4);
+        assert_eq!(
+            link,
+            "\x1b]8;line=5;file:///project/test.R\x07test.R#5\x1b]8;;\x07"
+        );
     }
 }

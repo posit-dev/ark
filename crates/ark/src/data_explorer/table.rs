@@ -1,50 +1,31 @@
 //
 // table.rs
 //
-// Copyright (C) 2024 by Posit Software, PBC
+// Copyright (C) 2024-2026 by Posit Software, PBC
 //
 //
 
-use std::sync::Arc;
-use std::sync::Mutex;
-
-use anyhow::anyhow;
 use harp::RObject;
 
 use crate::thread::RThreadSafe;
 
-#[derive(Clone)]
-pub struct Table {
-    table: Arc<Mutex<Option<RThreadSafe<RObject>>>>,
-}
+pub struct Table(RThreadSafe<RObject>);
 
 impl Table {
-    pub fn new(data: RThreadSafe<RObject>) -> Self {
-        let table = Arc::new(Mutex::new(Some(data)));
-        Self { table }
+    pub fn new(data: RObject) -> Self {
+        Self(RThreadSafe::new(data))
     }
 
-    // Get can only be called from the main thread as it will also call
-    // get in the RThreadSafe object.
-    // Get only result in errors when the table is no longer available, so this
-    // failing to get, can be used as a sign to cancel a task.
-    pub fn get(&self) -> anyhow::Result<RObject> {
-        let guard = self.table.lock().unwrap();
-        let table = guard
-            .as_ref()
-            .ok_or(anyhow!("Table not found"))?
-            .get()
-            .clone();
-        Ok(table)
+    pub fn get(&self) -> &RObject {
+        self.0.get()
     }
 
-    pub fn set(&mut self, data: RThreadSafe<RObject>) {
-        let mut table = self.table.lock().unwrap();
-        *table = Some(data);
+    pub fn set(&mut self, data: RObject) {
+        self.0 = RThreadSafe::new(data);
     }
 
-    pub fn delete(&mut self) {
-        let mut table = self.table.lock().unwrap();
-        *table = None;
+    /// Clone the table for use in an idle task. Must be called on the R thread.
+    pub fn clone_for_task(&self) -> Self {
+        Self(RThreadSafe::new(self.0.get().clone()))
     }
 }

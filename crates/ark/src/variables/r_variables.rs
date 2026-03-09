@@ -6,7 +6,6 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
 use amalthea::comm::variables_comm::ClipboardFormatFormat;
 use amalthea::comm::variables_comm::FormattedVariable;
 use amalthea::comm::variables_comm::InspectedVariable;
@@ -19,11 +18,9 @@ use amalthea::comm::variables_comm::VariablesBackendReply;
 use amalthea::comm::variables_comm::VariablesBackendRequest;
 use amalthea::comm::variables_comm::VariablesFrontendEvent;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
 use anyhow::anyhow;
 use crossbeam::channel::select;
 use crossbeam::channel::unbounded;
-use crossbeam::channel::Sender;
 use harp::environment::Binding;
 use harp::environment::Environment;
 use harp::environment::EnvironmentFilter;
@@ -35,6 +32,8 @@ use harp::utils::r_assert_type;
 use harp::utils::r_is_function;
 use harp::vector::CharacterVector;
 use harp::vector::Vector;
+use harp::RSymbol;
+use harp::R_ENVS;
 use libr::R_GlobalEnv;
 use libr::Rf_ScalarLogical;
 use libr::ENVSXP;
@@ -45,6 +44,7 @@ use crate::console;
 use crate::console::Console;
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
@@ -53,25 +53,12 @@ use crate::variables::variable::try_dispatch_view;
 use crate::variables::variable::PositronVariable;
 use crate::view::view;
 
-/// Enumeration of treatments for the .Last.value variable
-pub enum LastValue {
-    /// Always show the .Last.value variable in the Variables pane. This is used
-    /// by tests to show the value without changing the global option.
-    Always,
-
-    /// Use the value of the global option `positron.show_last_value` to
-    /// determine whether to show the .Last.value variable
-    UseOption,
-}
-
 /**
  * The R Variables handler provides the server side of Positron's Variables panel, and is
  * responsible for creating and updating the list of variables.
  */
 pub struct RVariables {
     comm: CommSocket,
-    comm_event_tx: Sender<CommEvent>,
-    iopub_tx: Sender<IOPubMessage>,
     pub env: RThreadSafe<RObject>,
     /// `Binding` does not currently protect anything, and therefore doesn't
     /// implement `Drop`, which might use the R API. It assumes that R SYMSXPs
@@ -90,14 +77,6 @@ pub struct RVariables {
     current_bindings: RThreadSafe<Vec<Binding>>,
     version: u64,
 
-    /// Whether to always show the .Last.value in the Variables pane, regardless
-    /// of the value of positron.show_last_value
-    show_last_value: LastValue,
-
-    /// Whether we are currently showing the .Last.value variable in the Variables
-    /// pane.
-    showing_last_value: bool,
-
     /// Whether we need to send an initial `Refresh` event to the frontend,
     /// which is required for frontend initialization. Set on construction,
     /// cleared after the first `update()` call.
@@ -111,30 +90,7 @@ impl RVariables {
      * - `env`: An R environment to scan for variables, typically R_GlobalEnv
      * - `comm`: A channel used to send messages to the frontend
      */
-    pub fn start(
-        env: RObject,
-        comm: CommSocket,
-        comm_event_tx: Sender<CommEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-    ) {
-        // Start with default settings
-        Self::start_with_config(env, comm, comm_event_tx, iopub_tx, LastValue::UseOption);
-    }
-
-    /**
-     * Creates a new RVariables instance with specific configuration.
-     *
-     * - `env`: An R environment to scan for variables, typically R_GlobalEnv
-     * - `comm`: A channel used to send messages to the frontend
-     * - `show_last_value`: Whether to include .Last.value in the variables list
-     */
-    pub fn start_with_config(
-        env: RObject,
-        comm: CommSocket,
-        comm_event_tx: Sender<CommEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-        show_last_value: LastValue,
-    ) {
+    pub fn start(env: RObject, comm: CommSocket) {
         // Validate that the RObject we were passed is actually an environment
         if let Err(err) = r_assert_type(env.sexp, &[ENVSXP]) {
             log::warn!(
@@ -154,13 +110,9 @@ impl RVariables {
             // call unprotects them
             let environment = Self {
                 comm,
-                comm_event_tx,
-                iopub_tx,
                 env,
                 current_bindings,
                 version: 0,
-                show_last_value,
-                showing_last_value: false,
                 needs_initial_refresh: true,
             };
             environment.execution_thread();
@@ -256,10 +208,6 @@ impl RVariables {
     fn list_variables(&mut self) -> Vec<Variable> {
         let mut variables: Vec<Variable> = vec![];
         r_task(|| {
-            if let Some(last_value) = self.last_value() {
-                variables.push(last_value.var());
-            }
-
             for binding in self.current_bindings.get() {
                 variables.push(PositronVariable::new(binding).var());
             }
@@ -407,16 +355,14 @@ impl RVariables {
 
             let binding = DataObjectEnvInfo {
                 name: name.to_string(),
-                env: RThreadSafe::new(env),
+                env,
             };
 
-            let viewer_id = RDataExplorer::start(
-                name.clone(),
-                obj,
-                Some(binding),
-                self.comm_event_tx.clone(),
-                self.iopub_tx.clone(),
-            )?;
+            let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
+                .map_err(|err| harp::Error::Anyhow(err))?;
+            let viewer_id = Console::get_mut()
+                .comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
+                .map_err(|err| harp::Error::Anyhow(err))?;
             Ok(Some(viewer_id))
         })
     }
@@ -457,7 +403,7 @@ impl RVariables {
                 },
             };
 
-            let shapes = RDataExplorer::r_get_shape(table.clone())?;
+            let shapes = RDataExplorer::get_shape(table.clone())?;
 
             let column_schemas: Vec<String> = shapes
                 .columns
@@ -526,43 +472,19 @@ impl RVariables {
         }
     }
 
-    /// Gets the value of the special variable '.Last.value' (the value of the
-    /// last expression evaluated at the top level), if enabled.
-    ///
-    /// Returns None in all other cases.
-    fn last_value(&self) -> Option<PositronVariable> {
-        // Check the cached value first
-        let show_last_value = match self.show_last_value {
-            LastValue::Always => true,
-            LastValue::UseOption => {
-                // If we aren't always showing the last value, update from the
-                // global option
-                let use_last_value = get_option("positron.show_last_value");
-                match use_last_value.get_bool(0) {
-                    Ok(Some(true)) => true,
-                    _ => false,
-                }
-            },
-        };
-
-        if show_last_value {
-            match harp::environment::last_value() {
-                Ok(last_robj) => Some(PositronVariable::from(
-                    String::from(".Last.value"),
-                    String::from(".Last.value"),
-                    last_robj.sexp,
-                )),
-                Err(err) => {
-                    // This isn't a critical error but would also be very
-                    // unexpected.
-                    log::error!("Variables: Could not evaluate .Last.value ({err:?})");
-                    None
-                },
-            }
-        } else {
-            // Last value display is disabled
-            None
+    /// Determines whether or not we should be showing the special `.Last.value` object
+    fn show_last_value(&self) -> bool {
+        match get_option("positron.show_last_value").get_bool(0) {
+            Ok(Some(true)) => true,
+            _ => false,
         }
+    }
+
+    fn last_value() -> harp::Result<Binding> {
+        Binding::new(
+            &Environment::view(R_ENVS.base),
+            RSymbol::from(".Last.value"),
+        )
     }
 
     #[tracing::instrument(level = "trace", skip_all)]
@@ -579,10 +501,6 @@ impl RVariables {
                 self.update_bindings(self.bindings());
 
                 let mut variables: Vec<Variable> = vec![];
-
-                if let (Some(var), _) = self.track_last_value() {
-                    variables.push(var);
-                }
 
                 for binding in self.current_bindings.get() {
                     variables.push(PositronVariable::new(binding).var());
@@ -601,12 +519,6 @@ impl RVariables {
             // Incremental update: diff old vs new bindings
             let mut assigned: Vec<Variable> = vec![];
             let mut removed: Vec<String> = vec![];
-
-            match self.track_last_value() {
-                (Some(var), _) => assigned.push(var),
-                (None, true) => removed.push(".Last.value".to_string()),
-                (None, false) => {},
-            }
 
             let new_bindings = self.bindings();
 
@@ -684,20 +596,6 @@ impl RVariables {
 
     // SAFETY: The following methods must be called in an `r_task()`
 
-    /// Updates `self.showing_last_value` and returns the last value variable
-    /// if it should be shown, along with whether it was previously shown.
-    fn track_last_value(&mut self) -> (Option<Variable>, bool) {
-        let was_showing = self.showing_last_value;
-
-        if let Some(last_value) = self.last_value() {
-            self.showing_last_value = true;
-            (Some(last_value.var()), was_showing)
-        } else {
-            self.showing_last_value = false;
-            (None, was_showing)
-        }
-    }
-
     /// Updates `self.env` to the current effective environment if it changed
     /// (e.g. entering or exiting debug mode). Returns `true` if switched.
     fn update_env(&mut self) -> bool {
@@ -720,6 +618,12 @@ impl RVariables {
         let env = Environment::new_filtered(env, EnvironmentFilter::ExcludeHidden);
 
         let mut bindings: Vec<Binding> = env.iter().filter_map(|b| b.ok()).collect();
+
+        if self.show_last_value() {
+            if let Some(last_value) = Self::last_value().log_err() {
+                bindings.push(last_value);
+            }
+        }
 
         bindings.sort_by(|a, b| a.name.cmp(&b.name));
 

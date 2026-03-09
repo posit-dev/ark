@@ -226,6 +226,100 @@ impl DapClient {
             })
             .collect();
 
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
+    /// Set breakpoints with conditions for a source file.
+    ///
+    /// Takes a file path and a list of `(line, condition)` pairs.
+    /// Returns the breakpoints as reported by the server.
+    #[track_caller]
+    pub fn set_conditional_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: &[(i64, &str)],
+    ) -> Vec<Breakpoint> {
+        let breakpoints: Vec<SourceBreakpoint> = breakpoints
+            .iter()
+            .map(|&(line, condition)| SourceBreakpoint {
+                line,
+                column: None,
+                condition: Some(condition.to_string()),
+                hit_condition: None,
+                log_message: None,
+            })
+            .collect();
+
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
+    /// Set log breakpoints (logpoints) for a source file.
+    ///
+    /// Takes a file path and a list of `(line, log_message)` pairs.
+    /// Returns the breakpoints as reported by the server.
+    #[track_caller]
+    pub fn set_log_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: &[(i64, &str)],
+    ) -> Vec<Breakpoint> {
+        let breakpoints: Vec<SourceBreakpoint> = breakpoints
+            .iter()
+            .map(|&(line, log_message)| SourceBreakpoint {
+                line,
+                column: None,
+                condition: None,
+                hit_condition: None,
+                log_message: Some(log_message.to_string()),
+            })
+            .collect();
+
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
+    /// Set breakpoints with hit count thresholds for a source file.
+    ///
+    /// Takes a file path and a list of `(line, hit_condition)` pairs.
+    /// Returns the breakpoints as reported by the server.
+    #[track_caller]
+    pub fn set_hit_count_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: &[(i64, &str)],
+    ) -> Vec<Breakpoint> {
+        let breakpoints: Vec<SourceBreakpoint> = breakpoints
+            .iter()
+            .map(|&(line, hit_condition)| SourceBreakpoint {
+                line,
+                column: None,
+                condition: None,
+                hit_condition: Some(hit_condition.to_string()),
+                log_message: None,
+            })
+            .collect();
+
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
+    /// Set breakpoints from raw `SourceBreakpoint` objects.
+    ///
+    /// Useful for mixed scenarios where some breakpoints have conditions
+    /// and others don't.
+    #[track_caller]
+    pub fn set_source_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: Vec<SourceBreakpoint>,
+    ) -> Vec<Breakpoint> {
+        self.send_set_breakpoints(path, breakpoints)
+    }
+
+    #[track_caller]
+    fn send_set_breakpoints(
+        &mut self,
+        path: &str,
+        breakpoints: Vec<SourceBreakpoint>,
+    ) -> Vec<Breakpoint> {
         #[allow(deprecated)]
         let seq = self
             .send(Command::SetBreakpoints(SetBreakpointsArguments {

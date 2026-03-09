@@ -61,16 +61,10 @@ use amalthea::comm::data_explorer_comm::TableSchema;
 use amalthea::comm::data_explorer_comm::TableSelection;
 use amalthea::comm::data_explorer_comm::TableShape;
 use amalthea::comm::data_explorer_comm::TextSearchType;
-use amalthea::comm::event::CommEvent;
-use amalthea::socket::comm::CommInitiator;
-use amalthea::socket::comm::CommSocket;
-use amalthea::socket::iopub::IOPubMessage;
+use amalthea::socket::comm::CommOutgoingTx;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
-use crossbeam::channel::unbounded;
-use crossbeam::channel::Sender;
-use crossbeam::select;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
@@ -83,15 +77,14 @@ use harp::ColumnNames;
 use harp::TableKind;
 use itertools::Itertools;
 use libr::*;
-use serde::Deserialize;
-use serde::Serialize;
-use stdext::local;
 use stdext::result::ResultExt;
-use stdext::spawn;
 use stdext::unwrap;
 use tracing::Instrument;
-use uuid::Uuid;
 
+use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::CommHandler;
+use crate::comm_handler::CommHandlerContext;
+use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::data_explorer::column_profile::handle_columns_profiles_requests;
 use crate::data_explorer::column_profile::ProcessColumnsProfilesParams;
@@ -102,11 +95,11 @@ use crate::data_explorer::format::format_string;
 use crate::data_explorer::table::Table;
 use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
-use crate::lsp::events::EVENTS;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
-use crate::thread::RThreadSafe;
 use crate::variables::variable::WorkspaceVariableDisplayType;
+
+pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
 
 /// A name/value binding pair in an environment.
 ///
@@ -115,7 +108,7 @@ use crate::variables::variable::WorkspaceVariableDisplayType;
 /// accordingly.
 pub struct DataObjectEnvInfo {
     pub name: String,
-    pub env: RThreadSafe<RObject>,
+    pub env: RObject,
 }
 
 pub(crate) struct DataObjectShape {
@@ -163,215 +156,63 @@ pub struct RDataExplorer {
     /// row indices. This is the set of row indices that are displayed in the
     /// data viewer.
     view_indices: Option<Vec<i32>>,
-
-    /// The communication socket for the data viewer.
-    comm: CommSocket,
-
-    /// A channel to send comm lifecycle events.
-    comm_event_tx: Sender<CommEvent>,
-}
-#[derive(Deserialize, Serialize)]
-struct Metadata {
-    title: String,
 }
 
-impl Drop for RDataExplorer {
-    fn drop(&mut self) {
-        // We guarantee that the table is deleted from the global store.
-        self.table.delete();
+impl std::fmt::Debug for RDataExplorer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RDataExplorer")
+            .field("title", &self.title)
+            .finish_non_exhaustive()
     }
 }
 
 impl RDataExplorer {
-    pub fn start(
+    /// Create a new data explorer. Must be called from the R thread.
+    pub fn new(
         title: String,
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
-        comm_event_tx: Sender<CommEvent>,
-        iopub_tx: Sender<IOPubMessage>,
-    ) -> harp::Result<String> {
-        let id = Uuid::new_v4().to_string();
-
-        let comm = CommSocket::new(
-            CommInitiator::BackEnd,
-            id.clone(),
-            String::from("positron.dataExplorer"),
-            iopub_tx,
-        );
-
-        // To be able to `Send` the `data` to the thread to be owned by the data
-        // viewer, it needs to be made thread safe
-        let table = Table::new(RThreadSafe::new(data));
-
-        spawn!(format!("ark-data-viewer-{}-{}", title, id), move || {
-            // Get the initial set of column schemas for the data object
-            let shape = r_task(|| Self::r_get_shape(table.get()?));
-            match shape {
-                // shape the columns; start the data viewer
-                Ok(shape) => {
-                    // Create the initial state for the data viewer
-                    let viewer = Self {
-                        title,
-                        table,
-                        binding,
-                        shape,
-                        sorted_indices: None,
-                        filtered_indices: None,
-                        view_indices: None,
-                        sort_keys: vec![],
-                        row_filters: vec![],
-                        col_filters: vec![],
-                        comm,
-                        comm_event_tx,
-                    };
-
-                    // Start the data viewer's execution thread
-                    viewer.execution_thread();
-                },
-                Err(err) => {
-                    // Didn't get the columns; log the error and close the comm
-                    log::error!(
-                        "Error retrieving initial object schema: '{}': {}",
-                        title,
-                        err
-                    );
-
-                    // Close the comm immediately since we can't proceed without
-                    // the schema
-                    comm_event_tx
-                        .send(CommEvent::Closed(comm.comm_id))
-                        .log_err();
-                },
-            }
-        });
-
-        Ok(id)
-    }
-
-    pub fn execution_thread(mut self) {
-        // Register a handler for environment change events. We do this before sending
-        // `CommManagerEvent::Opened` to ensure we can't miss any events (#781).
-        let (prompt_signal_tx, prompt_signal_rx) = unbounded::<()>();
-        let listen_id = EVENTS.environment_changed.listen({
-            move |_| {
-                prompt_signal_tx.send(()).unwrap();
-            }
-        });
-
-        let execute: anyhow::Result<()> = local! {
-            let metadata = Metadata {
-                title: self.title.clone(),
-            };
-            let comm_open_json = serde_json::to_value(metadata)?;
-            // Notify frontend that the data viewer comm is open
-            let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
-            self.comm_event_tx.send(event)?;
-            Ok(())
-        };
-
-        if let Err(err) = execute {
-            log::error!("Error while viewing object '{}': {}", self.title, err);
-        };
-
-        // Flag initially set to false, but set to true if the user closes the
-        // channel (i.e. the frontend is closed)
-        let mut user_initiated_close = false;
-
-        // Set up event loop to listen for incoming messages from the frontend
-        loop {
-            select! {
-                // When the environment changes, check for updates to the
-                // underlying data
-                recv(&prompt_signal_rx) -> msg => {
-                    if let Ok(()) = msg {
-                        match self.update() {
-                            Ok(true) => {},
-                            Ok(false) => {
-                                // The binding has been removed (or replaced
-                                // with something incompatible), so close the
-                                // data viewer
-                                break;
-                            },
-                            Err(err) => {
-                                log::error!("Error while checking environment for data viewer update: {err}");
-                            },
-                        }
-                    }
-                },
-
-                // When a message is received from the frontend, handle it
-                recv(self.comm.incoming_rx) -> msg => {
-                    let msg = unwrap!(msg, Err(e) => {
-                        log::trace!("Data Viewer: Error while receiving message from frontend: {e:?}");
-                        break;
-                    });
-                    log::info!("Data Viewer: Received message from frontend: {msg:?}");
-
-                    // Break out of the loop if the frontend has closed the channel
-                    if let CommMsg::Close = msg {
-                        log::trace!("Data Viewer: Closing down after receiving comm_close from frontend.");
-
-                        // Remember that the user initiated the close so that we can
-                        // avoid sending a duplicate close message from the back end
-                        user_initiated_close = true;
-                        break;
-                    }
-
-                    let comm = self.comm.clone();
-                    comm.handle_request(msg, |req| self.handle_rpc(req));
-                },
-            }
-        }
-
-        EVENTS.environment_changed.remove(listen_id);
-
-        if !user_initiated_close {
-            // Send a close message to the frontend if the frontend didn't
-            // initiate the close
-            self.comm.outgoing_tx.send(CommMsg::Close).unwrap();
-        }
+    ) -> anyhow::Result<Self> {
+        let table = Table::new(data);
+        let shape = Self::get_shape(table.get().clone())?;
+        Ok(Self {
+            title,
+            table,
+            binding,
+            shape,
+            sorted_indices: None,
+            filtered_indices: None,
+            view_indices: None,
+            sort_keys: vec![],
+            row_filters: vec![],
+            col_filters: vec![],
+        })
     }
 
     /// Check the environment bindings for updates to the underlying value
     ///
     /// Returns true if the update was processed; false if the binding has been
     /// removed and the data viewer should be closed.
-    fn update(&mut self) -> anyhow::Result<bool> {
+    fn update(&mut self, ctx: &CommHandlerContext) -> anyhow::Result<bool> {
         // No need to check for updates if we have no binding
         if self.binding.is_none() {
             return Ok(true);
         }
 
-        // See if the value has changed; this block returns true if the value has changed
-        // or false otherwise. It also sets the new value correctly.
-        let changed = r_task(|| {
-            let binding = self.binding.as_ref().unwrap();
-            let env = binding.env.get().sexp;
+        let binding = self.binding.as_ref().unwrap();
+        let env = binding.env.sexp;
 
-            let new = unsafe {
-                let sym = r_symbol!(binding.name);
-                Rf_findVarInFrame(env, sym)
-            };
+        let new = unsafe {
+            let sym = r_symbol!(binding.name);
+            Rf_findVarInFrame(env, sym)
+        };
 
-            let old = self.table.get();
-            let old = unwrap!(old, Err(_) => {
-                // This is AFAICT impossible because the table is only deleted when the data explorer instance is
-                // deleted and this method belongs to that data explorer instance.
-                log::error!("Old table has been deleted? This is unexpected, but we'll update the data explorer table.");
-                // It's `unsafe` because RObject::new calls protect, and it shouldn't
-                // be called outside of the R main thread.
-                self.table.set(RThreadSafe::new(RObject::new(new)));
-                return true;
-            });
-
-            if new == old.sexp {
-                false
-            } else {
-                // Safety is same as above. We guarantee this is the R main thread.
-                self.table.set(RThreadSafe::new(RObject::new(new)));
-                true
-            }
-        });
+        let changed = if new == self.table.get().sexp {
+            false
+        } else {
+            self.table.set(RObject::new(new));
+            true
+        };
 
         // No change to the value, so we're done
         if !changed {
@@ -383,7 +224,7 @@ impl RDataExplorer {
         //
         // Consider: there may be a cheaper way to test the schema for changes
         // than regenerating it, but it'd be a lot more complicated.
-        let new_shape = match r_task(|| Self::r_get_shape(self.table.get()?.clone())) {
+        let new_shape = match Self::get_shape(self.table.get().clone()) {
             Ok(shape) => shape,
             Err(_) => {
                 // The most likely cause of this error is that the object is no
@@ -426,7 +267,7 @@ impl RDataExplorer {
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
             if self.sort_keys.len() > 0 {
-                self.sorted_indices = Some(r_task(|| self.r_sort_rows())?);
+                self.sorted_indices = Some(self.sort_rows()?);
             }
 
             // Recompute and apply filters and sorts.
@@ -437,8 +278,7 @@ impl RDataExplorer {
             DataExplorerFrontendEvent::DataUpdate
         };
 
-        self.comm
-            .outgoing_tx
+        ctx.outgoing_tx
             .send(CommMsg::Data(serde_json::to_value(event)?))?;
         Ok(true)
     }
@@ -479,6 +319,7 @@ impl RDataExplorer {
     fn handle_rpc(
         &mut self,
         req: DataExplorerBackendRequest,
+        ctx: &CommHandlerContext,
     ) -> anyhow::Result<DataExplorerBackendReply> {
         match req {
             DataExplorerBackendRequest::GetSchema(GetSchemaParams { column_indices }) => {
@@ -488,7 +329,7 @@ impl RDataExplorer {
             DataExplorerBackendRequest::GetDataValues(GetDataValuesParams {
                 columns,
                 format_options,
-            }) => r_task(|| self.r_get_data_values(columns, format_options)),
+            }) => self.get_data_values(columns, format_options),
 
             DataExplorerBackendRequest::SetSortColumns(SetSortColumnsParams {
                 sort_keys: keys,
@@ -500,7 +341,7 @@ impl RDataExplorer {
                 // indices; otherwise, sort the rows and save the result
                 self.sorted_indices = match keys.len() {
                     0 => None,
-                    _ => Some(r_task(|| self.r_sort_rows())?),
+                    _ => Some(self.sort_rows()?),
                 };
 
                 // Apply sorts to the filtered indices to create view indices
@@ -532,15 +373,13 @@ impl RDataExplorer {
             },
 
             DataExplorerBackendRequest::GetColumnProfiles(params) => {
-                // We respond imediately to this request, but first we launch an R idle task that will
-                // be responsible to compute the column profiles.
-                // This idle task yieldsß to the main event loop whenver possible, in order to allow for
-                // other requests to be computed.
-                self.launch_get_column_profiles_handler(params);
+                // We respond immediately to this request, but first we launch an
+                // R idle task that will compute the column profiles.
+                self.launch_get_column_profiles_handler(params, &ctx.outgoing_tx);
                 Ok(DataExplorerBackendReply::GetColumnProfilesReply())
             },
 
-            DataExplorerBackendRequest::GetState => r_task(|| self.r_get_state()),
+            DataExplorerBackendRequest::GetState => self.get_state(),
 
             DataExplorerBackendRequest::OpenDataset(_) => {
                 return Err(anyhow!("Data Explorer: Not yet supported"));
@@ -553,8 +392,7 @@ impl RDataExplorer {
             },
 
             DataExplorerBackendRequest::GetRowLabels(req) => {
-                let row_labels =
-                    r_task(|| self.r_get_row_labels(req.selection, &req.format_options))?;
+                let row_labels = self.get_row_labels(req.selection, &req.format_options)?;
                 Ok(DataExplorerBackendReply::GetRowLabelsReply(
                     TableRowLabels {
                         row_labels: vec![row_labels],
@@ -567,7 +405,7 @@ impl RDataExplorer {
                 format,
             }) => Ok(DataExplorerBackendReply::ExportDataSelectionReply(
                 ExportedData {
-                    data: self.r_export_data_selection(selection, format.clone())?,
+                    data: self.export_data_selection(selection, format.clone())?,
                     format,
                 },
             )),
@@ -581,9 +419,33 @@ impl RDataExplorer {
     }
 }
 
-// Methods that must be run on the main R thread
+impl CommHandler for RDataExplorer {
+    fn open_metadata(&self) -> serde_json::Value {
+        serde_json::json!({ "title": self.title })
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        handle_rpc_request(&ctx.outgoing_tx, DATA_EXPLORER_COMM_NAME, msg, |req| {
+            self.handle_rpc(req, ctx)
+        });
+    }
+
+    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution = event else {
+            return;
+        };
+        match self.update(ctx) {
+            Ok(true) => {},
+            Ok(false) => ctx.close_on_exit(),
+            Err(err) => {
+                log::error!("Error while checking environment for data viewer update: {err}");
+            },
+        }
+    }
+}
+
 impl RDataExplorer {
-    pub(crate) fn r_get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
+    pub(crate) fn get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
         unsafe {
             let table = table.clone();
 
@@ -668,19 +530,23 @@ impl RDataExplorer {
         }
     }
 
-    fn launch_get_column_profiles_handler(&self, params: GetColumnProfilesParams) {
+    fn launch_get_column_profiles_handler(
+        &self,
+        params: GetColumnProfilesParams,
+        outgoing_tx: &CommOutgoingTx,
+    ) {
         let id = params.callback_id.clone();
 
         let params = ProcessColumnsProfilesParams {
-            table: self.table.clone(),
+            table: self.table.clone_for_task(),
             indices: self.filtered_indices.clone(),
             kind: self.shape.kind,
             request: params,
         };
-        let comm = self.comm.clone();
+        let outgoing_tx = outgoing_tx.clone();
         r_task::spawn_idle(async move |_| {
             log::trace!("Processing GetColumnProfile request: {id}");
-            handle_columns_profiles_requests(params, comm)
+            handle_columns_profiles_requests(params, outgoing_tx)
                 .instrument(tracing::info_span!("get_columns_profile", ns = id))
                 .await
                 .context("Unable to handle get_columns_profile")
@@ -692,7 +558,7 @@ impl RDataExplorer {
     /// self.sort_keys.
     ///
     /// Returns a vector containing the sorted row indices.
-    fn r_sort_rows(&self) -> anyhow::Result<Vec<i32>> {
+    fn sort_rows(&self) -> anyhow::Result<Vec<i32>> {
         let mut order = RFunction::new("base", "order");
 
         // Allocate a vector to hold the sort order for each column
@@ -702,7 +568,7 @@ impl RDataExplorer {
         for key in &self.sort_keys {
             // Get the column to sort by
             order.add(tbl_get_column(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 key.column_index as i32,
                 self.shape.kind,
             )?);
@@ -723,7 +589,7 @@ impl RDataExplorer {
     ///
     /// Returns a tuple containing a vector of all the row indices that pass the filters and
     /// a character vector of errors, where None means no error happened.
-    fn r_filter_rows(&self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
+    fn filter_rows(&self) -> anyhow::Result<(Vec<i32>, Vec<Option<String>>)> {
         let mut filters: Vec<RObject> = vec![];
 
         // Shortcut: If there are no row filters, the filtered indices include
@@ -748,7 +614,7 @@ impl RDataExplorer {
         // Pass the row filters to R and get the resulting row indices
         let filters = RObject::try_from(filters)?;
         let result: HashMap<String, RObject> = RFunction::new("", ".ps.filter_rows")
-            .param("table", self.table.get()?.sexp)
+            .param("table", self.table.get().sexp)
             .param("row_filters", filters)
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
@@ -776,7 +642,7 @@ impl RDataExplorer {
             return Ok((None, None));
         }
 
-        let (indices, errors) = r_task(|| self.r_filter_rows())?;
+        let (indices, errors) = self.filter_rows()?;
         // this is called for the side-effect of updating the row_filters with validty status and
         // error messages
         let had_errors = Some(self.apply_filter_errors(errors)?);
@@ -1046,9 +912,9 @@ impl RDataExplorer {
         }))
     }
 
-    fn r_get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
+    fn get_state(&self) -> anyhow::Result<DataExplorerBackendReply> {
         let row_names = RFunction::new("base", "row.names")
-            .add(self.table.get()?)
+            .add(self.table.get().clone())
             .call_in(ARK_ENVS.positron_ns)?;
 
         let state = BackendState {
@@ -1165,7 +1031,7 @@ impl RDataExplorer {
         Ok(DataExplorerBackendReply::GetStateReply(state))
     }
 
-    fn r_get_data_values(
+    fn get_data_values(
         &self,
         columns: Vec<ColumnSelection>,
         format_options: FormatOptions,
@@ -1173,7 +1039,7 @@ impl RDataExplorer {
         let mut column_data: Vec<Vec<ColumnValue>> = Vec::with_capacity(columns.len());
         for selection in columns {
             let tbl = tbl_subset_with_view_indices(
-                self.table.get()?.sexp,
+                self.table.get().sexp,
                 &self.view_indices,
                 Some(self.get_row_selection_indices(selection.spec)),
                 Some(vec![selection.column_index]),
@@ -1192,13 +1058,13 @@ impl RDataExplorer {
         Ok(DataExplorerBackendReply::GetDataValuesReply(response))
     }
 
-    fn r_get_row_labels(
+    fn get_row_labels(
         &self,
         selection: ArraySelection,
         format_options: &FormatOptions,
     ) -> anyhow::Result<Vec<String>> {
         let tbl = tbl_subset_with_view_indices(
-            self.table.get()?.sexp,
+            self.table.get().sexp,
             &self.view_indices,
             Some(self.get_row_selection_indices(selection)),
             Some(vec![]), // Use empty vec, because we only need the row names.
@@ -1245,19 +1111,17 @@ impl RDataExplorer {
         }
     }
 
-    fn r_export_data_selection(
+    fn export_data_selection(
         &self,
         selection: TableSelection,
         format: ExportFormat,
     ) -> anyhow::Result<String> {
-        r_task(|| {
-            export_selection::export_selection(
-                self.table.get()?.sexp,
-                &self.view_indices,
-                selection,
-                format,
-            )
-        })
+        export_selection::export_selection(
+            self.table.get().sexp,
+            &self.view_indices,
+            selection,
+            format,
+        )
     }
 
     /// Suggest code syntax for code conversion
@@ -1279,7 +1143,7 @@ impl RDataExplorer {
             .map(|b| b.name.as_str())
             .or_else(|| Some(self.title.as_str()));
 
-        // Resolve column names for sort keys using the same pattern as r_sort_rows()
+        // Resolve column names for sort keys using the same pattern as `sort_rows()`
         let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params
             .sort_keys
             .iter()
@@ -1325,10 +1189,6 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     let title = RObject::new(title);
     let title = unwrap!(String::try_from(title), Err(_) => "".to_string());
 
-    let console = Console::get();
-    let comm_event_tx = console.get_comm_event_tx().clone();
-    let iopub_tx = console.get_iopub_tx().clone();
-
     // If an environment is provided, watch the variable in the environment
     let env_info = if env != R_NilValue {
         let var_obj = RObject::new(var);
@@ -1336,7 +1196,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         match String::try_from(var_obj.clone()) {
             Ok(var_name) => Some(DataObjectEnvInfo {
                 name: var_name,
-                env: RThreadSafe::new(RObject::new(env)),
+                env: RObject::new(env),
             }),
             Err(_) => {
                 // If the variable name can't be converted to a string, don't
@@ -1352,7 +1212,8 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         None
     };
 
-    RDataExplorer::start(title, x, env_info, comm_event_tx, iopub_tx)?;
+    let explorer = RDataExplorer::new(title, x, env_info)?;
+    Console::get_mut().comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
     Ok(R_NilValue)
 }

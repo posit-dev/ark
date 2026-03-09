@@ -15,8 +15,6 @@ use crate::object::RObject;
 use crate::r_env_binding_is_active;
 use crate::symbol::RSymbol;
 
-const FRAME_LOCK_MASK: std::ffi::c_int = 1 << 14;
-
 #[derive(Clone, Debug)]
 pub struct Environment {
     pub inner: RObject,
@@ -76,16 +74,14 @@ impl Environment {
     }
 
     pub fn parent(&self) -> Option<Environment> {
-        unsafe {
-            let parent = ENCLOS(self.inner.sexp);
-            if parent == R_ENVS.empty {
-                None
-            } else {
-                Some(Self::new_filtered(
-                    RObject::new(parent),
-                    self.filter.clone(),
-                ))
-            }
+        let parent = crate::r::env_parent(self.inner.sexp);
+        if parent == R_ENVS.empty {
+            None
+        } else {
+            Some(Self::new_filtered(
+                RObject::new(parent),
+                self.filter.clone(),
+            ))
         }
     }
 
@@ -211,11 +207,6 @@ impl Environment {
         }
     }
 
-    pub fn unlock(&self) {
-        let unlocked_mask = self.flags() & !FRAME_LOCK_MASK;
-        unsafe { libr::SET_ENVFLAGS(self.inner.sexp, unlocked_mask) }
-    }
-
     pub fn lock_binding(&self, name: RSymbol) {
         unsafe {
             libr::R_LockBinding(name.sexp, self.inner.sexp);
@@ -238,10 +229,6 @@ impl Environment {
 
     pub fn is_active(&self, name: RSymbol) -> harp::Result<bool> {
         r_env_binding_is_active(self.inner.sexp, name.sexp)
-    }
-
-    fn flags(&self) -> std::ffi::c_int {
-        unsafe { libr::ENVFLAGS(self.inner.sexp) }
     }
 
     pub fn as_list(&self) -> harp::Result<RObject> {
@@ -269,15 +256,6 @@ impl From<Environment> for RObject {
 // accessed from the R thread.
 unsafe impl Send for REnvs {}
 unsafe impl Sync for REnvs {}
-
-#[harp::register]
-pub extern "C-unwind" fn ark_env_unlock(env: SEXP) -> crate::error::Result<SEXP> {
-    unsafe {
-        crate::check_env(env)?;
-        Environment::view(env).unlock();
-        Ok(libr::R_NilValue)
-    }
-}
 
 pub fn r_ns_env(name: &str) -> anyhow::Result<Environment> {
     let registry = Environment::new(unsafe { R_NamespaceRegistry.into() });
