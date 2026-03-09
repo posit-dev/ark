@@ -103,6 +103,7 @@ mod console_comm;
 mod console_debug;
 mod console_error;
 mod console_filter;
+mod console_integration;
 mod console_repl;
 
 use console_annotate::annotate_input;
@@ -114,7 +115,6 @@ pub(crate) use console_debug::FrameSource;
 use console_error::stack_overflow_occurred;
 use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
-#[cfg(test)]
 pub(crate) use console_repl::console_inputs;
 pub(crate) use console_repl::r_busy;
 pub(crate) use console_repl::r_polled_events;
@@ -128,6 +128,7 @@ pub(crate) use console_repl::ConsoleNotification;
 pub(crate) use console_repl::ConsoleOutputCapture;
 pub(crate) use console_repl::KernelInfo;
 use console_repl::PendingInputs;
+use console_repl::PromptInfo;
 use console_repl::ReadConsolePendingAction;
 pub use console_repl::SessionMode;
 
