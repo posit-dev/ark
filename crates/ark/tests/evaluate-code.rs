@@ -80,3 +80,18 @@ fn test_evaluate_code_output_and_value() {
         })
     );
 }
+
+#[test]
+fn test_evaluate_code_warning_capture() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    let reply = evaluate_code(&frontend, &comm_id, "{ warning('watch out'); 42 }");
+    match &reply {
+        UiBackendReply::EvaluateCodeReply(eval) => {
+            assert_eq!(eval.result, serde_json::Value::from(42.0));
+            assert!(eval.output.contains("watch out"));
+        },
+        other => panic!("Expected EvaluateCodeReply, got: {other:?}"),
+    }
+}
