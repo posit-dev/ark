@@ -18,6 +18,16 @@ pub type Param = serde_json::Value;
 /// The method result
 pub type CallMethodResult = serde_json::Value;
 
+/// The results of evaluating the statement
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EvalResult {
+	/// The result value
+	pub result: serde_json::Value,
+
+	/// The output, if any, emitted during evaluation
+	pub output: String
+}
+
 /// Editor metadata
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct EditorContext {
@@ -164,6 +174,13 @@ pub struct CallMethodParams {
 
 	/// The parameters for `method`
 	pub params: Vec<Param>,
+}
+
+/// Parameters for the EvaluateCode method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct EvaluateCodeParams {
+	/// The code string to evaluate
+	pub code: String,
 }
 
 /// Parameters for the EditorContextChanged method.
@@ -414,6 +431,12 @@ pub enum UiBackendRequest {
 	#[serde(rename = "call_method")]
 	CallMethod(CallMethodParams),
 
+	/// Evaluate a statement in the interpreter
+	///
+	/// Execute a code fragment silently and return a JSON-serialized result.
+	#[serde(rename = "evaluate_code")]
+	EvaluateCode(EvaluateCodeParams),
+
 	/// Active editor context changed
 	///
 	/// This notification is sent from the frontend to the backend when the
@@ -436,6 +459,9 @@ pub enum UiBackendReply {
 
 	/// The method result
 	CallMethodReply(CallMethodResult),
+
+	/// The results of evaluating the statement
+	EvaluateCodeReply(EvalResult),
 
 	/// Unused response to notification
 	EditorContextChangedReply(),

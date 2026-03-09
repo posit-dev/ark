@@ -636,6 +636,33 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive a CommMsg and Idle from IOPub in either order.
+    ///
+    /// Some comm RPC replies race with the shell's Idle status because the
+    /// reply is sent from a separate thread (e.g. the UI comm thread). This
+    /// helper accepts both orderings and returns the CommMsg content.
+    #[track_caller]
+    pub fn recv_iopub_comm_msg_and_idle(&self) -> amalthea::wire::comm_msg::CommWireMsg {
+        let first = self.recv_iopub_next();
+        let second = self.recv_iopub_next();
+
+        let (comm_msg, idle) = match (first, second) {
+            (Message::CommMsg(comm), Message::Status(status)) => (comm, status),
+            (Message::Status(status), Message::CommMsg(comm)) => (comm, status),
+            (a, b) => panic!("Expected CommMsg and Idle in either order, got {:?} and {:?}", a, b),
+        };
+
+        assert_eq!(
+            idle.content.execution_state,
+            amalthea::wire::status::ExecutionState::Idle,
+            "Expected Idle status"
+        );
+
+        self.flush_streams_at_boundary();
+
+        comm_msg.content
+    }
+
     /// Receive from IOPub and assert CommOpen message.
     /// Automatically skips any Stream messages.
     #[track_caller]
@@ -1056,10 +1083,10 @@ impl DummyArkFrontend {
     /// request to synchronize. After this call,
     /// `should_use_dynamic_plots()` returns true.
     #[track_caller]
-    pub fn open_ui_comm(&self) {
+    pub fn open_ui_comm(&self) -> String {
         let comm_id = uuid::Uuid::new_v4().to_string();
         self.send_shell(CommOpen {
-            comm_id,
+            comm_id: comm_id.clone(),
             target_name: String::from("positron.ui"),
             data: serde_json::json!({}),
         });
@@ -1112,6 +1139,8 @@ impl DummyArkFrontend {
             }
             // Discard late comm messages and other events
         }
+
+        comm_id
     }
 
     /// Source a file that was created with `SourceFile::new()`.
