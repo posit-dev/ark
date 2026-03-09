@@ -636,6 +636,33 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive a CommMsg and Idle from IOPub in either order.
+    ///
+    /// Some comm RPC replies race with the shell's Idle status because the
+    /// reply is sent from a separate thread (e.g. the UI comm thread). This
+    /// helper accepts both orderings and returns the CommMsg content.
+    #[track_caller]
+    pub fn recv_iopub_comm_msg_and_idle(&self) -> amalthea::wire::comm_msg::CommWireMsg {
+        let first = self.recv_iopub_next();
+        let second = self.recv_iopub_next();
+
+        let (comm_msg, idle) = match (first, second) {
+            (Message::CommMsg(comm), Message::Status(status)) => (comm, status),
+            (Message::Status(status), Message::CommMsg(comm)) => (comm, status),
+            (a, b) => panic!("Expected CommMsg and Idle in either order, got {:?} and {:?}", a, b),
+        };
+
+        assert_eq!(
+            idle.content.execution_state,
+            amalthea::wire::status::ExecutionState::Idle,
+            "Expected Idle status"
+        );
+
+        self.flush_streams_at_boundary();
+
+        comm_msg.content
+    }
+
     /// Receive from IOPub and assert CommOpen message.
     /// Automatically skips any Stream messages.
     #[track_caller]
