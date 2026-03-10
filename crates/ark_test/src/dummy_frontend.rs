@@ -1106,54 +1106,40 @@ impl DummyArkFrontend {
             data: serde_json::json!({}),
         });
 
-        // The comm_open triggers busy/idle on the shell thread and also
-        // sends an EstablishUiCommChannel kernel request to the console.
-        // The UI comm then sends events (prompt_state, working_directory)
-        // as CommMsg on IOPub. These can arrive in any order relative to
-        // the busy/idle. We wait for the prompt_state CommMsg as evidence
-        // that the UI comm has been established, draining everything.
-        let deadline = Instant::now() + RECV_TIMEOUT;
-        let mut got_prompt_state = false;
-        let mut idle_count = 0u32;
+        // The UI comm now runs on the R thread via CommHandler. The
+        // comm_open blocks Shell while the handler's `handle_open()` runs,
+        // so events (prompt_state, working_directory) arrive
+        // deterministically within the Busy/Idle window.
+        self.recv_iopub_busy();
 
-        // We need to see the prompt_state AND at least one idle
-        while !got_prompt_state || idle_count == 0 {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let Some(msg) = self.recv_iopub_with_timeout(remaining) else {
-                panic!(
-                    "Timed out waiting for UI comm (got_prompt_state={got_prompt_state}, \
-                     idle_count={idle_count})"
-                );
-            };
-            match &msg {
-                Message::CommMsg(data) => {
-                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str()) {
-                        if method == "prompt_state" {
-                            got_prompt_state = true;
-                        }
-                    }
+        // Drain the initial events sent by `handle_open()` (prompt_state,
+        // working_directory). We don't assert on their content here.
+        let mut comm_msg_count = 0;
+        loop {
+            let msg = self.recv_iopub_next();
+            match msg {
+                Message::CommMsg(_) => {
+                    comm_msg_count += 1;
                 },
                 Message::Status(ref data)
                     if data.content.execution_state ==
                         amalthea::wire::status::ExecutionState::Idle =>
                 {
-                    idle_count += 1;
+                    self.flush_streams_at_boundary();
+                    break;
                 },
                 Message::Stream(ref data) => {
                     self.buffer_stream(&data.content);
                 },
-                _ => {},
+                other => panic!("Unexpected message during open_ui_comm: {other:?}"),
             }
         }
 
-        // The UI comm sends events asynchronously. Some may arrive after
-        // idle. Drain any stragglers with a short timeout.
-        while let Some(msg) = self.recv_iopub_with_timeout(Duration::from_millis(200)) {
-            if let Message::Stream(ref data) = msg {
-                self.buffer_stream(&data.content);
-            }
-            // Discard late comm messages and other events
-        }
+        // We expect at least the prompt_state event
+        assert!(
+            comm_msg_count >= 1,
+            "Expected at least 1 comm event from UI comm open, got {comm_msg_count}"
+        );
 
         comm_id
     }

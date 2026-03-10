@@ -11,69 +11,24 @@ use super::*;
 
 /// UI comm integration.
 impl Console {
-    pub(super) fn handle_establish_ui_comm_channel(
-        &mut self,
-        ui_comm_tx: Sender<UiCommMessage>,
-        info: &PromptInfo,
-    ) {
-        if self.ui_comm_tx.is_some() {
-            log::info!("Replacing an existing UI comm channel.");
-        }
-
-        // Create and store the sender channel
-        self.ui_comm_tx = Some(UiCommSender::new(ui_comm_tx));
-
-        // Go ahead and do an initial refresh
-        self.with_mut_ui_comm_tx(|ui_comm_tx| {
-            let input_prompt = info.input_prompt.clone();
-            let continuation_prompt = info.continuation_prompt.clone();
-
-            ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
-        });
-    }
-
     pub(crate) fn session_mode(&self) -> SessionMode {
         self.session_mode
     }
 
-    pub(crate) fn get_ui_comm_tx(&self) -> Option<&UiCommSender> {
-        self.ui_comm_tx.as_ref()
-    }
-
-    fn get_mut_ui_comm_tx(&mut self) -> Option<&mut UiCommSender> {
-        self.ui_comm_tx.as_mut()
-    }
-
-    pub(super) fn with_ui_comm_tx<F>(&self, f: F)
-    where
-        F: FnOnce(&UiCommSender),
-    {
-        match self.get_ui_comm_tx() {
-            Some(ui_comm_tx) => f(ui_comm_tx),
-            None => {
-                // Trace level logging, its typically not a bug if the frontend
-                // isn't connected. Happens in all Jupyter use cases.
-                log::trace!("UI comm isn't connected, dropping `f`.");
-            },
-        }
-    }
-
-    pub(super) fn with_mut_ui_comm_tx<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&mut UiCommSender),
-    {
-        match self.get_mut_ui_comm_tx() {
-            Some(ui_comm_tx) => f(ui_comm_tx),
-            None => {
-                // Trace level logging, its typically not a bug if the frontend
-                // isn't connected. Happens in all Jupyter use cases.
-                log::trace!("UI comm isn't connected, dropping `f`.");
-            },
-        }
+    /// Send a `UiFrontendEvent` to the frontend via the UI comm, if connected.
+    /// Silently drops the event if no UI comm is open (common in Jupyter).
+    pub(crate) fn send_ui_event(&self, event: &UiFrontendEvent) {
+        let Some(reg) = self.comms.get(self.ui_comm_id.as_deref().unwrap_or("")) else {
+            log::trace!("UI comm isn't connected, dropping event.");
+            return;
+        };
+        send_ui_event(&reg.ctx.outgoing_tx, event);
     }
 
     pub(crate) fn is_ui_comm_connected(&self) -> bool {
-        self.get_ui_comm_tx().is_some()
+        self.ui_comm_id
+            .as_deref()
+            .is_some_and(|id| self.comms.contains_key(id))
     }
 
     pub(crate) fn call_frontend_method(
@@ -82,24 +37,27 @@ impl Console {
     ) -> anyhow::Result<RObject> {
         log::trace!("Calling frontend method {request:?}");
 
-        let ui_comm_tx = self.get_ui_comm_tx().ok_or_else(|| {
-            anyhow::anyhow!("UI comm is not connected. Can't execute request {request:?}")
-        })?;
+        if !self.is_ui_comm_connected() {
+            return Err(anyhow!(
+                "UI comm is not connected. Can't execute request {request:?}"
+            ));
+        }
 
         let (reply_tx, reply_rx) = bounded(1);
 
         let Some(req) = &self.active_request else {
-            return Err(anyhow::anyhow!(
+            return Err(anyhow!(
                 "No active request. Can't execute request {request:?}"
             ));
         };
 
-        // Forward request to UI comm
-        ui_comm_tx.send_request(UiCommFrontendRequest {
+        // Forward request directly to the stdin channel
+        let comm_msg = StdInRequest::Comm(UiCommFrontendRequest {
             originator: req.originator.clone(),
             reply_tx,
             request: request.clone(),
         });
+        self.stdin_request_tx.send(comm_msg)?;
 
         // Block for reply
         let reply = reply_rx.recv().unwrap();
@@ -112,7 +70,7 @@ impl Console {
                     // Deserialize to Rust first to verify the OpenRPC contract.
                     // Errors are propagated to R.
                     if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
-                        return Err(anyhow::anyhow!(
+                        return Err(anyhow!(
                             "Can't deserialize RPC reply for {request:?}:\n{err:?}"
                         ));
                     }
@@ -123,7 +81,7 @@ impl Console {
                 JsonRpcReply::Error(reply) => {
                     let message = reply.error.message;
 
-                    Err(anyhow::anyhow!(
+                    Err(anyhow!(
                         "While calling frontend method:\n\
                          {message}",
                     ))

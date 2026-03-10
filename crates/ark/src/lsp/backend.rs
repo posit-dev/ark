@@ -113,9 +113,7 @@ fn report_crash() {
             message: String::from(user_message),
         });
 
-        if let Some(ui_comm_tx) = Console::get().get_ui_comm_tx() {
-            ui_comm_tx.send_event(event);
-        }
+        Console::get().send_ui_event(&event);
     });
 }
 
