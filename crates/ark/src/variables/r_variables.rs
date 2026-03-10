@@ -361,7 +361,7 @@ impl RVariables {
             let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
                 .map_err(|err| harp::Error::Anyhow(err))?;
             let viewer_id = Console::get_mut()
-                .comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
+                .comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
                 .map_err(|err| harp::Error::Anyhow(err))?;
             Ok(Some(viewer_id))
         })

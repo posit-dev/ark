@@ -112,10 +112,7 @@ pub unsafe extern "C-unwind" fn ps_html_viewer(
 
                     // TODO: What's the right thing to do in `Console` mode when
                     // we aren't connected to Positron? Right now we error.
-                    if !console.is_ui_comm_connected() {
-                        return Err(anyhow::anyhow!("UI comm not connected."));
-                    }
-                    console.send_ui_event(&event);
+                    console.try_ui_comm()?.send_event(&event);
                 },
             }
         },

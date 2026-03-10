@@ -212,15 +212,6 @@ pub(super) struct PromptInfo {
     /// case of a browser prompt or a readline prompt.
     pub(super) input_prompt: String,
 
-    /// The continuation prompt string when user supplies incomplete
-    /// inputs. This always corresponds to `getOption("continue")`. We send
-    /// it to frontends along with `prompt` because some frontends such as
-    /// Positron do not send incomplete inputs to Ark and take charge of
-    /// continuation prompts themselves. For frontends that can send
-    /// incomplete inputs to Ark, like Jupyter Notebooks, we immediately
-    /// error on them rather than requesting that this be shown.
-    pub(super) continuation_prompt: String,
-
     /// The kind of prompt we're handling.
     pub(super) kind: PromptKind,
 }
@@ -881,7 +872,7 @@ impl Console {
             self.pending_inputs = None;
 
             // Reply to active request with error, then fall through to event loop
-            self.handle_active_request(&info, ConsoleValue::Error(exception));
+            self.handle_active_request(ConsoleValue::Error(exception));
         } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input from the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
@@ -892,7 +883,7 @@ impl Console {
             // Otherwise reply to active request with accumulated result, then
             // fall through to event loop
             let result = self.take_result();
-            self.handle_active_request(&info, ConsoleValue::Success(result));
+            self.handle_active_request(ConsoleValue::Success(result));
         }
 
         // In the future we'll also send browser information, see
@@ -1022,7 +1013,7 @@ impl Console {
                 // We've got a kernel request
                 i if i == kernel_request_index => {
                     let req = oper.recv(&kernel_request_rx).unwrap();
-                    self.handle_kernel_request(req, &info);
+                    self.handle_kernel_request(req);
                 },
 
                 // An interrupt task woke us up
@@ -1064,10 +1055,6 @@ impl Console {
         let prompt_slice = unsafe { CStr::from_ptr(prompt_c) };
         let prompt = prompt_slice.to_string_lossy().into_owned();
 
-        // Sent to the frontend after each top-level command so users can
-        // customise their prompts
-        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
-
         // Detect browser prompt by matching the prompt string
         // https://github.com/posit-dev/positron/issues/4742.
         // There are ways to break this detection, for instance setting
@@ -1089,7 +1076,6 @@ impl Console {
 
         return PromptInfo {
             input_prompt: prompt,
-            continuation_prompt,
             kind,
         };
     }
@@ -1197,7 +1183,7 @@ impl Console {
         Some(exception)
     }
 
-    fn handle_active_request(&mut self, _info: &PromptInfo, value: ConsoleValue) {
+    fn handle_active_request(&mut self, value: ConsoleValue) {
         self.reset_global_env_rdebug();
 
         // If we get here we finished evaluating all pending inputs. Check if we
@@ -1337,7 +1323,7 @@ impl Console {
                     } else {
                         // Otherwise we got an empty input, e.g. `""` and there's
                         // nothing to do. Close active request.
-                        self.handle_active_request(info, ConsoleValue::Success(Default::default()));
+                        self.handle_active_request(ConsoleValue::Success(Default::default()));
 
                         // And return to event loop
                         None
@@ -1824,7 +1810,7 @@ impl Console {
         }
     }
 
-    fn handle_kernel_request(&mut self, req: KernelRequest, _info: &PromptInfo) {
+    fn handle_kernel_request(&mut self, req: KernelRequest) {
         log::trace!("Received kernel request {req:?}");
 
         match req {
@@ -2178,7 +2164,9 @@ impl Console {
         let busy = which != 0;
 
         // Send updated state to the frontend over the UI comm
-        self.send_ui_event(&UiFrontendEvent::Busy(BusyParams { busy }));
+        if let Some(ui) = self.ui_comm() {
+            ui.busy(busy);
+        }
     }
 
     /// Invoked by R to show a message to the user.
@@ -2186,8 +2174,12 @@ impl Console {
         let message = unsafe { CStr::from_ptr(buf) };
         let message = message.to_str().unwrap().to_string();
 
-        // Deliver message to the frontend over the UI comm
-        self.send_ui_event(&UiFrontendEvent::ShowMessage(ShowMessageParams { message }));
+        if let Some(ui) = self.ui_comm() {
+            ui.show_message(message);
+        } else {
+            // Should we emit the message in the Console?
+            log::info!("`show_message`: {message}")
+        }
     }
 
     /// Invoked by the R event loop

@@ -301,7 +301,7 @@ impl DeviceContext {
     /// [SessionMode::Console] mode.
     fn should_use_dynamic_plots(&self) -> bool {
         let console = Console::get();
-        console.is_ui_comm_connected() && console.session_mode() == SessionMode::Console
+        console.ui_comm().is_some() && console.session_mode() == SessionMode::Console
     }
 
     /// Deactivation hook

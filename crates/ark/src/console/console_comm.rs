@@ -3,7 +3,6 @@
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
-//
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
@@ -31,7 +30,6 @@ impl Console {
     }
 
     pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
-        // Clear UI comm ID if this is the UI comm being closed
         if self.ui_comm_id.as_deref() == Some(comm_id) {
             self.ui_comm_id = None;
         }
@@ -47,7 +45,7 @@ impl Console {
     ///
     /// Creates the `CommSocket` and `CommHandlerContext`, calls `handle_open`,
     /// sends `CommEvent::Opened` to amalthea, and returns the comm ID.
-    pub(crate) fn comm_register(
+    pub(crate) fn comm_open_backend(
         &mut self,
         comm_name: &str,
         mut handler: Box<dyn CommHandler>,
@@ -76,10 +74,10 @@ impl Console {
 
     /// Register a frontend-initiated comm on the R thread.
     ///
-    /// Unlike `comm_register` (which is for backend-initiated comms and sends
-    /// `CommEvent::Opened`), this is called when the frontend opened the comm.
-    /// The `CommSocket` already exists in amalthea's open_comms list, so we
-    /// only need to register the handler and call `handle_open`.
+    /// Unlike `comm_open_backend` (which is for backend-initiated comms and
+    /// sends `CommEvent::Opened`), this is called when the frontend opened the
+    /// comm. The `CommSocket` already exists in amalthea's open_comms list, so
+    /// we only need to register the handler and call `handle_open`.
     pub(super) fn comm_open_frontend(
         &mut self,
         comm_id: String,
@@ -91,8 +89,11 @@ impl Console {
         handler.handle_open(&ctx);
 
         if comm_name == UI_COMM_NAME {
-            if self.ui_comm_id.is_some() {
+            if let Some(old_id) = self.ui_comm_id.take() {
                 log::info!("Replacing an existing UI comm.");
+                if let Some(mut old) = self.comms.remove(&old_id) {
+                    old.handler.handle_close(&old.ctx);
+                }
             }
             self.ui_comm_id = Some(comm_id.clone());
         }
@@ -117,6 +118,11 @@ impl Console {
             .collect();
 
         for comm_id in closed_ids {
+            // We're not expecting the UI comm to close itself but we handle the
+            // case explicitly to be defensive
+            if self.ui_comm_id.as_deref() == Some(comm_id.as_str()) {
+                self.ui_comm_id = None;
+            }
             if let Some(reg) = self.comms.remove(&comm_id) {
                 self.comm_notify_closed(&comm_id, &reg);
             }

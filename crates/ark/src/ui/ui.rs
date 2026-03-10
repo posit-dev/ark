@@ -18,7 +18,6 @@ use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use amalthea::comm::ui_comm::WorkingDirectoryParams;
-use amalthea::socket::comm::CommOutgoingTx;
 use harp::eval::parse_eval_global;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -37,24 +36,30 @@ use crate::plots::graphics_device::GraphicsDeviceNotification;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
 
-/// Send a `UiFrontendEvent` as a `CommMsg::Data` on the given outgoing channel.
-pub fn send_ui_event(outgoing_tx: &CommOutgoingTx, event: &UiFrontendEvent) {
-    let Ok(json) = serde_json::to_value(event) else {
-        log::error!("Failed to serialize UI event");
-        return;
-    };
-    outgoing_tx.send(CommMsg::Data(json)).log_err();
-}
-
 /// Comm handler for the Positron UI comm.
-///
-/// Runs on the R thread via the `CommHandler` trait. Handles incoming RPCs
-/// from the frontend (e.g. `callMethod`, `evaluateCode`) and sends events
-/// to the frontend (e.g. prompt state, working directory changes).
 #[derive(Debug)]
 pub struct UiComm {
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     working_directory: PathBuf,
+}
+
+impl CommHandler for UiComm {
+    fn handle_open(&mut self, ctx: &CommHandlerContext) {
+        self.refresh(ctx);
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
+            self.handle_rpc(req)
+        });
+    }
+
+    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution = event else {
+            return;
+        };
+        self.refresh(ctx);
+    }
 }
 
 impl UiComm {
@@ -95,7 +100,7 @@ impl UiComm {
         let exists_obj = RFunction::from("exists")
             .param("x", method.clone())
             .call()?;
-        let exists = unsafe { RObject::to::<bool>(exists_obj) }?;
+        let exists: bool = exists_obj.try_into()?;
 
         if !exists {
             let method = &request.method;
@@ -156,16 +161,16 @@ impl UiComm {
             ConsoleOutputCapture::dummy()
         };
 
-        let eval_result = parse_eval_global(&params.code);
+        let value = parse_eval_global(&params.code);
 
         let output = capture.take();
         drop(capture);
 
-        match eval_result {
+        match value {
             Ok(evaluated) => {
-                let value = Value::try_from(evaluated)?;
+                let result = Value::try_from(evaluated)?;
                 Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
-                    result: value,
+                    result,
                     output,
                 }))
             },
@@ -181,26 +186,23 @@ impl UiComm {
         }
     }
 
-    fn send_refresh(&mut self, ctx: &CommHandlerContext) {
+    fn refresh(&mut self, ctx: &CommHandlerContext) {
         self.refresh_prompt_info(ctx);
-
-        if let Err(err) = self.refresh_working_directory(ctx) {
-            log::error!("Can't refresh working directory: {err:?}");
-        }
+        self.refresh_working_directory(ctx).log_err();
     }
 
     fn refresh_prompt_info(&self, ctx: &CommHandlerContext) {
-        let input_prompt = Self::get_r_option("prompt").unwrap_or_else(|| String::from("> "));
-        let continuation_prompt =
-            Self::get_r_option("continue").unwrap_or_else(|| String::from("+ "));
+        let input_prompt: String = harp::get_option("prompt")
+            .try_into()
+            .unwrap_or_else(|_| String::from("> "));
+        let continuation_prompt: String = harp::get_option("continue")
+            .try_into()
+            .unwrap_or_else(|_| String::from("+ "));
 
-        send_ui_event(
-            &ctx.outgoing_tx,
-            &UiFrontendEvent::PromptState(PromptStateParams {
-                input_prompt,
-                continuation_prompt,
-            }),
-        );
+        ctx.send_event(&UiFrontendEvent::PromptState(PromptStateParams {
+            input_prompt,
+            continuation_prompt,
+        }));
     }
 
     /// Checks for changes to the working directory, and sends an event to the
@@ -220,40 +222,12 @@ impl UiComm {
                 }
             }
 
-            send_ui_event(
-                &ctx.outgoing_tx,
-                &UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
-                    directory: new_working_directory.to_string_lossy().to_string(),
-                }),
-            );
+            ctx.send_event(&UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+                directory: new_working_directory.to_string_lossy().to_string(),
+            }));
         }
 
         Ok(())
-    }
-
-    fn get_r_option(name: &str) -> Option<String> {
-        let obj = RFunction::from("getOption").param("x", name).call().ok()?;
-        let value = Value::try_from(obj).ok()?;
-        value.as_str().map(String::from)
-    }
-}
-
-impl CommHandler for UiComm {
-    fn handle_open(&mut self, ctx: &CommHandlerContext) {
-        self.send_refresh(ctx);
-    }
-
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
-            self.handle_rpc(req)
-        });
-    }
-
-    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
-        let EnvironmentChanged::Execution = event else {
-            return;
-        };
-        self.send_refresh(ctx);
     }
 }
 
@@ -272,23 +246,24 @@ mod tests {
     use ark_test::dummy_jupyter_header;
     use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
-    use harp::exec::RFunction;
-    use harp::exec::RFunctionExt;
-    use harp::object::RObject;
     use serde_json::Value;
 
     use super::*;
     use crate::comm_handler::CommHandlerContext;
+    use crate::r_task;
 
     fn setup_ui_comm(
         iopub_tx: crossbeam::channel::Sender<IOPubMessage>,
     ) -> (UiComm, CommHandlerContext) {
         let comm_id = uuid::Uuid::new_v4().to_string();
+
         let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
         let (comm_event_tx, _) = bounded::<CommEvent>(10);
         let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
+
         let (graphics_device_tx, _) = tokio::sync::mpsc::unbounded_channel();
         let handler = UiComm::new(graphics_device_tx);
+
         (handler, ctx)
     }
 
@@ -296,17 +271,11 @@ mod tests {
     fn test_ui_comm() {
         let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-        let old_width = crate::r_task::r_task(move || {
+        let old_width = r_task(move || {
             let (mut handler, ctx) = setup_ui_comm(iopub_tx);
 
             // Get the current console width
-            let old_width = unsafe {
-                let width = RFunction::from("getOption")
-                    .param("x", "width")
-                    .call()
-                    .unwrap();
-                RObject::to::<i32>(width).unwrap()
-            };
+            let old_width: i32 = harp::get_option("width").try_into().unwrap();
 
             // Send a setConsoleWidth RPC
             let msg = CommMsg::Rpc {
@@ -321,13 +290,7 @@ mod tests {
             handler.handle_msg(msg, &ctx);
 
             // Assert that the console width changed
-            let new_width = unsafe {
-                let width = RFunction::from("getOption")
-                    .param("x", "width")
-                    .call()
-                    .unwrap();
-                RObject::to::<i32>(width).unwrap()
-            };
+            let new_width: i32 = harp::get_option("width").try_into().unwrap();
             assert_eq!(new_width, 123);
 
             // Now try to invoke an RPC that doesn't exist
@@ -374,7 +337,7 @@ mod tests {
     fn test_evaluate_code() {
         let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-        crate::r_task::r_task(move || {
+        r_task(move || {
             let (mut handler, ctx) = setup_ui_comm(iopub_tx);
 
             // Pure result with no output (e.g. 1 + 1)
