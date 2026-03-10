@@ -649,7 +649,10 @@ impl DummyArkFrontend {
         let (comm_msg, idle) = match (first, second) {
             (Message::CommMsg(comm), Message::Status(status)) => (comm, status),
             (Message::Status(status), Message::CommMsg(comm)) => (comm, status),
-            (a, b) => panic!("Expected CommMsg and Idle in either order, got {:?} and {:?}", a, b),
+            (a, b) => panic!(
+                "Expected CommMsg and Idle in either order, got {:?} and {:?}",
+                a, b
+            ),
         };
 
         assert_eq!(

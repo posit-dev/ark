@@ -440,8 +440,8 @@ impl Into<String> for FormattedValue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::r_task;
     use crate::fixtures::package_is_installed;
+    use crate::r_task;
 
     fn default_options() -> FormatOptions {
         FormatOptions {
@@ -681,8 +681,10 @@ mod tests {
                 return;
             }
 
-            let data =
-                harp::parse_eval_global("survival::Surv(survival::lung$time[1:5], survival::lung$status[1:5])").unwrap();
+            let data = harp::parse_eval_global(
+                "survival::Surv(survival::lung$time[1:5], survival::lung$status[1:5])",
+            )
+            .unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("306".to_string()),

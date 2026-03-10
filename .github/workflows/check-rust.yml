@@ -1,0 +1,21 @@
+name: "Check Rust"
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  formatting:
+    name: "Check formatting"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Our `.rustfmt.toml` does use some nightly rules
+      - name: "Install rustfmt"
+        run: rustup component add rustfmt --toolchain nightly
+
+      - name: "Check formatting"
+        run: cargo +nightly fmt --all --check

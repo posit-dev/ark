@@ -133,8 +133,8 @@ mod tests {
 
     use crate::fixtures::point_from_cursor;
     use crate::lsp::completions::sources::unique::subset::completions_from_string_subset;
-    use crate::lsp::document_context::DocumentContext;
     use crate::lsp::document::Document;
+    use crate::lsp::document_context::DocumentContext;
     use crate::r_task;
     use crate::treesitter::node_find_string;
 

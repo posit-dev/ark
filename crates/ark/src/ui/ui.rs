@@ -504,12 +504,7 @@ mod tests {
         );
 
         // Test 2: Code that returns a value
-        let reply = send_evaluate_code(
-            &comm_socket,
-            &iopub_rx,
-            "eval-2",
-            "isTRUE(cat('oatmeal'))",
-        );
+        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-2", "isTRUE(cat('oatmeal'))");
         assert_eq!(
             reply,
             UiBackendReply::EvaluateCodeReply(EvalResult {
