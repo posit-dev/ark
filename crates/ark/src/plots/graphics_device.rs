@@ -776,7 +776,7 @@ impl DeviceContext {
         let outgoing_tx = CommOutgoingTx::new(comm_id, self.iopub_tx.clone());
         outgoing_tx
             .send(CommMsg::Data(value))
-            .context("Failed to send update message for id {id}.")
+            .context(format!("Failed to send update message for id {id}."))
             .log_err();
     }
 
