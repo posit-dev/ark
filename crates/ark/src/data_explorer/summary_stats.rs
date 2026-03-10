@@ -93,7 +93,10 @@ fn summary_stats_number(
         let reformat_as_whole_number = |value: Option<String>| -> Option<String> {
             value.and_then(|v| {
                 // Remove thousands separator, parse, and format as integer
-                v.replace(',', "").parse::<f64>().ok().map(|num| format!("{:.0}", num))
+                v.replace(',', "")
+                    .parse::<f64>()
+                    .ok()
+                    .map(|num| format!("{:.0}", num))
             })
         };
 
@@ -232,8 +235,8 @@ mod tests {
     fn test_numeric_summary() {
         crate::r_task(|| {
             let column = harp::parse_eval_global("c(1,2,3,4,5, NA)").unwrap();
-            let stats =
-                summary_stats(column.sexp, ColumnDisplayType::Floating, &default_options()).unwrap();
+            let stats = summary_stats(column.sexp, ColumnDisplayType::Floating, &default_options())
+                .unwrap();
             let expected = SummaryStatsNumber {
                 min_value: Some("1.00".to_string()),
                 max_value: Some("5.00".to_string()),
@@ -266,8 +269,8 @@ mod tests {
     fn test_numeric_all_nas() {
         crate::r_task(|| {
             let column = harp::parse_eval_global("c(NA_real_, NA_real_, NA_real_)").unwrap();
-            let stats =
-                summary_stats(column.sexp, ColumnDisplayType::Floating, &default_options()).unwrap();
+            let stats = summary_stats(column.sexp, ColumnDisplayType::Floating, &default_options())
+                .unwrap();
             let expected = SummaryStatsNumber {
                 min_value: None,
                 max_value: None,

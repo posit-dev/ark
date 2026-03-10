@@ -231,9 +231,9 @@ fn format_value_for_r(display_type: &ColumnDisplayType, value: &str) -> String {
         },
 
         // For numbers, no quotes needed
-        ColumnDisplayType::Integer |
-        ColumnDisplayType::Floating |
-        ColumnDisplayType::Decimal => value.to_string(),
+        ColumnDisplayType::Integer | ColumnDisplayType::Floating | ColumnDisplayType::Decimal => {
+            value.to_string()
+        },
 
         // For any other type, default to quoting
         _ => escape_character_constant(value),
@@ -962,16 +962,10 @@ mod tests {
         assert_eq!(escape_character_constant(""), r#""""#);
 
         // String with single quote - not escaped, R accepts it in double-quoted strings
-        assert_eq!(
-            escape_character_constant("it's"),
-            r#""it's""#
-        );
+        assert_eq!(escape_character_constant("it's"), r#""it's""#);
 
         // String with backtick - not escaped, R accepts it in double-quoted strings
-        assert_eq!(
-            escape_character_constant("code: `x`"),
-            r#""code: `x`""#
-        );
+        assert_eq!(escape_character_constant("code: `x`"), r#""code: `x`""#);
     }
 
     #[test]
