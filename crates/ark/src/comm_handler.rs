@@ -18,9 +18,12 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use stdext::result::ResultExt;
 
+use crate::console::Console;
+
 /// Context provided to `CommHandler` methods, giving access to the outgoing
-/// channel and close-request mechanism. In the future, we'll provide access to
-/// more of the Console state, such as the currently active environment.
+/// channel, close-request mechanism, and the Console singleton (via
+/// `console()`). Through the Console, handlers can reach runtime state such
+/// as the graphics device context.
 #[derive(Debug)]
 pub struct CommHandlerContext {
     pub outgoing_tx: CommOutgoingTx,
@@ -55,6 +58,11 @@ impl CommHandlerContext {
             return;
         };
         self.outgoing_tx.send(CommMsg::Data(json)).log_err();
+    }
+
+    /// Access the Console singleton (the R runtime).
+    pub(crate) fn console(&self) -> &Console {
+        Console::get()
     }
 }
 

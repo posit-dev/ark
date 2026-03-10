@@ -147,6 +147,7 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
+use crate::plots::graphics_device::DeviceContext;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 use crate::r_task::BoxFuture;
@@ -334,4 +335,7 @@ pub(crate) struct Console {
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
     comms: HashMap<String, ConsoleComm>,
+
+    /// Graphics device state (plot recording, rendering, comm management).
+    device_context: DeviceContext,
 }
