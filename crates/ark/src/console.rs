@@ -147,7 +147,6 @@ use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
 use crate::plots::graphics_device::DeviceContext;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::QueuedRTask;
