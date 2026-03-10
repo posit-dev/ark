@@ -47,7 +47,6 @@ use libr::SEXP;
 use serde_json::json;
 use stdext::result::ResultExt;
 use stdext::unwrap;
-use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
 use crate::comm_handler::handle_rpc_request;
@@ -56,52 +55,16 @@ use crate::comm_handler::CommHandlerContext;
 use crate::console::Console;
 use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
-use crate::r_task;
-
-#[derive(Debug)]
-pub(crate) enum GraphicsDeviceNotification {
-    DidChangePlotRenderSettings(PlotRenderSettings),
-}
 
 pub const PLOT_COMM_NAME: &str = "positron.plot";
 
 /// Perform R-side initialization of the graphics device.
 /// Must be called from the main R thread after Console is initialized.
-pub(crate) fn init_graphics_device(
-    graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
-) {
+pub(crate) fn init_graphics_device() {
     // Declare our graphics device as interactive
     if let Err(err) = RFunction::from(".ps.graphics.register_as_interactive").call() {
         log::error!("Failed to register Ark graphics device as interactive: {err:?}");
     };
-
-    // Launch an R thread task to process messages from the frontend
-    r_task::spawn_interrupt(async move || process_notifications(graphics_device_rx).await);
-}
-
-async fn process_notifications(
-    mut graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
-) {
-    log::trace!("Now listening for graphics device notifications");
-
-    loop {
-        while let Some(notification) = graphics_device_rx.recv().await {
-            log::trace!("Got graphics device notification: {notification:#?}");
-
-            match notification {
-                GraphicsDeviceNotification::DidChangePlotRenderSettings(plot_render_settings) => {
-                    // Safety: The device context is accessed at interrupt
-                    // time. Other methods in this file should be written in
-                    // accordance and avoid causing R interrupt checks while
-                    // they themselves access the device.
-                    Console::get()
-                        .device_context()
-                        .prerender_settings
-                        .replace(plot_render_settings);
-                },
-            }
-        }
-    }
 }
 
 /// Wrapped callbacks of the original graphics device we shadow
@@ -203,7 +166,7 @@ pub(crate) struct DeviceContext {
 }
 
 impl DeviceContext {
-    pub(crate) fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
+    pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
         Self {
             iopub_tx,
             has_changes: Cell::new(false),
@@ -227,6 +190,10 @@ impl DeviceContext {
             source_context_stack: RefCell::new(Vec::new()),
             pending_origin: RefCell::new(None),
         }
+    }
+
+    pub fn set_prerender_settings(&self, settings: PlotRenderSettings) {
+        self.prerender_settings.replace(settings);
     }
 
     /// Set the current execution context (called when an execute request starts)
@@ -665,7 +632,7 @@ impl DeviceContext {
             open_data,
         };
 
-        match Console::get_mut().comm_register(PLOT_COMM_NAME, Box::new(plot_comm)) {
+        match Console::get_mut().comm_open_backend(PLOT_COMM_NAME, Box::new(plot_comm)) {
             Ok(comm_id) => {
                 self.comm_ids.borrow_mut().insert(id.clone(), comm_id);
             },
