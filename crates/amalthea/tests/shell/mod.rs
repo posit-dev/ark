@@ -103,7 +103,7 @@ impl ShellHandler for Shell {
         Ok(KernelInfoReply {
             status: Status::Ok,
             banner: format!("Amalthea Echo {}", env!("CARGO_PKG_VERSION")),
-            implementation: String::from(env!("CARGO_PKG_NAME")),
+            implementation: String::from("echo"),
             implementation_version: String::from(env!("CARGO_PKG_VERSION")),
             debugger: false,
             help_links: Vec::new(),
