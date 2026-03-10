@@ -15,83 +15,18 @@ impl Console {
         self.session_mode
     }
 
-    /// Send a `UiFrontendEvent` to the frontend via the UI comm, if connected.
-    /// Silently drops the event if no UI comm is open (common in Jupyter).
-    pub(crate) fn send_ui_event(&self, event: &UiFrontendEvent) {
-        let Some(reg) = self.comms.get(self.ui_comm_id.as_deref().unwrap_or("")) else {
-            log::trace!("UI comm isn't connected, dropping event.");
-            return;
-        };
-        send_ui_event(&reg.ctx.outgoing_tx, event);
+    pub(crate) fn ui_comm(&self) -> Option<UiCommRef<'_>> {
+        let comm = self.comms.get(self.ui_comm_id.as_deref()?)?;
+        Some(UiCommRef {
+            comm,
+            originator: self.active_request.as_ref().map(|r| &r.originator),
+            stdin_request_tx: &self.stdin_request_tx,
+        })
     }
 
-    pub(crate) fn is_ui_comm_connected(&self) -> bool {
-        self.ui_comm_id
-            .as_deref()
-            .is_some_and(|id| self.comms.contains_key(id))
-    }
-
-    pub(crate) fn call_frontend_method(
-        &self,
-        request: UiFrontendRequest,
-    ) -> anyhow::Result<RObject> {
-        log::trace!("Calling frontend method {request:?}");
-
-        if !self.is_ui_comm_connected() {
-            return Err(anyhow!(
-                "UI comm is not connected. Can't execute request {request:?}"
-            ));
-        }
-
-        let (reply_tx, reply_rx) = bounded(1);
-
-        let Some(req) = &self.active_request else {
-            return Err(anyhow!(
-                "No active request. Can't execute request {request:?}"
-            ));
-        };
-
-        // Forward request directly to the stdin channel
-        let comm_msg = StdInRequest::Comm(UiCommFrontendRequest {
-            originator: req.originator.clone(),
-            reply_tx,
-            request: request.clone(),
-        });
-        self.stdin_request_tx.send(comm_msg)?;
-
-        // Block for reply
-        let reply = reply_rx.recv().unwrap();
-
-        log::trace!("Got reply from frontend method: {reply:?}");
-
-        match reply {
-            StdInRpcReply::Reply(reply) => match reply {
-                JsonRpcReply::Result(reply) => {
-                    // Deserialize to Rust first to verify the OpenRPC contract.
-                    // Errors are propagated to R.
-                    if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
-                        return Err(anyhow!(
-                            "Can't deserialize RPC reply for {request:?}:\n{err:?}"
-                        ));
-                    }
-
-                    // Now deserialize to an R object
-                    Ok(RObject::try_from(reply.result)?)
-                },
-                JsonRpcReply::Error(reply) => {
-                    let message = reply.error.message;
-
-                    Err(anyhow!(
-                        "While calling frontend method:\n\
-                         {message}",
-                    ))
-                },
-            },
-            // If an interrupt was signalled, return `NULL`. This should not be
-            // visible to the caller since `r_unwrap()` (called e.g. by
-            // `harp::register`) will trigger an interrupt jump right away.
-            StdInRpcReply::Interrupt => Ok(RObject::null()),
-        }
+    pub(crate) fn try_ui_comm(&self) -> anyhow::Result<UiCommRef<'_>> {
+        self.ui_comm()
+            .ok_or_else(|| anyhow!("UI comm is not connected"))
     }
 }
 
@@ -226,5 +161,85 @@ impl Console {
     pub(crate) fn get_virtual_document(&self, uri: &str) -> Option<String> {
         let uri = uri.strip_prefix("ark:").unwrap_or(uri);
         self.lsp_virtual_documents.get(uri).cloned()
+    }
+}
+
+/// Reference to the UI comm. Returned by `Console::ui_comm()`.
+///
+/// Existence of this value guarantees the comm is connected.
+pub(crate) struct UiCommRef<'a> {
+    comm: &'a ConsoleComm,
+    originator: Option<&'a Originator>,
+    stdin_request_tx: &'a Sender<StdInRequest>,
+}
+
+impl UiCommRef<'_> {
+    pub(crate) fn send_event(&self, event: &UiFrontendEvent) {
+        self.comm.ctx.send_event(event);
+    }
+
+    pub(crate) fn busy(&self, busy: bool) {
+        self.send_event(&UiFrontendEvent::Busy(BusyParams { busy }));
+    }
+
+    pub(crate) fn show_message(&self, message: String) {
+        self.send_event(&UiFrontendEvent::ShowMessage(ShowMessageParams { message }));
+    }
+
+    pub(crate) fn call_frontend_method(
+        &self,
+        request: UiFrontendRequest,
+    ) -> anyhow::Result<RObject> {
+        log::trace!("Calling frontend method {request:?}");
+
+        let (reply_tx, reply_rx) = bounded(1);
+
+        let Some(originator) = self.originator else {
+            return Err(anyhow!(
+                "No active request. Can't execute request {request:?}"
+            ));
+        };
+
+        // Forward request directly to the stdin channel
+        let comm_msg = StdInRequest::Comm(UiCommFrontendRequest {
+            originator: originator.clone(),
+            reply_tx,
+            request: request.clone(),
+        });
+        self.stdin_request_tx.send(comm_msg)?;
+
+        // Block for reply
+        let reply = reply_rx.recv()?;
+
+        log::trace!("Got reply from frontend method: {reply:?}");
+
+        match reply {
+            StdInRpcReply::Reply(reply) => match reply {
+                JsonRpcReply::Result(reply) => {
+                    // Deserialize to Rust first to verify the OpenRPC contract.
+                    // Errors are propagated to R.
+                    if let Err(err) = ui_frontend_reply_from_value(reply.result.clone(), &request) {
+                        return Err(anyhow!(
+                            "Can't deserialize RPC reply for {request:?}:\n{err:?}"
+                        ));
+                    }
+
+                    // Now deserialize to an R object
+                    Ok(RObject::try_from(reply.result)?)
+                },
+                JsonRpcReply::Error(reply) => {
+                    let message = reply.error.message;
+
+                    return Err(anyhow!(
+                        "While calling frontend method:\n\
+                         {message}",
+                    ));
+                },
+            },
+            // If an interrupt was signalled, return `NULL`. This should not be
+            // visible to the caller since `r_unwrap()` (called e.g. by
+            // `harp::register`) will trigger an interrupt jump right away.
+            StdInRpcReply::Interrupt => Ok(RObject::null()),
+        }
     }
 }

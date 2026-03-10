@@ -47,6 +47,15 @@ impl CommHandlerContext {
     pub fn is_closed(&self) -> bool {
         self.closed.get()
     }
+
+    /// Send a serializable event as `CommMsg::Data` on the outgoing channel.
+    /// Serialization or send errors are logged and ignored.
+    pub fn send_event<T: Serialize>(&self, event: &T) {
+        let Some(json) = serde_json::to_value(event).log_err() else {
+            return;
+        };
+        self.outgoing_tx.send(CommMsg::Data(json)).log_err();
+    }
 }
 
 /// Trait for comm handlers that run synchronously on the R thread.

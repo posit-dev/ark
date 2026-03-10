@@ -14,7 +14,6 @@ use amalthea::comm::ui_comm::OpenWorkspaceParams;
 use amalthea::comm::ui_comm::Position;
 use amalthea::comm::ui_comm::Range;
 use amalthea::comm::ui_comm::SetEditorSelectionsParams;
-use amalthea::comm::ui_comm::ShowMessageParams;
 use amalthea::comm::ui_comm::ShowUrlParams;
 use amalthea::comm::ui_comm::UiFrontendEvent;
 use harp::object::RObject;
@@ -25,17 +24,9 @@ use crate::console::Console;
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEXP> {
-    let params = ShowMessageParams {
-        message: RObject::view(message).try_into()?,
-    };
+    let message: String = RObject::view(message).try_into()?;
 
-    let event = UiFrontendEvent::ShowMessage(params);
-
-    let console = Console::get();
-    if !console.is_ui_comm_connected() {
-        return Err(ui_comm_not_connected("ui_show_message"));
-    }
-    console.send_ui_event(&event);
+    Console::get().try_ui_comm()?.show_message(message);
 
     Ok(R_NilValue)
 }
@@ -52,11 +43,7 @@ pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
 
     let event = UiFrontendEvent::OpenWorkspace(params);
 
-    let console = Console::get();
-    if !console.is_ui_comm_connected() {
-        return Err(ui_comm_not_connected("ui_open_workspace"));
-    }
-    console.send_ui_event(&event);
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(R_NilValue)
 }
@@ -81,11 +68,7 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
 
     let event = UiFrontendEvent::OpenEditor(params);
 
-    let console = Console::get();
-    if !console.is_ui_comm_connected() {
-        return Err(ui_comm_not_connected("ui_navigate_to_file"));
-    }
-    console.send_ui_event(&event);
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(R_NilValue)
 }
@@ -97,11 +80,7 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
 
     let event = UiFrontendEvent::SetEditorSelections(params);
 
-    let console = Console::get();
-    if !console.is_ui_comm_connected() {
-        return Err(ui_comm_not_connected("ui_set_selection_ranges"));
-    }
-    console.send_ui_event(&event);
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(R_NilValue)
 }
@@ -113,11 +92,7 @@ pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    let console = Console::get();
-    if !console.is_ui_comm_connected() {
-        return Err(ui_comm_not_connected("show_url"));
-    }
-    console.send_ui_event(&event);
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(())
 }
@@ -135,11 +110,7 @@ pub fn send_open_with_system_event(path: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::OpenWithSystem(params);
 
-    let console = Console::get();
-    if !console.is_ui_comm_connected() {
-        return Err(ui_comm_not_connected("open_with_system"));
-    }
-    console.send_ui_event(&event);
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(())
 }
@@ -165,8 +136,4 @@ pub fn ps_ui_robj_as_ranges(ranges: SEXP) -> anyhow::Result<Vec<Range>> {
         })
         .collect();
     Ok(selections)
-}
-
-fn ui_comm_not_connected(name: &str) -> anyhow::Error {
-    anyhow::anyhow!("UI comm not connected, can't run `{name}`.")
 }

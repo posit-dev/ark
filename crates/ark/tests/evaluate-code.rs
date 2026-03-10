@@ -21,14 +21,10 @@ fn evaluate_code(frontend: &DummyArkFrontend, comm_id: &str, code: &str) -> UiBa
     });
 
     frontend.send_shell_comm_msg(String::from(comm_id), data);
-
-    // The UI comm runs on the R thread via CommHandler, so the RPC reply
-    // arrives deterministically before Idle.
     frontend.recv_iopub_busy();
 
     let reply = frontend.recv_iopub_comm_msg();
     assert_eq!(reply.comm_id, comm_id);
-
     frontend.recv_iopub_idle();
 
     serde_json::from_value::<UiBackendReply>(reply.data).unwrap()

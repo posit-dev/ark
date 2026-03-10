@@ -1211,7 +1211,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     };
 
     let explorer = RDataExplorer::new(title, x, env_info)?;
-    Console::get_mut().comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+    Console::get_mut().comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
     Ok(R_NilValue)
 }

@@ -10,7 +10,6 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::shell_handler::CommHandled;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::execute_reply::ExecuteReply;
@@ -45,7 +44,6 @@ use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::ark_comm::ArkComm;
 use crate::console::Console;
-use crate::console::ConsoleNotification;
 use crate::console::KernelInfo;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
@@ -60,12 +58,10 @@ use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
     r_request_tx: Sender<RRequest>,
-    _stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-    _console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 }
 
 #[derive(Debug)]
@@ -77,20 +73,16 @@ impl Shell {
     /// Creates a new instance of the shell message handler.
     pub(crate) fn new(
         r_request_tx: Sender<RRequest>,
-        stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-        console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
         Self {
             r_request_tx,
-            _stdin_request_tx: stdin_request_tx,
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
             graphics_device_tx,
-            _console_notification_tx: console_notification_tx,
         }
     }
 

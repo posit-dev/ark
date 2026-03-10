@@ -12,8 +12,6 @@ use std::sync::Arc;
 
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
-use amalthea::comm::ui_comm::ShowMessageParams as UiShowMessageParams;
-use amalthea::comm::ui_comm::UiFrontendEvent;
 use anyhow::Context;
 use crossbeam::channel::Sender;
 use serde_json::Value;
@@ -108,12 +106,12 @@ fn report_crash() {
         "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
     );
 
+    // NOTE: This is a legit use of interrupt-time task. No R access here, and
+    // we need to go through Console since it owns the UI comm.
     r_task(|| {
-        let event = UiFrontendEvent::ShowMessage(UiShowMessageParams {
-            message: String::from(user_message),
-        });
-
-        Console::get().send_ui_event(&event);
+        if let Some(ui) = Console::get().ui_comm() {
+            ui.show_message(String::from(user_message));
+        }
     });
 }
 

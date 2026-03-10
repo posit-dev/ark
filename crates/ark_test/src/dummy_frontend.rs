@@ -647,36 +647,6 @@ impl DummyArkFrontend {
         }
     }
 
-    /// Receive a CommMsg and Idle from IOPub in either order.
-    ///
-    /// Some comm RPC replies race with the shell's Idle status because the
-    /// reply is sent from a separate thread (e.g. the UI comm thread). This
-    /// helper accepts both orderings and returns the CommMsg content.
-    #[track_caller]
-    pub fn recv_iopub_comm_msg_and_idle(&self) -> amalthea::wire::comm_msg::CommWireMsg {
-        let first = self.recv_iopub_next();
-        let second = self.recv_iopub_next();
-
-        let (comm_msg, idle) = match (first, second) {
-            (Message::CommMsg(comm), Message::Status(status)) => (comm, status),
-            (Message::Status(status), Message::CommMsg(comm)) => (comm, status),
-            (a, b) => panic!(
-                "Expected CommMsg and Idle in either order, got {:?} and {:?}",
-                a, b
-            ),
-        };
-
-        assert_eq!(
-            idle.content.execution_state,
-            amalthea::wire::status::ExecutionState::Idle,
-            "Expected Idle status"
-        );
-
-        self.flush_streams_at_boundary();
-
-        comm_msg.content
-    }
-
     /// Receive from IOPub and assert CommOpen message.
     /// Automatically skips any Stream messages.
     #[track_caller]
@@ -1106,40 +1076,28 @@ impl DummyArkFrontend {
             data: serde_json::json!({}),
         });
 
-        // The UI comm now runs on the R thread via CommHandler. The
-        // comm_open blocks Shell while the handler's `handle_open()` runs,
-        // so events (prompt_state, working_directory) arrive
-        // deterministically within the Busy/Idle window.
+        // The UI comm runs on the R thread via CommHandler. The comm_open
+        // blocks Shell while the handler's `handle_open()` runs, so events
+        // arrive deterministically within the Busy/Idle window.
         self.recv_iopub_busy();
 
-        // Drain the initial events sent by `handle_open()` (prompt_state,
-        // working_directory). We don't assert on their content here.
-        let mut comm_msg_count = 0;
-        loop {
-            let msg = self.recv_iopub_next();
-            match msg {
-                Message::CommMsg(_) => {
-                    comm_msg_count += 1;
-                },
-                Message::Status(ref data)
-                    if data.content.execution_state ==
-                        amalthea::wire::status::ExecutionState::Idle =>
-                {
-                    self.flush_streams_at_boundary();
-                    break;
-                },
-                Message::Stream(ref data) => {
-                    self.buffer_stream(&data.content);
-                },
-                other => panic!("Unexpected message during open_ui_comm: {other:?}"),
-            }
-        }
-
-        // We expect at least the prompt_state event
-        assert!(
-            comm_msg_count >= 1,
-            "Expected at least 1 comm event from UI comm open, got {comm_msg_count}"
+        // `handle_open()` calls `refresh()` which sends prompt_state then
+        // working_directory.
+        let prompt_state = self.recv_iopub_comm_msg();
+        assert_eq!(prompt_state.comm_id, comm_id);
+        assert_eq!(
+            prompt_state.data.get("method").and_then(|v| v.as_str()),
+            Some("prompt_state")
         );
+
+        let working_dir = self.recv_iopub_comm_msg();
+        assert_eq!(working_dir.comm_id, comm_id);
+        assert_eq!(
+            working_dir.data.get("method").and_then(|v| v.as_str()),
+            Some("working_directory")
+        );
+
+        self.recv_iopub_idle();
 
         comm_id
     }
