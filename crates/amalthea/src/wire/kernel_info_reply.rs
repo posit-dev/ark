@@ -27,6 +27,14 @@ pub struct KernelInfoReply {
     /// A startup banner
     pub banner: String,
 
+    /// Name of the kernel implementation (e.g. "ark")
+    /// Optional: kernels may omit this field if they prefer.
+    pub implementation: Option<String>,
+
+    /// Version of the kernel implementation
+    /// Optional: kernels may omit this field if they prefer.
+    pub implementation_version: Option<String>,
+
     /// Whether debugging is supported
     pub debugger: bool,
 

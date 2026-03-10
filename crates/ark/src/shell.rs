@@ -157,6 +157,8 @@ impl ShellHandler for Shell {
             debugger: false,
             help_links: Vec::new(),
             language_info: info,
+            implementation: Some(String::from("ark")),
+            implementation_version: Some(String::from(env!("CARGO_PKG_VERSION"))),
         })
     }
 
