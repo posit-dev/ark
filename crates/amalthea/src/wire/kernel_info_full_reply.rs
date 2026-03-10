@@ -37,6 +37,12 @@ pub struct KernelInfoReply {
     /// A startup banner
     pub banner: String,
 
+    /// Name of the kernel implementation (e.g. "ark")
+    pub implementation: String,
+
+    /// Version of the kernel implementation
+    pub implementation_version: String,
+
     /// Whether debugging is supported
     pub debugger: bool,
 
@@ -62,6 +68,8 @@ impl From<kernel_info_reply::KernelInfoReply> for KernelInfoReply {
             status: value.status,
             language_info: value.language_info,
             banner: value.banner,
+            implementation: value.implementation,
+            implementation_version: value.implementation_version,
             debugger: value.debugger,
             help_links: value.help_links,
         }
