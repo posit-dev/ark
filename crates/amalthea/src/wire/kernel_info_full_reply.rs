@@ -38,12 +38,10 @@ pub struct KernelInfoReply {
     pub banner: String,
 
     /// Name of the kernel implementation (e.g. "ark")
-    /// Optional: kernels may omit this field if they prefer.
-    pub implementation: Option<String>,
+    pub implementation: String,
 
     /// Version of the kernel implementation
-    /// Optional: kernels may omit this field if they prefer.
-    pub implementation_version: Option<String>,
+    pub implementation_version: String,
 
     /// Whether debugging is supported
     pub debugger: bool,
