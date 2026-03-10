@@ -5,154 +5,71 @@
 //
 //
 
+use std::path::PathBuf;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
 use amalthea::comm::ui_comm::EditorContextChangedParams;
 use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
+use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
-use amalthea::socket::comm::CommSocket;
-use amalthea::socket::stdin::StdInRequest;
-use amalthea::wire::input_request::UiCommFrontendRequest;
-use crossbeam::channel::Receiver;
-use crossbeam::channel::Sender;
-use crossbeam::select;
+use amalthea::comm::ui_comm::WorkingDirectoryParams;
+use amalthea::socket::comm::CommOutgoingTx;
 use harp::eval::parse_eval_global;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use serde_json::Value;
-use stdext::spawn;
-use stdext::unwrap;
+use stdext::result::ResultExt;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
+use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::CommHandler;
+use crate::comm_handler::CommHandlerContext;
+use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
-use crate::r_task;
 
-#[derive(Debug)]
-pub enum UiCommMessage {
-    Event(UiFrontendEvent),
-    Request(UiCommFrontendRequest),
+pub const UI_COMM_NAME: &str = "positron.ui";
+
+/// Send a `UiFrontendEvent` as a `CommMsg::Data` on the given outgoing channel.
+pub fn send_ui_event(outgoing_tx: &CommOutgoingTx, event: &UiFrontendEvent) {
+    let Ok(json) = serde_json::to_value(event) else {
+        log::error!("Failed to serialize UI event");
+        return;
+    };
+    outgoing_tx.send(CommMsg::Data(json)).log_err();
 }
 
-/// UiComm is a wrapper around a comm channel whose lifetime matches
-/// that of the Positron UI frontend. It is used to perform communication with the
-/// frontend that isn't scoped to any particular view.
+/// Comm handler for the Positron UI comm.
+///
+/// Runs on the R thread via the `CommHandler` trait. Handles incoming RPCs
+/// from the frontend (e.g. `callMethod`, `evaluateCode`) and sends events
+/// to the frontend (e.g. prompt state, working directory changes).
+#[derive(Debug)]
 pub struct UiComm {
-    comm: CommSocket,
-    ui_comm_rx: Receiver<UiCommMessage>,
-    stdin_request_tx: Sender<StdInRequest>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+    working_directory: PathBuf,
 }
 
 impl UiComm {
-    pub(crate) fn start(
-        comm: CommSocket,
-        stdin_request_tx: Sender<StdInRequest>,
+    pub(crate) fn new(
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-    ) -> Sender<UiCommMessage> {
-        // Create a sender-receiver pair for Positron global events
-        let (ui_comm_tx, ui_comm_rx) = crossbeam::channel::unbounded::<UiCommMessage>();
-
-        spawn!("ark-comm-ui", move || {
-            let frontend = Self {
-                comm,
-                ui_comm_rx,
-                stdin_request_tx,
-                graphics_device_tx,
-            };
-            frontend.execution_thread();
-        });
-
-        ui_comm_tx
-    }
-
-    fn execution_thread(&self) {
-        loop {
-            // Wait for an event on either the event channel (which forwards
-            // Positron events to the frontend) or the comm channel (which
-            // receives requests from the frontend)
-            select! {
-                recv(&self.ui_comm_rx) -> msg => {
-                    let msg = unwrap!(msg, Err(err) => {
-                        log::error!(
-                            "Error receiving Positron event; closing event listener: {err:?}"
-                        );
-                        // Most likely the channel was closed, so we should stop the thread
-                        break;
-                    });
-                    match msg {
-                        UiCommMessage::Event(event) => self.dispatch_event(&event),
-                        UiCommMessage::Request(request) => self.call_frontend_method(request).unwrap(),
-                    }
-                },
-
-                recv(&self.comm.incoming_rx) -> msg => {
-                    match msg {
-                        Ok(msg) => {
-                            if !self.handle_comm_message(msg) {
-                                log::info!("UI comm {} closing by request from frontend.", self.comm.comm_id);
-                                break;
-                            }
-                        },
-                        Err(err) => {
-                            log::error!("Error receiving message from frontend: {:?}", err);
-                            break;
-                        },
-                    }
-                },
-            }
+    ) -> Self {
+        Self {
+            graphics_device_tx,
+            working_directory: PathBuf::new(),
         }
     }
 
-    fn dispatch_event(&self, event: &UiFrontendEvent) {
-        let json = serde_json::to_value(event).unwrap();
-
-        // Deliver the event to the frontend over the comm channel
-        if let Err(err) = self.comm.outgoing_tx.send(CommMsg::Data(json)) {
-            log::error!("Error sending UI event to frontend: {}", err);
-        };
-    }
-
-    /**
-     * Handles a comm message from the frontend.
-     *
-     * Returns true if the thread should continue, false if it should exit.
-     */
-    fn handle_comm_message(&self, message: CommMsg) -> bool {
-        if let CommMsg::Close = message {
-            // The frontend has closed the connection; let the
-            // thread exit.
-            return false;
-        }
-
-        if self
-            .comm
-            .handle_request(message.clone(), |req| self.handle_backend_method(req))
-        {
-            return true;
-        }
-
-        // We don't really expect to receive data messages from the
-        // frontend; they are events
-        log::warn!("Unexpected data message from frontend: {message:?}");
-        true
-    }
-
-    /**
-     * Handles an RPC request from the frontend.
-     */
-    fn handle_backend_method(
-        &self,
-        request: UiBackendRequest,
-    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+    fn handle_rpc(&mut self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
         match request {
-            UiBackendRequest::CallMethod(request) => self.handle_call_method(request),
+            UiBackendRequest::CallMethod(params) => self.handle_call_method(params),
             UiBackendRequest::DidChangePlotsRenderSettings(params) => {
                 self.handle_did_change_plot_render_settings(params)
             },
@@ -163,10 +80,7 @@ impl UiComm {
         }
     }
 
-    fn handle_call_method(
-        &self,
-        request: CallMethodParams,
-    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+    fn handle_call_method(&self, request: CallMethodParams) -> anyhow::Result<UiBackendReply> {
         log::trace!("Handling '{}' frontend RPC method", request.method);
 
         // Today, all RPCs are fulfilled by R directly. Check to see if an R
@@ -176,31 +90,25 @@ impl UiComm {
         // fulfilled here on the Rust side, with only some requests forwarded to
         // R; Rust methods may wish to establish their own RPC handlers.
 
-        // The method name is prefixed with ".ps.rpc.", by convention
         let method = format!(".ps.rpc.{}", request.method);
 
-        // Use the `exists` function to see if the method exists
-        let exists = r_task(|| unsafe {
-            let exists = RFunction::from("exists")
-                .param("x", method.clone())
-                .call()?;
-            RObject::to::<bool>(exists)
-        })?;
+        let exists_obj = RFunction::from("exists")
+            .param("x", method.clone())
+            .call()?;
+        let exists = unsafe { RObject::to::<bool>(exists_obj) }?;
 
         if !exists {
-            anyhow::bail!("No such method: {}", request.method);
+            let method = &request.method;
+            return Err(anyhow::anyhow!("No such method: {method}"));
         }
 
-        // Form an R function call from the request
-        let result = r_task(|| {
-            let mut call = RFunction::from(method);
-            for param in request.params.iter() {
-                let p = RObject::try_from(param.clone())?;
-                call.add(p);
-            }
-            let result = call.call()?;
-            Value::try_from(result)
-        })?;
+        let mut call = RFunction::from(method);
+        for param in request.params.iter() {
+            let p = RObject::try_from(param.clone())?;
+            call.add(p);
+        }
+        let result = call.call()?;
+        let result = Value::try_from(result)?;
 
         Ok(UiBackendReply::CallMethodReply(result))
     }
@@ -208,8 +116,8 @@ impl UiComm {
     fn handle_did_change_plot_render_settings(
         &self,
         params: DidChangePlotsRenderSettingsParams,
-    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
-        // The frontend shoudn't send invalid sizes but be defensive. Sometimes
+    ) -> anyhow::Result<UiBackendReply> {
+        // The frontend shouldn't send invalid sizes but be defensive. Sometimes
         // the plot container is in a strange state when it's hidden.
         if params.settings.size.height <= 0 || params.settings.size.width <= 0 {
             return Err(anyhow::anyhow!(
@@ -222,7 +130,7 @@ impl UiComm {
             .send(GraphicsDeviceNotification::DidChangePlotRenderSettings(
                 params.settings,
             ))
-            .unwrap();
+            .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
 
         Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
     }
@@ -230,7 +138,7 @@ impl UiComm {
     fn handle_editor_context_changed(
         &self,
         params: EditorContextChangedParams,
-    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+    ) -> anyhow::Result<UiBackendReply> {
         log::trace!(
             "Editor context changed: document_uri={}, is_execution_source={}",
             params.document_uri,
@@ -239,38 +147,28 @@ impl UiComm {
         Ok(UiBackendReply::EditorContextChangedReply())
     }
 
-    fn handle_evaluate_code(
-        &self,
-        params: EvaluateCodeParams,
-    ) -> anyhow::Result<UiBackendReply, anyhow::Error> {
+    fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {
         log::trace!("Evaluating code: {}", params.code);
 
-        let result = r_task(|| {
-            let mut capture = if Console::is_initialized() {
-                Console::get_mut().start_capture()
-            } else {
-                ConsoleOutputCapture::dummy()
-            };
+        let mut capture = if Console::is_initialized() {
+            Console::get_mut().start_capture()
+        } else {
+            ConsoleOutputCapture::dummy()
+        };
 
-            // Evaluate the user's code
-            let eval_result = parse_eval_global(&params.code);
+        let eval_result = parse_eval_global(&params.code);
 
-            // Take captured output before dropping the capture guard
-            let output = capture.take();
-            drop(capture);
+        let output = capture.take();
+        drop(capture);
 
-            // Now handle the eval result
-            let evaluated = eval_result?;
-            let value = Value::try_from(evaluated)?;
-
-            Ok((value, output))
-        });
-
-        match result {
-            Ok((value, output)) => Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
-                result: value,
-                output,
-            })),
+        match eval_result {
+            Ok(evaluated) => {
+                let value = Value::try_from(evaluated)?;
+                Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
+                    result: value,
+                    output,
+                }))
+            },
             Err(err) => {
                 let message = match err {
                     harp::Error::TryCatchError { message, .. } => message,
@@ -283,14 +181,79 @@ impl UiComm {
         }
     }
 
-    /**
-     * Send an RPC request to the frontend.
-     */
-    fn call_frontend_method(&self, request: UiCommFrontendRequest) -> anyhow::Result<()> {
-        let comm_msg = StdInRequest::Comm(request);
-        self.stdin_request_tx.send(comm_msg)?;
+    fn send_refresh(&mut self, ctx: &CommHandlerContext) {
+        self.refresh_prompt_info(ctx);
+
+        if let Err(err) = self.refresh_working_directory(ctx) {
+            log::error!("Can't refresh working directory: {err:?}");
+        }
+    }
+
+    fn refresh_prompt_info(&self, ctx: &CommHandlerContext) {
+        let input_prompt = Self::get_r_option("prompt").unwrap_or_else(|| String::from("> "));
+        let continuation_prompt =
+            Self::get_r_option("continue").unwrap_or_else(|| String::from("+ "));
+
+        send_ui_event(
+            &ctx.outgoing_tx,
+            &UiFrontendEvent::PromptState(PromptStateParams {
+                input_prompt,
+                continuation_prompt,
+            }),
+        );
+    }
+
+    /// Checks for changes to the working directory, and sends an event to the
+    /// frontend if the working directory has changed.
+    fn refresh_working_directory(&mut self, ctx: &CommHandlerContext) -> anyhow::Result<()> {
+        let mut new_working_directory = std::env::current_dir()?;
+
+        if new_working_directory != self.working_directory {
+            self.working_directory = new_working_directory.clone();
+
+            // Attempt to alias the directory, if it's within the home directory
+            if let Some(home_dir) = home::home_dir() {
+                if let Ok(stripped_dir) = new_working_directory.strip_prefix(home_dir) {
+                    let mut new_path = PathBuf::from("~");
+                    new_path.push(stripped_dir);
+                    new_working_directory = new_path;
+                }
+            }
+
+            send_ui_event(
+                &ctx.outgoing_tx,
+                &UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+                    directory: new_working_directory.to_string_lossy().to_string(),
+                }),
+            );
+        }
 
         Ok(())
+    }
+
+    fn get_r_option(name: &str) -> Option<String> {
+        let obj = RFunction::from("getOption").param("x", name).call().ok()?;
+        let value = Value::try_from(obj).ok()?;
+        value.as_str().map(String::from)
+    }
+}
+
+impl CommHandler for UiComm {
+    fn handle_open(&mut self, ctx: &CommHandlerContext) {
+        self.send_refresh(ctx);
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
+            self.handle_rpc(req)
+        });
+    }
+
+    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution = event else {
+            return;
+        };
+        self.send_refresh(ctx);
     }
 }
 
@@ -298,86 +261,96 @@ impl UiComm {
 mod tests {
     use amalthea::comm::base_comm::JsonRpcError;
     use amalthea::comm::comm_channel::CommMsg;
-    use amalthea::comm::ui_comm::BusyParams;
+    use amalthea::comm::event::CommEvent;
     use amalthea::comm::ui_comm::CallMethodParams;
     use amalthea::comm::ui_comm::EvalResult;
     use amalthea::comm::ui_comm::EvaluateCodeParams;
     use amalthea::comm::ui_comm::UiBackendReply;
     use amalthea::comm::ui_comm::UiBackendRequest;
-    use amalthea::comm::ui_comm::UiFrontendEvent;
-    use amalthea::socket::comm::CommInitiator;
-    use amalthea::socket::comm::CommSocket;
+    use amalthea::socket::comm::CommOutgoingTx;
     use amalthea::socket::iopub::IOPubMessage;
-    use amalthea::socket::stdin::StdInRequest;
     use ark_test::dummy_jupyter_header;
     use ark_test::IOPubReceiverExt;
     use crossbeam::channel::bounded;
-    use crossbeam::channel::Sender;
     use harp::exec::RFunction;
     use harp::exec::RFunctionExt;
     use harp::object::RObject;
     use serde_json::Value;
 
-    use crate::plots::graphics_device::GraphicsDeviceNotification;
-    use crate::r_task::r_task;
-    use crate::ui::UiComm;
-    use crate::ui::UiCommMessage;
+    use super::*;
+    use crate::comm_handler::CommHandlerContext;
+
+    fn setup_ui_comm(
+        iopub_tx: crossbeam::channel::Sender<IOPubMessage>,
+    ) -> (UiComm, CommHandlerContext) {
+        let comm_id = uuid::Uuid::new_v4().to_string();
+        let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+        let (comm_event_tx, _) = bounded::<CommEvent>(10);
+        let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
+        let (graphics_device_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let handler = UiComm::new(graphics_device_tx);
+        (handler, ctx)
+    }
 
     #[test]
     fn test_ui_comm() {
-        // Create a dummy iopub channel to receive responses.
         let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-        // Create a sender/receiver pair for the comm channel.
-        let comm_socket = CommSocket::new(
-            CommInitiator::FrontEnd,
-            String::from("test-ui-comm-id"),
-            String::from("positron.UI"),
-            iopub_tx,
-        );
+        let old_width = crate::r_task::r_task(move || {
+            let (mut handler, ctx) = setup_ui_comm(iopub_tx);
 
-        // Communication channel between the main thread and the Amalthea
-        // StdIn socket thread
-        let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
+            // Get the current console width
+            let old_width = unsafe {
+                let width = RFunction::from("getOption")
+                    .param("x", "width")
+                    .call()
+                    .unwrap();
+                RObject::to::<i32>(width).unwrap()
+            };
 
-        let (graphics_device_tx, _graphics_device_rx) =
-            tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
-
-        // Create a frontend instance, get access to the sender channel
-        let ui_comm_tx = UiComm::start(comm_socket.clone(), stdin_request_tx, graphics_device_tx);
-
-        // Get the current console width
-        let old_width = r_task(|| unsafe {
-            let width = RFunction::from("getOption")
-                .param("x", "width")
-                .call()
-                .unwrap();
-            RObject::to::<i32>(width).unwrap()
-        });
-
-        // Send a message to the frontend
-        let id = String::from("test-id-1");
-        let request = UiBackendRequest::CallMethod(CallMethodParams {
-            method: String::from("setConsoleWidth"),
-            params: vec![Value::from(123)],
-        });
-        comm_socket
-            .incoming_tx
-            .send(CommMsg::Rpc {
-                id,
+            // Send a setConsoleWidth RPC
+            let msg = CommMsg::Rpc {
+                id: String::from("test-id-1"),
                 parent_header: dummy_jupyter_header(),
-                data: serde_json::to_value(request).unwrap(),
-            })
-            .unwrap();
+                data: serde_json::to_value(UiBackendRequest::CallMethod(CallMethodParams {
+                    method: String::from("setConsoleWidth"),
+                    params: vec![Value::from(123)],
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
 
-        // Wait for the reply; this should be a FrontendRpcResult.
+            // Assert that the console width changed
+            let new_width = unsafe {
+                let width = RFunction::from("getOption")
+                    .param("x", "width")
+                    .call()
+                    .unwrap();
+                RObject::to::<i32>(width).unwrap()
+            };
+            assert_eq!(new_width, 123);
+
+            // Now try to invoke an RPC that doesn't exist
+            let msg = CommMsg::Rpc {
+                id: String::from("test-id-2"),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(UiBackendRequest::CallMethod(CallMethodParams {
+                    method: String::from("thisRpcDoesNotExist"),
+                    params: vec![],
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
+
+            old_width
+        });
+
+        // Check first response (setConsoleWidth)
         let response = iopub_rx.recv_comm_msg();
         match response {
             CommMsg::Rpc { id, data, .. } => {
-                println!("Got RPC result: {:?}", data);
                 let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
                 assert_eq!(id, "test-id-1");
-                // This RPC should return the old width
                 assert_eq!(
                     result,
                     UiBackendReply::CallMethodReply(Value::from(old_width))
@@ -386,151 +359,52 @@ mod tests {
             _ => panic!("Unexpected response: {:?}", response),
         }
 
-        // Get the new console width
-        let new_width = r_task(|| unsafe {
-            let width = RFunction::from("getOption")
-                .param("x", "width")
-                .call()
-                .unwrap();
-            RObject::to::<i32>(width).unwrap()
-        });
-
-        // Assert that the console width changed
-        assert_eq!(new_width, 123);
-
-        // Now try to invoke an RPC that doesn't exist
-        let id = String::from("test-id-2");
-        let request = UiBackendRequest::CallMethod(CallMethodParams {
-            method: String::from("thisRpcDoesNotExist"),
-            params: vec![],
-        });
-        comm_socket
-            .incoming_tx
-            .send(CommMsg::Rpc {
-                id,
-                parent_header: dummy_jupyter_header(),
-                data: serde_json::to_value(request).unwrap(),
-            })
-            .unwrap();
-
-        // Wait for the reply
+        // Check second response (non-existent method error)
         let response = iopub_rx.recv_comm_msg();
         match response {
             CommMsg::Rpc { id, data, .. } => {
-                println!("Got RPC result: {:?}", data);
                 let _reply = serde_json::from_value::<JsonRpcError>(data).unwrap();
-                // Ensure that the error code is -32601 (method not found)
                 assert_eq!(id, "test-id-2");
-
-                // TODO: This should normally throw a `MethodNotFound` but
-                // that's currently a bit hard because of the nested method
-                // call. One way to solve this would be for RPC handler
-                // functions to return a typed JSON-RPC error instead of a
-                // `anyhow::Result`. Then we could return a `MethodNotFound` from
-                // `callMethod()`.
-                //
-                // assert_eq!(reply.error.code, JsonRpcErrorCode::MethodNotFound);
             },
-            _ => panic!("Unexpected response: {:?}", response),
-        }
-
-        // Mark not busy (this prevents the frontend comm from being closed due to
-        // the Sender being dropped)
-        ui_comm_tx
-            .send(UiCommMessage::Event(UiFrontendEvent::Busy(BusyParams {
-                busy: false,
-            })))
-            .unwrap();
-    }
-
-    /// Helper to set up a UiComm and return the pieces needed for testing
-    fn setup_ui_comm() -> (
-        CommSocket,
-        crossbeam::channel::Receiver<IOPubMessage>,
-        Sender<UiCommMessage>,
-    ) {
-        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
-        let comm_socket = CommSocket::new(
-            CommInitiator::FrontEnd,
-            String::from("test-eval-comm-id"),
-            String::from("positron.UI"),
-            iopub_tx,
-        );
-        let (stdin_request_tx, _stdin_request_rx) = bounded::<StdInRequest>(1);
-        let (graphics_device_tx, _graphics_device_rx) =
-            tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
-        let ui_comm_tx = UiComm::start(comm_socket.clone(), stdin_request_tx, graphics_device_tx);
-        (comm_socket, iopub_rx, ui_comm_tx)
-    }
-
-    /// Send an evaluate_code RPC and return the reply
-    fn send_evaluate_code(
-        comm_socket: &CommSocket,
-        iopub_rx: &crossbeam::channel::Receiver<IOPubMessage>,
-        id: &str,
-        code: &str,
-    ) -> UiBackendReply {
-        let request = UiBackendRequest::EvaluateCode(EvaluateCodeParams {
-            code: String::from(code),
-        });
-        comm_socket
-            .incoming_tx
-            .send(CommMsg::Rpc {
-                id: String::from(id),
-                parent_header: dummy_jupyter_header(),
-                data: serde_json::to_value(request).unwrap(),
-            })
-            .unwrap();
-
-        let response = iopub_rx.recv_comm_msg();
-        match response {
-            CommMsg::Rpc { data, .. } => serde_json::from_value::<UiBackendReply>(data).unwrap(),
             _ => panic!("Unexpected response: {:?}", response),
         }
     }
 
     #[test]
     fn test_evaluate_code() {
-        let (comm_socket, iopub_rx, ui_comm_tx) = setup_ui_comm();
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
 
-        // Test 1: Pure result with no output (e.g. 1 + 1)
-        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-1", "1 + 1");
-        assert_eq!(
-            reply,
-            UiBackendReply::EvaluateCodeReply(EvalResult {
-                result: Value::from(2.0),
-                output: String::from(""),
-            })
-        );
+        crate::r_task::r_task(move || {
+            let (mut handler, ctx) = setup_ui_comm(iopub_tx);
 
-        // Test 2: Code that returns a value
-        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-2", "isTRUE(cat('oatmeal'))");
-        assert_eq!(
-            reply,
-            UiBackendReply::EvaluateCodeReply(EvalResult {
-                result: Value::from(false),
-                // Output capture relies on Console::start_capture(), which is
-                // not available in unit tests (Console is not initialized).
-                // Output capture is exercised in integration tests instead.
-                output: String::from(""),
-            })
-        );
+            // Pure result with no output (e.g. 1 + 1)
+            let msg = CommMsg::Rpc {
+                id: String::from("eval-1"),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(UiBackendRequest::EvaluateCode(EvaluateCodeParams {
+                    code: String::from("1 + 1"),
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
+        });
 
-        // Test 3: Code that only prints, with an invisible NULL result
-        let reply = send_evaluate_code(&comm_socket, &iopub_rx, "eval-3", "cat('hello\\nworld')");
-        assert_eq!(
-            reply,
-            UiBackendReply::EvaluateCodeReply(EvalResult {
-                result: Value::Null,
-                output: String::from(""),
-            })
-        );
-
-        // Keep the comm alive
-        ui_comm_tx
-            .send(UiCommMessage::Event(UiFrontendEvent::Busy(BusyParams {
-                busy: false,
-            })))
-            .unwrap();
+        let response = iopub_rx.recv_comm_msg();
+        match response {
+            CommMsg::Rpc { data, .. } => {
+                let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
+                assert_eq!(
+                    result,
+                    UiBackendReply::EvaluateCodeReply(EvalResult {
+                        result: Value::from(2.0),
+                        // Output capture relies on Console::start_capture(), which is
+                        // not available in unit tests (Console is not initialized).
+                        // Output capture is exercised in integration tests instead.
+                        output: String::from(""),
+                    })
+                );
+            },
+            _ => panic!("Unexpected response: {:?}", response),
+        }
     }
 }

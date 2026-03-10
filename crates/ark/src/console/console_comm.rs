@@ -8,6 +8,7 @@
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
+use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::comm::CommSocket;
 use stdext::result::ResultExt;
 use uuid::Uuid;
@@ -17,6 +18,7 @@ use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::ConsoleComm;
 use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
+use crate::ui::UI_COMM_NAME;
 
 impl Console {
     pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
@@ -29,6 +31,11 @@ impl Console {
     }
 
     pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
+        // Clear UI comm ID if this is the UI comm being closed
+        if self.ui_comm_id.as_deref() == Some(comm_id) {
+            self.ui_comm_id = None;
+        }
+
         let Some(mut reg) = self.comms.remove(comm_id) else {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
@@ -65,6 +72,32 @@ impl Console {
             .send(CommEvent::Opened(comm, open_metadata))?;
 
         Ok(comm_id)
+    }
+
+    /// Register a frontend-initiated comm on the R thread.
+    ///
+    /// Unlike `comm_register` (which is for backend-initiated comms and sends
+    /// `CommEvent::Opened`), this is called when the frontend opened the comm.
+    /// The `CommSocket` already exists in amalthea's open_comms list, so we
+    /// only need to register the handler and call `handle_open`.
+    pub(super) fn comm_open_frontend(
+        &mut self,
+        comm_id: String,
+        comm_name: &str,
+        outgoing_tx: CommOutgoingTx,
+        mut handler: Box<dyn CommHandler>,
+    ) {
+        let ctx = CommHandlerContext::new(outgoing_tx, self.comm_event_tx.clone());
+        handler.handle_open(&ctx);
+
+        if comm_name == UI_COMM_NAME {
+            if self.ui_comm_id.is_some() {
+                log::info!("Replacing an existing UI comm.");
+            }
+            self.ui_comm_id = Some(comm_id.clone());
+        }
+
+        self.comms.insert(comm_id, ConsoleComm { handler, ctx });
     }
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {

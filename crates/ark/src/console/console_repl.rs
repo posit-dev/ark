@@ -608,7 +608,7 @@ impl Console {
             active_request: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm_tx: None,
+            ui_comm_id: None,
             last_error: None,
             help_event_tx: None,
             help_port: None,
@@ -1197,7 +1197,7 @@ impl Console {
         Some(exception)
     }
 
-    fn handle_active_request(&mut self, info: &PromptInfo, value: ConsoleValue) {
+    fn handle_active_request(&mut self, _info: &PromptInfo, value: ConsoleValue) {
         self.reset_global_env_rdebug();
 
         // If we get here we finished evaluating all pending inputs. Check if we
@@ -1208,17 +1208,6 @@ impl Console {
             log::info!("No active request to handle, discarding: {value:?}");
             return;
         };
-
-        // Perform a refresh of the frontend state (Prompts, working
-        // directory, etc)
-        // TODO: Once the UI comm is migrated to the `CommHandler` path, this
-        // becomes a `handle_environment` impl reacting to `Execution`.
-        self.with_mut_ui_comm_tx(|ui_comm_tx| {
-            let input_prompt = info.input_prompt.clone();
-            let continuation_prompt = info.continuation_prompt.clone();
-
-            ui_comm_tx.send_refresh(input_prompt, continuation_prompt);
-        });
 
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
@@ -1835,12 +1824,19 @@ impl Console {
         }
     }
 
-    fn handle_kernel_request(&mut self, req: KernelRequest, info: &PromptInfo) {
+    fn handle_kernel_request(&mut self, req: KernelRequest, _info: &PromptInfo) {
         log::trace!("Received kernel request {req:?}");
 
         match req {
-            KernelRequest::EstablishUiCommChannel(ref ui_comm_tx) => {
-                self.handle_establish_ui_comm_channel(ui_comm_tx.clone(), info)
+            KernelRequest::CommOpen {
+                comm_id,
+                comm_name,
+                outgoing_tx,
+                handler,
+                done_tx,
+            } => {
+                self.comm_open_frontend(comm_id, &comm_name, outgoing_tx, handler);
+                done_tx.send(()).log_err();
             },
             KernelRequest::CommMsg {
                 comm_id,
@@ -2182,9 +2178,7 @@ impl Console {
         let busy = which != 0;
 
         // Send updated state to the frontend over the UI comm
-        self.with_ui_comm_tx(|ui_comm_tx| {
-            ui_comm_tx.send_event(UiFrontendEvent::Busy(BusyParams { busy }));
-        });
+        self.send_ui_event(&UiFrontendEvent::Busy(BusyParams { busy }));
     }
 
     /// Invoked by R to show a message to the user.
@@ -2193,9 +2187,7 @@ impl Console {
         let message = message.to_str().unwrap().to_string();
 
         // Deliver message to the frontend over the UI comm
-        self.with_ui_comm_tx(|ui_comm_tx| {
-            ui_comm_tx.send_event(UiFrontendEvent::ShowMessage(ShowMessageParams { message }))
-        });
+        self.send_ui_event(&UiFrontendEvent::ShowMessage(ShowMessageParams { message }));
     }
 
     /// Invoked by the R event loop

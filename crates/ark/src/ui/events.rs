@@ -31,10 +31,11 @@ pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Res
 
     let event = UiFrontendEvent::ShowMessage(params);
 
-    let ui_comm_tx = Console::get()
-        .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("ui_show_message"))?;
-    ui_comm_tx.send_event(event);
+    let console = Console::get();
+    if !console.is_ui_comm_connected() {
+        return Err(ui_comm_not_connected("ui_show_message"));
+    }
+    console.send_ui_event(&event);
 
     Ok(R_NilValue)
 }
@@ -51,10 +52,11 @@ pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
 
     let event = UiFrontendEvent::OpenWorkspace(params);
 
-    let ui_comm_tx = Console::get()
-        .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("ui_open_workspace"))?;
-    ui_comm_tx.send_event(event);
+    let console = Console::get();
+    if !console.is_ui_comm_connected() {
+        return Err(ui_comm_not_connected("ui_open_workspace"));
+    }
+    console.send_ui_event(&event);
 
     Ok(R_NilValue)
 }
@@ -79,10 +81,11 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
 
     let event = UiFrontendEvent::OpenEditor(params);
 
-    let ui_comm_tx = Console::get()
-        .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("ui_navigate_to_file"))?;
-    ui_comm_tx.send_event(event);
+    let console = Console::get();
+    if !console.is_ui_comm_connected() {
+        return Err(ui_comm_not_connected("ui_navigate_to_file"));
+    }
+    console.send_ui_event(&event);
 
     Ok(R_NilValue)
 }
@@ -94,10 +97,11 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
 
     let event = UiFrontendEvent::SetEditorSelections(params);
 
-    let ui_comm_tx = Console::get()
-        .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("ui_set_selection_ranges"))?;
-    ui_comm_tx.send_event(event);
+    let console = Console::get();
+    if !console.is_ui_comm_connected() {
+        return Err(ui_comm_not_connected("ui_set_selection_ranges"));
+    }
+    console.send_ui_event(&event);
 
     Ok(R_NilValue)
 }
@@ -109,10 +113,11 @@ pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    let ui_comm_tx = Console::get()
-        .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("show_url"))?;
-    ui_comm_tx.send_event(event);
+    let console = Console::get();
+    if !console.is_ui_comm_connected() {
+        return Err(ui_comm_not_connected("show_url"));
+    }
+    console.send_ui_event(&event);
 
     Ok(())
 }
@@ -130,10 +135,11 @@ pub fn send_open_with_system_event(path: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::OpenWithSystem(params);
 
-    let ui_comm_tx = Console::get()
-        .get_ui_comm_tx()
-        .ok_or_else(|| ui_comm_not_connected("open_with_system"))?;
-    ui_comm_tx.send_event(event);
+    let console = Console::get();
+    if !console.is_ui_comm_connected() {
+        return Err(ui_comm_not_connected("open_with_system"));
+    }
+    console.send_ui_event(&event);
 
     Ok(())
 }
