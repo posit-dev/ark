@@ -106,12 +106,15 @@ pub fn initialize() -> anyhow::Result<RObject> {
 
         use debug::*;
 
+        use crate::r_task::RTask;
+
         let source = std::env!("CARGO_MANIFEST_DIR");
         let root = Path::new(&source).join("src").join("modules").to_path_buf();
 
         if root.exists() {
             // First reload all modules from source to reflect new changes that have
             // not been built into the binary yet.
+
             log::trace!("Loading R modules from sources via cargo manifest");
 
             // Intentionally panic if module loading fails in debug builds.
@@ -134,10 +137,10 @@ pub fn initialize() -> anyhow::Result<RObject> {
 
             // Spawn the watcher thread when R is idle so we don't try to access
             // the R API while R is starting up
-            crate::r_task::spawn_idle(async move |_| {
+            crate::r_task::spawn(RTask::idle(async move |_| {
                 log::info!("Watching R modules from sources via cargo manifest");
                 spawn_watcher_thread(root);
-            });
+            }));
         } else {
             log::error!("Can't find ark R modules from sources");
         }
