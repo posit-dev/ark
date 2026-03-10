@@ -67,21 +67,13 @@ pub(crate) enum GraphicsDeviceNotification {
     DidChangePlotRenderSettings(PlotRenderSettings),
 }
 
-thread_local! {
-  // Safety: Set once by `Console` on initialization
-  static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
-}
-
 pub const PLOT_COMM_NAME: &str = "positron.plot";
 
-// Expose thread initialization via function so we can keep the structs private.
-// Must be called from the main R thread.
+/// Perform R-side initialization of the graphics device.
+/// Must be called from the main R thread after Console is initialized.
 pub(crate) fn init_graphics_device(
-    iopub_tx: Sender<IOPubMessage>,
     graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
 ) {
-    DEVICE_CONTEXT.set(DeviceContext::new(iopub_tx));
-
     // Declare our graphics device as interactive
     if let Err(err) = RFunction::from(".ps.graphics.register_as_interactive").call() {
         log::error!("Failed to register Ark graphics device as interactive: {err:?}");
@@ -104,12 +96,14 @@ async fn process_notifications(
 
             match notification {
                 GraphicsDeviceNotification::DidChangePlotRenderSettings(plot_render_settings) => {
-                    // Safety: Note that `DEVICE_CONTEXT` is accessed at
-                    // interrupt time. Other methods in this file should be
-                    // written in accordance and avoid causing R interrupt
-                    // checks while they themselves access the device.
-                    DEVICE_CONTEXT
-                        .with_borrow(|ctx| ctx.prerender_settings.replace(plot_render_settings));
+                    // Safety: The device context is accessed at interrupt
+                    // time. Other methods in this file should be written in
+                    // accordance and avoid causing R interrupt checks while
+                    // they themselves access the device.
+                    Console::get()
+                        .device_context()
+                        .prerender_settings
+                        .replace(plot_render_settings);
                 },
             }
         }
@@ -149,7 +143,7 @@ struct PlotContext {
     intrinsic_size: Option<IntrinsicSize>,
 }
 
-struct DeviceContext {
+pub(crate) struct DeviceContext {
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
     iopub_tx: Sender<IOPubMessage>,
@@ -226,7 +220,7 @@ struct DeviceContext {
 }
 
 impl DeviceContext {
-    fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
+    pub(crate) fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
         Self {
             iopub_tx,
             has_changes: Cell::new(false),
@@ -942,17 +936,14 @@ impl CommHandler for PlotComm {
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        DEVICE_CONTEXT.with_borrow(|dc| {
-            handle_rpc_request(&ctx.outgoing_tx, PLOT_COMM_NAME, msg, |req| {
-                dc.handle_rpc(req, &self.id)
-            });
+        let dc = ctx.console().device_context();
+        handle_rpc_request(&ctx.outgoing_tx, PLOT_COMM_NAME, msg, |req| {
+            dc.handle_rpc(req, &self.id)
         });
     }
 
-    fn handle_close(&mut self, _ctx: &CommHandlerContext) {
-        DEVICE_CONTEXT.with_borrow(|dc| {
-            dc.on_plot_closed(&self.id);
-        });
+    fn handle_close(&mut self, ctx: &CommHandlerContext) {
+        ctx.console().device_context().on_plot_closed(&self.id);
     }
 }
 
@@ -1138,15 +1129,13 @@ pub(crate) fn on_execute_request(
     intrinsic_size: Option<IntrinsicSize>,
 ) {
     log::trace!("Entering on_execute_request");
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        cell.set_execution_context(
-            execution_id,
-            code,
-            code_location,
-            render_settings,
-            intrinsic_size,
-        )
-    });
+    Console::get().device_context().set_execution_context(
+        execution_id,
+        code,
+        code_location,
+        render_settings,
+        intrinsic_size,
+    );
 }
 
 /// Hook applied after a code chunk has finished executing
@@ -1169,11 +1158,10 @@ pub(crate) fn on_execute_request(
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn on_did_execute_request() {
     log::trace!("Entering on_did_execute_request");
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        cell.process_changes();
-        cell.clear_execution_context();
-        cell.clear_pending_origin();
-    });
+    let dc = Console::get().device_context();
+    dc.process_changes();
+    dc.clear_execution_context();
+    dc.clear_pending_origin();
 }
 
 /// Activation callback
@@ -1186,11 +1174,10 @@ pub(crate) fn on_did_execute_request() {
 unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
     log::trace!("Entering callback_activate");
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.activate.get() {
-            callback(dev);
-        }
-    });
+    let dc = Console::get().device_context();
+    if let Some(callback) = dc.wrapped_callbacks.activate.get() {
+        callback(dev);
+    }
 }
 
 /// Deactivation callback
@@ -1201,42 +1188,40 @@ unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
 unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     log::trace!("Entering callback_deactivate");
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        // We run our hook first to record before we deactivate the underlying device,
-        // in case device deactivation messes with the display list
-        cell.hook_deactivate();
-        if let Some(callback) = cell.wrapped_callbacks.deactivate.get() {
-            callback(dev);
-        }
-    });
+    let dc = Console::get().device_context();
+    // We run our hook first to record before we deactivate the underlying device,
+    // in case device deactivation messes with the display list
+    dc.hook_deactivate();
+    if let Some(callback) = dc.wrapped_callbacks.deactivate.get() {
+        callback(dev);
+    }
 }
 
 #[tracing::instrument(level = "trace", skip_all, fields(level_delta = %level_delta))]
 unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) -> i32 {
     log::trace!("Entering callback_holdflush");
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        // If our wrapped device has a `holdflush()` method, we rely on it to apply
-        // the `level_delta` (typically `+1` or `-1`) and return the new level. Otherwise
-        // we follow the lead of `devholdflush()` in R and use a resolved `level` of `0`.
-        // Notably, `grDevices::png()` with a Cairo backend does not have a holdflush
-        // hook.
-        // https://github.com/wch/r-source/blob/8cebcc0a5d99890839e5171f398da643d858dcca/src/library/grDevices/src/devices.c#L129-L138
-        let level = match cell.wrapped_callbacks.holdflush.get() {
-            Some(callback) => {
-                let level = callback(dev, level_delta);
-                log::trace!("Using resolved holdflush level from wrapped callback: {level}");
-                level
-            },
-            None => {
-                let level = 0;
-                log::trace!("Using default holdflush level: {level}");
-                level
-            },
-        };
-        cell.hook_holdflush(level);
-        level
-    })
+    let dc = Console::get().device_context();
+    // If our wrapped device has a `holdflush()` method, we rely on it to apply
+    // the `level_delta` (typically `+1` or `-1`) and return the new level. Otherwise
+    // we follow the lead of `devholdflush()` in R and use a resolved `level` of `0`.
+    // Notably, `grDevices::png()` with a Cairo backend does not have a holdflush
+    // hook.
+    // https://github.com/wch/r-source/blob/8cebcc0a5d99890839e5171f398da643d858dcca/src/library/grDevices/src/devices.c#L129-L138
+    let level = match dc.wrapped_callbacks.holdflush.get() {
+        Some(callback) => {
+            let level = callback(dev, level_delta);
+            log::trace!("Using resolved holdflush level from wrapped callback: {level}");
+            level
+        },
+        None => {
+            let level = 0;
+            log::trace!("Using default holdflush level: {level}");
+            level
+        },
+    };
+    dc.hook_holdflush(level);
+    level
 }
 
 // mode = 0, graphics off
@@ -1246,24 +1231,22 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     log::trace!("Entering callback_mode");
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.mode.get() {
-            callback(mode, dev);
-        }
-        cell.hook_mode(mode);
-    });
+    let dc = Console::get().device_context();
+    if let Some(callback) = dc.wrapped_callbacks.mode.get() {
+        callback(mode, dev);
+    }
+    dc.hook_mode(mode);
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
 unsafe extern "C-unwind" fn callback_new_page(dd: pGEcontext, dev: pDevDesc) {
     log::trace!("Entering callback_new_page");
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        if let Some(callback) = cell.wrapped_callbacks.newPage.get() {
-            callback(dd, dev);
-        }
-        cell.hook_new_page();
-    });
+    let dc = Console::get().device_context();
+    if let Some(callback) = dc.wrapped_callbacks.newPage.get() {
+        callback(dd, dev);
+    }
+    dc.hook_new_page();
 }
 
 unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
@@ -1286,26 +1269,24 @@ unsafe fn ps_graphics_device_impl() -> anyhow::Result<SEXP> {
     with_device!(ge_device, |ge_device, device| {
         (*ge_device).displayListOn = 1;
 
-        DEVICE_CONTEXT.with_borrow(|cell| {
-            let wrapped_callbacks = &cell.wrapped_callbacks;
+        let wrapped_callbacks = &Console::get().device_context().wrapped_callbacks;
 
-            // Safety: The callbacks are stored in simple cells.
+        // Safety: The callbacks are stored in simple cells.
 
-            wrapped_callbacks.activate.replace((*device).activate);
-            (*device).activate = Some(callback_activate);
+        wrapped_callbacks.activate.replace((*device).activate);
+        (*device).activate = Some(callback_activate);
 
-            wrapped_callbacks.deactivate.replace((*device).deactivate);
-            (*device).deactivate = Some(callback_deactivate);
+        wrapped_callbacks.deactivate.replace((*device).deactivate);
+        (*device).deactivate = Some(callback_deactivate);
 
-            wrapped_callbacks.holdflush.replace((*device).holdflush);
-            (*device).holdflush = Some(callback_holdflush);
+        wrapped_callbacks.holdflush.replace((*device).holdflush);
+        (*device).holdflush = Some(callback_holdflush);
 
-            wrapped_callbacks.mode.replace((*device).mode);
-            (*device).mode = Some(callback_mode);
+        wrapped_callbacks.mode.replace((*device).mode);
+        (*device).mode = Some(callback_mode);
 
-            wrapped_callbacks.newPage.replace((*device).newPage);
-            (*device).newPage = Some(callback_new_page);
-        });
+        wrapped_callbacks.newPage.replace((*device).newPage);
+        (*device).newPage = Some(callback_new_page);
     });
 
     Ok(R_NilValue)
@@ -1348,11 +1329,9 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::Result<SEXP> {
     log::trace!("Entering ps_graphics_before_plot_new");
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        // Process changes related to the last plot before opening a new page.
-        // Particularly important if we make multiple plots in a single chunk.
-        cell.process_changes();
-    });
+    // Process changes related to the last plot before opening a new page.
+    // Particularly important if we make multiple plots in a single chunk.
+    Console::get().device_context().process_changes();
 
     Ok(harp::r_null())
 }
@@ -1367,39 +1346,37 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
     let id_str: String = RObject::view(id).try_into()?;
     let plot_id = PlotId(id_str);
 
-    DEVICE_CONTEXT.with_borrow(|cell| {
-        let contexts = cell.plot_contexts.borrow();
-        match contexts.get(&plot_id) {
-            Some(ctx) => {
-                let info = &ctx.metadata;
-                let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
+    let contexts = Console::get().device_context().plot_contexts.borrow();
+    match contexts.get(&plot_id) {
+        Some(ctx) => {
+            let info = &ctx.metadata;
+            let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
 
-                // Create a list with the metadata values
-                let values: Vec<RObject> = vec![
-                    RObject::from(info.name.as_str()),
-                    RObject::from(info.kind.as_str()),
-                    RObject::from(info.execution_id.as_str()),
-                    RObject::from(info.code.as_str()),
-                    RObject::from(origin_uri),
-                ];
-                let list = RObject::try_from(values)?;
+            // Create a list with the metadata values
+            let values: Vec<RObject> = vec![
+                RObject::from(info.name.as_str()),
+                RObject::from(info.kind.as_str()),
+                RObject::from(info.execution_id.as_str()),
+                RObject::from(info.code.as_str()),
+                RObject::from(origin_uri),
+            ];
+            let list = RObject::try_from(values)?;
 
-                // Set the names attribute
-                let names: Vec<String> = vec![
-                    "name".to_string(),
-                    "kind".to_string(),
-                    "execution_id".to_string(),
-                    "code".to_string(),
-                    "origin_uri".to_string(),
-                ];
-                let names = RObject::from(names);
-                libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+            // Set the names attribute
+            let names: Vec<String> = vec![
+                "name".to_string(),
+                "kind".to_string(),
+                "execution_id".to_string(),
+                "code".to_string(),
+                "origin_uri".to_string(),
+            ];
+            let names = RObject::from(names);
+            libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
 
-                Ok(list.sexp)
-            },
-            None => Ok(harp::r_null()),
-        }
-    })
+            Ok(list.sexp)
+        },
+        None => Ok(harp::r_null()),
+    }
 }
 
 /// Push a source file URI onto the source context stack.
@@ -1407,7 +1384,7 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_push_source_context(uri: SEXP) -> anyhow::Result<SEXP> {
     let uri_str: String = RObject::view(uri).try_into()?;
-    DEVICE_CONTEXT.with_borrow(|cell| cell.push_source_context(uri_str));
+    Console::get().device_context().push_source_context(uri_str);
     Ok(harp::r_null())
 }
 
@@ -1415,7 +1392,7 @@ unsafe extern "C-unwind" fn ps_graphics_push_source_context(uri: SEXP) -> anyhow
 /// Called from the `source()` hook when leaving a sourced file.
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<SEXP> {
-    DEVICE_CONTEXT.with_borrow(|cell| cell.pop_source_context());
+    Console::get().device_context().pop_source_context();
     Ok(harp::r_null())
 }
 
