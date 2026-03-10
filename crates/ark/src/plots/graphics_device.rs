@@ -15,7 +15,6 @@ use std::io::BufReader;
 use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
-use amalthea::comm::event::CommEvent;
 use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
@@ -27,8 +26,7 @@ use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
 use amalthea::comm::plot_comm::UpdateParams;
-use amalthea::socket::comm::CommInitiator;
-use amalthea::socket::comm::CommSocket;
+use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::execute_request::CodeLocation;
@@ -38,7 +36,6 @@ use anyhow::anyhow;
 use anyhow::Context;
 use base64::engine::general_purpose;
 use base64::Engine;
-use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
@@ -53,6 +50,9 @@ use stdext::unwrap;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
 
+use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::CommHandler;
+use crate::comm_handler::CommHandlerContext;
 use crate::console::Console;
 use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
@@ -68,16 +68,15 @@ thread_local! {
   static DEVICE_CONTEXT: RefCell<DeviceContext> = panic!("Must access `DEVICE_CONTEXT` from the R thread");
 }
 
-const POSITRON_PLOT_CHANNEL_ID: &str = "positron.plot";
+pub const PLOT_COMM_NAME: &str = "positron.plot";
 
 // Expose thread initialization via function so we can keep the structs private.
 // Must be called from the main R thread.
 pub(crate) fn init_graphics_device(
-    comm_event_tx: Sender<CommEvent>,
     iopub_tx: Sender<IOPubMessage>,
     graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
 ) {
-    DEVICE_CONTEXT.set(DeviceContext::new(comm_event_tx, iopub_tx));
+    DEVICE_CONTEXT.set(DeviceContext::new(iopub_tx));
 
     // Declare our graphics device as interactive
     if let Err(err) = RFunction::from(".ps.graphics.register_as_interactive").call() {
@@ -134,9 +133,6 @@ struct ExecutionContext {
 }
 
 struct DeviceContext {
-    /// Channel for sending [CommEvent]s to Positron when plot events occur
-    comm_event_tx: Sender<CommEvent>,
-
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
     iopub_tx: Sender<IOPubMessage>,
@@ -179,9 +175,9 @@ struct DeviceContext {
     /// device specifications (i.e. for Positron's Plots pane).
     id: RefCell<PlotId>,
 
-    /// Mapping of plot ID to the communication socket used for communicating its
-    /// rendered results to the frontend.
-    sockets: RefCell<HashMap<PlotId, CommSocket>>,
+    /// Mapping of `PlotId` to comm ID, used for sending update events to
+    /// existing plot comms via `CommOutgoingTx`.
+    comm_ids: RefCell<HashMap<PlotId, String>>,
 
     /// Mapping of plot ID to its metadata (captured at creation time)
     metadata: RefCell<HashMap<PlotId, PlotMetadata>>,
@@ -213,16 +209,15 @@ struct DeviceContext {
 }
 
 impl DeviceContext {
-    fn new(comm_event_tx: Sender<CommEvent>, iopub_tx: Sender<IOPubMessage>) -> Self {
+    fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
         Self {
-            comm_event_tx,
             iopub_tx,
             has_changes: Cell::new(false),
             is_new_page: Cell::new(true),
             is_drawing: Cell::new(false),
             should_render: Cell::new(true),
             id: RefCell::new(Self::new_id()),
-            sockets: RefCell::new(HashMap::new()),
+            comm_ids: RefCell::new(HashMap::new()),
             metadata: RefCell::new(HashMap::new()),
             kind_counters: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
@@ -474,111 +469,6 @@ impl DeviceContext {
         format!("{} {}", kind, counter)
     }
 
-    /// Process outstanding RPC requests received from Positron
-    ///
-    /// At idle time we loop through our set of plot channels and check if Positron has
-    /// responded on any of them stating that it is ready for us to replay and render
-    /// the actual plot, and then send back the bytes that represent that plot.
-    ///
-    /// Note that we only send back rendered plots at idle time. This means that if you
-    /// do something like:
-    ///
-    /// ```r
-    /// for (i in 1:5) {
-    ///   plot(i)
-    ///   Sys.sleep(1)
-    /// }
-    /// ```
-    ///
-    /// Then it goes something like this:
-    /// - At each new page event we tell Positron there we have a new plot for it
-    /// - Positron sets up 5 blank plot windows and sends back an RPC requesting the plot
-    ///   data
-    /// - AFTER the entire for loop has finished and we hit idle time, we drop into
-    ///   `process_rpc_requests()` and render all 5 plots at once
-    ///
-    /// Practically this seems okay, it is just something to keep in mind.
-    #[tracing::instrument(level = "trace", skip_all)]
-    fn process_rpc_requests(&self) {
-        // Don't try to render a plot if we're currently drawing.
-        if self.is_drawing.get() {
-            log::trace!("Refusing to render due to `is_drawing`");
-            return;
-        }
-
-        // Don't try to render a plot if someone is asking us not to, i.e. `dev.hold()`
-        if !self.should_render.get() {
-            log::trace!("Refusing to render due to `should_render`");
-            return;
-        }
-
-        // Collect existing sockets into a vector of tuples.
-        // Necessary for handling Select in a clean way.
-        let sockets = {
-            // Refcell Safety: Clone the hashmap so we don't hold a reference for too long
-            let sockets = self.sockets.borrow().clone();
-            sockets.into_iter().collect::<Vec<_>>()
-        };
-
-        // Dynamically load all incoming channels within the sockets into a single `Select`
-        let mut select = Select::new();
-        for (_id, sockets) in sockets.iter() {
-            select.recv(&sockets.incoming_rx);
-        }
-
-        // Check for incoming plot render requests.
-        // Totally possible to have >1 requests pending, especially if we've plotted
-        // multiple things in a single chunk of R code. The `Err` case is likely just
-        // that no channels have any messages, so we don't log in that case.
-        while let Ok(selection) = select.try_select() {
-            let socket = sockets
-                .get(selection.index())
-                .expect("Socket should exist for the selection index");
-            let id = &socket.0;
-            let socket = &socket.1;
-
-            // Receive on the "selected" channel
-            let message = match selection.recv(&socket.incoming_rx) {
-                Ok(message) => message,
-                Err(error) => {
-                    // If the channel is disconnected, log and remove it so we don't try
-                    // and `recv()` on it ever again
-                    log::error!("{error:?}");
-                    // Refcell Safety: Short borrows in the file.
-                    self.sockets.borrow_mut().remove(id);
-
-                    // Process remaining messages. Safe to do because we have
-                    // removed the `DeviceContext`'s copy off the sockets but we
-                    // are working through our own copy of them.
-                    continue;
-                },
-            };
-
-            match message {
-                CommMsg::Rpc { .. } => {
-                    log::trace!("Handling `RPC` for plot `id` {id}");
-                    socket.handle_request(message, |req| self.handle_rpc(req, id));
-                },
-
-                // Note that ideally this handler should be invoked before we
-                // check for `should_render`. I.e. we should acknowledge a plot
-                // has been closed on the frontend side even when `dev.hold()`
-                // is active. Doing so would require some more careful
-                // bookkeeping of the state though, and since this is a very
-                // unlikely sequence of action nothing really bad happens with
-                // the current approach, we decided to keep handling here.
-                CommMsg::Close => {
-                    log::trace!("Handling `Close` for plot `id` {id}");
-                    self.close_plot(id)
-                },
-
-                message => {
-                    log::error!("Received unexpected comm message for plot `id` {id}: {message:?}")
-                },
-            }
-        }
-    }
-
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
     fn handle_rpc(
         &self,
@@ -643,16 +533,10 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip(self))]
-    fn close_plot(&self, id: &PlotId) {
-        // RefCell safety: Short borrows in the file
-        self.sockets.borrow_mut().remove(id);
-
-        // Remove metadata for this plot
+    fn on_plot_closed(&self, id: &PlotId) {
+        self.comm_ids.borrow_mut().remove(id);
         self.metadata.borrow_mut().remove(id);
 
-        // The plot data is stored at R level. Assumes we're called on the R
-        // thread at idle time so there's no race issues (see
-        // `on_process_idle_events()`).
         if let Err(err) = RFunction::from("remove_recording")
             .param("id", id)
             .call_in(ARK_ENVS.positron_ns)
@@ -749,18 +633,9 @@ impl DeviceContext {
             origin,
         });
 
-        // Let Positron know that we just created a new plot.
-        let socket = CommSocket::new(
-            CommInitiator::BackEnd,
-            id.to_string(),
-            POSITRON_PLOT_CHANNEL_ID.to_string(),
-            self.iopub_tx.clone(),
-        );
-
         let settings = self.prerender_settings.get();
 
-        // Prepare a pre-rendering of the plot so Positron has something to display immediately
-        let data = match self.render_plot(id, &settings) {
+        let open_data = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
                 let mime_type = Self::get_mime_type(&PlotRenderFormat::Png);
 
@@ -778,14 +653,19 @@ impl DeviceContext {
             },
         };
 
-        let event = CommEvent::Opened(socket.clone(), data);
-        if let Err(error) = self.comm_event_tx.send(event) {
-            log::error!("{error:?}");
-        }
+        let plot_comm = PlotComm {
+            id: id.clone(),
+            open_data,
+        };
 
-        // Save our new socket.
-        // Refcell Safety: Short borrows in the file.
-        self.sockets.borrow_mut().insert(id.clone(), socket);
+        match Console::get_mut().comm_register(PLOT_COMM_NAME, Box::new(plot_comm)) {
+            Ok(comm_id) => {
+                self.comm_ids.borrow_mut().insert(id.clone(), comm_id);
+            },
+            Err(err) => {
+                log::error!("Failed to register plot comm: {err:?}");
+            },
+        }
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
@@ -845,17 +725,14 @@ impl DeviceContext {
     fn process_update_plot_positron(&self, id: &PlotId) {
         log::trace!("Notifying Positron of plot update");
 
-        // Refcell Safety: Make sure not to call other methods from this whole block.
-        let sockets = self.sockets.borrow();
+        let comm_id = match self.comm_ids.borrow().get(id).cloned() {
+            Some(id) => id,
+            None => {
+                log::error!("Can't find comm to update with id: {id}.");
+                return;
+            },
+        };
 
-        // Find our socket
-        let socket = unwrap!(sockets.get(id), None => {
-            // If socket doesn't exist, bail, nothing to update (should be rare, likely a bug?)
-            log::error!("Can't find socket to update with id: {id}.");
-            return;
-        });
-
-        // Create a pre-rendering of the updated plot
         let settings = self.prerender_settings.get();
         let update_params = match self.render_plot(id, &settings) {
             Ok(pre_render) => {
@@ -879,9 +756,8 @@ impl DeviceContext {
 
         let value = serde_json::to_value(PlotFrontendEvent::Update(update_params)).unwrap();
 
-        // Tell Positron we have an updated plot with optional pre-rendering
-        socket
-            .outgoing_tx
+        let outgoing_tx = CommOutgoingTx::new(comm_id, self.iopub_tx.clone());
+        outgoing_tx
             .send(CommMsg::Data(value))
             .context("Failed to send update message for id {id}.")
             .log_err();
@@ -939,36 +815,24 @@ impl DeviceContext {
     fn render_plot(&self, id: &PlotId, settings: &PlotRenderSettings) -> anyhow::Result<String> {
         log::trace!("Rendering plot");
 
-        let image_path = r_task(|| unsafe {
-            RFunction::from(".ps.graphics.render_plot_from_recording")
-                .param("id", id)
-                .param("width", RObject::try_from(settings.size.width)?)
-                .param("height", RObject::try_from(settings.size.height)?)
-                .param("pixel_ratio", settings.pixel_ratio)
-                .param("format", settings.format.to_string())
-                .call()?
-                .to::<String>()
-        });
-
-        let image_path = match image_path {
-            Ok(image_path) => image_path,
-            Err(error) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to render plot with `id` {id} due to: {error}."
-                ))
-            },
-        };
+        let image_path: String = RFunction::from(".ps.graphics.render_plot_from_recording")
+            .param("id", id)
+            .param("width", RObject::try_from(settings.size.width)?)
+            .param("height", RObject::try_from(settings.size.height)?)
+            .param("pixel_ratio", settings.pixel_ratio)
+            .param("format", settings.format.to_string())
+            .call()?
+            .try_into()
+            .map_err(|err: harp::Error| anyhow!("Failed to render plot with `id` {id}: {err:?}"))?;
 
         log::trace!("Rendered plot to {image_path}");
 
-        // Read contents into bytes.
         let conn = File::open(image_path)?;
         let mut reader = BufReader::new(conn);
 
         let mut buffer = vec![];
         reader.read_to_end(&mut buffer)?;
 
-        // what an odd interface
         let data = general_purpose::STANDARD_NO_PAD.encode(buffer);
 
         Ok(data)
@@ -992,6 +856,34 @@ impl DeviceContext {
                 false
             },
         }
+    }
+}
+
+/// Per-plot comm handler registered in Console's comm table.
+/// Delegates RPC handling and lifecycle events to the shared `DeviceContext`.
+#[derive(Debug)]
+struct PlotComm {
+    id: PlotId,
+    open_data: serde_json::Value,
+}
+
+impl CommHandler for PlotComm {
+    fn open_metadata(&self) -> serde_json::Value {
+        self.open_data.clone()
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        DEVICE_CONTEXT.with_borrow(|dc| {
+            handle_rpc_request(&ctx.outgoing_tx, PLOT_COMM_NAME, msg, |req| {
+                dc.handle_rpc(req, &self.id)
+            });
+        });
+    }
+
+    fn handle_close(&mut self, _ctx: &CommHandlerContext) {
+        DEVICE_CONTEXT.with_borrow(|dc| {
+            dc.on_plot_closed(&self.id);
+        });
     }
 }
 
@@ -1045,15 +937,6 @@ impl From<&PlotId> for RObject {
     fn from(value: &PlotId) -> Self {
         RObject::from(value.0.as_str())
     }
-}
-
-/// Hook applied at idle time (`R_ProcessEvents()` time) to process any outstanding
-/// RPC requests from Positron
-///
-/// This is called a lot, so we don't trace log each entry
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_process_idle_events() {
-    DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
 /// Hook applied when an execute request starts
