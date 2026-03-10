@@ -499,13 +499,16 @@ impl Console {
             }
         }));
 
-        // Initialize the GD context on this thread.
+        // Perform R-side graphics device initialization (register as
+        // interactive, spawn notification listener). The `DeviceContext`
+        // itself is already created as part of `Console::new()`.
+        //
         // Note that we do it after init is complete to avoid deadlocking
         // integration tests by spawning an async task. The deadlock is caused
         // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
-        graphics_device::init_graphics_device(console.iopub_tx().clone(), graphics_device_rx);
+        graphics_device::init_graphics_device(graphics_device_rx);
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -616,6 +619,8 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
+        let device_context = DeviceContext::new(iopub_tx.clone());
+
         Self {
             r_home,
             r_request_rx,
@@ -663,6 +668,7 @@ impl Console {
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
             comms: HashMap::new(),
+            device_context,
         }
     }
 
@@ -716,6 +722,10 @@ impl Console {
 
     pub(crate) fn comm_event_tx(&self) -> &Sender<CommEvent> {
         &self.comm_event_tx
+    }
+
+    pub(crate) fn device_context(&self) -> &DeviceContext {
+        &self.device_context
     }
 
     /// Run a closure while capturing console output.
