@@ -2,6 +2,11 @@
 
 # 0.1.9000
 
+## 2026-03
+
+- Jupyter: `kernel_info_reply` now includes the mandatory `implementation` and `implementation_version` fields, which should allow ark to run in Zed (#1094).
+
+
 ## 2025-02
 
 - Jupyter: The `--install` command now works on Linux (#648).
