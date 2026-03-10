@@ -25,7 +25,6 @@ use harp::exec::RFunctionExt;
 use harp::object::RObject;
 use serde_json::Value;
 use stdext::result::ResultExt;
-use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::comm_handler::handle_comm_message;
 use crate::comm_handler::CommHandler;
@@ -34,7 +33,6 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 use crate::modules::ARK_ENVS;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
 
@@ -48,7 +46,6 @@ struct UiCommOpenData {
 /// Comm handler for the Positron UI comm.
 #[derive(Debug)]
 pub struct UiComm {
-    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     working_directory: PathBuf,
     comm_open_data: UiCommOpenData,
 }
@@ -97,10 +94,7 @@ impl CommHandler for UiComm {
 }
 
 impl UiComm {
-    pub(crate) fn new(
-        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-        comm_open_data: Value,
-    ) -> Self {
+    pub(crate) fn new(comm_open_data: Value) -> Self {
         let comm_open_data: UiCommOpenData =
             serde_json::from_value(comm_open_data).unwrap_or_else(|err| {
                 log::warn!("Failed to deserialize UI comm_open data: {err:?}");
@@ -110,7 +104,6 @@ impl UiComm {
             });
 
         Self {
-            graphics_device_tx,
             working_directory: PathBuf::new(),
             comm_open_data,
         }
@@ -178,11 +171,9 @@ impl UiComm {
             ));
         }
 
-        self.graphics_device_tx
-            .send(GraphicsDeviceNotification::DidChangePlotRenderSettings(
-                params.settings,
-            ))
-            .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
+        Console::get()
+            .device_context()
+            .set_prerender_settings(params.settings);
 
         Ok(())
     }
@@ -302,8 +293,7 @@ mod tests {
         let (comm_event_tx, _) = bounded::<CommEvent>(10);
         let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
-        let (graphics_device_tx, _) = tokio::sync::mpsc::unbounded_channel();
-        let handler = UiComm::new(graphics_device_tx, serde_json::Value::Null);
+        let handler = UiComm::new(serde_json::Value::Null);
 
         (handler, ctx)
     }

@@ -25,7 +25,6 @@ use crate::console::SessionMode;
 use crate::control::Control;
 use crate::dap;
 use crate::lsp;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::repos::DefaultRepos;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -86,18 +85,12 @@ pub fn start_kernel(
     // StdIn socket thread
     let (stdin_request_tx, stdin_request_rx) = bounded::<StdInRequest>(1);
 
-    // Communication channel between the graphics device (running on the R
-    // thread) and the shell thread
-    let (graphics_device_tx, graphics_device_rx) =
-        tokio::sync::mpsc::unbounded_channel::<GraphicsDeviceNotification>();
-
     // Create the shell.
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Box::new(Shell::new(
         r_request_tx.clone(),
         kernel_init_rx,
         kernel_request_tx,
-        graphics_device_tx,
     ));
 
     // Create the control handler; this is used to handle shutdown/interrupt and
@@ -167,7 +160,6 @@ pub fn start_kernel(
         dap,
         session_mode,
         default_repos,
-        graphics_device_rx,
         console_notification_rx,
     )
 }

@@ -348,7 +348,6 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
         default_repos: DefaultRepos,
-        graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
         console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
@@ -508,7 +507,7 @@ impl Console {
         // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
-        graphics_device::init_graphics_device(graphics_device_rx);
+        graphics_device::init_graphics_device();
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
