@@ -40,7 +40,6 @@ use harp::ParseResult;
 use log::*;
 use serde_json::json;
 use stdext::unwrap;
-use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::ark_comm::ArkComm;
 use crate::console::Console;
@@ -48,7 +47,6 @@ use crate::console::KernelInfo;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::plots::graphics_device::PLOT_COMM_NAME;
 use crate::r_task;
 use crate::request::KernelRequest;
@@ -62,7 +60,6 @@ pub struct Shell {
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
-    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 }
 
 #[derive(Debug)]
@@ -76,14 +73,12 @@ impl Shell {
         r_request_tx: Sender<RRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
-        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     ) -> Self {
         Self {
             r_request_tx,
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
-            graphics_device_tx,
         }
     }
 
@@ -245,12 +240,7 @@ impl ShellHandler for Shell {
     ) -> amalthea::Result<bool> {
         match target {
             Comm::Variables => handle_comm_open_variables(comm),
-            Comm::Ui => handle_comm_open_ui(
-                comm,
-                self.kernel_request_tx.clone(),
-                self.graphics_device_tx.clone(),
-                data,
-            ),
+            Comm::Ui => handle_comm_open_ui(comm, self.kernel_request_tx.clone(), data),
             Comm::Help => handle_comm_open_help(comm),
             Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
             _ => Ok(false),
@@ -324,10 +314,9 @@ fn handle_comm_open_variables(comm: CommSocket) -> amalthea::Result<bool> {
 fn handle_comm_open_ui(
     comm: CommSocket,
     kernel_request_tx: Sender<KernelRequest>,
-    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     data: serde_json::Value,
 ) -> amalthea::Result<bool> {
-    let handler = UiComm::new(graphics_device_tx, data);
+    let handler = UiComm::new(data);
 
     let (done_tx, done_rx) = bounded(0);
     kernel_request_tx
