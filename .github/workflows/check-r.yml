@@ -1,3 +1,5 @@
+name: "Check R"
+
 # Workflow derived from https://github.com/posit-dev/setup-air/tree/main/examples
 
 on:
@@ -15,8 +17,6 @@ on:
   # code, we are just treating it as passive data).
   # https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
   pull_request_target:
-
-name: format-suggest.yaml
 
 jobs:
   format-suggest:
