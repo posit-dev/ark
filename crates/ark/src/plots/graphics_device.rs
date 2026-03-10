@@ -350,9 +350,15 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
     fn hook_holdflush(&self, level: i32) {
+        let was_held = !self.should_render.get();
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
         self.should_render.replace(level <= 0);
+
+        // Flush deferred changes on hold→release transition
+        if was_held && self.should_render.get() {
+            self.process_changes();
+        }
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
@@ -609,10 +615,17 @@ impl DeviceContext {
     fn process_changes(&self) {
         let id = self.id();
 
-        if !self.has_changes.replace(false) {
+        if !self.has_changes.get() {
             log::trace!("No changes to process for plot `id` {id}");
             return;
         }
+
+        if !self.should_render.get() {
+            log::trace!("Deferring changes for plot `id` {id} (rendering held)");
+            return;
+        }
+
+        self.has_changes.replace(false);
 
         log::trace!("Processing changes for plot `id` {id}");
 
