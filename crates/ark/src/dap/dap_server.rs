@@ -808,7 +808,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Result<(), ServerError> {
         let variables_reference = args.variables_reference;
         let variables = self.collect_r_variables(variables_reference);
-        let variables = self.into_variables(variables);
+        let variables = self.make_variables(variables);
         let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
         self.respond(rsp)
     }
@@ -888,8 +888,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
         variables
     }
 
-    fn into_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
-        self.state.lock().unwrap().into_variables(variables)
+    fn make_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
+        self.state.lock().unwrap().make_variables(variables)
     }
 
     fn handle_step<A>(

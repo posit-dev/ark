@@ -388,7 +388,7 @@ impl Dap {
         variables_reference
     }
 
-    pub fn into_variables(&mut self, variables: Vec<RVariable>) -> Vec<Variable> {
+    pub fn make_variables(&mut self, variables: Vec<RVariable>) -> Vec<Variable> {
         let mut out = Vec::with_capacity(variables.len());
 
         for variable in variables.into_iter() {
