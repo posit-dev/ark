@@ -102,7 +102,7 @@ pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
 
     if let Err(Error::TryCatchError { ref mut call, .. }) = res {
         if call.is_none() {
-            *call = Some(unsafe { r_stringify(expr, "\n")? });
+            *call = Some(r_stringify(expr, "\n")?);
         }
     }
 
