@@ -327,7 +327,7 @@ impl RTask {
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        RTask::Idle(Self::with_capture(fun))
+        RTask::Idle(Self::pin_with_capture(fun))
     }
 
     #[allow(unused)]
@@ -336,10 +336,10 @@ impl RTask {
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        RTask::IdleAnyPrompt(Self::with_capture(fun))
+        RTask::IdleAnyPrompt(Self::pin_with_capture(fun))
     }
 
-    fn with_capture<F, Fut>(fun: F) -> BoxFuture<'static, ()>
+    fn pin_with_capture<F, Fut>(fun: F) -> BoxFuture<'static, ()>
     where
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
         Fut: Future<Output = ()> + 'static,
@@ -370,7 +370,7 @@ impl RTask {
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
         Fut: Future<Output = ()> + 'static,
     {
-        RTask::SendIdle(Self::with_capture(fun))
+        RTask::SendIdle(Self::pin_with_capture(fun))
     }
 
     pub(crate) fn send_idle_any_prompt<F, Fut>(fun: F) -> Self
@@ -378,7 +378,7 @@ impl RTask {
         F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
         Fut: Future<Output = ()> + 'static,
     {
-        RTask::SendIdleAnyPrompt(Self::with_capture(fun))
+        RTask::SendIdleAnyPrompt(Self::pin_with_capture(fun))
     }
 }
 
@@ -411,7 +411,7 @@ pub(crate) fn spawn(task: RTask) {
         panic!("`spawn()` must be called from the R thread, not thread '{name}'");
     }
 
-    let (fut, tasks_tx, idle) = match task {
+    let (fut, tasks_tx, only_idle) = match task {
         RTask::Interrupt(fut) | RTask::SendInterrupt(fut) => (fut, INTERRUPT_TASKS.tx(), false),
         RTask::Idle(fut) | RTask::SendIdle(fut) => (fut, IDLE_TASKS.tx(), true),
         RTask::IdleAnyPrompt(fut) | RTask::SendIdleAnyPrompt(fut) => {
@@ -422,7 +422,7 @@ pub(crate) fn spawn(task: RTask) {
     let task = QueuedRTask::Async(RTaskAsync {
         fut,
         tasks_tx: tasks_tx.clone(),
-        start_info: RTaskStartInfo::new(idle),
+        start_info: RTaskStartInfo::new(only_idle),
     });
 
     tasks_tx.send(task).unwrap();
