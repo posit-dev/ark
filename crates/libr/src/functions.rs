@@ -28,7 +28,7 @@ macro_rules! generate {
                 $(#[doc=$doc])*
                 $(#[cfg($cfg)])*
                 pub fn $name($($pname: $pty), *) $(-> $ret)* {
-                    unsafe { [<$name _opt>].unwrap_unchecked()($($pname), *) }
+                    unsafe { (*std::ptr::addr_of!([<$name _opt>])).unwrap_unchecked()($($pname), *) }
                 }
             }
         )+
@@ -67,7 +67,7 @@ macro_rules! generate {
                             Err(_) => None
                         };
 
-                        unsafe { [<$name _opt>] = pointer };
+                        unsafe { std::ptr::addr_of_mut!([<$name _opt>]).write(pointer) };
                     }
                 )+
             }
