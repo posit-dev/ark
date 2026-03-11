@@ -84,7 +84,7 @@ fn unknown_format(x: SEXP) -> Vec<FormattedValue> {
 
 // Format a column of data for display in the data explorer.
 fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<FormattedValue>> {
-    if let Some(_) = r_classes(x) {
+    if r_classes(x).is_some() {
         return Ok(format_object(x));
     }
 

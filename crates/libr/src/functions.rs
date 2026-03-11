@@ -43,7 +43,7 @@ macro_rules! generate {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
                     pub fn $name() -> bool {
-                        unsafe { matches!([<$name _opt>], Some(_)) }
+                        (*std::ptr::addr_of!([<$name _opt>])).is_some()
                     }
                 }
             )+
