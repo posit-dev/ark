@@ -86,15 +86,19 @@ impl DummyAmaltheaFrontend {
                     "amalthea",
                     connection_file,
                     Some(registration_file),
-                    shell,
-                    control,
-                    server_handlers,
+                    kernel::Handlers {
+                        shell_handler: shell,
+                        control_handler: control,
+                        server_handlers,
+                    },
                     StreamBehavior::None,
-                    iopub_tx,
-                    iopub_rx,
-                    comm_event_rx,
-                    stdin_request_rx,
-                    stdin_reply_tx,
+                    kernel::ConnectionChannels {
+                        iopub_tx,
+                        iopub_rx,
+                        comm_event_rx,
+                        stdin_request_rx,
+                        stdin_reply_tx,
+                    },
                 ) {
                     panic!("Error connecting kernel: {err:?}");
                 };
