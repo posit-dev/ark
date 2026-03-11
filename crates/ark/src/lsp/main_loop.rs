@@ -89,6 +89,7 @@ pub(crate) enum Event {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum KernelNotification {
     DidChangeConsoleInputs(ConsoleInputs),
     DidOpenVirtualDocument(DidOpenVirtualDocumentParams),
