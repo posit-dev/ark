@@ -11,9 +11,11 @@ use std::sync::Mutex;
 
 static ID: AtomicI32 = AtomicI32::new(0);
 
+type Listener<T> = Box<dyn Fn(&T) + Send>;
+
 #[derive(Default)]
 pub struct Event<T> {
-    listeners: Mutex<HashMap<i32, Box<dyn Fn(&T) + Send>>>,
+    listeners: Mutex<HashMap<i32, Listener<T>>>,
 }
 
 impl<T> Event<T> {
