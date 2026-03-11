@@ -67,7 +67,7 @@ macro_rules! generate {
                             Err(_) => None
                         };
 
-                        unsafe { [<$name _opt>] = pointer };
+                        unsafe { std::ptr::addr_of_mut!([<$name _opt>]).write(pointer) };
                     }
                 )+
             }
