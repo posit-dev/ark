@@ -314,7 +314,7 @@ impl RVariables {
 
     fn clipboard_format(
         &mut self,
-        path: &Vec<String>,
+        path: &[String],
         format: ClipboardFormatFormat,
     ) -> anyhow::Result<String> {
         r_task(|| {
@@ -335,7 +335,7 @@ impl RVariables {
     /// - `path`: The path to the variable to view, as an array of access keys
     ///
     /// Returns the ID of the comm managing the view, if any.
-    fn view(&mut self, path: &Vec<String>) -> Result<Option<String>, harp::error::Error> {
+    fn view(&mut self, path: &[String]) -> Result<Option<String>, harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();
             let obj = PositronVariable::resolve_data_object(env.clone(), path)?;
@@ -374,8 +374,8 @@ impl RVariables {
     /// Returns summary information about the table including schemas and profiles.
     fn query_table_summary(
         &mut self,
-        path: &Vec<String>,
-        query_types: &Vec<String>,
+        path: &[String],
+        query_types: &[String],
     ) -> anyhow::Result<QueryTableSummaryResult> {
         r_task(|| {
             let env = self.env.get().clone();
