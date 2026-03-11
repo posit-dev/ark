@@ -213,10 +213,9 @@ impl RHtmlHelp {
             let mut cells = elt.select(&selector);
 
             // Start iterating through pairs of cells.
-            loop {
+            while let Some(lhs) = cells.next() {
                 // Get the parameters. Note that multiple parameters might be contained
                 // within a single table cell, so we'll need to split that later.
-                let lhs = unwrap!(cells.next(), None => { break });
                 let names: String = lhs.text().collect();
 
                 // Get the parameters associated with this description.
@@ -224,7 +223,9 @@ impl RHtmlHelp {
                 let names = pattern.split(names.as_str()).collect::<Vec<_>>();
 
                 // Get the parameter description.
-                let rhs = unwrap!(cells.next(), None => { break });
+                let Some(rhs) = cells.next() else {
+                    break;
+                };
 
                 // Execute the callback.
                 match callback(&names, &rhs) {
