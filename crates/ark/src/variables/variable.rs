@@ -1649,11 +1649,10 @@ fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableK
 }
 
 pub fn is_binding_fancy(binding: &Binding) -> bool {
-    match &binding.value {
-        BindingValue::Active { .. } => true,
-        BindingValue::Altrep { .. } => true,
-        _ => false,
-    }
+    matches!(
+        &binding.value,
+        BindingValue::Active { .. } | BindingValue::Altrep { .. }
+    )
 }
 
 pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RObject> {
