@@ -583,3 +583,71 @@ fn test_plot_source_context_stacking() {
         file_a.uri_id,
     );
 }
+
+/// Test that `dev.hold()` suppresses intermediate plot output.
+///
+/// Without hold, each `plot()` call emits a separate `display_data`.
+/// With hold active, intermediate plots are suppressed and only the
+/// final state after `dev.flush()` is emitted.
+#[test]
+fn test_dev_hold_suppresses_intermediate_plots() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Activate the graphics device
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Hold, draw two intermediate plots, then flush.
+    // Only the final plot should produce output.
+    let code = r#"
+invisible(dev.hold())
+plot(1:5)
+plot(1:3)
+invisible(dev.flush())
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that `dev.hold()` persists across execute requests.
+///
+/// A hold started in one request should suppress output until
+/// `dev.flush()` is called in a subsequent request.
+#[test]
+fn test_dev_hold_across_execute_requests() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Activate the graphics device
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Hold and plot without flushing. No display_data should appear.
+    frontend.send_execute_request(
+        "invisible(dev.hold())\nplot(1:5)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Flush in a separate request. The held plot should now appear.
+    frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}

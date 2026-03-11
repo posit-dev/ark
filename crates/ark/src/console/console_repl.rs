@@ -326,7 +326,6 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
         default_repos: DefaultRepos,
-        graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
         console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
@@ -481,17 +480,16 @@ impl Console {
             }
         });
 
-        // Initialize the GD context on this thread.
+        // Perform R-side graphics device initialization (register as
+        // interactive, spawn notification listener). The `DeviceContext`
+        // itself is already created as part of `Console::new()`.
+        //
         // Note that we do it after init is complete to avoid deadlocking
         // integration tests by spawning an async task. The deadlock is caused
         // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
-        graphics_device::init_graphics_device(
-            console.comm_event_tx.clone(),
-            console.iopub_tx().clone(),
-            graphics_device_rx,
-        );
+        graphics_device::init_graphics_device();
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -589,6 +587,8 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
+        let device_context = DeviceContext::new(iopub_tx.clone());
+
         Self {
             r_request_rx,
             comm_event_tx,
@@ -634,6 +634,7 @@ impl Console {
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
             comms: HashMap::new(),
+            device_context,
         }
     }
 
@@ -683,6 +684,10 @@ impl Console {
 
     pub(crate) fn comm_event_tx(&self) -> &Sender<CommEvent> {
         &self.comm_event_tx
+    }
+
+    pub(crate) fn device_context(&self) -> &DeviceContext {
+        &self.device_context
     }
 
     /// Run a closure while capturing console output.
@@ -2235,13 +2240,6 @@ impl Console {
         // might end up being executed on the LSP thread.
         // https://github.com/rstudio/positron/issues/431
         unsafe { R_RunPendingFinalizers() };
-
-        // Check for Positron render requests.
-        //
-        // TODO: This should move to a spawned task that'd be woken up by
-        // incoming messages on plot comms. This way we'll prevent the delays
-        // introduced by timeout-based event polling.
-        graphics_device::on_process_idle_events();
     }
 
     pub(super) fn eval_env(&self) -> RObject {

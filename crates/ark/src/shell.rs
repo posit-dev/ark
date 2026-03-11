@@ -40,7 +40,6 @@ use harp::ParseResult;
 use log::*;
 use serde_json::json;
 use stdext::unwrap;
-use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::ark_comm::ArkComm;
 use crate::console::Console;
@@ -48,7 +47,7 @@ use crate::console::KernelInfo;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
+use crate::plots::graphics_device::PLOT_COMM_NAME;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -61,7 +60,6 @@ pub struct Shell {
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
-    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 }
 
 #[derive(Debug)]
@@ -75,14 +73,12 @@ impl Shell {
         r_request_tx: Sender<RRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
-        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     ) -> Self {
         Self {
             r_request_tx,
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
-            graphics_device_tx,
         }
     }
 
@@ -240,11 +236,7 @@ impl ShellHandler for Shell {
     async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
         match target {
             Comm::Variables => handle_comm_open_variables(comm),
-            Comm::Ui => handle_comm_open_ui(
-                comm,
-                self.kernel_request_tx.clone(),
-                self.graphics_device_tx.clone(),
-            ),
+            Comm::Ui => handle_comm_open_ui(comm, self.kernel_request_tx.clone()),
             Comm::Help => handle_comm_open_help(comm),
             Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
             _ => Ok(false),
@@ -258,7 +250,7 @@ impl ShellHandler for Shell {
         msg: CommMsg,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
@@ -276,7 +268,7 @@ impl ShellHandler for Shell {
         comm_name: &str,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
@@ -316,9 +308,8 @@ fn handle_comm_open_variables(comm: CommSocket) -> amalthea::Result<bool> {
 fn handle_comm_open_ui(
     comm: CommSocket,
     kernel_request_tx: Sender<KernelRequest>,
-    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 ) -> amalthea::Result<bool> {
-    let handler = UiComm::new(graphics_device_tx);
+    let handler = UiComm::new();
 
     let (done_tx, done_rx) = bounded(0);
     kernel_request_tx
