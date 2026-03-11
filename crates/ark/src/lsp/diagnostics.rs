@@ -871,8 +871,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     if node
         .arguments_names_as_string(&context.doc.contents)
         .flatten()
-        .find(|n| n == "character.only")
-        .is_some()
+        .any(|n| n == "character.only")
     {
         return Ok(());
     }
