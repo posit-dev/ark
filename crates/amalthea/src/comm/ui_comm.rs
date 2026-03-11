@@ -194,6 +194,14 @@ pub struct EditorContextChangedParams {
 	pub is_execution_source: bool,
 }
 
+/// Parameters for the FrontendReady method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FrontendReadyParams {
+	/// True if this is a new session, false if reconnecting to existing
+	/// session
+	pub is_new_session: bool,
+}
+
 /// Parameters for the Busy method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BusyParams {
@@ -446,6 +454,15 @@ pub enum UiBackendRequest {
 	#[serde(rename = "editor_context_changed")]
 	EditorContextChanged(EditorContextChangedParams),
 
+	/// Notify backend that the frontend is ready
+	///
+	/// Sent after the UI comm is opened and the frontend is fully
+	/// initialized. The runtime can use this as a signal to run session
+	/// initialization hooks (e.g., positron.sessionInit,
+	/// rstudio.sessionInit).
+	#[serde(rename = "frontend_ready")]
+	FrontendReady(FrontendReadyParams),
+
 }
 
 /**
@@ -465,6 +482,9 @@ pub enum UiBackendReply {
 
 	/// Unused response to notification
 	EditorContextChangedReply(),
+
+	/// Unused response to notification
+	FrontendReadyReply(),
 
 }
 
