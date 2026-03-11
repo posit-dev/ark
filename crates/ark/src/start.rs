@@ -88,11 +88,9 @@ pub fn start_kernel(
     let kernel_init_rx = kernel_init_tx.add_rx();
     let shell = Box::new(Shell::new(
         r_request_tx.clone(),
-        stdin_request_tx.clone(),
         kernel_init_rx,
         kernel_request_tx,
         graphics_device_tx,
-        console_notification_tx,
     ));
 
     // Create the control handler; this is used to handle shutdown/interrupt and

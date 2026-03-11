@@ -636,36 +636,6 @@ impl DummyArkFrontend {
         }
     }
 
-    /// Receive a CommMsg and Idle from IOPub in either order.
-    ///
-    /// Some comm RPC replies race with the shell's Idle status because the
-    /// reply is sent from a separate thread (e.g. the UI comm thread). This
-    /// helper accepts both orderings and returns the CommMsg content.
-    #[track_caller]
-    pub fn recv_iopub_comm_msg_and_idle(&self) -> amalthea::wire::comm_msg::CommWireMsg {
-        let first = self.recv_iopub_next();
-        let second = self.recv_iopub_next();
-
-        let (comm_msg, idle) = match (first, second) {
-            (Message::CommMsg(comm), Message::Status(status)) => (comm, status),
-            (Message::Status(status), Message::CommMsg(comm)) => (comm, status),
-            (a, b) => panic!(
-                "Expected CommMsg and Idle in either order, got {:?} and {:?}",
-                a, b
-            ),
-        };
-
-        assert_eq!(
-            idle.content.execution_state,
-            amalthea::wire::status::ExecutionState::Idle,
-            "Expected Idle status"
-        );
-
-        self.flush_streams_at_boundary();
-
-        comm_msg.content
-    }
-
     /// Receive from IOPub and assert CommOpen message.
     /// Automatically skips any Stream messages.
     #[track_caller]
@@ -1094,54 +1064,28 @@ impl DummyArkFrontend {
             data: serde_json::json!({}),
         });
 
-        // The comm_open triggers busy/idle on the shell thread and also
-        // sends an EstablishUiCommChannel kernel request to the console.
-        // The UI comm then sends events (prompt_state, working_directory)
-        // as CommMsg on IOPub. These can arrive in any order relative to
-        // the busy/idle. We wait for the prompt_state CommMsg as evidence
-        // that the UI comm has been established, draining everything.
-        let deadline = Instant::now() + RECV_TIMEOUT;
-        let mut got_prompt_state = false;
-        let mut idle_count = 0u32;
+        // The UI comm runs on the R thread via CommHandler. The comm_open
+        // blocks Shell while the handler's `handle_open()` runs, so events
+        // arrive deterministically within the Busy/Idle window.
+        self.recv_iopub_busy();
 
-        // We need to see the prompt_state AND at least one idle
-        while !got_prompt_state || idle_count == 0 {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let Some(msg) = self.recv_iopub_with_timeout(remaining) else {
-                panic!(
-                    "Timed out waiting for UI comm (got_prompt_state={got_prompt_state}, \
-                     idle_count={idle_count})"
-                );
-            };
-            match &msg {
-                Message::CommMsg(data) => {
-                    if let Some(method) = data.content.data.get("method").and_then(|v| v.as_str()) {
-                        if method == "prompt_state" {
-                            got_prompt_state = true;
-                        }
-                    }
-                },
-                Message::Status(ref data)
-                    if data.content.execution_state ==
-                        amalthea::wire::status::ExecutionState::Idle =>
-                {
-                    idle_count += 1;
-                },
-                Message::Stream(ref data) => {
-                    self.buffer_stream(&data.content);
-                },
-                _ => {},
-            }
-        }
+        // `handle_open()` calls `refresh()` which sends prompt_state then
+        // working_directory.
+        let prompt_state = self.recv_iopub_comm_msg();
+        assert_eq!(prompt_state.comm_id, comm_id);
+        assert_eq!(
+            prompt_state.data.get("method").and_then(|v| v.as_str()),
+            Some("prompt_state")
+        );
 
-        // The UI comm sends events asynchronously. Some may arrive after
-        // idle. Drain any stragglers with a short timeout.
-        while let Some(msg) = self.recv_iopub_with_timeout(Duration::from_millis(200)) {
-            if let Message::Stream(ref data) = msg {
-                self.buffer_stream(&data.content);
-            }
-            // Discard late comm messages and other events
-        }
+        let working_dir = self.recv_iopub_comm_msg();
+        assert_eq!(working_dir.comm_id, comm_id);
+        assert_eq!(
+            working_dir.data.get("method").and_then(|v| v.as_str()),
+            Some("working_directory")
+        );
+
+        self.recv_iopub_idle();
 
         comm_id
     }

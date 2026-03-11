@@ -128,7 +128,6 @@ pub(crate) use console_repl::ConsoleNotification;
 pub(crate) use console_repl::ConsoleOutputCapture;
 pub(crate) use console_repl::KernelInfo;
 use console_repl::PendingInputs;
-use console_repl::PromptInfo;
 use console_repl::ReadConsolePendingAction;
 pub use console_repl::SessionMode;
 
@@ -166,8 +165,6 @@ use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
-use crate::ui::UiCommMessage;
-use crate::ui::UiCommSender;
 use crate::url::UrlId;
 
 thread_local! {
@@ -224,9 +221,9 @@ pub(crate) struct Console {
     tasks_idle_any_rx: Receiver<RTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// Channel to communicate requests and events to the frontend
-    /// by forwarding them through the UI comm. Optional, and really Positron specific.
-    ui_comm_tx: Option<UiCommSender>,
+    /// Comm ID of the currently connected UI comm, if any.
+    /// The handler lives in `self.comms`; this is just an index into it.
+    ui_comm_id: Option<String>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.

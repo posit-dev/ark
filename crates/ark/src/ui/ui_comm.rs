@@ -1,0 +1,373 @@
+//
+// ui.rs
+//
+// Copyright (C) 2023-2026 by Posit Software, PBC
+//
+//
+
+use std::path::PathBuf;
+
+use amalthea::comm::comm_channel::CommMsg;
+use amalthea::comm::ui_comm::CallMethodParams;
+use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
+use amalthea::comm::ui_comm::EditorContextChangedParams;
+use amalthea::comm::ui_comm::EvalResult;
+use amalthea::comm::ui_comm::EvaluateCodeParams;
+use amalthea::comm::ui_comm::PromptStateParams;
+use amalthea::comm::ui_comm::UiBackendReply;
+use amalthea::comm::ui_comm::UiBackendRequest;
+use amalthea::comm::ui_comm::UiFrontendEvent;
+use amalthea::comm::ui_comm::WorkingDirectoryParams;
+use harp::eval::parse_eval_global;
+use harp::exec::RFunction;
+use harp::exec::RFunctionExt;
+use harp::object::RObject;
+use serde_json::Value;
+use stdext::result::ResultExt;
+use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
+
+use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::CommHandler;
+use crate::comm_handler::CommHandlerContext;
+use crate::comm_handler::EnvironmentChanged;
+use crate::console::Console;
+use crate::console::ConsoleOutputCapture;
+use crate::plots::graphics_device::GraphicsDeviceNotification;
+
+pub const UI_COMM_NAME: &str = "positron.ui";
+
+/// Comm handler for the Positron UI comm.
+#[derive(Debug)]
+pub struct UiComm {
+    graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+    working_directory: PathBuf,
+}
+
+impl CommHandler for UiComm {
+    fn handle_open(&mut self, ctx: &CommHandlerContext) {
+        self.refresh(ctx);
+    }
+
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+        handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
+            self.handle_rpc(req)
+        });
+    }
+
+    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution = event else {
+            return;
+        };
+        self.refresh(ctx);
+    }
+}
+
+impl UiComm {
+    pub(crate) fn new(
+        graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+    ) -> Self {
+        Self {
+            graphics_device_tx,
+            working_directory: PathBuf::new(),
+        }
+    }
+
+    fn handle_rpc(&mut self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
+        match request {
+            UiBackendRequest::CallMethod(params) => self.handle_call_method(params),
+            UiBackendRequest::DidChangePlotsRenderSettings(params) => {
+                self.handle_did_change_plot_render_settings(params)
+            },
+            UiBackendRequest::EditorContextChanged(params) => {
+                self.handle_editor_context_changed(params)
+            },
+            UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
+        }
+    }
+
+    fn handle_call_method(&self, request: CallMethodParams) -> anyhow::Result<UiBackendReply> {
+        log::trace!("Handling '{}' frontend RPC method", request.method);
+
+        // Today, all RPCs are fulfilled by R directly. Check to see if an R
+        // method of the appropriate name is defined.
+        //
+        // Consider: In the future, we may want to allow requests to be
+        // fulfilled here on the Rust side, with only some requests forwarded to
+        // R; Rust methods may wish to establish their own RPC handlers.
+
+        let method = format!(".ps.rpc.{}", request.method);
+
+        let exists_obj = RFunction::from("exists")
+            .param("x", method.clone())
+            .call()?;
+        let exists: bool = exists_obj.try_into()?;
+
+        if !exists {
+            let method = &request.method;
+            return Err(anyhow::anyhow!("No such method: {method}"));
+        }
+
+        let mut call = RFunction::from(method);
+        for param in request.params.iter() {
+            let p = RObject::try_from(param.clone())?;
+            call.add(p);
+        }
+        let result = call.call()?;
+        let result = Value::try_from(result)?;
+
+        Ok(UiBackendReply::CallMethodReply(result))
+    }
+
+    fn handle_did_change_plot_render_settings(
+        &self,
+        params: DidChangePlotsRenderSettingsParams,
+    ) -> anyhow::Result<UiBackendReply> {
+        // The frontend shouldn't send invalid sizes but be defensive. Sometimes
+        // the plot container is in a strange state when it's hidden.
+        if params.settings.size.height <= 0 || params.settings.size.width <= 0 {
+            return Err(anyhow::anyhow!(
+                "Got invalid plot render size: {size:?}",
+                size = params.settings.size,
+            ));
+        }
+
+        self.graphics_device_tx
+            .send(GraphicsDeviceNotification::DidChangePlotRenderSettings(
+                params.settings,
+            ))
+            .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
+
+        Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
+    }
+
+    fn handle_editor_context_changed(
+        &self,
+        params: EditorContextChangedParams,
+    ) -> anyhow::Result<UiBackendReply> {
+        log::trace!(
+            "Editor context changed: document_uri={}, is_execution_source={}",
+            params.document_uri,
+            params.is_execution_source
+        );
+        Ok(UiBackendReply::EditorContextChangedReply())
+    }
+
+    fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {
+        log::trace!("Evaluating code: {}", params.code);
+
+        let mut capture = if Console::is_initialized() {
+            Console::get_mut().start_capture()
+        } else {
+            ConsoleOutputCapture::dummy()
+        };
+
+        let value = parse_eval_global(&params.code);
+
+        let output = capture.take();
+        drop(capture);
+
+        match value {
+            Ok(evaluated) => {
+                let result = Value::try_from(evaluated)?;
+                Ok(UiBackendReply::EvaluateCodeReply(EvalResult {
+                    result,
+                    output,
+                }))
+            },
+            Err(err) => {
+                let message = match err {
+                    harp::Error::TryCatchError { message, .. } => message,
+                    harp::Error::ParseError { message, .. } => message,
+                    harp::Error::ParseSyntaxError { message } => message,
+                    _ => format!("{err}"),
+                };
+                Err(anyhow::anyhow!("{message}"))
+            },
+        }
+    }
+
+    fn refresh(&mut self, ctx: &CommHandlerContext) {
+        self.refresh_prompt_info(ctx);
+        self.refresh_working_directory(ctx).log_err();
+    }
+
+    fn refresh_prompt_info(&self, ctx: &CommHandlerContext) {
+        let input_prompt: String = harp::get_option("prompt")
+            .try_into()
+            .unwrap_or_else(|_| String::from("> "));
+        let continuation_prompt: String = harp::get_option("continue")
+            .try_into()
+            .unwrap_or_else(|_| String::from("+ "));
+
+        ctx.send_event(&UiFrontendEvent::PromptState(PromptStateParams {
+            input_prompt,
+            continuation_prompt,
+        }));
+    }
+
+    /// Checks for changes to the working directory, and sends an event to the
+    /// frontend if the working directory has changed.
+    fn refresh_working_directory(&mut self, ctx: &CommHandlerContext) -> anyhow::Result<()> {
+        let mut new_working_directory = std::env::current_dir()?;
+
+        if new_working_directory != self.working_directory {
+            self.working_directory = new_working_directory.clone();
+
+            // Attempt to alias the directory, if it's within the home directory
+            if let Some(home_dir) = home::home_dir() {
+                if let Ok(stripped_dir) = new_working_directory.strip_prefix(home_dir) {
+                    let mut new_path = PathBuf::from("~");
+                    new_path.push(stripped_dir);
+                    new_working_directory = new_path;
+                }
+            }
+
+            ctx.send_event(&UiFrontendEvent::WorkingDirectory(WorkingDirectoryParams {
+                directory: new_working_directory.to_string_lossy().to_string(),
+            }));
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use amalthea::comm::base_comm::JsonRpcError;
+    use amalthea::comm::comm_channel::CommMsg;
+    use amalthea::comm::event::CommEvent;
+    use amalthea::comm::ui_comm::CallMethodParams;
+    use amalthea::comm::ui_comm::EvalResult;
+    use amalthea::comm::ui_comm::EvaluateCodeParams;
+    use amalthea::comm::ui_comm::UiBackendReply;
+    use amalthea::comm::ui_comm::UiBackendRequest;
+    use amalthea::socket::comm::CommOutgoingTx;
+    use amalthea::socket::iopub::IOPubMessage;
+    use ark_test::dummy_jupyter_header;
+    use ark_test::IOPubReceiverExt;
+    use crossbeam::channel::bounded;
+    use serde_json::Value;
+
+    use super::*;
+    use crate::comm_handler::CommHandlerContext;
+    use crate::r_task;
+
+    fn setup_ui_comm(
+        iopub_tx: crossbeam::channel::Sender<IOPubMessage>,
+    ) -> (UiComm, CommHandlerContext) {
+        let comm_id = uuid::Uuid::new_v4().to_string();
+
+        let outgoing_tx = CommOutgoingTx::new(comm_id, iopub_tx);
+        let (comm_event_tx, _) = bounded::<CommEvent>(10);
+        let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
+
+        let (graphics_device_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let handler = UiComm::new(graphics_device_tx);
+
+        (handler, ctx)
+    }
+
+    #[test]
+    fn test_ui_comm() {
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
+        let old_width = r_task(move || {
+            let (mut handler, ctx) = setup_ui_comm(iopub_tx);
+
+            // Get the current console width
+            let old_width: i32 = harp::get_option("width").try_into().unwrap();
+
+            // Send a setConsoleWidth RPC
+            let msg = CommMsg::Rpc {
+                id: String::from("test-id-1"),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(UiBackendRequest::CallMethod(CallMethodParams {
+                    method: String::from("setConsoleWidth"),
+                    params: vec![Value::from(123)],
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
+
+            // Assert that the console width changed
+            let new_width: i32 = harp::get_option("width").try_into().unwrap();
+            assert_eq!(new_width, 123);
+
+            // Now try to invoke an RPC that doesn't exist
+            let msg = CommMsg::Rpc {
+                id: String::from("test-id-2"),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(UiBackendRequest::CallMethod(CallMethodParams {
+                    method: String::from("thisRpcDoesNotExist"),
+                    params: vec![],
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
+
+            old_width
+        });
+
+        // Check first response (setConsoleWidth)
+        let response = iopub_rx.recv_comm_msg();
+        match response {
+            CommMsg::Rpc { id, data, .. } => {
+                let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
+                assert_eq!(id, "test-id-1");
+                assert_eq!(
+                    result,
+                    UiBackendReply::CallMethodReply(Value::from(old_width))
+                );
+            },
+            _ => panic!("Unexpected response: {:?}", response),
+        }
+
+        // Check second response (non-existent method error)
+        let response = iopub_rx.recv_comm_msg();
+        match response {
+            CommMsg::Rpc { id, data, .. } => {
+                let _reply = serde_json::from_value::<JsonRpcError>(data).unwrap();
+                assert_eq!(id, "test-id-2");
+            },
+            _ => panic!("Unexpected response: {:?}", response),
+        }
+    }
+
+    #[test]
+    fn test_evaluate_code() {
+        let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
+
+        r_task(move || {
+            let (mut handler, ctx) = setup_ui_comm(iopub_tx);
+
+            // Pure result with no output (e.g. 1 + 1)
+            let msg = CommMsg::Rpc {
+                id: String::from("eval-1"),
+                parent_header: dummy_jupyter_header(),
+                data: serde_json::to_value(UiBackendRequest::EvaluateCode(EvaluateCodeParams {
+                    code: String::from("1 + 1"),
+                }))
+                .unwrap(),
+            };
+            handler.handle_msg(msg, &ctx);
+        });
+
+        let response = iopub_rx.recv_comm_msg();
+        match response {
+            CommMsg::Rpc { data, .. } => {
+                let result = serde_json::from_value::<UiBackendReply>(data).unwrap();
+                assert_eq!(
+                    result,
+                    UiBackendReply::EvaluateCodeReply(EvalResult {
+                        result: Value::from(2.0),
+                        // Output capture relies on Console::start_capture(), which is
+                        // not available in unit tests (Console is not initialized).
+                        // Output capture is exercised in integration tests instead.
+                        output: String::from(""),
+                    })
+                );
+            },
+            _ => panic!("Unexpected response: {:?}", response),
+        }
+    }
+}
