@@ -21,7 +21,7 @@ use crate::error::Error;
 use crate::language::control_handler::ControlHandler;
 use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;

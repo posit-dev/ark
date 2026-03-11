@@ -16,7 +16,7 @@ use serde_json::value::Value;
 use sha2::Sha256;
 
 use crate::error::Error;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::ProtocolMessage;

@@ -29,7 +29,7 @@ use crate::socket::comm::CommInitiator;
 use crate::socket::comm::CommSocket;
 use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_reply::CommInfoTargetName;
