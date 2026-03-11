@@ -67,6 +67,9 @@ fn get_selection(
     // Helper function to get all row indices when selecting whole columns
     // This ensures sort order is preserved when exporting columns
     let get_all_row_indices = |view_indices: &Option<Vec<i32>>| -> Option<Vec<i64>> {
+        // When there are view indices (sorted/filtered), select all rows in the
+        // order specified by `view_indices`. Otherwise `None` means select all
+        // rows in their natural order.
         view_indices
             .as_ref()
             .map(|indices| (0..indices.len() as i64).collect())
@@ -176,7 +179,7 @@ mod tests {
     /// Creates:
     /// row | col_0 | col_1 | col_2
     ///  0  |  10   |  20   |  'A'
-    ///  1  |  11   |  21   |  'B'  
+    ///  1  |  11   |  21   |  'B'
     ///  2  |  12   |  22   |  'C'
     ///  3  |  13   |  23   |  'D'
     fn predictable_test_data() -> RObject {
