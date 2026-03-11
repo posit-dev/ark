@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::connection_file::ConnectionFile;
 use crate::registration_file::RegistrationFile;
 use crate::session::Session;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;

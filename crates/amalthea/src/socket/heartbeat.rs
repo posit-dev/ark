@@ -5,7 +5,7 @@
  *
  */
 
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 
 /// Structure used for heartbeat messages
 pub struct Heartbeat {

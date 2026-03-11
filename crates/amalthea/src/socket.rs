@@ -5,6 +5,13 @@
  *
  */
 
+pub mod comm;
+pub mod control;
+pub mod heartbeat;
+pub mod iopub;
+pub mod shell;
+pub mod stdin;
+
 use crate::error::Error;
 use crate::session::Session;
 

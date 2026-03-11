@@ -30,7 +30,7 @@ use crate::socket::heartbeat::Heartbeat;
 use crate::socket::iopub::IOPub;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::shell::Shell;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 use crate::socket::stdin::StdInRequest;
 use crate::socket::stdin::Stdin;
 use crate::stream_capture::StreamCapture;

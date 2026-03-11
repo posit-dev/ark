@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::error::Error;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 
 /// Represents a special `SubscriptionMessage` sent from a SUB to an XPUB
 /// upon `socket.set_subscribe(subscription)` or `socket.set_unsubscribe(subscription)`.

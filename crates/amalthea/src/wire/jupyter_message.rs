@@ -19,7 +19,7 @@ use crate::comm::base_comm::JsonRpcReply;
 use crate::comm::ui_comm::UiFrontendRequest;
 use crate::error::Error;
 use crate::session::Session;
-use crate::socket::socket::Socket;
+use crate::socket::Socket;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_info_reply::CommInfoReply;
 use crate::wire::comm_info_request::CommInfoRequest;
