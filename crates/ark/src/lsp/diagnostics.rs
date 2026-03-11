@@ -868,10 +868,11 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     // Just bail if `character.only` is passed, even if it's actually `FALSE`.
     // We'll do better when we have a more capable argument inspection
     // infrastructure.
-    if let Some(_) = node
+    if node
         .arguments_names_as_string(&context.doc.contents)
         .flatten()
         .find(|n| n == "character.only")
+        .is_some()
     {
         return Ok(());
     }
