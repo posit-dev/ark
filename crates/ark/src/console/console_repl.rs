@@ -1608,7 +1608,7 @@ impl Console {
     /// in duplicate virtual editors being opened on the client side.
     pub(super) fn load_fallback_sources(
         &mut self,
-        stack: &Vec<console_debug::FrameInfo>,
+        stack: &[console_debug::FrameInfo],
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 

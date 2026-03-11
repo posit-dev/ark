@@ -988,7 +988,7 @@ impl PositronVariable {
 
     pub fn clip(
         env: RObject,
-        path: &Vec<String>,
+        path: &[String],
         _format: &ClipboardFormatFormat,
     ) -> anyhow::Result<String> {
         let node = Self::resolve_object_from_path(env, path)?;
@@ -1026,14 +1026,16 @@ impl PositronVariable {
 
     pub fn resolve_data_object(
         env: RObject,
-        path: &Vec<String>,
+        path: &[String],
     ) -> Result<RObject, harp::error::Error> {
         let resolved = Self::resolve_object_from_path(env, path)?;
 
         match resolved {
             EnvironmentVariableNode::Concrete { object } => Ok(object),
 
-            _ => Err(harp::error::Error::InspectError { path: path.clone() }),
+            _ => Err(harp::error::Error::InspectError {
+                path: path.to_vec(),
+            }),
         }
     }
 
@@ -1217,7 +1219,7 @@ impl PositronVariable {
 
     fn resolve_object_from_path(
         object: RObject,
-        path: &Vec<String>,
+        path: &[String],
     ) -> harp::Result<EnvironmentVariableNode> {
         let mut node = EnvironmentVariableNode::Concrete { object };
 

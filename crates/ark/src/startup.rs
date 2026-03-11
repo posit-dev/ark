@@ -20,12 +20,12 @@ use stdext::result::ResultExt;
 use crate::console::Console;
 use crate::sys;
 
-pub(crate) fn should_ignore_site_r_profile(args: &Vec<String>) -> bool {
+pub(crate) fn should_ignore_site_r_profile(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--no-site-file" || arg == "--vanilla")
 }
 
-pub(crate) fn should_ignore_user_r_profile(args: &Vec<String>) -> bool {
+pub(crate) fn should_ignore_user_r_profile(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--no-init-file" || arg == "--vanilla")
 }

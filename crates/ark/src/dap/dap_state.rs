@@ -331,7 +331,7 @@ impl Dap {
         }
     }
 
-    fn load_variables_references(&mut self, stack: &mut Vec<FrameInfo>) {
+    fn load_variables_references(&mut self, stack: &mut [FrameInfo]) {
         // Reset the last step's maps. The frontend should never ask for these variable
         // references or variables again (and if it does due to some race condition, we
         // end up replying with an error). This lets us free our references to the
