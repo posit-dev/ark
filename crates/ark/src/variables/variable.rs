@@ -538,7 +538,7 @@ impl WorkspaceVariableDisplayType {
     fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Option<Self>> {
         let args = vec![RArgument::new(
             "include_length",
-            RObject::try_from(include_length)?,
+            RObject::from(include_length),
         )];
         let result: Option<String> = ArkGenerics::VariableDisplayType.try_dispatch(value, args)?;
         Ok(result.map(Self::simple))

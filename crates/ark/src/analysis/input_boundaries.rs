@@ -119,7 +119,7 @@ pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
         };
 
         // Parse within source file to get source references
-        let srcfile = harp::srcref::SrcFile::try_from(&subset)?;
+        let srcfile = harp::srcref::SrcFile::from(&subset);
 
         match harp::parse_status(&harp::ParseInput::SrcFile(&srcfile))? {
             ParseResult::Complete(exprs) => {

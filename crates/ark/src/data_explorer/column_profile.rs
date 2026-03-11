@@ -281,7 +281,7 @@ fn profile_null_count(column: RObject) -> anyhow::Result<i64> {
         .try_into()?;
 
     // Return the count of nulls and NA values
-    Ok(result.try_into()?)
+    Ok(result.into())
 }
 
 fn tbl_get_filtered_column(

@@ -20,6 +20,6 @@ pub unsafe extern "C-unwind" fn ps_to_json(obj: SEXP) -> anyhow::Result<SEXP> {
     let json = serde_json::to_string_pretty(&val)?;
 
     // Create an R string from the JSON string
-    let robj = RObject::try_from(json)?;
+    let robj = RObject::from(json);
     Ok(robj.sexp)
 }

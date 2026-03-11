@@ -115,7 +115,7 @@ impl ReticulateService {
 pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, anyhow::Error> {
     let console = Console::get();
 
-    let input: RObject = input.try_into()?;
+    let input: RObject = input.into();
     // Reticulate sends `NULL` or a string with the code to be executed in the Python console.
     let input_code: Option<String> = if r_is_null(input.sexp) {
         None

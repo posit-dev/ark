@@ -275,8 +275,8 @@ unsafe extern "C-unwind" fn ps_ns_populate_srcref_without_vdoc_insertion(
     };
 
     // Would ideally be a named list but currently inconvenient to create
-    let uri: RObject = uri.try_into()?;
-    let contents: RObject = contents.try_into()?;
+    let uri: RObject = uri.into();
+    let contents: RObject = contents.into();
     let out: RObject = vec![uri, contents].try_into()?;
 
     Ok(out.sexp)

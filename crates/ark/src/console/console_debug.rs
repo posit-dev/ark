@@ -525,10 +525,10 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
             frame_name,
             source,
             environment,
-            start_line: start_line.try_into()?,
-            start_column: start_column.try_into()?,
-            end_line: end_line.try_into()?,
-            end_column: end_column.try_into()?,
+            start_line: start_line.into(),
+            start_column: start_column.into(),
+            end_line: end_line.into(),
+            end_column: end_column.into(),
         })
     }
 }
