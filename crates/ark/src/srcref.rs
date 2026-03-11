@@ -125,7 +125,7 @@ fn generate_source(
     binding: &Binding,
     ns_env: SEXP,
     line: usize,
-    uri: &String,
+    uri: &str,
 ) -> anyhow::Result<Option<Vec<String>>> {
     if is_binding_fancy(binding) {
         return Ok(None);

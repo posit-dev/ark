@@ -1613,7 +1613,7 @@ impl PositronVariable {
     }
 }
 
-fn parse_custom_access_key(access_key: &String) -> anyhow::Result<Option<(RObject, i32)>> {
+fn parse_custom_access_key(access_key: &str) -> anyhow::Result<Option<(RObject, i32)>> {
     let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
 
     if parsed_access_key.len() != 4 {
@@ -1675,7 +1675,7 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
     }
 }
 
-fn parse_index(x: &String) -> harp::Result<isize> {
+fn parse_index(x: &str) -> harp::Result<isize> {
     x.parse::<isize>().map_err(|err| {
         harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
     })
