@@ -284,10 +284,10 @@ fn recurse(
             recurse_subset_or_subset2(node, context, diagnostics)
         },
         NodeType::Call => recurse_call(node, context, diagnostics),
-        NodeType::UnaryOperator(op) => match op {
-            UnaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
-            _ => recurse_default(node, context, diagnostics),
+        NodeType::UnaryOperator(UnaryOperatorType::Tilde) => {
+            recurse_formula(node, context, diagnostics)
         },
+        NodeType::UnaryOperator(_) => recurse_default(node, context, diagnostics),
         NodeType::BinaryOperator(op) => match op {
             BinaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
             BinaryOperatorType::LeftAssignment => {
