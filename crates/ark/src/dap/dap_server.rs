@@ -446,8 +446,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
         // file paths via the `pathFormat` field of the `Initialize` request.
         let uri = match UrlId::from_file_path(path) {
             Ok(uri) => uri,
-            Err(()) => {
-                log::warn!("Can't set breakpoints for non-file path: '{path}'");
+            Err(err) => {
+                log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
                 let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
                     breakpoints: vec![],
                 }));

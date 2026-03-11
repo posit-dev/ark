@@ -163,20 +163,10 @@ fn obj_size_tree(
                     if cons != x {
                         size += sizeof_node
                     }
-                    size += obj_size_tree(
-                        libr::TAG(cons),
-                        base_env,
-                        sizeof_node,
-                        sizeof_vector,
-                        seen,
-                    );
-                    size += obj_size_tree(
-                        libr::CAR(cons),
-                        base_env,
-                        sizeof_node,
-                        sizeof_vector,
-                        seen,
-                    );
+                    size +=
+                        obj_size_tree(libr::TAG(cons), base_env, sizeof_node, sizeof_vector, seen);
+                    size +=
+                        obj_size_tree(libr::CAR(cons), base_env, sizeof_node, sizeof_vector, seen);
                     cons = libr::CDR(cons);
                 }
                 // Handle non-nil CDRs
@@ -184,27 +174,9 @@ fn obj_size_tree(
             }
         },
         BCODESXP => {
-            size += obj_size_tree(
-                libr::TAG(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
-            size += obj_size_tree(
-                libr::CAR(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
-            size += obj_size_tree(
-                libr::CDR(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
+            size += obj_size_tree(libr::TAG(x), base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(libr::CAR(x), base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(libr::CDR(x), base_env, sizeof_node, sizeof_vector, seen);
         },
         // Environments
         ENVSXP => {
@@ -266,27 +238,9 @@ fn obj_size_tree(
             size += obj_size_tree(fn_env(x), base_env, sizeof_node, sizeof_vector, seen);
         },
         PROMSXP => {
-            size += obj_size_tree(
-                libr::PRVALUE(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
-            size += obj_size_tree(
-                libr::PRCODE(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
-            size += obj_size_tree(
-                libr::PRENV(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
+            size += obj_size_tree(libr::PRVALUE(x), base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(libr::PRCODE(x), base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(libr::PRENV(x), base_env, sizeof_node, sizeof_vector, seen);
         },
         EXTPTRSXP => {
             size += size_of::<*mut c_void>(); // the actual pointer
@@ -306,13 +260,7 @@ fn obj_size_tree(
             );
         },
         S4SXP => {
-            size += obj_size_tree(
-                libr::TAG(x),
-                base_env,
-                sizeof_node,
-                sizeof_vector,
-                seen,
-            );
+            size += obj_size_tree(libr::TAG(x), base_env, sizeof_node, sizeof_vector, seen);
         },
         SYMSXP => {},
         _ => {},

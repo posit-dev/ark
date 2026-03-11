@@ -57,7 +57,7 @@ impl IOPubReceiverExt for Receiver<IOPubMessage> {
     }
 }
 
-pub fn socket_rpc_request<'de, RequestType, ReplyType>(
+pub fn socket_rpc_request<RequestType, ReplyType>(
     socket: &socket::comm::CommSocket,
     iopub_rx: &Receiver<IOPubMessage>,
     req: RequestType,

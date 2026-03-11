@@ -228,7 +228,7 @@ pub(super) struct PromptInfo {
 }
 
 enum ConsoleInput {
-    EOF,
+    EndOfFile,
     Input(String, Option<CodeLocation>),
 }
 
@@ -324,6 +324,7 @@ impl Console {
     /// Sets up the main R thread, initializes the `CONSOLE` singleton,
     /// and starts R. Does not return!
     /// SAFETY: Must be called only once. Enforced with a panic.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
@@ -585,6 +586,7 @@ impl Console {
         R_INIT.set(()).expect("`R_INIT` can only be set once");
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         tasks_interrupt_rx: Receiver<QueuedRTask>,
         tasks_idle_rx: Receiver<QueuedRTask>,
@@ -1282,7 +1284,7 @@ impl Console {
                 input
             },
 
-            RRequest::Shutdown(_) => ConsoleInput::EOF,
+            RRequest::Shutdown(_) => ConsoleInput::EndOfFile,
 
             RRequest::DebugCommand(cmd) => {
                 // Just ignore command in case we left the debugging state already
@@ -1353,7 +1355,7 @@ impl Console {
                 }
             },
 
-            ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
+            ConsoleInput::EndOfFile => Some(ConsoleResult::Disconnected),
         }
     }
 

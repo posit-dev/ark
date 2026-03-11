@@ -469,14 +469,12 @@ where
     }
 
     // Call into R; the callbacks will populate `res` and always return R_NilValue.
-    {
-        R_ExecWithCleanup(
-            Some(exec_callback::<F, C, T>),
-            payload,
-            Some(cleanup_callback::<F, C, T>),
-            payload,
-        )
-    };
+    R_ExecWithCleanup(
+        Some(exec_callback::<F, C, T>),
+        payload,
+        Some(cleanup_callback::<F, C, T>),
+        payload,
+    );
 
     // Unwrap Safety: If we get here, we're in the happy path and the result is Some
     result.unwrap()

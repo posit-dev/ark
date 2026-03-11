@@ -117,8 +117,10 @@ impl UrlId {
     /// `/private/var/folders` on macOS) so the URI matches what R's
     /// `normalizePath()` produces. Falls back to the original path if
     /// canonicalization fails.
-    pub fn from_file_path(path: impl AsRef<std::path::Path>) -> Result<Self, ()> {
-        let url = Url::from_file_path(path.as_ref())?;
+    pub fn from_file_path(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        let url = Url::from_file_path(path)
+            .map_err(|()| anyhow::anyhow!("Failed to convert path to URL: {}", path.display()))?;
         Ok(Self::from_url(url))
     }
 

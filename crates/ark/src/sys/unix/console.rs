@@ -51,7 +51,7 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(R_SignalHandlers, 0);
 
         let mut c_args = Console::build_ark_c_args(args);
-        Rf_initialize_R(c_args.len() as i32, c_args.as_mut_ptr() as *mut *mut c_char);
+        Rf_initialize_R(c_args.len() as i32, c_args.as_mut_ptr());
 
         // Initialize the signal blocks and handlers (like interrupts).
         // Don't do that in tests because that makes them uninterruptible.
