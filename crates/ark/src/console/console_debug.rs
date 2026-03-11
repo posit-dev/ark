@@ -684,7 +684,7 @@ fn eval_log_message(template: &str, env: RObject) -> String {
         .call_in(env.sexp)
     {
         Ok(val) => String::try_from(val).unwrap_or_default(),
-        Err(harp::Error::TryCatchError { message, .. }) => format!("Error: {message}"),
+        Err(harp::Error::TryCatchError(err)) => format!("Error: {}", err.message),
         Err(err) => format!("Error: {err}"),
     }
 }
@@ -716,8 +716,8 @@ fn eval_condition(condition: &str, envir: RObject) -> (bool, Option<String>) {
 
     let result = match harp::parse_eval0(&code, envir) {
         Ok(val) => val,
-        Err(harp::Error::TryCatchError { message, .. }) => {
-            return (true, Some(format!("Error: {message}\n")));
+        Err(harp::Error::TryCatchError(err)) => {
+            return (true, Some(format!("Error: {}\n", err.message)));
         },
         Err(err) => {
             return (true, Some(format!("Error: {err}\n")));
