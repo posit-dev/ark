@@ -70,11 +70,10 @@ fn truncate_inplace(s: &mut String, max_len: i64) {
     let index = s.char_indices().nth(max_len as usize);
 
     // If an index is found, truncate the string to that index
-    match index {
-        // truncate is an in-place operation that takes the new max index as input
-        // but looking the string as a sequence of bytes, not chars.
-        Some((i, _)) => s.truncate(i),
-        None => (),
+    // truncate is an in-place operation that takes the new max index as input
+    // but looking the string as a sequence of bytes, not chars.
+    if let Some((i, _)) = index {
+        s.truncate(i);
     }
 }
 
