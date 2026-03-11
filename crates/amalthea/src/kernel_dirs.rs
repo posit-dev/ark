@@ -22,7 +22,7 @@ pub fn jupyter_dir() -> Option<PathBuf> {
     if let Ok(envpath) = env::var("JUPYTER_PATH") {
         Some(PathBuf::from(envpath))
     } else {
-        jupyter_xdg_dir().map(|userpath| userpath)
+        jupyter_xdg_dir()
     }
 }
 
