@@ -28,3 +28,11 @@
 //   So instead we define a global variable here that can then be checked at
 //   runtime in Ark.
 pub static IS_TESTING: bool = cfg!(feature = "testing");
+
+/// Panics if called outside a test context. Use as a guard in test-only
+/// helpers that are compiled into debug builds via `cfg(debug_assertions)`.
+pub fn assert_testing() {
+    if !IS_TESTING {
+        panic!("This function is only available in tests");
+    }
+}
