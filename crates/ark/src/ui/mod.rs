@@ -8,6 +8,6 @@
 pub mod events;
 pub mod methods;
 
-mod ui;
-pub use ui::UiComm;
-pub use ui::UI_COMM_NAME;
+mod ui_comm;
+pub use ui_comm::UiComm;
+pub use ui_comm::UI_COMM_NAME;
