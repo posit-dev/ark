@@ -1821,8 +1821,10 @@ impl DummyArkFrontendNotebook {
 
     /// Initialize with Notebook session mode
     fn init() {
-        let mut options = DummyArkFrontendOptions::default();
-        options.session_mode = SessionMode::Notebook;
+        let options = DummyArkFrontendOptions {
+            session_mode: SessionMode::Notebook,
+            ..Default::default()
+        };
         FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
     }
 }
@@ -1862,9 +1864,11 @@ impl DummyArkFrontendDefaultRepos {
 
     /// Initialize with given default repos
     fn init(default_repos: DefaultRepos, startup_file: String) {
-        let mut options = DummyArkFrontendOptions::default();
-        options.default_repos = default_repos;
-        options.startup_file = Some(startup_file);
+        let options = DummyArkFrontendOptions {
+            default_repos,
+            startup_file: Some(startup_file),
+            ..Default::default()
+        };
 
         FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
     }
@@ -1897,8 +1901,10 @@ impl DummyArkFrontendRprofile {
 
     /// Initialize with user level `.Rprofile` enabled
     fn init() {
-        let mut options = DummyArkFrontendOptions::default();
-        options.user_r_profile = true;
+        let options = DummyArkFrontendOptions {
+            user_r_profile: true,
+            ..Default::default()
+        };
         let status = FRONTEND.set(Arc::new(Mutex::new(DummyArkFrontend::init(options))));
 
         if status.is_err() {
