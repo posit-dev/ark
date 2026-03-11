@@ -487,7 +487,7 @@ impl DeviceContext {
                     format: plot_meta.format,
                 };
 
-                let data = self.render_plot(&id, &settings)?;
+                let data = self.render_plot(id, &settings)?;
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
