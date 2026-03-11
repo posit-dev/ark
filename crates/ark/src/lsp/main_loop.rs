@@ -82,6 +82,7 @@ impl<T, F> AnyhowJoinHandleFut<T> for F where
 type TaskList<T> = futures::stream::FuturesUnordered<Pin<Box<dyn AnyhowJoinHandleFut<T> + Send>>>;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Event {
     Lsp(LspMessage),
     Kernel(KernelNotification),
@@ -700,6 +701,7 @@ impl std::fmt::Debug for TraceKernelNotification<'_> {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum IndexerQueueTask {
     Indexer(IndexerTask),
     Diagnostics(RefreshDiagnosticsTask),
