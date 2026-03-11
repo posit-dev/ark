@@ -479,12 +479,8 @@ fn socket_bridge_thread(
     };
 
     // This function checks that a 0MQ message from the frontend is ready.
-    let has_inbound = |socket: &Socket| -> bool {
-        match socket.socket.poll(zmq::POLLIN, 0) {
-            Ok(n) if n > 0 => true,
-            _ => false,
-        }
-    };
+    let has_inbound =
+        |socket: &Socket| -> bool { matches!(socket.socket.poll(zmq::POLLIN, 0), Ok(n) if n > 0) };
 
     // Drain all pending outbound messages and forward to ZMQ.
     let forward_outbound = || {

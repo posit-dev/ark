@@ -5,6 +5,7 @@
  *
  */
 
+use std::path::Path;
 use std::path::PathBuf;
 
 use libloading::os::unix::Library;
@@ -75,7 +76,7 @@ impl RLibraries {
     /// - Windows doesn't need these precautions because symbol lookup is namespaced to
     ///   the library. On Unix, symbol lookup is global and resolved via a global linked
     ///   list of library namespaces.
-    pub fn from_r_home_path(path: &PathBuf) -> Self {
+    pub fn from_r_home_path(path: &Path) -> Self {
         let r_path = find_r_shared_library(path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
 
@@ -97,7 +98,7 @@ impl RLibraries {
     }
 }
 
-pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libloading::Error> {
+pub fn open_r_shared_library(path: &Path) -> Result<libloading::Library, libloading::Error> {
     // Default behavior of `Library` is `RTLD_LAZY | RTLD_LOCAL`.
     // In general this makes sense, where you want to isolate modules as much as possible.
     // However, for us `libR` is like our main application.
@@ -124,6 +125,6 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
     library.map(|library| library.into())
 }
 
-pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
+pub fn find_r_shared_library_folder(path: &Path) -> PathBuf {
     path.join("lib")
 }

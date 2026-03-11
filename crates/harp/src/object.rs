@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::i32;
 use std::ops::Deref;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
@@ -739,7 +738,6 @@ impl From<HashMap<String, String>> for RObject {
 }
 
 /// Convert RObject into other types.
-
 impl From<RObject> for SEXP {
     fn from(object: RObject) -> Self {
         object.sexp
