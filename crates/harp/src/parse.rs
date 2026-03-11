@@ -40,20 +40,18 @@ pub enum ParseInput<'a> {
 
 /// Returns a single expression
 pub fn parse_expr(code: &str) -> crate::Result<RObject> {
-    unsafe {
-        let exprs = parse_exprs(code)?;
+    let exprs = parse_exprs(code)?;
 
-        let n = libr::Rf_xlength(*exprs);
-        if n != 1 {
-            return Err(crate::Error::ParseError {
-                code: code.to_string(),
-                message: String::from("Expected a single expression, got {n}"),
-            });
-        }
-
-        let expr = libr::VECTOR_ELT(*exprs, 0);
-        Ok(expr.into())
+    let n = libr::Rf_xlength(*exprs);
+    if n != 1 {
+        return Err(crate::Error::ParseError {
+            code: code.to_string(),
+            message: String::from("Expected a single expression, got {n}"),
+        });
     }
+
+    let expr = libr::VECTOR_ELT(*exprs, 0);
+    Ok(expr.into())
 }
 
 /// Returns an EXPRSXP vector
@@ -145,11 +143,9 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
 }
 
 pub fn as_parse_text(text: &str) -> RObject {
-    unsafe {
-        let mut protect = RProtect::new();
-        let input = r_string!(convert_line_endings(text, LineEnding::Posix), &mut protect);
-        input.into()
-    }
+    let mut protect = RProtect::new();
+    let input = r_string!(convert_line_endings(text, LineEnding::Posix), &mut protect);
+    input.into()
 }
 
 fn parse_input_as_string<'a>(input: &ParseInput<'a>) -> crate::Result<String> {

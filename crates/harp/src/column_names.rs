@@ -20,7 +20,7 @@ pub struct ColumnNames {
 impl ColumnNames {
     pub fn new(names: SEXP) -> Self {
         let names = if r_typeof(names) == STRSXP {
-            Some(unsafe { CharacterVector::new_unchecked(names) })
+            Some(CharacterVector::new_unchecked(names))
         } else {
             None
         };

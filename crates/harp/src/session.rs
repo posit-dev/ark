@@ -112,7 +112,7 @@ pub fn r_env_is_browsed(env: SEXP) -> anyhow::Result<bool> {
         anyhow::bail!("`env` must be an environment");
     }
 
-    let browsed = unsafe { RDEBUG(env) };
+    let browsed = RDEBUG(env);
     Ok(browsed != 0)
 }
 

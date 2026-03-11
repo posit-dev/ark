@@ -97,7 +97,7 @@ fn test_variables_list() {
 
     // Now create a variable in the R environment and ensure we get a list of
     // variables with the new variable in it.
-    r_task(|| unsafe {
+    r_task(|| {
         let test_env = test_env.get().clone();
         let sym = r_symbol!("everything");
         Rf_defineVar(sym, Rf_ScalarInteger(42), *test_env);
@@ -171,7 +171,7 @@ fn test_variables_list() {
     }
 
     // Create another variable
-    r_task(|| unsafe {
+    r_task(|| {
         let test_env = test_env.get().clone();
         r_envir_set("nothing", Rf_ScalarInteger(43), *test_env);
         r_envir_remove("everything", *test_env);
@@ -253,14 +253,14 @@ fn test_variables_list() {
     }
 
     // test the env is now empty
-    r_task(|| unsafe {
+    r_task(|| {
         let test_env = test_env.get().clone();
         let contents = RObject::new(R_lsInternal(*test_env, Rboolean_TRUE));
         assert_eq!(Rf_xlength(*contents), 0);
     });
 
     // Create some more variables
-    r_task(|| unsafe {
+    r_task(|| {
         let test_env = test_env.get().clone();
 
         let sym = r_symbol!("a");

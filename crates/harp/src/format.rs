@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_to_string_methods() {
-        crate::r_task(|| unsafe {
+        crate::r_task(|| {
             assert_eq!(lgl_to_string(1), String::from("TRUE"));
             assert_eq!(lgl_to_string(0), String::from("FALSE"));
             assert_eq!(lgl_to_string(r_lgl_na()), String::from("NA"));

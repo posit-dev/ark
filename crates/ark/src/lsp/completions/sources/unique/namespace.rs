@@ -94,7 +94,7 @@ fn completions_from_namespace(
         list_namespace_symbols(*namespace)
     };
 
-    let strings = unsafe { symbols.to::<Vec<String>>()? };
+    let strings = symbols.to::<Vec<String>>()?;
 
     for string in strings.iter() {
         let item = unsafe {
@@ -219,7 +219,7 @@ fn completions_from_namespace_lazydata(
 }
 
 fn list_namespace_symbols(namespace: SEXP) -> RObject {
-    unsafe { RObject::new(R_lsInternal(namespace, 1)) }
+    RObject::new(R_lsInternal(namespace, 1))
 }
 
 fn list_namespace_exports(namespace: SEXP) -> RObject {

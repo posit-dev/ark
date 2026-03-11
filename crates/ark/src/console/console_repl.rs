@@ -316,7 +316,7 @@ impl Drop for ConsoleOutputCapture {
 
         // Restore previous capture state
         console.captured_output = self.previous_output.take();
-        unsafe { r_poke_option(r_symbol!("warn"), self.previous_warn.sexp) };
+        r_poke_option(r_symbol!("warn"), self.previous_warn.sexp);
     }
 }
 
@@ -428,49 +428,47 @@ impl Console {
 
         libraries.initialize_post_setup_r();
 
-        unsafe {
-            // Register embedded routines
-            r_register_routines();
+        // Register embedded routines
+        r_register_routines();
 
-            // Initialize harp (after routine registration)
-            harp::initialize();
+        // Initialize harp (after routine registration)
+        harp::initialize();
 
-            // Optionally run a frontend specified R startup script (after harp init)
-            if let Some(file) = &startup_file {
-                harp::source(file)
-                    .context(format!("Failed to source startup file '{file}' due to"))
-                    .log_err();
-            }
-
-            // Initialize support functions (after routine registration, after
-            // r_task initialization). Intentionally panic if module loading
-            // fails. Modules are critical for ark to function.
-            match modules::initialize() {
-                Err(err) => {
-                    panic!("Failed to load R modules: {err:?}");
-                },
-                Ok(namespace) => {
-                    console.positron_ns = Some(namespace);
-                },
-            }
-
-            // Populate srcrefs for namespaces already loaded in the session.
-            // Namespaces of future loaded packages will be populated on load.
-            // (after r_task initialization)
-            if do_resource_namespaces() {
-                if let Err(err) = resource_loaded_namespaces() {
-                    log::error!("Can't populate srcrefs for loaded packages: {err:?}");
-                }
-            }
-
-            // Set default repositories
-            if let Err(err) = apply_default_repos(default_repos) {
-                log::error!("Error setting default repositories: {err:?}");
-            }
-
-            // Initialise Ark's last value
-            libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
+        // Optionally run a frontend specified R startup script (after harp init)
+        if let Some(file) = &startup_file {
+            harp::source(file)
+                .context(format!("Failed to source startup file '{file}' due to"))
+                .log_err();
         }
+
+        // Initialize support functions (after routine registration, after
+        // r_task initialization). Intentionally panic if module loading
+        // fails. Modules are critical for ark to function.
+        match modules::initialize() {
+            Err(err) => {
+                panic!("Failed to load R modules: {err:?}");
+            },
+            Ok(namespace) => {
+                console.positron_ns = Some(namespace);
+            },
+        }
+
+        // Populate srcrefs for namespaces already loaded in the session.
+        // Namespaces of future loaded packages will be populated on load.
+        // (after r_task initialization)
+        if do_resource_namespaces() {
+            if let Err(err) = resource_loaded_namespaces() {
+                log::error!("Can't populate srcrefs for loaded packages: {err:?}");
+            }
+        }
+
+        // Set default repositories
+        if let Err(err) = apply_default_repos(default_repos) {
+            log::error!("Error setting default repositories: {err:?}");
+        }
+
+        // Initialise Ark's last value
+        libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
 
         // Now that R has started (emitting any startup messages that we capture in the
         // banner), and now that we have set up all hooks and handlers, officially finish
@@ -711,8 +709,7 @@ impl Console {
         let previous_output = self.captured_output.replace(String::new());
 
         // Force immediate warning output so it gets captured instead of deferred
-        let previous_warn =
-            RObject::new(unsafe { r_poke_option(r_symbol!("warn"), Rf_ScalarInteger(1)) });
+        let previous_warn = RObject::new(r_poke_option(r_symbol!("warn"), Rf_ScalarInteger(1)));
 
         ConsoleOutputCapture {
             previous_output,
@@ -2241,14 +2238,14 @@ impl Console {
         // either (i.e. if `UserBreak` is set), but it will reset `UserBreak`
         // so we need to ensure we handle interrupts right before calling
         // this.
-        unsafe { R_ProcessEvents() };
+        R_ProcessEvents();
 
         crate::sys::console::run_activity_handlers();
 
         // Run pending finalizers. We need to do this eagerly as otherwise finalizers
         // might end up being executed on the LSP thread.
         // https://github.com/rstudio/positron/issues/431
-        unsafe { R_RunPendingFinalizers() };
+        R_RunPendingFinalizers();
 
         // Check for Positron render requests.
         //
@@ -2338,13 +2335,11 @@ impl Console {
 
 /// Converts a data frame to HTML
 fn to_html(frame: SEXP) -> Result<String> {
-    unsafe {
-        let result = RFunction::from(".ps.format.toHtml")
-            .add(frame)
-            .call()?
-            .to::<String>()?;
-        Ok(result)
-    }
+    let result = RFunction::from(".ps.format.toHtml")
+        .add(frame)
+        .call()?
+        .to::<String>()?;
+    Ok(result)
 }
 
 // Inputs generated by `ReadConsole` for the LSP
@@ -2385,7 +2380,7 @@ struct EvalBodyData {
 /// Simply evaluates the expression in the given frame.
 unsafe extern "C-unwind" fn eval_body_callback(data: *mut c_void) -> libr::SEXP {
     let data = unsafe { &*(data as *const EvalBodyData) };
-    unsafe { libr::Rf_eval(data.expr, data.frame) }
+    libr::Rf_eval(data.expr, data.frame)
 }
 
 /// Error handler callback for `R_withCallingErrorHandler` in `Console::eval`.
@@ -2399,11 +2394,9 @@ unsafe extern "C-unwind" fn eval_error_callback(err: libr::SEXP, _data: *mut c_v
     // Call the R-side global error handler which sets the stopped reason,
     // calls `browser()`, saves the backtrace, and invokes the `abort` or
     // `browser` restart.
-    unsafe {
-        let call = libr::Rf_lang2(r_symbol!(".ps.errors.globalErrorHandler"), err);
-        libr::Rf_protect(call);
-        libr::Rf_eval(call, ARK_ENVS.positron_ns);
-    }
+    let call = libr::Rf_lang2(r_symbol!(".ps.errors.globalErrorHandler"), err);
+    libr::Rf_protect(call);
+    libr::Rf_eval(call, ARK_ENVS.positron_ns);
 
     unreachable!("globalErrorHandler longjumps via invokeRestart")
 }
@@ -2599,9 +2592,7 @@ fn r_read_console_impl(
 
         ConsoleResult::Interrupt => {
             log::trace!("Interrupting `ReadConsole()`");
-            unsafe {
-                Rf_onintr();
-            }
+            Rf_onintr();
 
             // This normally does not return
             log::error!("`Rf_onintr()` did not longjump");
@@ -2614,7 +2605,7 @@ fn r_read_console_impl(
             // possibility of `CString` conversion failure since the error
             // message comes from the frontend and might be corrupted.
             console.r_error_buffer = Some(new_cstring(message));
-            unsafe { Rf_error(console.r_error_buffer.as_ref().unwrap().as_ptr()) }
+            Rf_error(console.r_error_buffer.as_ref().unwrap().as_ptr())
         },
     }
 }
@@ -2741,24 +2732,22 @@ fn is_auto_printing() -> bool {
         return false;
     }
 
-    unsafe {
-        let car = libr::CAR(call.sexp);
+    let car = libr::CAR(call.sexp);
 
-        let Ok(print_fun) = harp::try_eval(r_symbol!("print"), R_ENVS.base) else {
-            return false;
-        };
-        if car == print_fun.sexp {
-            return true;
-        }
-
-        let Ok(methods_ns) = r_ns_env("methods") else {
-            return false;
-        };
-        let Ok(show_fun) = harp::try_eval(r_symbol!("show"), methods_ns.into()) else {
-            return false;
-        };
-        car == show_fun.sexp
+    let Ok(print_fun) = harp::try_eval(r_symbol!("print"), R_ENVS.base) else {
+        return false;
+    };
+    if car == print_fun.sexp {
+        return true;
     }
+
+    let Ok(methods_ns) = r_ns_env("methods") else {
+        return false;
+    };
+    let Ok(show_fun) = harp::try_eval(r_symbol!("show"), methods_ns.into()) else {
+        return false;
+    };
+    car == show_fun.sexp
 }
 
 #[harp::register]

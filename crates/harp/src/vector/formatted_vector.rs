@@ -120,14 +120,12 @@ enum AtomicVector {
 impl AtomicVector {
     fn new(vector: RObject) -> anyhow::Result<Self> {
         let vector = match r_typeof(vector.sexp) {
-            RAWSXP => AtomicVector::Raw(unsafe { RawVector::new_unchecked(vector.sexp) }),
-            LGLSXP => AtomicVector::Logical(unsafe { LogicalVector::new_unchecked(vector.sexp) }),
-            INTSXP => AtomicVector::Integer(unsafe { IntegerVector::new_unchecked(vector.sexp) }),
-            REALSXP => AtomicVector::Numeric(unsafe { NumericVector::new_unchecked(vector.sexp) }),
-            STRSXP => {
-                AtomicVector::Character(unsafe { CharacterVector::new_unchecked(vector.sexp) })
-            },
-            CPLXSXP => AtomicVector::Complex(unsafe { ComplexVector::new_unchecked(vector.sexp) }),
+            RAWSXP => AtomicVector::Raw(RawVector::new_unchecked(vector.sexp)),
+            LGLSXP => AtomicVector::Logical(LogicalVector::new_unchecked(vector.sexp)),
+            INTSXP => AtomicVector::Integer(IntegerVector::new_unchecked(vector.sexp)),
+            REALSXP => AtomicVector::Numeric(NumericVector::new_unchecked(vector.sexp)),
+            STRSXP => AtomicVector::Character(CharacterVector::new_unchecked(vector.sexp)),
+            CPLXSXP => AtomicVector::Complex(ComplexVector::new_unchecked(vector.sexp)),
             _ => {
                 return Err(anyhow!("Unsupported type"));
             },
@@ -150,15 +148,13 @@ impl AtomicVector {
     }
 
     fn len(&self) -> usize {
-        unsafe {
-            match self {
-                AtomicVector::Raw(v) => v.len(),
-                AtomicVector::Logical(v) => v.len(),
-                AtomicVector::Integer(v) => v.len(),
-                AtomicVector::Numeric(v) => v.len(),
-                AtomicVector::Character(v) => v.len(),
-                AtomicVector::Complex(v) => v.len(),
-            }
+        match self {
+            AtomicVector::Raw(v) => v.len(),
+            AtomicVector::Logical(v) => v.len(),
+            AtomicVector::Integer(v) => v.len(),
+            AtomicVector::Numeric(v) => v.len(),
+            AtomicVector::Character(v) => v.len(),
+            AtomicVector::Complex(v) => v.len(),
         }
     }
 }

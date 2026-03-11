@@ -214,17 +214,15 @@ impl WorkspaceVariableDisplayValue {
     }
 
     fn from_closure(value: SEXP) -> Self {
-        unsafe {
-            let args = RFunction::from("args").add(value).call().unwrap();
-            let formatted = RFunction::from("format").add(args.sexp).call().unwrap();
-            let formatted = CharacterVector::new_unchecked(formatted);
-            let out = formatted
-                .iter()
-                .take(formatted.len() - 1)
-                .map(|o| o.unwrap())
-                .join("");
-            Self::new(out, false)
-        }
+        let args = RFunction::from("args").add(value).call().unwrap();
+        let formatted = RFunction::from("format").add(args.sexp).call().unwrap();
+        let formatted = CharacterVector::new_unchecked(formatted);
+        let out = formatted
+            .iter()
+            .take(formatted.len() - 1)
+            .map(|o| o.unwrap())
+            .join("");
+        Self::new(out, false)
     }
 
     fn from_env(value: SEXP) -> Self {
@@ -453,7 +451,7 @@ impl WorkspaceVariableDisplayType {
         match rtype {
             EXPRSXP => {
                 let default = match include_length {
-                    true => format!("expression [{}]", unsafe { Rf_xlength(value) }),
+                    true => format!("expression [{}]", Rf_xlength(value)),
                     false => String::from("expression"),
                 };
                 Self::from_class(value, default)
@@ -477,7 +475,7 @@ impl WorkspaceVariableDisplayType {
                 false => Self::simple(String::from("pairlist")),
             },
 
-            VECSXP => unsafe {
+            VECSXP => {
                 if r_is_data_frame(value) {
                     let classes = r_classes(value).unwrap();
                     let dfclass = classes.get_unchecked(0).unwrap();
@@ -562,25 +560,21 @@ fn has_children(value: SEXP) -> bool {
     }
 
     if RObject::view(value).is_s4() {
-        unsafe {
-            let names = RFunction::new("methods", ".slotNames")
-                .add(value)
-                .call()
-                .unwrap();
-            let names = CharacterVector::new_unchecked(names);
-            names.len() > 0
-        }
+        let names = RFunction::new("methods", ".slotNames")
+            .add(value)
+            .call()
+            .unwrap();
+        let names = CharacterVector::new_unchecked(names);
+        names.len() > 0
     } else {
         match r_typeof(value) {
-            VECSXP | EXPRSXP => unsafe { Rf_xlength(value) != 0 },
+            VECSXP | EXPRSXP => Rf_xlength(value) != 0,
             LISTSXP => true,
             ENVSXP => {
                 !Environment::new_filtered(RObject::view(value), EnvironmentFilter::ExcludeHidden)
                     .is_empty()
             },
-            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => unsafe {
-                Rf_xlength(value) > 1
-            },
+            LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => Rf_xlength(value) > 1,
             _ => false,
         }
     }
@@ -701,21 +695,19 @@ impl PositronVariable {
 
     fn from_promise(display_name: String, promise: SEXP) -> Self {
         let display_value = local! {
-            unsafe {
-                let code = PRCODE(promise);
-                match r_typeof(code) {
-                    SYMSXP => {
-                        Ok(RSymbol::new_unchecked(code).to_string())
-                    },
-                    LANGSXP => {
-                        let fun = RSymbol::new(CAR(code))?;
-                        if fun == "lazyLoadDBfetch" {
-                            return Ok(String::from("(unevaluated)"))
-                        }
-                        harp::call::expr_deparse_collapse(code)
-                    },
-                    _ => Err(Error::UnexpectedType(r_typeof(code), vec!(SYMSXP, LANGSXP)))
-                }
+            let code = PRCODE(promise);
+            match r_typeof(code) {
+                SYMSXP => {
+                    Ok(RSymbol::new_unchecked(code).to_string())
+                },
+                LANGSXP => {
+                    let fun = RSymbol::new(CAR(code))?;
+                    if fun == "lazyLoadDBfetch" {
+                        return Ok(String::from("(unevaluated)"))
+                    }
+                    harp::call::expr_deparse_collapse(code)
+                },
+                _ => Err(Error::UnexpectedType(r_typeof(code), vec!(SYMSXP, LANGSXP)))
             }
         };
 
@@ -791,10 +783,10 @@ impl PositronVariable {
         // Otherwise treat as vector
         let rtype = r_typeof(x);
         match rtype {
-            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | LISTSXP => unsafe {
+            LGLSXP | RAWSXP | INTSXP | REALSXP | CPLXSXP | STRSXP | LISTSXP => {
                 Rf_xlength(x) as usize
             },
-            VECSXP => unsafe {
+            VECSXP => {
                 // TODO: Support vctrs types like record vectors
                 if r_inherits(x, "POSIXlt") && r_typeof(x) == VECSXP && r_length(x) > 0 {
                     Rf_xlength(VECTOR_ELT(x, 0)) as usize
@@ -1048,8 +1040,8 @@ impl PositronVariable {
         object: RObject,
         access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
-        let symbol = unsafe { r_symbol!(access_key) };
-        let mut x = unsafe { Rf_findVarInFrame(object.sexp, symbol) };
+        let symbol = r_symbol!(access_key);
+        let mut x = Rf_findVarInFrame(object.sexp, symbol);
 
         if r_typeof(x) == PROMSXP {
             // if we are here, it means the promise is either evaluated
@@ -1060,9 +1052,9 @@ impl PositronVariable {
             // Actual promises, i.e. unevaluated promises can't be
             // expanded in the variables pane so we would not get here.
 
-            let value = unsafe { PRVALUE(x) };
+            let value = PRVALUE(x);
             if r_is_unbound(value) {
-                x = unsafe { PRCODE(x) };
+                x = PRCODE(x);
             } else {
                 x = value;
             }
@@ -1121,9 +1113,8 @@ impl PositronVariable {
 
         // For S4 objects, we acess child nodes using R_do_slot.
         if object.is_s4() {
-            let name = unsafe { r_symbol!(access_key) };
-            let child: RObject =
-                harp::try_catch(|| unsafe { R_do_slot(object.sexp, name) }.into())?;
+            let name = r_symbol!(access_key);
+            let child: RObject = harp::try_catch(|| R_do_slot(object.sexp, name).into())?;
             return Ok(EnvironmentVariableNode::Concrete { object: child });
         }
 
@@ -1148,10 +1139,10 @@ impl PositronVariable {
                 let mut pairlist = object.sexp;
                 let index = parse_index(access_key)?;
                 for _i in 0..index {
-                    pairlist = unsafe { CDR(pairlist) };
+                    pairlist = CDR(pairlist);
                 }
                 Ok(EnvironmentVariableNode::Concrete {
-                    object: RObject::view(unsafe { CAR(pairlist) }),
+                    object: RObject::view(CAR(pairlist)),
                 })
             },
             LGLSXP | RAWSXP | STRSXP | INTSXP | REALSXP | CPLXSXP => {
@@ -1516,17 +1507,15 @@ impl PositronVariable {
     fn inspect_s4(value: SEXP) -> Result<Vec<Variable>, harp::error::Error> {
         let mut out: Vec<Variable> = vec![];
 
-        unsafe {
-            let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
+        let slot_names = RFunction::new("methods", ".slotNames").add(value).call()?;
 
-            let slot_names = CharacterVector::new_unchecked(slot_names.sexp);
-            let mut iter = slot_names.iter();
-            while let Some(Some(display_name)) = iter.next() {
-                let slot_symbol = r_symbol!(display_name);
-                let slot: RObject = harp::try_catch(|| R_do_slot(value, slot_symbol).into())?;
-                let access_key = display_name.clone();
-                out.push(PositronVariable::from(access_key, display_name, slot.sexp).var());
-            }
+        let slot_names = CharacterVector::new_unchecked(slot_names.sexp);
+        let mut iter = slot_names.iter();
+        while let Some(Some(display_name)) = iter.next() {
+            let slot_symbol = r_symbol!(display_name);
+            let slot: RObject = harp::try_catch(|| R_do_slot(value, slot_symbol).into())?;
+            let access_key = display_name.clone();
+            out.push(PositronVariable::from(access_key, display_name, slot.sexp).var());
         }
 
         Ok(out)
@@ -1570,7 +1559,7 @@ impl PositronVariable {
                 // 1. Provide the name and the index for the `get_child_at` method.
                 // 2. (Not necessary) Given an access key, we can detect if we want to apply a custom get_child_method.
                 let list = List::new(value.sexp)?;
-                let n = unsafe { list.len() };
+                let n = list.len();
 
                 let names = match value.names() {
                     None => vec![None; n],

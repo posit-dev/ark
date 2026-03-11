@@ -48,7 +48,7 @@ fn is_reserved_word(name: &str) -> bool {
 pub extern "C-unwind" fn harp_is_valid_symbol(name: SEXP) -> anyhow::Result<SEXP> {
     let name = String::try_from(RObject::view(name))?;
     let result = is_valid_symbol(&name);
-    Ok(unsafe { libr::Rf_ScalarLogical(result as i32) })
+    Ok(libr::Rf_ScalarLogical(result as i32))
 }
 
 /// Returns `true` if `name` is a syntactic R identifier that doesn't need backtick-quoting.

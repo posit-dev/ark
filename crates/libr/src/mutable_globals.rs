@@ -27,8 +27,8 @@ macro_rules! generate {
                 paste::paste! {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
-                    pub unsafe fn $name() -> bool {
-                        !super::$name.is_null()
+                    pub fn $name() -> bool {
+                        unsafe { !super::$name.is_null() }
                     }
                 }
             )+

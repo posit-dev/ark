@@ -81,7 +81,7 @@ pub fn r_assert_type(object: SEXP, expected: &[u32]) -> Result<u32> {
 }
 
 pub fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
-    let actual = unsafe { Rf_xlength(object) } as usize;
+    let actual = Rf_xlength(object) as usize;
     if actual < required {
         return Err(Error::UnexpectedLength(actual, required));
     }
@@ -90,7 +90,7 @@ pub fn r_assert_capacity(object: SEXP, required: usize) -> Result<usize> {
 }
 
 pub fn r_assert_length(object: SEXP, expected: usize) -> Result<usize> {
-    let actual = unsafe { Rf_xlength(object) as usize };
+    let actual = Rf_xlength(object) as usize;
     if actual != expected {
         return Err(Error::UnexpectedLength(actual, expected));
     }
@@ -123,15 +123,15 @@ pub fn r_is_null(object: SEXP) -> bool {
 }
 
 pub fn r_is_altrep(object: SEXP) -> bool {
-    unsafe { libr::ALTREP(object) != 0 }
+    libr::ALTREP(object) != 0
 }
 
 pub fn r_is_object(object: SEXP) -> bool {
-    unsafe { libr::Rf_isObject(object) != 0 }
+    libr::Rf_isObject(object) != 0
 }
 
 pub fn r_is_s4(object: SEXP) -> bool {
-    unsafe { libr::Rf_isS4(object) != 0 }
+    libr::Rf_isS4(object) != 0
 }
 
 pub fn r_is_unbound(object: SEXP) -> bool {
@@ -190,7 +190,7 @@ pub fn r_classes(value: SEXP) -> Option<CharacterVector> {
 /// - `x` is the R vector to translate from.
 /// - `i` is the index in the vector of the string to translate.
 pub fn r_chr_get_owned_utf8(x: SEXP, i: isize) -> Result<String> {
-    unsafe { r_str_to_owned_utf8(STRING_ELT(x, i)) }
+    r_str_to_owned_utf8(STRING_ELT(x, i))
 }
 
 /// Translates an R string to a UTF-8 Rust string.
@@ -285,10 +285,10 @@ pub fn r_vec_shape(value: SEXP) -> String {
 }
 
 pub fn r_altrep_class(object: SEXP) -> String {
-    let serialized_klass = unsafe { ATTRIB(ALTREP_CLASS(object)) };
+    let serialized_klass = ATTRIB(ALTREP_CLASS(object));
 
-    let klass = RSymbol::new_unchecked(unsafe { CAR(serialized_klass) });
-    let pkg = RSymbol::new_unchecked(unsafe { CADR(serialized_klass) });
+    let klass = RSymbol::new_unchecked(CAR(serialized_klass));
+    let pkg = RSymbol::new_unchecked(CADR(serialized_klass));
 
     format!("{}::{}", pkg, klass)
 }
@@ -296,7 +296,7 @@ pub fn r_altrep_class(object: SEXP) -> String {
 pub fn r_typeof(object: SEXP) -> u32 {
     // SAFETY: The type of an R object is typically considered constant,
     // and TYPEOF merely queries the R type directly from the SEXPREC struct.
-    unsafe { TYPEOF(object) as u32 }
+    TYPEOF(object) as u32
 }
 
 pub fn r_type2char<T: Into<u32>>(kind: T) -> String {
@@ -309,7 +309,7 @@ pub fn r_type2char<T: Into<u32>>(kind: T) -> String {
 
 pub fn r_inherits(object: SEXP, class: &str) -> bool {
     let class = CString::new(class).unwrap();
-    unsafe { libr::Rf_inherits(object, class.as_ptr()) != 0 }
+    libr::Rf_inherits(object, class.as_ptr()) != 0
 }
 
 pub fn r_is_function(object: SEXP) -> bool {
@@ -335,13 +335,11 @@ pub fn r_formals(object: SEXP) -> Result<Vec<RArgument>> {
     // iterate through the entries
     let mut arguments = Vec::new();
 
-    unsafe {
-        while formals != r_null() {
-            let name = RObject::from(TAG(formals)).to::<String>()?;
-            let value = CAR(formals);
-            arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
-            formals = CDR(formals);
-        }
+    while formals != r_null() {
+        let name = RObject::from(TAG(formals)).to::<String>()?;
+        let value = CAR(formals);
+        arguments.push(RArgument::new(name.as_str(), RObject::new(value)));
+        formals = CDR(formals);
     }
 
     Ok(arguments)
@@ -352,17 +350,17 @@ pub fn r_envir_name(envir: SEXP) -> Result<String> {
 
     if r_env_is_pkg_env(envir) {
         let name = RObject::from(r_pkg_env_name(envir));
-        return unsafe { name.to::<String>() };
+        return name.to::<String>();
     }
 
     if r_env_is_ns_env(envir) {
         let name = RObject::from(r_ns_env_name(envir));
-        return unsafe { name.to::<String>() };
+        return name.to::<String>();
     }
 
-    let name = unsafe { Rf_getAttrib(envir, r_symbol!("name")) };
+    let name = Rf_getAttrib(envir, r_symbol!("name"));
     if r_typeof(name) == STRSXP {
-        let name = unsafe { RObject::view(name).to::<String>()? };
+        let name = RObject::view(name).to::<String>()?;
         return Ok(name);
     }
 
@@ -382,11 +380,11 @@ pub fn r_envir_get(symbol: &str, envir: SEXP) -> Option<SEXP> {
 }
 
 pub fn r_envir_set(symbol: &str, value: SEXP, envir: SEXP) {
-    unsafe { Rf_defineVar(r_symbol!(symbol), value, envir) };
+    Rf_defineVar(r_symbol!(symbol), value, envir);
 }
 
 pub fn r_envir_remove(symbol: &str, envir: SEXP) {
-    unsafe { R_removeVarFromFrame(r_symbol!(symbol), envir) };
+    R_removeVarFromFrame(r_symbol!(symbol), envir);
 }
 
 /// Get names of a vector
@@ -397,12 +395,12 @@ pub fn r_envir_remove(symbol: &str, envir: SEXP) {
 ///
 /// Note that it does not use S3 dispatch for length or names.
 pub fn r_names2(x: SEXP) -> SEXP {
-    let mut protect = unsafe { RProtect::new() };
+    let mut protect = RProtect::new();
 
     let size = r_length(x);
 
     let names = unsafe { Rf_getAttrib(x, R_NamesSymbol) };
-    unsafe { protect.add(names) };
+    protect.add(names);
 
     if r_is_null(names) {
         // Comes initialized with `""`.
@@ -430,7 +428,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
     }
 
     let out = r_alloc_character(size);
-    unsafe { protect.add(out) };
+    protect.add(out);
 
     for i in 0..size {
         let elt = r_chr_get(names, i);
@@ -448,7 +446,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
 pub fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
     // handle SYMSXPs upfront
     if r_typeof(object) == SYMSXP {
-        return unsafe { RObject::view(object).to::<String>() };
+        return RObject::view(object).to::<String>();
     }
 
     // call format on the object
@@ -457,7 +455,7 @@ pub fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
         .call()?;
 
     // paste into a single string
-    let object = unsafe {
+    let object = {
         RFunction::new("base", "paste")
             .add(object)
             .param("collapse", delimiter)
@@ -486,12 +484,12 @@ pub fn r_promise_is_forced(x: SEXP) -> bool {
 }
 
 pub fn r_promise_value(x: SEXP) -> SEXP {
-    unsafe { PRVALUE(x) }
+    PRVALUE(x)
 }
 
 pub fn r_promise_expr(x: SEXP) -> SEXP {
     // Like `PRCODE()`, but also handles bytecode expressions
-    unsafe { R_PromiseExpr(x) }
+    R_PromiseExpr(x)
 }
 
 pub fn r_promise_force(x: SEXP) -> harp::Result<RObject> {
@@ -503,11 +501,9 @@ pub fn r_promise_force_with_rollback(x: SEXP) -> harp::Result<RObject> {
     // Like `r_promise_force()`, but if evaluation results in an error
     // then the original promise is untouched, i.e. `PRSEEN` isn't modified,
     // avoiding `"restarting interrupted promise evaluation"` warnings.
-    unsafe {
-        let out = harp::try_eval(PRCODE(x), PRENV(x))?;
-        SET_PRVALUE(x, out.sexp);
-        Ok(out)
-    }
+    let out = harp::try_eval(PRCODE(x), PRENV(x))?;
+    SET_PRVALUE(x, out.sexp);
+    Ok(out)
 }
 
 pub fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
@@ -517,36 +513,36 @@ pub fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
     // We can take advantage of this to identify promises in namespaces
     // that correspond to symbols we should evaluate when generating completions.
 
-    let expr = unsafe { PRCODE(x) };
+    let expr = PRCODE(x);
 
     if r_typeof(expr) != LANGSXP {
         return false;
     }
 
-    if unsafe { Rf_xlength(expr) } == 0 {
+    if Rf_xlength(expr) == 0 {
         return false;
     }
 
-    let expr = unsafe { CAR(expr) };
+    let expr = CAR(expr);
 
     if r_typeof(expr) != SYMSXP {
         return false;
     }
 
-    expr == unsafe { r_symbol!("lazyLoadDBfetch") }
+    expr == r_symbol!("lazyLoadDBfetch")
 }
 
 pub fn r_bytecode_expr(x: SEXP) -> SEXP {
-    unsafe { R_BytecodeExpr(x) }
+    R_BytecodeExpr(x)
 }
 
 pub fn r_env_names(env: SEXP) -> SEXP {
     // `all = true`, `sorted = false`
-    unsafe { R_lsInternal3(env, Rboolean_TRUE, Rboolean_FALSE) }
+    R_lsInternal3(env, Rboolean_TRUE, Rboolean_FALSE)
 }
 
 pub fn r_env_has(env: SEXP, sym: SEXP) -> bool {
-    unsafe { libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE }
+    libr::R_existsVarInFrame(env, sym) == libr::Rboolean_TRUE
 }
 
 /// Check if a symbol is an active binding in an environment
@@ -563,7 +559,7 @@ pub fn r_env_binding_is_active(env: SEXP, sym: SEXP) -> harp::Result<bool> {
         let name = RSymbol::new(sym)?.to_string();
         Err(harp::Error::MissingBindingError { name })
     } else {
-        Ok(unsafe { R_BindingIsActive(sym, env) == Rboolean_TRUE })
+        Ok(R_BindingIsActive(sym, env) == Rboolean_TRUE)
     }
 }
 
@@ -593,7 +589,7 @@ pub fn r_pkg_env_name(env: SEXP) -> SEXP {
 pub fn r_env_is_ns_env(env: SEXP) -> bool {
     // Does handle `R_BaseNamespace`
     // https://github.com/wch/r-source/blob/1cb35ff692d3eb3ab546e0db4761102b5ea4ac89/src/main/envir.c#L3689
-    unsafe { R_IsNamespaceEnv(env) == Rboolean_TRUE }
+    R_IsNamespaceEnv(env) == Rboolean_TRUE
 }
 
 pub fn r_ns_env_name(env: SEXP) -> SEXP {
@@ -651,15 +647,13 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     if !r_is_string(x.sexp) {
         anyhow::bail!("Expected string for srcfile's filename");
     }
-    unsafe {
-        let path = RFunction::new("base", "normalizePath")
-            .param("path", x)
-            .param("winslash", "/")
-            .param("mustWork", false)
-            .call()?
-            .to::<String>()?;
-        Ok(path)
-    }
+    let path = RFunction::new("base", "normalizePath")
+        .param("path", x)
+        .param("winslash", "/")
+        .param("mustWork", false)
+        .call()?
+        .to::<String>()?;
+    Ok(path)
 }
 
 pub fn save_rds(x: SEXP, path: &str) {
@@ -707,16 +701,12 @@ pub fn push_rds(x: SEXP, path: &str, context: &str) {
 }
 
 pub fn r_print(x: impl Into<SEXP>) {
-    unsafe {
-        Rf_PrintValue(x.into());
-    }
+    Rf_PrintValue(x.into());
 }
 
 pub fn r_printf(x: &str) {
     let c_str = std::ffi::CString::new(x).unwrap();
-    unsafe {
-        libr::Rprintf(c_str.as_ptr());
-    }
+    libr::Rprintf(c_str.as_ptr());
 }
 
 pub fn r_format_vec(x: SEXP) -> Result<SEXP> {
@@ -781,7 +771,7 @@ mod tests {
             ";
 
             let x = harp::parse_eval0(code, env).unwrap();
-            let x = unsafe { STRING_ELT(x.sexp, 0) };
+            let x = STRING_ELT(x.sexp, 0);
             let x = r_str_to_owned_utf8_unchecked(x);
 
             assert_eq!(x, String::from(std::char::REPLACEMENT_CHARACTER));

@@ -23,42 +23,38 @@ pub fn zap_srcref(x: SEXP) -> RObject {
 }
 
 fn zap_srcref_fn(x: SEXP) -> RObject {
-    unsafe {
-        let formals = fn_formals(x);
-        let body = fn_body(x);
-        let env = fn_env(x);
+    let formals = fn_formals(x);
+    let body = fn_body(x);
+    let env = fn_env(x);
 
-        let new_body = zap_srcref(body);
-        let out = RObject::new(new_function(formals, new_body.sexp, env));
+    let new_body = zap_srcref(body);
+    let out = RObject::new(new_function(formals, new_body.sexp, env));
 
-        // Copy attributes from the original, but zap `srcref`
-        attrib_poke_from(out.sexp, x);
-        attrib_poke(out.sexp, r_symbol!("srcref"), r_null());
+    // Copy attributes from the original, but zap `srcref`
+    attrib_poke_from(out.sexp, x);
+    attrib_poke(out.sexp, r_symbol!("srcref"), r_null());
 
-        out
-    }
+    out
 }
 
 fn zap_srcref_call(x: SEXP) -> RObject {
-    unsafe {
-        let x = RObject::view(x).shallow_duplicate();
+    let x = RObject::view(x).shallow_duplicate();
 
-        zap_srcref_attrib(x.sexp);
+    zap_srcref_attrib(x.sexp);
 
-        if libr::CAR(x.sexp) == r_symbol!("function") {
-            // Remove `call[[4]]` where the parser stores srcref information
-            // for calls to `function`
-            libr::SETCDR(libr::CDDR(x.sexp), r_null());
-        }
-
-        let mut node = x.sexp;
-        while node != r_null() {
-            libr::SETCAR(node, zap_srcref(libr::CAR(node)).sexp);
-            node = libr::CDR(node);
-        }
-
-        x
+    if libr::CAR(x.sexp) == r_symbol!("function") {
+        // Remove `call[[4]]` where the parser stores srcref information
+        // for calls to `function`
+        libr::SETCDR(libr::CDDR(x.sexp), r_null());
     }
+
+    let mut node = x.sexp;
+    while node != r_null() {
+        libr::SETCAR(node, zap_srcref(libr::CAR(node)).sexp);
+        node = libr::CDR(node);
+    }
+
+    x
 }
 
 fn zap_srcref_expr(x: SEXP) -> RObject {

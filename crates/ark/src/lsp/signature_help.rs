@@ -611,11 +611,11 @@ fn <- function(
     #[test]
     fn test_argument_label_symbol() {
         crate::r_task(|| {
-            let x = unsafe { r_symbol!("name") };
+            let x = r_symbol!("name");
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x = name"));
 
-            let x = unsafe { r_symbol!("hi there") };
+            let x = r_symbol!("hi there");
             let label = argument_label(String::from("x"), x);
             assert_eq!(label, String::from("x = `hi there`"));
         })
@@ -624,12 +624,10 @@ fn <- function(
     #[test]
     fn test_argument_label_call() {
         crate::r_task(|| {
-            let x = unsafe {
-                RCall::new(r_symbol!("source"))
-                    .add(r_symbol!("exprs"))
-                    .param("local", r_symbol!("is_local"))
-                    .build()
-            };
+            let x = RCall::new(r_symbol!("source"))
+                .add(r_symbol!("exprs"))
+                .param("local", r_symbol!("is_local"))
+                .build();
             let label = argument_label(String::from("x"), x.sexp);
             assert_eq!(label, String::from("x = source(exprs, local = is_local)"));
         })
@@ -687,8 +685,8 @@ fn <- function(
             assert_eq!(label, String::from("x = c(1+2.5i, Inf-Infi, NA+2.5i)"));
 
             let x = RObject::from(r_alloc_character(3));
-            r_chr_poke(x.sexp, 0, unsafe { r_char!("hi") });
-            r_chr_poke(x.sexp, 1, unsafe { r_char!("there") });
+            r_chr_poke(x.sexp, 0, r_char!("hi"));
+            r_chr_poke(x.sexp, 1, r_char!("there"));
             r_chr_poke(x.sexp, 2, r_str_na());
             let label = argument_label(String::from("x"), x.sexp);
             assert_eq!(label, String::from("x = c(\"hi\", \"there\", NA)"));
@@ -736,7 +734,7 @@ fn <- function(
             assert_eq!(label, String::from("x = 1.5+2.5i"));
 
             let x = RObject::from(r_alloc_character(1));
-            r_chr_poke(x.sexp, 0, unsafe { r_char!("hi") });
+            r_chr_poke(x.sexp, 0, r_char!("hi"));
             let label = argument_label(String::from("x"), x.sexp);
             assert_eq!(label, String::from("x = \"hi\""));
         })

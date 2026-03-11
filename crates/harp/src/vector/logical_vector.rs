@@ -29,7 +29,7 @@ impl Vector for LogicalVector {
     type UnderlyingType = i32;
     type CompareType = bool;
 
-    unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
+    fn new_unchecked(object: impl Into<SEXP>) -> Self {
         Self {
             object: RObject::new(object.into()),
         }
@@ -64,7 +64,7 @@ impl Vector for LogicalVector {
     }
 
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { LOGICAL_ELT(self.data(), index as R_xlen_t) }
+        LOGICAL_ELT(self.data(), index as R_xlen_t)
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

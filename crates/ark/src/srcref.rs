@@ -161,49 +161,47 @@ fn generate_source(
 
     // Inject source references in functions. This is slightly unsafe but we
     // couldn't think of a dire failure mode.
-    unsafe {
-        // First replace the body which contains expressions tagged with srcrefs
-        // such as calls to `{`. Compiled functions are a little more tricky.
-        let body = harp::fn_body(old.sexp);
+    // First replace the body which contains expressions tagged with srcrefs
+    // such as calls to `{`. Compiled functions are a little more tricky.
+    let body = harp::fn_body(old.sexp);
 
-        if r_typeof(body) == BCODESXP {
-            // This is a compiled function. We could recompile the fresh
-            // function we just created but the compiler is very slow. Instead,
-            // update the expression stored in the bytecode. This expression is
-            // used by `eval()` when stepping with the debugger.
+    if r_typeof(body) == BCODESXP {
+        // This is a compiled function. We could recompile the fresh
+        // function we just created but the compiler is very slow. Instead,
+        // update the expression stored in the bytecode. This expression is
+        // used by `eval()` when stepping with the debugger.
 
-            // Get the constant pool: BCODE_CONSTS = CDR
-            let consts = CDR(body);
+        // Get the constant pool: BCODE_CONSTS = CDR
+        let consts = CDR(body);
 
-            // The original body expression is stored as first element
-            // of the constant pool
-            if r_length(consts) > 0 {
-                // Inject new body instrumented with source references
-                SET_VECTOR_ELT(consts, 0, R_ClosureExpr(new));
-            }
-
-            harp::attrib_poke(
-                old.sexp,
-                r_symbol!("srcref"),
-                harp::attrib_get(new, r_symbol!("srcref")),
-            );
-        } else {
-            let new_body = harp::fn_body(new);
-            let out = RObject::new(harp::new_function(
-                harp::fn_formals(old.sexp),
-                new_body,
-                harp::fn_env(old.sexp),
-            ));
-
-            harp::attrib_poke_from(out.sexp, old.sexp);
-            harp::attrib_poke(
-                out.sexp,
-                r_symbol!("srcref"),
-                harp::attrib_get(new, r_symbol!("srcref")),
-            );
-
-            harp::env_bind_force(ns_env, binding.name.sexp, out.sexp);
+        // The original body expression is stored as first element
+        // of the constant pool
+        if r_length(consts) > 0 {
+            // Inject new body instrumented with source references
+            SET_VECTOR_ELT(consts, 0, R_ClosureExpr(new));
         }
+
+        harp::attrib_poke(
+            old.sexp,
+            r_symbol!("srcref"),
+            harp::attrib_get(new, r_symbol!("srcref")),
+        );
+    } else {
+        let new_body = harp::fn_body(new);
+        let out = RObject::new(harp::new_function(
+            harp::fn_formals(old.sexp),
+            new_body,
+            harp::fn_env(old.sexp),
+        ));
+
+        harp::attrib_poke_from(out.sexp, old.sexp);
+        harp::attrib_poke(
+            out.sexp,
+            r_symbol!("srcref"),
+            harp::attrib_get(new, r_symbol!("srcref")),
+        );
+
+        harp::env_bind_force(ns_env, binding.name.sexp, out.sexp);
     }
 
     let text: Vec<String> = RObject::view(text).try_into()?;

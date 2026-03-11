@@ -55,7 +55,7 @@ pub trait Vector: Sized {
     type UnderlyingType;
     type CompareType;
 
-    unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self;
+    fn new_unchecked(object: impl Into<SEXP>) -> Self;
     fn data(&self) -> SEXP;
     fn is_na(x: &Self::UnderlyingType) -> bool;
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType;
@@ -88,10 +88,10 @@ pub trait Vector: Sized {
     {
         let object = object.into();
         r_assert_type(object, &[Self::SEXPTYPE])?;
-        unsafe { Ok(Self::new_unchecked(object)) }
+        Ok(Self::new_unchecked(object))
     }
 
-    unsafe fn with_length(size: usize) -> Self
+    fn with_length(size: usize) -> Self
     where
         Self: Sized,
     {
@@ -105,7 +105,7 @@ pub trait Vector: Sized {
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
         <T as IntoIterator>::Item: AsRef<Self::Item>;
 
-    unsafe fn len(&self) -> usize {
+    fn len(&self) -> usize {
         Rf_xlength(self.data()) as usize
     }
 
@@ -119,7 +119,7 @@ pub trait Vector: Sized {
     }
 
     fn iter(&self) -> harp::vector::VectorIterator<'_, Self> {
-        let size = unsafe { self.len() as isize };
+        let size = self.len() as isize;
         harp::vector::VectorIterator {
             data: self,
             index: 0,
@@ -170,18 +170,16 @@ pub(crate) fn try_vec_from_r_vector<VectorType>(
 where
     VectorType: Vector,
 {
-    unsafe {
-        let mut result: Vec<VectorType::Type> = Vec::with_capacity(value.len());
+    let mut result: Vec<VectorType::Type> = Vec::with_capacity(value.len());
 
-        for val in value.iter() {
-            let Some(x) = val else {
-                return Err(harp::Error::MissingValueError);
-            };
-            result.push(x);
-        }
-
-        Ok(result)
+    for val in value.iter() {
+        let Some(x) = val else {
+            return Err(harp::Error::MissingValueError);
+        };
+        result.push(x);
     }
+
+    Ok(result)
 }
 
 pub(crate) fn try_r_vector_from_r_sexp<VectorType>(value: SEXP) -> harp::Result<VectorType>
@@ -189,7 +187,7 @@ where
     VectorType: Vector,
 {
     if value == harp::RObject::null().sexp {
-        return Ok(unsafe { VectorType::with_length(0) });
+        return Ok(VectorType::with_length(0));
     }
 
     VectorType::new(value)

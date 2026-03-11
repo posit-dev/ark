@@ -64,7 +64,7 @@ fn completions_from_comment(
 
     // TODO: cache these?
     // TODO: use an indexer to build the tag list?
-    let tags = unsafe {
+    let tags = {
         RFunction::new("base", "system.file")
             .param("package", "roxygen2")
             .add("roxygen2-tags.yml")
@@ -172,7 +172,7 @@ fn test_roxygen_comment() {
     use crate::lsp::document::Document;
     use crate::r_task;
 
-    r_task(|| unsafe {
+    r_task(|| {
         let installed = RFunction::new("", ".ps.is_installed")
             .add("roxygen2")
             .add("7.2.1.9000")

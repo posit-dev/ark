@@ -33,7 +33,7 @@ impl Vector for Factor {
     type UnderlyingType = i32;
     type CompareType = i32;
 
-    unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
+    fn new_unchecked(object: impl Into<SEXP>) -> Self {
         let object = RObject::new(object.into());
         let levels = CharacterVector::new(Rf_getAttrib(*object, r_symbol!("levels"))).unwrap();
 
@@ -69,7 +69,7 @@ impl Vector for Factor {
     }
 
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { INTEGER_ELT(self.data(), index as R_xlen_t) }
+        INTEGER_ELT(self.data(), index as R_xlen_t)
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

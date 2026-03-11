@@ -203,7 +203,7 @@ impl RDataExplorer {
         let binding = self.binding.as_ref().unwrap();
         let env = binding.env.sexp;
 
-        let new = unsafe {
+        let new = {
             let sym = r_symbol!(binding.name);
             Rf_findVarInFrame(env, sym)
         };
@@ -447,88 +447,86 @@ impl CommHandler for RDataExplorer {
 
 impl RDataExplorer {
     pub(crate) fn get_shape(table: RObject) -> anyhow::Result<DataObjectShape> {
-        unsafe {
-            let table = table.clone();
+        let table = table.clone();
 
-            let Some(kind) = table_kind(table.sexp) else {
-                return Err(anyhow!("Unsupported type for the data viewer"));
+        let Some(kind) = table_kind(table.sexp) else {
+            return Err(anyhow!("Unsupported type for the data viewer"));
+        };
+
+        // `DataFrame::n_row()` will materialize duckplyr compact row names, but we
+        // are ok with that for the data explorer and don't provide a hook to opt out.
+        let (n_row, n_col, column_names) = match kind {
+            TableKind::Dataframe => (
+                harp::DataFrame::n_row(table.sexp)?,
+                harp::DataFrame::n_col(table.sexp)?,
+                ColumnNames::from_data_frame(table.sexp)?,
+            ),
+            TableKind::Matrix => {
+                let (n_row, n_col) = harp::Matrix::dim(table.sexp)?;
+                (n_row, n_col, ColumnNames::from_matrix(table.sexp)?)
+            },
+        };
+
+        let mut column_schemas = Vec::<ColumnSchema>::new();
+        for i in 0..(n_col as isize) {
+            let column_name = match column_names.get_unchecked(i) {
+                Some(name) => name,
+                None => String::from(""),
             };
 
-            // `DataFrame::n_row()` will materialize duckplyr compact row names, but we
-            // are ok with that for the data explorer and don't provide a hook to opt out.
-            let (n_row, n_col, column_names) = match kind {
-                TableKind::Dataframe => (
-                    harp::DataFrame::n_row(table.sexp)?,
-                    harp::DataFrame::n_col(table.sexp)?,
-                    ColumnNames::from_data_frame(table.sexp)?,
-                ),
-                TableKind::Matrix => {
-                    let (n_row, n_col) = harp::Matrix::dim(table.sexp)?;
-                    (n_row, n_col, ColumnNames::from_matrix(table.sexp)?)
+            // TODO: handling for nested data frame columns
+
+            let col = match kind {
+                harp::TableKind::Dataframe => VECTOR_ELT(table.sexp, i),
+                harp::TableKind::Matrix => table.sexp,
+            };
+
+            let type_name = WorkspaceVariableDisplayType::from(col, false).display_type;
+            let type_display = display_type(col);
+
+            // Get the label attribute if present (for data frames only)
+            let column_label = match kind {
+                harp::TableKind::Dataframe => {
+                    let col_obj = harp::RObject::view(col);
+                    col_obj.get_attribute("label").and_then(|label_obj| {
+                        // CharacterVector::new() already checks if it's a STRSXP
+                        CharacterVector::new(label_obj.sexp)
+                            .ok()
+                            .filter(|cv| cv.len() > 0) // Only proceed if non-empty
+                            .and_then(|cv| cv.get_unchecked(0))
+                            .and_then(|label| {
+                                // Filter out empty strings - treat them as no label
+                                if label.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(label.to_string())
+                                }
+                            })
+                    })
                 },
+                _ => None,
             };
 
-            let mut column_schemas = Vec::<ColumnSchema>::new();
-            for i in 0..(n_col as isize) {
-                let column_name = match column_names.get_unchecked(i) {
-                    Some(name) => name,
-                    None => String::from(""),
-                };
-
-                // TODO: handling for nested data frame columns
-
-                let col = match kind {
-                    harp::TableKind::Dataframe => VECTOR_ELT(table.sexp, i),
-                    harp::TableKind::Matrix => table.sexp,
-                };
-
-                let type_name = WorkspaceVariableDisplayType::from(col, false).display_type;
-                let type_display = display_type(col);
-
-                // Get the label attribute if present (for data frames only)
-                let column_label = match kind {
-                    harp::TableKind::Dataframe => {
-                        let col_obj = harp::RObject::view(col);
-                        col_obj.get_attribute("label").and_then(|label_obj| {
-                            // CharacterVector::new() already checks if it's a STRSXP
-                            CharacterVector::new(label_obj.sexp)
-                                .ok()
-                                .filter(|cv| cv.len() > 0) // Only proceed if non-empty
-                                .and_then(|cv| cv.get_unchecked(0))
-                                .and_then(|label| {
-                                    // Filter out empty strings - treat them as no label
-                                    if label.trim().is_empty() {
-                                        None
-                                    } else {
-                                        Some(label.to_string())
-                                    }
-                                })
-                        })
-                    },
-                    _ => None,
-                };
-
-                column_schemas.push(ColumnSchema {
-                    column_name,
-                    column_label,
-                    column_index: i as i64,
-                    type_name,
-                    type_display,
-                    description: None,
-                    children: None,
-                    precision: None,
-                    scale: None,
-                    timezone: None,
-                    type_size: None,
-                });
-            }
-
-            Ok(DataObjectShape {
-                columns: column_schemas,
-                kind,
-                num_rows: n_row,
-            })
+            column_schemas.push(ColumnSchema {
+                column_name,
+                column_label,
+                column_index: i as i64,
+                type_name,
+                type_display,
+                description: None,
+                children: None,
+                precision: None,
+                scale: None,
+                timezone: None,
+                type_size: None,
+            });
         }
+
+        Ok(DataObjectShape {
+            columns: column_schemas,
+            kind,
+            num_rows: n_row,
+        })
     }
 
     fn launch_get_column_profiles_handler(

@@ -71,7 +71,7 @@ impl TryFrom<RObject> for Value {
 
                 // A single integer becomes a JSON number
                 1 => {
-                    let value = unsafe { obj.to::<i32>()? };
+                    let value = obj.to::<i32>()?;
                     Ok(Value::Number(value.into()))
                 },
 
@@ -96,7 +96,7 @@ impl TryFrom<RObject> for Value {
 
                 // A single value becomes a JSON number
                 1 => {
-                    let value = unsafe { obj.to::<f64>()? };
+                    let value = obj.to::<f64>()?;
                     // There's no try/into implicit conversion from f64 to a
                     // JSON number, but json! handles it.
                     Ok(json!(value))
@@ -123,7 +123,7 @@ impl TryFrom<RObject> for Value {
 
                 // A single value becomes a JSON true/false value
                 1 => {
-                    let value = unsafe { obj.to::<bool>()? };
+                    let value = obj.to::<bool>()?;
                     Ok(Value::Bool(value))
                 },
 
@@ -159,7 +159,7 @@ impl TryFrom<RObject> for Value {
 
                 // With exactly one value, convert to a string
                 1 => {
-                    let str = unsafe { obj.to::<String>()? };
+                    let str = obj.to::<String>()?;
                     Ok(Value::String(str))
                 },
 
@@ -314,14 +314,12 @@ impl TryFrom<Vec<Value>> for RObject {
         // Consider: currently, this creates an unnamed list. It would be
         // better, presuming that the values are all the same type, to create an
         // atomic vector of that type.
-        unsafe {
-            let list = RObject::from(Rf_allocVector(VECSXP, vals.len() as isize));
-            for (i, val) in vals.iter().enumerate() {
-                let val = RObject::try_from(val.clone())?;
-                SET_VECTOR_ELT(list.sexp, i as isize, val.sexp);
-            }
-            Ok(list)
+        let list = RObject::from(Rf_allocVector(VECSXP, vals.len() as isize));
+        for (i, val) in vals.iter().enumerate() {
+            let val = RObject::try_from(val.clone())?;
+            SET_VECTOR_ELT(list.sexp, i as isize, val.sexp);
         }
+        Ok(list)
     }
 }
 

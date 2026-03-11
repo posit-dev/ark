@@ -107,7 +107,7 @@ fn test_help_comm() {
     r_help.test_topic("utils:::find", "help-test-id-3");
 
     // Figure out which port the R help server is running on (or would run on)
-    let r_help_port = r_task(|| unsafe {
+    let r_help_port = r_task(|| {
         RFunction::new_internal("tools", "httpdPort")
             .call()?
             .to::<u16>()
@@ -151,7 +151,7 @@ fn test_custom_help_handlers() {
 
     r_help.test_topic("obj$hello", "help-test-id-4");
     assert_eq!(
-        r_task(|| unsafe { harp::parse_eval_global("called").unwrap().to::<bool>() }).unwrap(),
+        r_task(|| { harp::parse_eval_global("called").unwrap().to::<bool>() }).unwrap(),
         true,
     );
 }

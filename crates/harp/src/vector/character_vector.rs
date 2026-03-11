@@ -49,7 +49,7 @@ impl Vector for CharacterVector {
         self.object.sexp
     }
 
-    unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
+    fn new_unchecked(object: impl Into<SEXP>) -> Self {
         Self {
             object: RObject::new(object.into()),
         }
@@ -88,7 +88,7 @@ impl Vector for CharacterVector {
     }
 
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { STRING_ELT(self.data(), index as R_xlen_t) }
+        STRING_ELT(self.data(), index as R_xlen_t)
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {
@@ -112,17 +112,15 @@ impl TryFrom<&[SEXP]> for CharacterVector {
     type Error = harp::Error;
 
     fn try_from(value: &[SEXP]) -> harp::Result<Self> {
-        unsafe {
-            let vec = Self::with_length(value.len());
-            let sexp = vec.object.sexp;
+        let vec = Self::with_length(value.len());
+        let sexp = vec.object.sexp;
 
-            for (i, elt) in value.iter().enumerate() {
-                r_assert_type(*elt, &[libr::CHARSXP])?;
-                r_chr_poke(sexp, i as R_xlen_t, *elt);
-            }
-
-            Ok(vec)
+        for (i, elt) in value.iter().enumerate() {
+            r_assert_type(*elt, &[libr::CHARSXP])?;
+            r_chr_poke(sexp, i as R_xlen_t, *elt);
         }
+
+        Ok(vec)
     }
 }
 

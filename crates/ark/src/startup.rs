@@ -73,7 +73,7 @@ fn source_r_profile(path: &PathBuf) {
     // call it when there are handlers on the stack). That is a common place to
     // register global calling handlers, including in Gabor's prompt package.
     // Source in the global env to mimic R.
-    let result = unsafe {
+    let result = {
         let call = RFunction::new("base", "sys.source")
             .param("file", path)
             .param("envir", R_ENVS.global)

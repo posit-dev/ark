@@ -47,7 +47,7 @@ impl RWeakRef {
         let finalizer = Box::into_raw(finalizer);
 
         // Wrap that address in an R external pointer.
-        let finalizer = RObject::new(unsafe {
+        let finalizer = RObject::new({
             libr::R_MakeExternalPtr(
                 finalizer as *mut std::ffi::c_void,
                 RObject::null().sexp,
@@ -70,7 +70,7 @@ impl RWeakRef {
         }
 
         // Finally, the weakref wraps `obj` and our finalizer.
-        let weak_ref = RObject::new(unsafe {
+        let weak_ref = RObject::new({
             libr::R_MakeWeakRefC(
                 finalizer.sexp, // Protected by weakref
                 obj,            // Not protected by weakref
@@ -88,21 +88,19 @@ impl RWeakRef {
     /// finalizer has been run.
     pub fn deref(&self) -> Option<RObject> {
         // If finalizer is `NULL` we know for sure the weakref is stale
-        let key = unsafe { libr::R_WeakRefKey(self.weak_ref.sexp) };
+        let key = libr::R_WeakRefKey(self.weak_ref.sexp);
         if key == RObject::null().sexp {
             return None;
         }
 
-        Some(RObject::new(unsafe {
-            libr::R_WeakRefValue(self.weak_ref.sexp)
-        }))
+        Some(RObject::new({ libr::R_WeakRefValue(self.weak_ref.sexp) }))
     }
 }
 
 impl Drop for RWeakRef {
     // It's fine to run this even when weakref is stale
     fn drop(&mut self) {
-        unsafe { libr::R_RunWeakRefFinalizer(self.weak_ref.sexp) }
+        libr::R_RunWeakRefFinalizer(self.weak_ref.sexp)
     }
 }
 
