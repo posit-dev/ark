@@ -657,14 +657,16 @@ impl RDataExplorer {
         let display_type = &filter.column_schema.type_display;
         let filter_type = &filter.filter_type;
 
-        let is_compare_supported = |x: &ColumnDisplayType| match x {
-            ColumnDisplayType::Integer |
-            ColumnDisplayType::Floating |
-            ColumnDisplayType::Decimal |
-            ColumnDisplayType::Date |
-            ColumnDisplayType::Datetime |
-            ColumnDisplayType::Time => true,
-            _ => false,
+        let is_compare_supported = |x: &ColumnDisplayType| {
+            matches!(
+                x,
+                ColumnDisplayType::Integer |
+                    ColumnDisplayType::Floating |
+                    ColumnDisplayType::Decimal |
+                    ColumnDisplayType::Date |
+                    ColumnDisplayType::Datetime |
+                    ColumnDisplayType::Time
+            )
         };
 
         match filter_type {

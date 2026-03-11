@@ -473,10 +473,10 @@ impl RVariables {
 
     /// Determines whether or not we should be showing the special `.Last.value` object
     fn show_last_value(&self) -> bool {
-        match get_option("positron.show_last_value").get_bool(0) {
-            Ok(Some(true)) => true,
-            _ => false,
-        }
+        matches!(
+            get_option("positron.show_last_value").get_bool(0),
+            Ok(Some(true))
+        )
     }
 
     fn last_value() -> harp::Result<Binding> {
