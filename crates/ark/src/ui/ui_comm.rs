@@ -273,7 +273,7 @@ impl UiComm {
             })),
             Err(err) => {
                 let message = match err {
-                    harp::Error::TryCatchError { message, .. } => message,
+                    harp::Error::TryCatchError(err) => err.message,
                     harp::Error::ParseError { message, .. } => message,
                     harp::Error::ParseSyntaxError { message } => message,
                     _ => format!("{err}"),

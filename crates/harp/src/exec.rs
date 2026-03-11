@@ -18,6 +18,7 @@ use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
+use crate::error::TryCatchError;
 use crate::modules::HARP_ENV;
 use crate::object::r_null_or_try_into;
 use crate::object::RObject;
@@ -264,13 +265,13 @@ where
 
             let rust_trace = std::backtrace::Backtrace::force_capture();
 
-            *(data.res) = Some(Err(Error::TryCatchError {
+            *(data.res) = Some(Err(Error::TryCatchError(Box::new(TryCatchError {
                 call,
                 message,
                 class,
                 r_trace,
                 rust_trace: Some(rust_trace),
-            }));
+            }))));
 
             Ok(())
         })() {
@@ -689,9 +690,9 @@ mod tests {
                 Rf_error(msg.as_ptr());
             });
 
-            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
-                assert_eq!(message, "ouch");
-                assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
+            assert_match!(out, Err(Error::TryCatchError(err)) => {
+                assert_eq!(err.message, "ouch");
+                assert_eq!(err.class.unwrap(), ["simpleError", "error", "condition"]);
             });
         })
     }
@@ -748,9 +749,9 @@ mod tests {
             let out: Result<RObject> =
                 try_catch(|| r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch"))));
 
-            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
-                assert_eq!(message, "ouch");
-                assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
+            assert_match!(out, Err(Error::TryCatchError(err)) => {
+                assert_eq!(err.message, "ouch");
+                assert_eq!(err.class.unwrap(), ["simpleError", "error", "condition"]);
             });
         })
     }

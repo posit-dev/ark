@@ -305,7 +305,10 @@ impl Shell {
             Message::InspectRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
                 block_on(shell_handler.handle_inspect_request(msg))
             }),
-            _ => Err(Error::UnsupportedMessage(msg, String::from("shell"))),
+            _ => Err(Error::UnsupportedMessage(
+                Box::new(msg),
+                String::from("shell"),
+            )),
         }
     }
 

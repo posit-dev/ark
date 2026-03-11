@@ -211,8 +211,8 @@ pub(super) fn completions_from_evaluated_object_names(
         Ok(object) => object,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
-            Error::TryCatchError { message, .. } => {
-                log::trace!("Can't evaluate object: {message}");
+            Error::TryCatchError(err) => {
+                log::trace!("Can't evaluate object: {}", err.message);
                 return Ok(None);
             },
             _ => {
