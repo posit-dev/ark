@@ -109,6 +109,10 @@ pub trait Vector: Sized {
         Rf_xlength(self.data()) as usize
     }
 
+    unsafe fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String;
 
     fn format_elt_unchecked(&self, index: isize, options: Option<&FormatOptions>) -> String {
