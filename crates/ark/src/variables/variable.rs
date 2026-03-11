@@ -131,7 +131,7 @@ impl WorkspaceVariableDisplayValue {
             };
         }
 
-        return Self::from_error(Error::Anyhow(anyhow!("Unexpected language object type")));
+        Self::from_error(Error::Anyhow(anyhow!("Unexpected language object type")))
     }
 
     fn from_formula(value: SEXP) -> anyhow::Result<Self> {
@@ -142,7 +142,7 @@ impl WorkspaceVariableDisplayValue {
             .call_in(ARK_ENVS.positron_ns)?
             .try_into()?;
 
-        if formatted.len() < 1 {
+        if formatted.is_empty() {
             return Err(anyhow!("Failed to format formula"));
         }
 
@@ -207,7 +207,7 @@ impl WorkspaceVariableDisplayValue {
         }
 
         if !is_truncated {
-            display_value.push_str("]");
+            display_value.push(']');
         }
 
         Self::new(display_value, is_truncated)
@@ -352,7 +352,7 @@ impl WorkspaceVariableDisplayValue {
         // to display the first MAX_DISPLAY_VALUE_LENGTH characters.
         'outer: for (i, elt) in formatted.iter_take(MAX_DISPLAY_VALUE_LENGTH)?.enumerate() {
             if i > 0 {
-                display_value.push_str(" ");
+                display_value.push(' ');
             }
             for char in elt.chars() {
                 if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
@@ -389,14 +389,11 @@ impl WorkspaceVariableDisplayValue {
             )]);
 
         let display_value = unwrap!(display_value, Err(err) => {
-            log::error!("Failed to apply '{}': {err:?}", ArkGenerics::VariableDisplayValue.to_string());
+            log::error!("Failed to apply '{}': {err:?}", ArkGenerics::VariableDisplayValue);
             return None;
         });
 
-        match display_value {
-            None => None,
-            Some(value) => Some(Self::from_untruncated_string(value)),
-        }
+        display_value.map(Self::from_untruncated_string)
     }
 }
 
@@ -416,7 +413,7 @@ impl WorkspaceVariableDisplayType {
         match Self::try_from_method(value, include_length) {
             Err(err) => log::error!(
                 "Error from '{}' method: {err}",
-                ArkGenerics::VariableDisplayType.to_string()
+                ArkGenerics::VariableDisplayType
             ),
             Ok(None) => {},
             Ok(Some(display_type)) => return display_type,
@@ -558,7 +555,7 @@ fn has_children(value: SEXP) -> bool {
     match ArkGenerics::VariableHasChildren.try_dispatch(value, vec![]) {
         Err(err) => log::error!(
             "Error from '{}' method: {err}",
-            ArkGenerics::VariableHasChildren.to_string()
+            ArkGenerics::VariableHasChildren
         ),
         Ok(None) => {},
         Ok(Some(answer)) => return answer,
@@ -599,7 +596,7 @@ fn has_viewer(value: SEXP) -> bool {
         Err(err) => {
             log::error!(
                 "Error from '{}' method: {err}",
-                ArkGenerics::VariableHasViewer.to_string()
+                ArkGenerics::VariableHasViewer
             );
             // The viewer method exists, but failed
             false
@@ -617,16 +614,12 @@ fn has_viewer(value: SEXP) -> bool {
 /// or Err if the method failed.
 pub fn try_dispatch_view(value: SEXP) -> anyhow::Result<bool> {
     match ArkGenerics::VariableView.try_dispatch::<bool>(value, vec![]) {
-        Err(err) => {
-            return Err(anyhow!("Error in custom view: {err}"));
-        },
+        Err(err) => Err(anyhow!("Error in custom view: {err}")),
         Ok(None) => {
             // No custom view method found
             Ok(false)
         },
-        Ok(Some(false)) => {
-            return Err(anyhow!("Custom view method failed"));
-        },
+        Ok(Some(false)) => Err(anyhow!("Custom view method failed")),
         Ok(Some(true)) => Ok(true),
     }
 }
@@ -819,10 +812,7 @@ impl PositronVariable {
         }
 
         match try_from_method_variable_kind(x) {
-            Err(err) => log::error!(
-                "Error from '{}' method: {err}",
-                ArkGenerics::VariableKind.to_string()
-            ),
+            Err(err) => log::error!("Error from '{}' method: {err}", ArkGenerics::VariableKind),
             Ok(None) => {},
             Ok(Some(kind)) => return kind,
         }
@@ -942,7 +932,7 @@ impl PositronVariable {
     }
 
     pub fn inspect(env: RObject, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
-        let node = Self::resolve_object_from_path(env, &path)?;
+        let node = Self::resolve_object_from_path(env, path)?;
 
         match node {
             EnvironmentVariableNode::R6Node { object, name } => match name.as_str() {
@@ -965,7 +955,7 @@ impl PositronVariable {
                 match Self::try_inspect_custom_method(object.sexp) {
                     Err(err) => log::error!(
                         "Failed to inspect with {}: {err}",
-                        ArkGenerics::VariableGetChildren.to_string()
+                        ArkGenerics::VariableGetChildren
                     ),
                     Ok(None) => {},
                     Ok(Some(variables)) => return Ok(variables),
@@ -1008,7 +998,7 @@ impl PositronVariable {
         path: &Vec<String>,
         _format: &ClipboardFormatFormat,
     ) -> anyhow::Result<String> {
-        let node = Self::resolve_object_from_path(env, &path)?;
+        let node = Self::resolve_object_from_path(env, path)?;
 
         match node {
             EnvironmentVariableNode::Concrete { object } => {
@@ -1107,7 +1097,7 @@ impl PositronVariable {
                 let node =
                     ArkGenerics::VariableGetChildAt.try_dispatch::<RObject>(object.sexp, vec![
                         RArgument::new("index", RObject::from(index + 1)), // Index is 0-based, so we convert to 1-based for R.
-                        RArgument::new("name", RObject::from(name)),
+                        RArgument::new("name", name),
                     ]);
                 match node {
                     Ok(None) => {
@@ -1209,18 +1199,16 @@ impl PositronVariable {
                     _ => {
                         // Technically we'd also implement this for `<methods>`, but because `methods`
                         // are all functions which always `have_children=false` we don't need to.
-                        return Err(harp::Error::Anyhow(anyhow!(
+                        Err(harp::Error::Anyhow(anyhow!(
                             "You can only get children from <private>, got {path_elt}"
-                        )));
+                        )))
                     },
                 }
             },
 
-            EnvironmentVariableNode::AtomicVectorElement { .. } => {
-                return Err(harp::Error::Anyhow(anyhow!(
-                    "Can't subset an atomic vector even further, got {path_elt}"
-                )));
-            },
+            EnvironmentVariableNode::AtomicVectorElement { .. } => Err(harp::Error::Anyhow(
+                anyhow!("Can't subset an atomic vector even further, got {path_elt}"),
+            )),
 
             EnvironmentVariableNode::Matrixcolumn { object, index } => unsafe {
                 let dim = IntegerVector::new(Rf_getAttrib(object.sexp, R_DimSymbol))?;
@@ -1303,7 +1291,7 @@ impl PositronVariable {
 
             'outer: for (i, elt) in iter {
                 if i > 0 {
-                    display_value.push_str(" ");
+                    display_value.push(' ');
                 }
                 for char in elt.chars() {
                     if display_value.len() >= MAX_DISPLAY_VALUE_LENGTH {
@@ -1426,7 +1414,7 @@ impl PositronVariable {
                 out.push(Self::from(i.to_string(), display_name, CAR(pairlist)).var());
 
                 pairlist = CDR(pairlist);
-                i = i + 1;
+                i += 1;
             }
         }
 
@@ -1564,7 +1552,7 @@ impl PositronVariable {
     fn try_inspect_custom_method(value: SEXP) -> anyhow::Result<Option<Vec<Variable>>> {
         let result: Option<RObject> = ArkGenerics::VariableGetChildren
             .try_dispatch(value, vec![])
-            .map_err(|err| harp::Error::Anyhow(err))?;
+            .map_err(harp::Error::Anyhow)?;
 
         match result {
             None => Ok(None),
@@ -1573,7 +1561,7 @@ impl PositronVariable {
                 if !r_typeof(value.sexp) == LISTSXP {
                     return Err(anyhow!(
                         "Expected `{}` to return a list.",
-                        ArkGenerics::VariableGetChildren.to_string()
+                        ArkGenerics::VariableGetChildren
                     ));
                 }
 

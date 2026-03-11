@@ -67,18 +67,9 @@ fn get_selection(
     // Helper function to get all row indices when selecting whole columns
     // This ensures sort order is preserved when exporting columns
     let get_all_row_indices = |view_indices: &Option<Vec<i32>>| -> Option<Vec<i64>> {
-        match view_indices {
-            Some(indices) => {
-                // When there are view indices (sorted/filtered), we need to select all rows
-                // in the order specified by view_indices
-                Some((0..indices.len() as i64).collect())
-            },
-            None => {
-                // When there are no view indices, we don't need to specify row indices
-                // (None means select all rows in their natural order)
-                None
-            },
-        }
+        view_indices
+            .as_ref()
+            .map(|indices| (0..indices.len() as i64).collect())
     };
 
     let (i, j) = match selection.kind {

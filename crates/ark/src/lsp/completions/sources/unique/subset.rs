@@ -65,10 +65,7 @@ fn node_find_object_for_string_subset<'tree>(
         return None;
     }
 
-    let mut node = match node_find_parent_call(node) {
-        Some(node) => node,
-        None => return None,
-    };
+    let mut node = node_find_parent_call(node)?;
 
     if node.is_call() {
         if !node_is_c_call(&node, &context.document.contents) {
@@ -76,10 +73,7 @@ fn node_find_object_for_string_subset<'tree>(
             return None;
         }
 
-        node = match node_find_parent_call(&node) {
-            Some(node) => node,
-            None => return None,
-        };
+        node = node_find_parent_call(&node)?;
 
         if !node.is_subset() && !node.is_subset2() {
             return None;
@@ -93,16 +87,13 @@ fn node_find_object_for_string_subset<'tree>(
 
     // We know `node` is the subset or subset2 node of interest. Return its "function",
     // i.e. likely the object name of interest to extract names for.
-    node = match node.child_by_field_name("function") {
-        Some(node) => node,
-        None => return None,
-    };
+    node = node.child_by_field_name("function")?;
 
     if !node.is_identifier() {
         return None;
     }
 
-    return Some(node);
+    Some(node)
 }
 
 fn node_is_c_call(x: &Node, contents: &str) -> bool {
@@ -118,7 +109,7 @@ fn node_is_c_call(x: &Node, contents: &str) -> bool {
         return false;
     }
 
-    let Ok(text) = x.node_as_str(&contents) else {
+    let Ok(text) = x.node_as_str(contents) else {
         log::error!("Can't slice `contents`.");
         return false;
     };

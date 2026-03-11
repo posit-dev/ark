@@ -76,7 +76,7 @@ impl RLibraries {
     ///   the library. On Unix, symbol lookup is global and resolved via a global linked
     ///   list of library namespaces.
     pub fn from_r_home_path(path: &PathBuf) -> Self {
-        let r_path = find_r_shared_library(&path, "R");
+        let r_path = find_r_shared_library(path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
 
         Self { r }
@@ -120,9 +120,8 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
     let library = unsafe { Library::open(Some(&path), flags) };
 
     // Map from the OS specific `Library` into the cross platform `Library`
-    let library = library.map(|library| library.into());
 
-    library
+    library.map(|library| library.into())
 }
 
 pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {

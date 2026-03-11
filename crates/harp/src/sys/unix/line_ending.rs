@@ -7,7 +7,7 @@
 
 use crate::line_ending::POSIX_LINE_ENDING;
 
-pub const NATIVE_LINE_ENDING: &'static str = POSIX_LINE_ENDING;
+pub const NATIVE_LINE_ENDING: &str = POSIX_LINE_ENDING;
 
 #[test]
 fn test_convert_line_endings_native_unix() {

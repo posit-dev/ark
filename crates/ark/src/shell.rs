@@ -206,9 +206,8 @@ impl ShellHandler for Shell {
         }
 
         trace!("Code sent to R: {}", req_clone.code);
-        let result = response_rx.recv().unwrap();
 
-        result
+        response_rx.recv().unwrap()
     }
 
     /// Handles an introspection request

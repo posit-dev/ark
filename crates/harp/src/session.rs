@@ -43,23 +43,13 @@ pub fn r_n_frame() -> crate::Result<i32> {
 pub fn r_sys_calls() -> crate::Result<RObject> {
     SESSION_INIT.call_once(init_interface);
 
-    unsafe {
-        Ok(harp::try_eval(
-            SYS_CALLS_CALL.unwrap_unchecked(),
-            R_BaseEnv,
-        )?)
-    }
+    unsafe { harp::try_eval(SYS_CALLS_CALL.unwrap_unchecked(), R_BaseEnv) }
 }
 
 pub fn r_sys_frames() -> crate::Result<RObject> {
     SESSION_INIT.call_once(init_interface);
 
-    unsafe {
-        Ok(harp::try_eval(
-            SYS_FRAMES_CALL.unwrap_unchecked(),
-            R_BaseEnv,
-        )?)
-    }
+    unsafe { harp::try_eval(SYS_FRAMES_CALL.unwrap_unchecked(), R_BaseEnv) }
 }
 
 pub fn r_current_frame() -> RObject {
@@ -104,7 +94,7 @@ pub fn r_sys_frame(n: std::ffi::c_int) -> crate::Result<RObject> {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.frame"), n));
-        Ok(harp::try_eval(call, R_BaseEnv)?)
+        harp::try_eval(call, R_BaseEnv)
     }
 }
 
@@ -113,7 +103,7 @@ pub fn r_sys_call(n: std::ffi::c_int) -> crate::Result<RObject> {
         let mut protect = RProtect::new();
         let n = protect.add(Rf_ScalarInteger(n));
         let call = protect.add(r_lang!(r_symbol!("sys.call"), n));
-        Ok(harp::try_eval(call, R_BaseEnv)?)
+        harp::try_eval(call, R_BaseEnv)
     }
 }
 

@@ -121,7 +121,7 @@ fn completion_item_from_roxygen(
         item.insert_text_format = Some(InsertTextFormat::SNIPPET);
         item.insert_text = Some(format!("{name}{template}"));
     } else {
-        item.insert_text = Some(format!("{label}"));
+        item.insert_text = Some(label.to_string());
     }
 
     item.detail = Some(format!("roxygen @{} (R)", name));

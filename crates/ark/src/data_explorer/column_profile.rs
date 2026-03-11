@@ -60,9 +60,7 @@ pub async fn handle_columns_profiles_requests(
         // an empty response. Ideally, we would have a way to comunicate an that
         // an error happened but it's not implemented yet.
         log::error!("Error while producing profiles: {e}");
-        std::iter::repeat(empty_column_profile_result())
-            .take(n_profiles)
-            .collect()
+        std::iter::repeat_n(empty_column_profile_result(), n_profiles).collect()
     });
 
     let event = DataExplorerFrontendEvent::ReturnColumnProfiles(ReturnColumnProfilesParams {
@@ -239,8 +237,7 @@ fn profile_frequency_table(
             _ => return Err(anyhow!("Wrong type of parameters for the frequency table.")),
         },
     };
-    let frequency_table =
-        histogram::profile_frequency_table(column.sexp, &params, &format_options)?;
+    let frequency_table = histogram::profile_frequency_table(column.sexp, params, format_options)?;
     Ok(frequency_table)
 }
 
@@ -257,7 +254,7 @@ fn profile_histogram(
             _ => return Err(anyhow!("Wrong type of parameters for the histogram.")),
         },
     };
-    let histogram = histogram::profile_histogram(column.sexp, &params, &format_options)?;
+    let histogram = histogram::profile_histogram(column.sexp, params, format_options)?;
     Ok(histogram)
 }
 
@@ -266,7 +263,7 @@ fn profile_summary_stats(
     format_options: &FormatOptions,
 ) -> anyhow::Result<ColumnSummaryStats> {
     let dtype = display_type(column.sexp);
-    Ok(summary_stats(column.sexp, dtype, format_options)?)
+    summary_stats(column.sexp, dtype, format_options)
 }
 
 /// Counts the number of nulls in a column. As the intent is to provide an

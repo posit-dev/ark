@@ -56,9 +56,9 @@ fn selection_range_one(tree: &Tree, point: Point) -> Option<SelectionRange> {
 fn selection_range_build(node: Node) -> SelectionRange {
     let range = range_for_node(node);
 
-    let parent = node.parent().and_then(|parent| {
+    let parent = node.parent().map(|parent| {
         let selection = selection_range_build(parent);
-        Some(Box::new(selection))
+        Box::new(selection)
     });
 
     SelectionRange { range, parent }

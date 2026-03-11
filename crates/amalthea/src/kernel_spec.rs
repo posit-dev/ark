@@ -39,7 +39,7 @@ impl KernelSpec {
         if let Some(kernel_dir) = kernel_dirs::jupyter_kernel_path() {
             return self.install_to(kernel_dir.join(folder));
         }
-        return Err(Error::NoInstallDir);
+        Err(Error::NoInstallDir)
     }
 
     fn install_to(&self, path: PathBuf) -> Result<PathBuf, Error> {
@@ -57,17 +57,15 @@ impl KernelSpec {
                 match File::create(&dest) {
                     Ok(mut f) => {
                         if let Err(err) = f.write_all(contents.as_bytes()) {
-                            return Err(Error::WriteSpecFailed(err));
+                            Err(Error::WriteSpecFailed(err))
                         } else {
-                            return Ok(dest);
+                            Ok(dest)
                         }
                     },
-                    Err(err) => return Err(Error::CreateSpecFailed(err)),
-                };
+                    Err(err) => Err(Error::CreateSpecFailed(err)),
+                }
             },
-            Err(err) => {
-                return Err(Error::JsonSerializeSpecFailed(err));
-            },
+            Err(err) => Err(Error::JsonSerializeSpecFailed(err)),
         }
     }
 }

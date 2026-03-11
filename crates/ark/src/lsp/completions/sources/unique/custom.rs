@@ -65,7 +65,7 @@ fn completions_from_custom_source(
     };
 
     // Pull out the relevant signature information.
-    let signature = signatures.signatures.get(0).into_result()?;
+    let signature = signatures.signatures.first().into_result()?;
     let mut name = signature.label.clone();
     let parameters = signature.parameters.as_ref().into_result()?;
     let index = signature.active_parameter.into_result()? as usize;
@@ -93,7 +93,7 @@ fn completions_from_custom_source(
     // Parameter text typically contains the parameter name and its default value if there is one.
     // Extract out just the parameter name for matching purposes.
     let parameter = match parameter.find("=") {
-        Some(loc) => &parameter[..loc].trim(),
+        Some(loc) => parameter[..loc].trim(),
         None => parameter.as_str(),
     };
 

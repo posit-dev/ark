@@ -138,10 +138,7 @@ impl RHtmlHelp {
         let needle = format!("<h2>{}</h2>", name);
         let header = headers.find(|elt| elt.inner_html() == needle);
 
-        let header = match header {
-            Some(header) => header,
-            None => return None,
-        };
+        let header = header?;
 
         // start collecting elements
         let mut elements: Vec<ElementRef> = Vec::new();
@@ -266,7 +263,7 @@ impl RHtmlHelp {
                 }
             }
 
-            return Status::KeepGoing;
+            Status::KeepGoing
         })?;
 
         Ok(result)

@@ -12,7 +12,7 @@ use tower_lsp::lsp_types::CodeActionProviderCapability;
 use tower_lsp::lsp_types::WorkDoneProgressOptions;
 
 /// Capabilities negotiated with [lsp_types::ClientCapabilities]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Capabilities {
     dynamic_registration_for_did_change_configuration: bool,
     code_action_literal_support: bool,
@@ -37,14 +37,14 @@ impl Capabilities {
             .as_ref()
             .and_then(|text_document| text_document.code_action.as_ref())
             .and_then(|code_action| code_action.code_action_literal_support.as_ref())
-            .map_or(false, |_| true);
+            .is_some_and(|_| true);
 
         let workspace_edit_document_changes = client_capabilities
             .workspace
             .as_ref()
             .and_then(|workspace| workspace.workspace_edit.as_ref())
             .and_then(|workspace_edit| workspace_edit.document_changes)
-            .map_or(false, |document_changes| document_changes);
+            .is_some_and(|document_changes| document_changes);
 
         Self {
             dynamic_registration_for_did_change_configuration,
@@ -104,12 +104,3 @@ impl Capabilities {
 // This is unfortunately required right now, because `LspState` is initialized before we
 // get the `Initialize` LSP request. We immediately overwrite the `LspState`
 // `capabilities` field after receiving the `Initialize` request.
-impl Default for Capabilities {
-    fn default() -> Self {
-        Self {
-            dynamic_registration_for_did_change_configuration: false,
-            code_action_literal_support: false,
-            workspace_edit_document_changes: false,
-        }
-    }
-}

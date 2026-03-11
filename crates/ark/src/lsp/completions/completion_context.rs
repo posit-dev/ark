@@ -56,7 +56,7 @@ impl<'a> CompletionContext<'a> {
 
     pub fn function_context(&self) -> anyhow::Result<&FunctionContext> {
         self.function_context_cell
-            .get_or_init(|| FunctionContext::new(&self.document_context))
+            .get_or_init(|| FunctionContext::new(self.document_context))
             .as_ref()
             .map_err(|err| anyhow::anyhow!("{err:?}"))
     }

@@ -26,7 +26,7 @@ use crate::treesitter::node_has_error_or_missing;
 use crate::treesitter::NodeType;
 use crate::treesitter::NodeTypeExt;
 
-pub static POSITRON_STATEMENT_RANGE_REQUEST: &'static str = "positron/textDocument/statementRange";
+pub static POSITRON_STATEMENT_RANGE_REQUEST: &str = "positron/textDocument/statementRange";
 
 // ---------------------------------------------------------------------------------------
 // LSP facing types (these use LSP `Range`)
@@ -173,7 +173,7 @@ fn find_roxygen_statement_range(
     // full examples section
     if let Some(range) = find_roxygen_examples_section(node, contents) {
         // Then narrow in on the exact range of code that the user's cursor covers
-        if let Some(response) = find_roxygen_examples_range(&root, range, contents, point)? {
+        if let Some(response) = find_roxygen_examples_range(root, range, contents, point)? {
             return Ok(Some(response));
         };
     }
@@ -310,7 +310,7 @@ fn find_roxygen_examples_section(node: Node, contents: &str) -> Option<tree_sitt
         end_point: end.end_position(),
     };
 
-    return Some(range);
+    Some(range)
 }
 
 fn find_roxygen_examples_range(

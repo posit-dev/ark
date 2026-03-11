@@ -426,7 +426,7 @@ impl NodeTypeExt for Node<'_> {
             return Ok(false);
         };
 
-        let Ok(text) = operator.node_as_str(&contents) else {
+        let Ok(text) = operator.node_as_str(contents) else {
             return Ok(false);
         };
 

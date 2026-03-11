@@ -23,7 +23,7 @@ fn _dump_impl(cursor: &mut TreeCursor, source: &str, indent: &str, output: &mut 
             format!(
                 "{} - {} - {} ({} -- {})\n",
                 indent,
-                node.node_as_str(&source).unwrap(),
+                node.node_as_str(source).unwrap(),
                 node.kind(),
                 node.start_position(),
                 node.end_position(),
@@ -111,7 +111,7 @@ impl<'tree> NodeExt for Node<'tree> {
     fn dump(&self, source: &str) -> String {
         let mut output = "\n".to_string();
         _dump_impl(&mut self.walk(), source, "", &mut output);
-        return output;
+        output
     }
 
     fn find_parent(&self, callback: impl Fn(&Self) -> bool) -> Option<Self> {
@@ -121,20 +121,17 @@ impl<'tree> NodeExt for Node<'tree> {
                 return Some(node);
             }
 
-            node = match node.parent() {
-                Some(node) => node,
-                None => return None,
-            }
+            node = node.parent()?
         }
     }
 
     fn find_smallest_spanning_node(&self, point: Point) -> Option<Self> {
         // The only way this should ever be `None` is if `Point` is not in the AST span
-        _find_smallest_container(&self, point)
+        _find_smallest_container(self, point)
     }
 
     fn find_closest_node_to_point(&self, point: Point) -> Option<Self> {
-        match _find_smallest_container(&self, point) {
+        match _find_smallest_container(self, point) {
             Some(node) => _find_closest_child(&node, point),
             None => None,
         }
@@ -153,10 +150,7 @@ impl<'tree> NodeExt for Node<'tree> {
         //
         let mut node = *self;
         while node.prev_sibling().is_none() {
-            node = match node.parent() {
-                Some(parent) => parent,
-                None => return None,
-            }
+            node = node.parent()?
         }
 
         node = node.prev_sibling().unwrap();
@@ -187,10 +181,7 @@ impl<'tree> NodeExt for Node<'tree> {
         //
         let mut node = *self;
         while node.next_sibling().is_none() {
-            node = match node.parent() {
-                Some(parent) => parent,
-                None => return None,
-            }
+            node = node.parent()?
         }
 
         node = node.next_sibling().unwrap();
@@ -292,10 +283,9 @@ impl<'tree> NodeExt for Node<'tree> {
     }
 
     fn node_to_string(&self, source: &str) -> anyhow::Result<String> {
-        Ok(self
-            .node_as_str(source)
+        self.node_as_str(source)
             .map(|s| s.to_string())
-            .map_err(|e| anyhow!(e))?)
+            .map_err(|e| anyhow!(e))
     }
 
     fn arguments_values(&self) -> impl Iterator<Item = Option<Node<'tree>>> {

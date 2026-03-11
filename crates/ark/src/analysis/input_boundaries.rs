@@ -81,7 +81,7 @@ pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
     let mut invalid_end: Option<u32> = None;
 
     let mut record_invalid = |start, invalid_end: &Option<u32>| {
-        if matches!(invalid, Some(_)) {
+        if invalid.is_some() {
             return;
         }
         let Some(end) = invalid_end else {
@@ -91,7 +91,7 @@ pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
     };
 
     let mut record_incomplete = |start, incomplete_end: &Option<u32>| {
-        if matches!(incomplete, Some(_)) {
+        if incomplete.is_some() {
             return;
         }
         let Some(end) = incomplete_end else {
@@ -133,14 +133,14 @@ pub fn input_boundaries(text: &str) -> anyhow::Result<Vec<InputBoundary>> {
                 record_invalid(current_line + 1, &invalid_end);
 
                 // Declare incomplete
-                if let None = incomplete_end {
+                if incomplete_end.is_none() {
                     incomplete_end = Some(current_line + 1);
                 }
             },
 
             ParseResult::SyntaxError { message, .. } => {
                 // Declare invalid
-                if let None = invalid_end {
+                if invalid_end.is_none() {
                     invalid_end = Some(current_line + 1);
                     invalid_message = Some(message)
                 }
@@ -211,7 +211,11 @@ fn fill_gaps(
     let range_from = |start| LineRange::new(start, start + 1);
 
     // Fill leading whitespace with empty input ranges
-    if let Some(first) = complete.get(0).or(incomplete.as_ref()).or(invalid.as_ref()) {
+    if let Some(first) = complete
+        .first()
+        .or(incomplete.as_ref())
+        .or(invalid.as_ref())
+    {
         for start in 0..first.start() {
             let range = range_from(start);
             last_line = range.end();

@@ -174,6 +174,6 @@ impl StreamCapture {
         }
 
         // Return the read end of the pipe
-        return Ok(read);
+        Ok(read)
     }
 }

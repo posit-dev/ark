@@ -87,9 +87,9 @@ pub(super) fn completion_item_from_direntry(entry: DirEntry) -> anyhow::Result<C
         .map(|value| value.is_dir())
         .unwrap_or(false);
     if is_dir {
-        return completion_item_from_directory(entry);
+        completion_item_from_directory(entry)
     } else {
-        return completion_item_from_file(entry);
+        completion_item_from_file(entry)
     }
 }
 
@@ -132,14 +132,14 @@ pub(super) fn completion_item_from_assignment(
         item.insert_text = Some(format!("{}($0)", label));
     }
 
-    return Ok(item);
+    Ok(item)
 }
 
 pub(super) unsafe fn completion_item_from_package(
     package: &str,
     append_colons: bool,
 ) -> anyhow::Result<CompletionItem> {
-    let mut item = completion_item(package.to_string(), CompletionData::Package {
+    let mut item = completion_item(package, CompletionData::Package {
         name: package.to_string(),
     })?;
 
@@ -159,7 +159,7 @@ pub(super) unsafe fn completion_item_from_package(
         });
     }
 
-    return Ok(item);
+    Ok(item)
 }
 
 pub(super) fn completion_item_from_function(
@@ -304,7 +304,7 @@ fn item_details(package: Option<&str>) -> CompletionItemLabelDetails {
 
 // TODO
 pub(super) unsafe fn completion_item_from_dataset(name: &str) -> anyhow::Result<CompletionItem> {
-    let mut item = completion_item(name.to_string(), CompletionData::Unknown)?;
+    let mut item = completion_item(name, CompletionData::Unknown)?;
     item.kind = Some(CompletionItemKind::STRUCT);
     Ok(item)
 }
@@ -314,7 +314,7 @@ pub(super) unsafe fn completion_item_from_data_variable(
     owner: &str,
     enquote: bool,
 ) -> anyhow::Result<CompletionItem> {
-    let mut item = completion_item(name.to_string(), CompletionData::DataVariable {
+    let mut item = completion_item(name, CompletionData::DataVariable {
         name: name.to_string(),
         owner: owner.to_string(),
     })?;
@@ -545,7 +545,6 @@ pub(super) unsafe fn completion_item_from_symbol(
     match r_env_binding_is_active(envir, symbol) {
         Ok(false) => {
             // Continue with standard environment completion item creation
-            ()
         },
         Ok(true) => {
             // We can't even extract out the object for active bindings so they

@@ -48,9 +48,16 @@ pub struct DummyFrontend {
     session: Session,
 }
 
+#[derive(Default)]
 pub struct ExecuteRequestOptions {
     pub allow_stdin: bool,
     pub positron: Option<ExecuteRequestPositron>,
+}
+
+impl Default for DummyConnection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DummyConnection {
@@ -331,7 +338,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert Busy message
     #[track_caller]
-    pub fn recv_iopub_busy(&self) -> () {
+    pub fn recv_iopub_busy(&self) {
         let msg = self.recv_iopub();
 
         assert_matches!(msg, Message::Status(data) => {
@@ -341,7 +348,7 @@ impl DummyFrontend {
 
     /// Receive from IOPub and assert Idle message
     #[track_caller]
-    pub fn recv_iopub_idle(&self) -> () {
+    pub fn recv_iopub_idle(&self) {
         let msg = self.recv_iopub();
 
         assert_matches!(msg, Message::Status(data) => {
@@ -605,14 +612,5 @@ impl DummyFrontend {
         assert_matches!(msg, Message::CommOpen(data) => {
             (data.content.comm_id, data.content.target_name, data.content.data)
         })
-    }
-}
-
-impl Default for ExecuteRequestOptions {
-    fn default() -> Self {
-        Self {
-            allow_stdin: false,
-            positron: None,
-        }
     }
 }

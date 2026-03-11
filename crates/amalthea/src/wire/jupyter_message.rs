@@ -314,7 +314,7 @@ impl TryFrom<&WireMessage> for Message {
         if kind == Welcome::message_type() {
             return Ok(Message::Welcome(JupyterMessage::try_from(msg)?));
         }
-        return Err(Error::UnknownMessageType(kind));
+        Err(Error::UnknownMessageType(kind))
     }
 }
 
@@ -383,7 +383,7 @@ where
     /// reply and sending it.
     pub fn send_reply<R: ProtocolMessage>(&self, content: R, socket: &Socket) -> crate::Result<()> {
         let reply = self.reply_msg(content, &socket.session)?;
-        reply.send(&socket)
+        reply.send(socket)
     }
 
     /// Sends an error reply to the message.
@@ -393,7 +393,7 @@ where
         socket: &Socket,
     ) -> crate::Result<()> {
         let reply = self.error_reply::<R>(exception, &socket.session);
-        reply.send(&socket)
+        reply.send(socket)
     }
 
     pub fn send_execute_error(

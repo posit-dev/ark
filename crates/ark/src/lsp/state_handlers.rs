@@ -247,12 +247,12 @@ pub(crate) fn did_change(
     let uri = &params.text_document.uri;
     let document = state.get_document_mut(uri)?;
 
-    let mut parser = lsp_state
+    let parser = lsp_state
         .parsers
         .get_mut(uri)
         .ok_or(anyhow!("No parser for {uri}"))?;
 
-    document.on_did_change(&mut parser, &params);
+    document.on_did_change(parser, &params);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
@@ -456,7 +456,7 @@ async fn update_config(
     let document_configs = configs.split_off(GLOBAL_SETTINGS.len());
     let global_configs = configs;
 
-    for (mapping, value) in GLOBAL_SETTINGS.into_iter().zip(global_configs) {
+    for (mapping, value) in GLOBAL_SETTINGS.iter().zip(global_configs) {
         (mapping.set)(&mut state.config, value);
     }
 

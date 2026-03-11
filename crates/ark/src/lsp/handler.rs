@@ -84,6 +84,6 @@ impl ServerHandler for Lsp {
                 console_notification_tx,
             )
         });
-        return Ok(());
+        Ok(())
     }
 }

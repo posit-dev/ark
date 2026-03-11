@@ -861,7 +861,7 @@ fn recurse_call(
 fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> anyhow::Result<()> {
     // Find the first argument (package name). Positionally for now, no attempt
     // at argument matching whatsoever.
-    let Some(package_node) = node.arguments_values().flatten().nth(0) else {
+    let Some(package_node) = node.arguments_values().flatten().next() else {
         return Err(anyhow::anyhow!("Can't unpack attached package argument"));
     };
 
@@ -879,11 +879,11 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     let package_name = package_node.get_identifier_or_string_text(&context.doc.contents)?;
     let attach_pos = node.end_position();
 
-    let package = insert_package_exports(&package_name, attach_pos, context)?;
+    let package = insert_package_exports(package_name, attach_pos, context)?;
 
     // Also attach packages from `Depends` field
     for package_name in package.description.depends.iter() {
-        insert_package_exports(&package_name, attach_pos, context)?;
+        insert_package_exports(package_name, attach_pos, context)?;
     }
 
     // Special handling for the tidyverse and tidymodels packages. Hard-coded
@@ -928,7 +928,7 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
         _ => vec![],
     };
     for package_name in attach_field {
-        insert_package_exports(&package_name, attach_pos, context)?;
+        insert_package_exports(package_name, attach_pos, context)?;
     }
 
     Ok(())

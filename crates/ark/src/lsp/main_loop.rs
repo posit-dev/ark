@@ -313,7 +313,7 @@ impl GlobalState {
                             state_handlers::did_create_files(params, &self.world)?;
                         },
                         LspNotification::DidDeleteFiles(params) => {
-                            state_handlers::did_delete_files(params, &mut self.world)?;
+                            state_handlers::did_delete_files(params, &self.world)?;
                         },
                         LspNotification::DidRenameFiles(params) => {
                             state_handlers::did_rename_files(params, &mut self.world)?;
@@ -432,9 +432,7 @@ impl GlobalState {
         Handler: FnOnce() -> LspResult<T>,
         Handler: Send + 'static,
     {
-        lsp::spawn_blocking(move || {
-            respond(response_tx, || handler(), into_lsp_response).and(Ok(None))
-        })
+        lsp::spawn_blocking(move || respond(response_tx, handler, into_lsp_response).and(Ok(None)))
     }
 }
 
@@ -633,9 +631,11 @@ pub(crate) fn log(level: lsp_types::MessageType, message: String) {
 
     // Check that channel is still alive in case the LSP was closed.
     // If closed, fallthrough.
-    if let Ok(_) = with_auxiliary_tx(|auxiliary_event_tx| {
+    if with_auxiliary_tx(|auxiliary_event_tx| {
         auxiliary_event_tx.send(AuxiliaryEvent::Log(level, message.clone()))
-    }) {
+    })
+    .is_ok()
+    {
         return;
     }
 
@@ -661,7 +661,7 @@ where
     Handler: FnOnce() -> anyhow::Result<Option<AuxiliaryEvent>>,
     Handler: Send + 'static,
 {
-    let handle = tokio::task::spawn_blocking(|| handler());
+    let handle = tokio::task::spawn_blocking(handler);
 
     // Send the join handle to the auxiliary loop so it can log any errors
     // or panics
@@ -821,14 +821,14 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
     );
 
     for task in batch {
-        let result: anyhow::Result<()> = (async || {
+        let result: anyhow::Result<()> = async {
             match &task {
                 IndexerTask::Create { uri } => {
                     indexer::create(uri)?;
                 },
 
                 IndexerTask::Update { uri, document } => {
-                    indexer::update(&document, uri)?;
+                    indexer::update(document, uri)?;
                 },
 
                 IndexerTask::Delete { uri } => {
@@ -844,7 +844,7 @@ async fn process_indexer_batch(batch: Vec<IndexerTask>) {
             }
 
             Ok(())
-        })()
+        }
         .await;
 
         if let Err(err) = result {
@@ -906,7 +906,7 @@ pub(crate) fn index_start(folders: Vec<String>, state: WorldState) {
         .flat_map(|folder| {
             walkdir::WalkDir::new(folder)
                 .into_iter()
-                .filter_entry(|e| indexer::filter_entry(e))
+                .filter_entry(indexer::filter_entry)
                 .filter_map(|entry| {
                     let entry = match entry {
                         Ok(e) => e,

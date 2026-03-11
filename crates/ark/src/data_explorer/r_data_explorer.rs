@@ -267,7 +267,7 @@ impl RDataExplorer {
 
             // Columns didn't change, but the data has. If there are sort
             // keys, we need to sort the rows again to reflect the new data.
-            if self.sort_keys.len() > 0 {
+            if !self.sort_keys.is_empty() {
                 self.sorted_indices = Some(self.sort_rows()?);
             }
 
@@ -383,13 +383,13 @@ impl RDataExplorer {
             DataExplorerBackendRequest::GetState => self.get_state(),
 
             DataExplorerBackendRequest::OpenDataset(_) => {
-                return Err(anyhow!("Data Explorer: Not yet supported"));
+                Err(anyhow!("Data Explorer: Not yet supported"))
             },
 
             DataExplorerBackendRequest::SearchSchema(params) => self.search_schema(params),
 
             DataExplorerBackendRequest::SetColumnFilters(_) => {
-                return Err(anyhow!("Data Explorer: Not yet supported"));
+                Err(anyhow!("Data Explorer: Not yet supported"))
             },
 
             DataExplorerBackendRequest::GetRowLabels(req) => {
@@ -406,7 +406,7 @@ impl RDataExplorer {
                 format,
             }) => Ok(DataExplorerBackendReply::ExportDataSelectionReply(
                 ExportedData {
-                    data: self.export_data_selection(selection, format.clone())?,
+                    data: self.export_data_selection(selection, format)?,
                     format,
                 },
             )),
@@ -639,7 +639,7 @@ impl RDataExplorer {
     // Implicitly updates the `row_filters` with validity status and error messages, if they
     // fail during the computation.
     fn row_filters_compute(&mut self) -> anyhow::Result<(Option<Vec<i32>>, Option<bool>)> {
-        if self.row_filters.len() == 0 {
+        if self.row_filters.is_empty() {
             return Ok((None, None));
         }
 
@@ -715,7 +715,7 @@ impl RDataExplorer {
                 },
             }
         }
-        return Ok(had_errors);
+        Ok(had_errors)
     }
 
     /// Sort the filtered indices according to the sort keys, storing the
@@ -754,7 +754,7 @@ impl RDataExplorer {
         for &index in sorted_indices {
             // We can use a binary search here for performance because
             // filtered_indices is already sorted in ascending order.
-            if let Ok(_) = filtered_indices.binary_search(&index) {
+            if filtered_indices.binary_search(&index).is_ok() {
                 view_indices.push(index);
             }
         }
@@ -982,7 +982,7 @@ impl RDataExplorer {
                 },
                 set_row_filters: SetRowFiltersFeatures {
                     support_status: SupportStatus::Supported,
-                    supported_types: vec![
+                    supported_types: [
                         RowFilterType::Between,
                         RowFilterType::Compare,
                         RowFilterType::IsEmpty,
@@ -997,7 +997,7 @@ impl RDataExplorer {
                     ]
                     .iter()
                     .map(|row_filter_type| RowFilterTypeSupportStatus {
-                        row_filter_type: row_filter_type.clone(),
+                        row_filter_type: *row_filter_type,
                         support_status: SupportStatus::Supported,
                     })
                     .collect(),
@@ -1080,12 +1080,10 @@ impl RDataExplorer {
                 let labels = format_string(row_names.sexp, format_options);
                 Ok(labels)
             },
-            _ => {
-                return Err(anyhow!(
-                    "`row.names` should be strings, got {:?}",
-                    row_names.kind()
-                ))
-            },
+            _ => Err(anyhow!(
+                "`row.names` should be strings, got {:?}",
+                row_names.kind()
+            )),
         }
     }
 
@@ -1142,7 +1140,7 @@ impl RDataExplorer {
             .binding
             .as_ref()
             .map(|b| b.name.as_str())
-            .or_else(|| Some(self.title.as_str()));
+            .or(Some(self.title.as_str()));
 
         // Resolve column names for sort keys using the same pattern as `sort_rows()`
         let resolved_sort_keys: Vec<convert_to_code::ResolvedSortKey> = params

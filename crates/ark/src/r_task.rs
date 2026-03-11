@@ -24,13 +24,13 @@ use crate::console::ConsoleOutputCapture;
 use crate::fixtures::r_test_init;
 
 /// Task channels for interrupt-time tasks
-static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
 /// Task channels for idle-time tasks
-static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+static IDLE_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
 /// Task channels for idle tasks that run at any idle prompt (top-level or browser)
-static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(|| TaskChannels::new());
+static IDLE_ANY_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
 
 // Compared to `futures::BoxFuture`, this doesn't require the future to be Send.
 // We don't need this bound since the executor runs on only on the R thread
@@ -175,7 +175,7 @@ impl RTaskStartInfo {
 
     pub(crate) fn bump_elapsed(&mut self, duration: Duration) {
         if let Some(ref mut elapsed_time) = self.elapsed_time {
-            *elapsed_time = *elapsed_time + duration;
+            *elapsed_time += duration;
         }
     }
 }

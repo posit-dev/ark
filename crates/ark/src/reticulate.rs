@@ -28,8 +28,7 @@ static RETICULATE_OUTGOING_TX: LazyLock<Mutex<Option<CommOutgoingTx>>> =
 
 // Each ark session has a unique session id which is used by the Positron frontend
 // to associate a client id with a session.
-static RETICULATE_ID: LazyLock<String> =
-    LazyLock::new(|| format!("reticulate-{}", Uuid::new_v4().to_string()));
+static RETICULATE_ID: LazyLock<String> = LazyLock::new(|| format!("reticulate-{}", Uuid::new_v4()));
 
 #[derive(Clone)]
 pub struct ReticulateService {
@@ -134,7 +133,7 @@ pub unsafe extern "C-unwind" fn ps_reticulate_open(input: SEXP) -> Result<SEXP, 
         }
     }
 
-    let id = format!("reticulate-{}", Uuid::new_v4().to_string());
+    let id = format!("reticulate-{}", Uuid::new_v4());
     ReticulateService::start(
         id,
         console.comm_event_tx().clone(),

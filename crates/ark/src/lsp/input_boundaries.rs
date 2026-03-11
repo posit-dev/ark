@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::analysis::input_boundaries::InputBoundary;
 
-pub static POSITRON_INPUT_BOUNDARIES_REQUEST: &'static str = "positron/inputBoundaries";
+pub static POSITRON_INPUT_BOUNDARIES_REQUEST: &str = "positron/inputBoundaries";
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -36,7 +36,7 @@ impl Dcf {
 }
 
 /// Parsed DESCRIPTION file
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Description {
     pub name: String,
     pub version: String,
@@ -46,17 +46,6 @@ pub struct Description {
 
     /// Raw DCF fields
     pub fields: Dcf,
-}
-
-impl Default for Description {
-    fn default() -> Self {
-        Description {
-            name: String::new(),
-            version: String::new(),
-            depends: Vec::new(),
-            fields: Dcf::default(),
-        }
-    }
 }
 
 impl Description {
@@ -76,14 +65,14 @@ impl Description {
 
         let depends = fields
             .get("Depends")
-            .and_then(|deps| {
+            .map(|deps| {
                 let mut pkgs = parse_comma_separated(deps);
 
                 // Remove dependency on R. In the future we will record it to a field with
                 // the minimum version the package depends on.
                 pkgs.retain(|pkg| pkg != "R");
 
-                Some(pkgs)
+                pkgs
             })
             .unwrap_or_default();
 

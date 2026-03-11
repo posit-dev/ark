@@ -9,15 +9,15 @@ use tree_sitter::Point;
 
 fn compare(lhs: Point, rhs: Point) -> i32 {
     if lhs.row < rhs.row {
-        return -1;
+        -1
     } else if lhs.row > rhs.row {
-        return 1;
+        1
     } else if lhs.column < rhs.column {
-        return -1;
+        -1
     } else if lhs.column > rhs.column {
-        return 1;
+        1
     } else {
-        return 0;
+        0
     }
 }
 
@@ -31,23 +31,23 @@ pub trait PointExt {
 
 impl PointExt for Point {
     fn is_before(self, other: Point) -> bool {
-        return compare(self, other) < 0;
+        compare(self, other) < 0
     }
 
     fn is_before_or_equal(self, other: Point) -> bool {
-        return compare(self, other) <= 0;
+        compare(self, other) <= 0
     }
 
     fn is_equal(self, other: Point) -> bool {
-        return compare(self, other) == 0;
+        compare(self, other) == 0
     }
 
     fn is_after_or_equal(self, other: Point) -> bool {
-        return compare(self, other) >= 0;
+        compare(self, other) >= 0
     }
 
     fn is_after(self, other: Point) -> bool {
-        return compare(self, other) > 0;
+        compare(self, other) > 0
     }
 }
 

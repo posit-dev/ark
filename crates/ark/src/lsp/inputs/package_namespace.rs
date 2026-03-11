@@ -62,7 +62,7 @@ impl Namespace {
             tree_sitter::Query::new(language, query_str).expect("Failed to compile NAMESPACE query")
         });
 
-        let mut ts_query = TsQuery::from_query(&*NAMESPACE_QUERY);
+        let mut ts_query = TsQuery::from_query(&NAMESPACE_QUERY);
 
         let captures = ts_query.captures_by(
             root_node,
@@ -73,7 +73,7 @@ impl Namespace {
         let as_strings = |nodes: &Vec<tree_sitter::Node>| {
             nodes
                 .iter()
-                .map(|node| node.node_as_str(&contents).unwrap_or("").to_string())
+                .map(|node| node.node_as_str(contents).unwrap_or("").to_string())
                 .collect::<Vec<_>>()
         };
 

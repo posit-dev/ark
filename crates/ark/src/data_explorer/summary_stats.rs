@@ -144,7 +144,7 @@ fn summary_stats_date(column: SEXP) -> anyhow::Result<SummaryStatsDate> {
 
     let num_unique: Option<i64> = get_stat::<i32, RObject>(&r_stats, "num_unique")
         .ok()
-        .and_then(|x| Some(x as i64));
+        .map(|x| x as i64);
 
     Ok(SummaryStatsDate {
         min_date: get_stat(&r_stats, "min_date").ok(),
@@ -163,7 +163,7 @@ fn summary_stats_datetime(column: SEXP) -> anyhow::Result<SummaryStatsDatetime> 
 
     let num_unique: Option<i64> = get_stat::<i32, RObject>(&r_stats, "num_unique")
         .ok()
-        .and_then(|x| Some(x as i64));
+        .map(|x| x as i64);
 
     let timezone: Option<String> = RFunction::from("summary_stats_get_timezone")
         .add(column)

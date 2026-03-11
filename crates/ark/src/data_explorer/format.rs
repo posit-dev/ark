@@ -359,7 +359,7 @@ fn apply_thousands_sep(x: String, sep: Option<String>) -> String {
                 }
 
                 // Add a `sep` every three characters
-                if count % 3 == 0 && count != 0 {
+                if count.is_multiple_of(3) && count != 0 {
                     formatted.push_str(&sep);
                 }
 
@@ -409,10 +409,10 @@ enum FormattedValue {
 
 // Find the special code values mapping to integer here:
 // https://github.com/posit-dev/positron/blob/46eb4dc0b071984be0f083c7836d74a19ef1509f/src/vs/workbench/services/positronDataExplorer/common/dataExplorerCache.ts#L59-L60
-impl Into<ColumnValue> for FormattedValue {
-    fn into(self) -> ColumnValue {
-        match self {
-            FormattedValue::Unkown => ColumnValue::FormattedValue(self.into()),
+impl From<FormattedValue> for ColumnValue {
+    fn from(val: FormattedValue) -> Self {
+        match val {
+            FormattedValue::Unkown => ColumnValue::FormattedValue(val.into()),
             FormattedValue::NULL => ColumnValue::SpecialValueCode(0),
             FormattedValue::NA => ColumnValue::SpecialValueCode(1),
             FormattedValue::NaN => ColumnValue::SpecialValueCode(2),
@@ -423,9 +423,9 @@ impl Into<ColumnValue> for FormattedValue {
     }
 }
 
-impl Into<String> for FormattedValue {
-    fn into(self) -> String {
-        match self {
+impl From<FormattedValue> for String {
+    fn from(val: FormattedValue) -> Self {
+        match val {
             FormattedValue::NULL => "NULL".to_string(),
             FormattedValue::NA => "NA".to_string(),
             FormattedValue::NaN => "NaN".to_string(),

@@ -296,7 +296,7 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
         },
         RowFilterType::IsNull => Some(format!("is.na({})", column_name)),
         RowFilterType::NotNull => Some(format!("!is.na({})", column_name)),
-        RowFilterType::IsTrue => Some(format!("{}", column_name)),
+        RowFilterType::IsTrue => Some(column_name.to_string()),
         RowFilterType::IsFalse => Some(format!("!{}", column_name)),
         RowFilterType::IsEmpty => Some(format!("{} == \"\"", column_name)),
         RowFilterType::NotEmpty => Some(format!("{} != \"\"", column_name)),
@@ -338,7 +338,7 @@ fn row_filter_to_dplyr(filter: &RowFilter) -> Option<String> {
                 let values = set
                     .values
                     .iter()
-                    .map(|v| escape_character_constant(&v))
+                    .map(|v| escape_character_constant(v))
                     .collect::<Vec<_>>()
                     .join(", ");
 

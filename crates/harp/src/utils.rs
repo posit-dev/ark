@@ -228,9 +228,8 @@ pub fn r_str_to_owned_utf8_unchecked(x: SEXP) -> String {
         // `const char*` -> `Cstr` wrapper -> `Cow<'static, str>` -> `String`
         let x = CStr::from_ptr(x);
         let x = x.to_string_lossy();
-        let x = x.to_string();
 
-        x
+        x.to_string()
     }
 }
 
@@ -241,7 +240,7 @@ pub fn pairlist_size(mut pairlist: SEXP) -> Result<isize> {
             r_assert_type(pairlist, &[LISTSXP])?;
 
             pairlist = CDR(pairlist);
-            n = n + 1;
+            n += 1;
         }
     }
     Ok(n)
@@ -304,7 +303,7 @@ pub fn r_type2char<T: Into<u32>>(kind: T) -> String {
     unsafe {
         let kind = Rf_type2char(kind.into());
         let cstr = CStr::from_ptr(kind);
-        return cstr.to_str().unwrap().to_string();
+        cstr.to_str().unwrap().to_string()
     }
 }
 
@@ -623,7 +622,7 @@ where
         node = r_node_cdr(node);
     }
 
-    return false;
+    false
 }
 
 // Note this might throw if wrong data types are passed in. The C-level
@@ -679,7 +678,7 @@ pub fn save_rds(x: SEXP, path: &str) {
 /// If `path` is empty, saves RDS in the path stored in the
 /// `RUST_PUSH_RDS_PATH` environment variable.
 pub fn push_rds(x: SEXP, path: &str, context: &str) {
-    let path = if path.len() == 0 {
+    let path = if path.is_empty() {
         RObject::null()
     } else {
         RObject::from(path)

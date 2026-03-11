@@ -159,7 +159,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
     #[cfg(not(debug_assertions))]
     RFunction::from("lock_environments").call_in(namespace.sexp)?;
 
-    return Ok(namespace);
+    Ok(namespace)
 }
 
 #[cfg(debug_assertions)]
@@ -222,12 +222,10 @@ mod debug {
         pub fn init(&mut self, path: PathBuf, src: RModuleSource) -> anyhow::Result<()> {
             let entries = std::fs::read_dir(path)?;
 
-            for entry in entries.into_iter() {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    let modified = path.metadata()?.modified()?;
-                    self.cache.insert(path, (modified, src));
-                }
+            for entry in entries.into_iter().flatten() {
+                let path = entry.path();
+                let modified = path.metadata()?.modified()?;
+                self.cache.insert(path, (modified, src));
             }
 
             Ok(())
@@ -260,7 +258,7 @@ mod debug {
                 r_task(|| {
                     let console = Console::get();
                     if let Err(err) =
-                        import_file(&path, *src, console.positron_ns.as_ref().unwrap().sexp)
+                        import_file(path, *src, console.positron_ns.as_ref().unwrap().sexp)
                     {
                         log::error!("{err:?}");
                     }

@@ -45,7 +45,7 @@ fn _find_impl<Callback: FnMut(Node) -> bool>(
         this.goto_parent();
     }
 
-    return true;
+    true
 }
 
 // Extension trait for the TreeSitter cursor object.
@@ -103,7 +103,7 @@ impl TreeCursorExt for TreeCursor<'_> {
             }
         }
 
-        return false;
+        false
     }
 
     // fn goto_closest_node_for_point(&mut self, point: Point) -> bool {
@@ -130,7 +130,7 @@ impl TreeCursorExt for TreeCursor<'_> {
             }
         }
 
-        return true;
+        true
     }
 }
 

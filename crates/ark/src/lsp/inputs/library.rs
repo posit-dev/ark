@@ -68,9 +68,8 @@ impl Library {
 
     fn load_package(&self, name: &str) -> anyhow::Result<Option<Package>> {
         for lib_path in self.library_paths.iter() {
-            match Package::load_from_library(&lib_path, name)? {
-                Some(pkg) => return Ok(Some(pkg)),
-                None => (),
+            if let Some(pkg) = Package::load_from_library(lib_path, name)? {
+                return Ok(Some(pkg));
             }
         }
 

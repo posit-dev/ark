@@ -272,7 +272,7 @@ impl IOPub {
                     "Received unsubscribe message on IOPub with subscription '{subscription}'."
                 );
                 // We don't do anything on unsubscribes
-                return Ok(());
+                Ok(())
             },
         }
     }
@@ -454,10 +454,10 @@ struct StreamBuffer {
 
 impl StreamBuffer {
     fn new(name: Stream) -> Self {
-        return StreamBuffer {
+        StreamBuffer {
             name,
             buffer: Vec::new(),
-        };
+        }
     }
 
     fn push(&mut self, message: String) {

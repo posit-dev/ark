@@ -116,7 +116,7 @@ impl TryFrom<&[SEXP]> for CharacterVector {
             let vec = Self::with_length(value.len());
             let sexp = vec.object.sexp;
 
-            for (i, elt) in value.into_iter().enumerate() {
+            for (i, elt) in value.iter().enumerate() {
                 r_assert_type(*elt, &[libr::CHARSXP])?;
                 r_chr_poke(sexp, i as R_xlen_t, *elt);
             }

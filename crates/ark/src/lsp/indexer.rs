@@ -81,7 +81,7 @@ type DocumentSymbol = String;
 type DocumentSymbolIndex = HashMap<DocumentSymbol, IndexEntry>;
 type WorkspaceIndex = Arc<Mutex<HashMap<FileId, DocumentSymbolIndex>>>;
 
-static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(|| Default::default());
+static WORKSPACE_INDEX: LazyLock<WorkspaceIndex> = LazyLock::new(Default::default);
 pub static RE_COMMENT_SECTION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*(#+)\s*(.*?)\s*[#=-]{4,}\s*$").unwrap());
 
@@ -92,7 +92,7 @@ pub fn start(folders: Vec<String>) {
 
     for folder in folders {
         let walker = WalkDir::new(folder);
-        for entry in walker.into_iter().filter_entry(|e| filter_entry(e)) {
+        for entry in walker.into_iter().filter_entry(filter_entry) {
             let Ok(entry) = entry else {
                 continue;
             };
@@ -419,7 +419,7 @@ fn index_r6_class_methods(
         let language = &tree_sitter_r::LANGUAGE.into();
         Query::new(language, query_str).expect("Failed to compile R6 methods query")
     });
-    let mut ts_query = TsQuery::from_query(&*R6_METHODS_QUERY);
+    let mut ts_query = TsQuery::from_query(&R6_METHODS_QUERY);
 
     for method_node in ts_query.captures_for(*node, "method_name", doc.contents.as_bytes()) {
         let name = method_node.node_to_string(&doc.contents)?;

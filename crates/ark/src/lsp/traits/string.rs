@@ -16,7 +16,7 @@ fn _fuzzy_matches(lhs: &str, rhs: &str) -> bool {
     // now iterate over lhs characters, looking for matches in rhs
     // if we exhaust all of the characters in rhs, then we found a match
     for lch in lhs.chars() {
-        if lch.to_ascii_lowercase() == rch.to_ascii_lowercase() {
+        if lch.eq_ignore_ascii_case(&rch) {
             rch = match it.next() {
                 Some(rch) => rch,
                 None => return true,
@@ -34,7 +34,7 @@ pub trait StringExt {
 
 impl StringExt for &str {
     fn fuzzy_matches(&self, rhs: impl AsRef<str>) -> bool {
-        _fuzzy_matches(self.as_ref(), rhs.as_ref())
+        _fuzzy_matches(self, rhs.as_ref())
     }
 }
 

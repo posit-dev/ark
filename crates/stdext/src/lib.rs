@@ -57,5 +57,5 @@ macro_rules! assert_match {
 
 // Useful for debugging
 pub fn log_trace() {
-    log::error!("{}", std::backtrace::Backtrace::force_capture().to_string());
+    log::error!("{}", std::backtrace::Backtrace::force_capture());
 }

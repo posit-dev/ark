@@ -66,10 +66,7 @@ pub(crate) fn code_action_workspace_text_edit(
         // Prefer the versioned `DocumentChanges` feature
         let edit = lsp_types::TextDocumentEdit {
             text_document: lsp_types::OptionalVersionedTextDocumentIdentifier { uri, version },
-            edits: edits
-                .into_iter()
-                .map(|edit| lsp_types::OneOf::Left(edit))
-                .collect(),
+            edits: edits.into_iter().map(lsp_types::OneOf::Left).collect(),
         };
 
         let document_changes = lsp_types::DocumentChanges::Edits(vec![edit]);

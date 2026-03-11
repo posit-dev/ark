@@ -41,7 +41,7 @@ pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<Completion
     let mut value = 10;
 
     while size >= value {
-        value = value * 10;
+        value *= 10;
         width += 1;
     }
 
@@ -120,31 +120,31 @@ pub(super) enum CallNodePositionType {
 
 pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePositionType {
     match node.node_type() {
-        NodeType::Arguments => return CallNodePositionType::Name,
+        NodeType::Arguments => CallNodePositionType::Name,
         NodeType::Anonymous(kind) if kind == "(" => {
             if point.is_before_or_equal(node.start_position()) {
                 // Before the `(`
-                return CallNodePositionType::Outside;
+                CallNodePositionType::Outside
             } else {
                 // Must be a name position
-                return CallNodePositionType::Name;
+                CallNodePositionType::Name
             }
         },
         NodeType::Anonymous(kind) if kind == ")" => {
             if point.is_after_or_equal(node.end_position()) {
                 // After the `)`
-                return CallNodePositionType::Outside;
+                CallNodePositionType::Outside
             } else {
                 // Let previous leaf determine type (i.e. did the `)`
                 // follow a `=` or a `,`?)
-                return call_prev_leaf_position_type(&node, false);
+                call_prev_leaf_position_type(node, false)
             }
         },
-        NodeType::Comma => return CallNodePositionType::Name,
-        NodeType::Anonymous(kind) if kind == "=" => return CallNodePositionType::Value,
+        NodeType::Comma => CallNodePositionType::Name,
+        NodeType::Anonymous(kind) if kind == "=" => CallNodePositionType::Value,
         // Like `fn(arg<tab>)` or `fn(x = 1, arg<tab>)` (which are ambiguous)
         // or `fn(x = arg<tab>)` (which is clearly a `Value`)
-        NodeType::Identifier => return call_prev_leaf_position_type(&node, true),
+        NodeType::Identifier => call_prev_leaf_position_type(node, true),
         _ => {
             // Probably a complex node inside `()`. Typically a `Value`
             // unless we are at the very beginning of the node.
@@ -152,10 +152,10 @@ pub(super) fn call_node_position_type(node: &Node, point: Point) -> CallNodePosi
             // For things like `vctrs::vec_sort(x = 1, |2)` where you typed
             // the argument value but want to go back and fill in the name.
             if point == node.start_position() {
-                return call_prev_leaf_position_type(&node, false);
+                return call_prev_leaf_position_type(node, false);
             }
 
-            return CallNodePositionType::Value;
+            CallNodePositionType::Value
         },
     }
 }

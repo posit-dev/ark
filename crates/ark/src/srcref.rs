@@ -79,7 +79,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
         span.in_scope(|| {
             match generate_source(&b, ns.inner.sexp, vdoc.len(), &uri) {
                 Ok(Some(mut lines)) => {
-                    n_ok = n_ok + 1;
+                    n_ok += 1;
 
                     vdoc.append(&mut lines);
 
@@ -87,7 +87,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
                     vdoc.push(String::from(""));
                 },
                 Err(_err) => {
-                    n_bad = n_bad + 1;
+                    n_bad += 1;
 
                     // log::error!(
                     //     "Can't populate srcref for {} in namespace {ns_name}: {_err}",
@@ -95,7 +95,7 @@ async fn ns_populate_srcref_without_vdoc_insertion(
                     // )
                 },
                 _ => {
-                    n_skipped = n_skipped + 1;
+                    n_skipped += 1;
                 },
             }
         });

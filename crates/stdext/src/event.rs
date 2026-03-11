@@ -29,7 +29,7 @@ impl<T> Event<T> {
         let id = ID.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         let mut listeners = self.listeners.lock().unwrap();
         listeners.insert(id, Box::new(callback));
-        return id;
+        id
     }
 
     pub fn remove(&self, id: i32) {
