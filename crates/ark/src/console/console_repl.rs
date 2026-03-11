@@ -11,6 +11,8 @@
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
 use super::*;
+use crate::r_task::QueuedRTask;
+use crate::r_task::RTask;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -483,12 +485,12 @@ impl Console {
         // integration tests by spawning an async task. The deadlock is caused
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
-        r_task::spawn_interrupt({
+        r_task::spawn(RTask::interrupt({
             let dap_clone = console.debug_dap.clone();
             async move || {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
-        });
+        }));
 
         // Initialize the GD context on this thread.
         // Note that we do it after init is complete to avoid deadlocking
@@ -586,9 +588,9 @@ impl Console {
     }
 
     fn new(
-        tasks_interrupt_rx: Receiver<RTask>,
-        tasks_idle_rx: Receiver<RTask>,
-        tasks_idle_any_rx: Receiver<RTask>,
+        tasks_interrupt_rx: Receiver<QueuedRTask>,
+        tasks_idle_rx: Receiver<QueuedRTask>,
+        tasks_idle_any_rx: Receiver<QueuedRTask>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -1719,7 +1721,7 @@ impl Console {
     /// Since tasks running during interrupt checks block the R thread while
     /// they are running, they should return very quickly. The log message helps
     /// monitor excessively long-running tasks.
-    fn handle_task_interrupt(&mut self, mut task: RTask) {
+    fn handle_task_interrupt(&mut self, mut task: QueuedRTask) {
         if let Some(start_info) = task.start_info_mut() {
             // Log excessive waiting before starting task
             if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
@@ -1750,13 +1752,13 @@ impl Console {
     }
 
     /// Returns start information when the task has been completed
-    fn handle_task(&mut self, task: RTask) -> Option<RTaskStartInfo> {
+    fn handle_task(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
 
         match task {
-            RTask::Sync(task) => {
+            QueuedRTask::Sync(task) => {
                 // Immediately let caller know we have started so it can set up the
                 // timeout
                 if let Some(ref status_tx) = task.status_tx {
@@ -1773,7 +1775,7 @@ impl Console {
                 Some(task.start_info)
             },
 
-            RTask::Async(task) => {
+            QueuedRTask::Async(task) => {
                 let id = Uuid::new_v4();
                 let waker = Arc::new(r_task::RTaskWaker {
                     id,
@@ -1783,7 +1785,7 @@ impl Console {
                 self.poll_task(Some(task.fut), waker)
             },
 
-            RTask::Parked(waker) => self.poll_task(None, waker),
+            QueuedRTask::Parked(waker) => self.poll_task(None, waker),
         }
     }
 
@@ -2670,11 +2672,11 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn_idle(async move |_| {
+        r_task::spawn(RTask::idle(async move |_| {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }
-        });
+        }));
     }
 
     Ok(RObject::null().sexp)

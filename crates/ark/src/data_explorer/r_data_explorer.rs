@@ -97,6 +97,7 @@ use crate::data_explorer::utils::display_type;
 use crate::data_explorer::utils::tbl_subset_with_view_indices;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
+use crate::r_task::RTask;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
 pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
@@ -538,20 +539,20 @@ impl RDataExplorer {
         let id = params.callback_id.clone();
 
         let params = ProcessColumnsProfilesParams {
-            table: self.table.clone_for_task(),
+            table: Table::new(self.table.get().clone()),
             indices: self.filtered_indices.clone(),
             kind: self.shape.kind,
             request: params,
         };
         let outgoing_tx = outgoing_tx.clone();
-        r_task::spawn_idle(async move |_| {
+        r_task::spawn(RTask::idle(async move |_| {
             log::trace!("Processing GetColumnProfile request: {id}");
             handle_columns_profiles_requests(params, outgoing_tx)
                 .instrument(tracing::info_span!("get_columns_profile", ns = id))
                 .await
                 .context("Unable to handle get_columns_profile")
                 .log_err();
-        });
+        }));
     }
 
     /// Sort the rows of the data object according to the sort keys in

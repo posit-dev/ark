@@ -48,6 +48,7 @@ use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::summary_stats::summary_stats;
 use crate::lsp::events::EVENTS;
 use crate::r_task;
+use crate::r_task::RTask;
 use crate::thread::RThreadSafe;
 use crate::variables::variable::try_dispatch_view;
 use crate::variables::variable::PositronVariable;
@@ -127,9 +128,9 @@ impl RVariables {
         // This and the prompt-driven `update()` may arrive in either order,
         // which is safe: the first sends a `Refresh`, the second is a no-op.
         let initial_signal_tx = prompt_signal_tx.clone();
-        r_task::spawn_idle(async move |_| {
+        r_task::spawn(RTask::send_idle(async move |_| {
             initial_signal_tx.send(()).log_err();
-        });
+        }));
 
         // Register a handler for environment change events
         let listen_id = EVENTS.environment_changed.listen({

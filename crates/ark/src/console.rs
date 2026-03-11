@@ -151,7 +151,7 @@ use crate::plots::graphics_device;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 use crate::r_task::BoxFuture;
-use crate::r_task::RTask;
+use crate::r_task::QueuedRTask;
 use crate::r_task::RTaskStartInfo;
 use crate::r_task::RTaskStatus;
 use crate::repos::apply_default_repos;
@@ -218,10 +218,10 @@ pub(crate) struct Console {
     /// `execute_result` Jupyter messages instead of `stream` messages.
     autoprint_output: String,
 
-    /// Channel to send and receive tasks from `RTask`s
-    tasks_interrupt_rx: Receiver<RTask>,
-    tasks_idle_rx: Receiver<RTask>,
-    tasks_idle_any_rx: Receiver<RTask>,
+    /// Channel to send and receive tasks from `QueuedRTask`s
+    tasks_interrupt_rx: Receiver<QueuedRTask>,
+    tasks_idle_rx: Receiver<QueuedRTask>,
+    tasks_idle_any_rx: Receiver<QueuedRTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
     /// Channel to communicate requests and events to the frontend
