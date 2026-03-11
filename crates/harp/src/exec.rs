@@ -479,8 +479,8 @@ where
             payload,
             Some(cleanup_callback::<F, C, T>),
             payload,
-        )
-    };
+        );
+    }
 
     // Unwrap Safety: If we get here, we're in the happy path and the result is Some
     result.unwrap()

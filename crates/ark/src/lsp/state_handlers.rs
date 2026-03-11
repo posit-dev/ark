@@ -152,7 +152,6 @@ pub(crate) fn initialize(
                 completion_item: Some(CompletionOptionsCompletionItem {
                     label_details_support: Some(true),
                 }),
-                ..Default::default()
             }),
             signature_help_provider: Some(SignatureHelpOptions {
                 trigger_characters: Some(vec!["(".to_string(), ",".to_string(), "=".to_string()]),

@@ -150,7 +150,7 @@ fn generate_source(
     let reparsed = RFunction::new("", "reparse_with_srcref")
         .add(old.clone())
         .param("name", r_expr_quote(binding.name.sexp))
-        .param("uri", uri.clone())
+        .param("uri", uri)
         .param("line", (line + 1) as i32)
         .call_in(ARK_ENVS.positron_ns)?;
 

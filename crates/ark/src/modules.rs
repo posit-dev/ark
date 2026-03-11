@@ -5,8 +5,6 @@
 //
 //
 
-use std::path::Path;
-
 use anyhow::anyhow;
 use harp::environment::R_ENVS;
 use harp::exec::RFunction;

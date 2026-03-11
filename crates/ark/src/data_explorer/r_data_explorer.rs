@@ -470,10 +470,7 @@ impl RDataExplorer {
 
             let mut column_schemas = Vec::<ColumnSchema>::new();
             for i in 0..(n_col as isize) {
-                let column_name = match column_names.get_unchecked(i) {
-                    Some(name) => name,
-                    None => String::from(""),
-                };
+                let column_name = column_names.get_unchecked(i).unwrap_or_default();
 
                 // TODO: handling for nested data frame columns
 

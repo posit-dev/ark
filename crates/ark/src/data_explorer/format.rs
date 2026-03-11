@@ -130,7 +130,7 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
             },
             // In some cases `format()` will return `NA` for values it can't format instead of `"NA"`.
             // For example, with `format(as.POSIXct(c(NA)))`.
-            None => FormattedValue::NA,
+            None => FormattedValue::Na,
         }
     });
 
@@ -153,7 +153,7 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
             // We don't expect is.na to return NA's, but if it happens, we treat it as false
             // and return the formatted values as is.
             if is_na.unwrap_or(false) {
-                FormattedValue::NA
+                FormattedValue::Na
             } else {
                 v
             }
@@ -168,7 +168,7 @@ fn format_list(x: SEXP) -> Vec<FormattedValue> {
     for i in 0..len {
         let elt = harp::list_get(x, i);
         let formatted = if r_is_null(elt) {
-            FormattedValue::NULL
+            FormattedValue::Null
         } else {
             FormattedValue::Value(format_list_elt(elt))
         };
@@ -222,7 +222,7 @@ fn format_cpl(x: ComplexVector) -> Vec<FormattedValue> {
     x.iter()
         .map(|x| match x {
             Some(v) => FormattedValue::Value(format!("{}+{}i", v.r, v.i)),
-            None => FormattedValue::NA,
+            None => FormattedValue::Na,
         })
         .collect()
 }
@@ -234,7 +234,7 @@ fn format_lgl(x: LogicalVector) -> Vec<FormattedValue> {
                 true => FormattedValue::Value("TRUE".to_string()),
                 false => FormattedValue::Value("FALSE".to_string()),
             },
-            None => FormattedValue::NA,
+            None => FormattedValue::Na,
         })
         .collect()
 }
@@ -243,7 +243,7 @@ fn format_chr(x: CharacterVector) -> Vec<FormattedValue> {
     x.iter()
         .map(|x| match x {
             Some(v) => FormattedValue::Value(v),
-            None => FormattedValue::NA,
+            None => FormattedValue::Na,
         })
         .collect()
 }
@@ -254,7 +254,7 @@ fn format_int(x: IntegerVector, options: &FormatOptions) -> Vec<FormattedValue> 
 
 fn format_int_elt(x: Option<i32>, options: &FormatOptions) -> FormattedValue {
     match x {
-        None => FormattedValue::NA,
+        None => FormattedValue::Na,
         Some(v) => FormattedValue::Value(apply_thousands_sep(
             v.to_string(),
             options.thousands_sep.clone(),
@@ -268,10 +268,10 @@ fn format_dbl(x: NumericVector, options: &FormatOptions) -> Vec<FormattedValue> 
 
 fn format_dbl_elt(x: Option<f64>, options: &FormatOptions) -> FormattedValue {
     match x {
-        None => FormattedValue::NA,
+        None => FormattedValue::Na,
         Some(v) => {
             if r_dbl_is_nan(v) {
-                FormattedValue::NaN
+                FormattedValue::Nan
             } else if r_dbl_is_finite(v) {
                 // finite values that are not NaN nor NA
                 format_dbl_value(v, options)
@@ -398,9 +398,9 @@ fn pad_exponent(x: String) -> String {
 #[derive(Clone)]
 enum FormattedValue {
     Unkown,
-    NULL,
-    NA,
-    NaN,
+    Null,
+    Na,
+    Nan,
     Inf,
     NegInf,
     Value(String),
@@ -412,9 +412,9 @@ impl From<FormattedValue> for ColumnValue {
     fn from(val: FormattedValue) -> Self {
         match val {
             FormattedValue::Unkown => ColumnValue::FormattedValue(val.into()),
-            FormattedValue::NULL => ColumnValue::SpecialValueCode(0),
-            FormattedValue::NA => ColumnValue::SpecialValueCode(1),
-            FormattedValue::NaN => ColumnValue::SpecialValueCode(2),
+            FormattedValue::Null => ColumnValue::SpecialValueCode(0),
+            FormattedValue::Na => ColumnValue::SpecialValueCode(1),
+            FormattedValue::Nan => ColumnValue::SpecialValueCode(2),
             FormattedValue::Inf => ColumnValue::SpecialValueCode(10),
             FormattedValue::NegInf => ColumnValue::SpecialValueCode(11),
             FormattedValue::Value(v) => ColumnValue::FormattedValue(v),
@@ -425,9 +425,9 @@ impl From<FormattedValue> for ColumnValue {
 impl From<FormattedValue> for String {
     fn from(val: FormattedValue) -> Self {
         match val {
-            FormattedValue::NULL => "NULL".to_string(),
-            FormattedValue::NA => "NA".to_string(),
-            FormattedValue::NaN => "NaN".to_string(),
+            FormattedValue::Null => "NULL".to_string(),
+            FormattedValue::Na => "NA".to_string(),
+            FormattedValue::Nan => "NaN".to_string(),
             FormattedValue::Inf => "Inf".to_string(),
             FormattedValue::NegInf => "-Inf".to_string(),
             FormattedValue::Unkown => FALLBACK_FORMAT_STRING.to_string(),
@@ -598,8 +598,8 @@ mod tests {
             .unwrap();
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
-                FormattedValue::NA.into(),
-                FormattedValue::NaN.into(),
+                FormattedValue::Na.into(),
+                FormattedValue::Nan.into(),
                 FormattedValue::Inf.into(),
                 FormattedValue::NegInf.into(),
                 ColumnValue::FormattedValue("0.00".to_string()),
@@ -617,7 +617,7 @@ mod tests {
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("<numeric [1]>".to_string()),
-                FormattedValue::NULL.into(),
+                FormattedValue::Null.into(),
                 ColumnValue::FormattedValue("<numeric [1]>".to_string())
             ]);
         })
@@ -634,7 +634,7 @@ mod tests {
                 ColumnValue::FormattedValue("1,000".to_string()),
                 ColumnValue::FormattedValue("0".to_string()),
                 ColumnValue::FormattedValue("-100,000".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("1,000,000".to_string())
             ]);
         })
@@ -649,7 +649,7 @@ mod tests {
                 ColumnValue::FormattedValue("a".to_string()),
                 ColumnValue::FormattedValue("b".to_string()),
                 ColumnValue::FormattedValue("c".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("d".to_string()),
                 ColumnValue::FormattedValue("e".to_string())
             ]);
@@ -666,7 +666,7 @@ mod tests {
                 ColumnValue::FormattedValue("aaaaa".to_string()),
                 ColumnValue::FormattedValue("b".to_string()),
                 ColumnValue::FormattedValue("c".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("d".to_string()),
                 ColumnValue::FormattedValue("e".to_string())
             ]);
@@ -710,7 +710,7 @@ mod tests {
                 ColumnValue::FormattedValue("1+1i".to_string()),
                 ColumnValue::FormattedValue("2+2i".to_string()),
                 ColumnValue::FormattedValue("3+3i".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("1000000000+1000000000i".to_string()),
                 ColumnValue::FormattedValue("5+5i".to_string())
             ]);
@@ -725,7 +725,7 @@ mod tests {
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("TRUE".to_string()),
                 ColumnValue::FormattedValue("FALSE".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("TRUE".to_string()),
                 ColumnValue::FormattedValue("FALSE".to_string()),
                 ColumnValue::FormattedValue("TRUE".to_string())
@@ -741,7 +741,7 @@ mod tests {
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("2012-01-01".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("2017-05-27".to_string())
             ]);
 
@@ -752,7 +752,7 @@ mod tests {
             let formatted = format_column(data.sexp, &default_options());
             assert_eq!(formatted, vec![
                 ColumnValue::FormattedValue("2012-01-01 00:01:00".to_string()),
-                FormattedValue::NA.into(),
+                FormattedValue::Na.into(),
                 ColumnValue::FormattedValue("2017-05-27 00:00:01".to_string())
             ]);
         })

@@ -9,6 +9,7 @@ use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
 use harp::utils::r_typeof;
 use libr::NILSXP;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use scraper::ElementRef;
 use scraper::Html;
@@ -20,6 +21,8 @@ use tower_lsp::lsp_types::MarkupContent;
 use tower_lsp::lsp_types::MarkupKind;
 
 use crate::lsp::markdown::*;
+
+static RE_COMMA_SEPARATOR: Lazy<Regex> = Lazy::new(|| Regex::new("\\s*,\\s*").unwrap());
 
 pub struct RHtmlHelp {
     html: Html,
@@ -219,8 +222,7 @@ impl RHtmlHelp {
                 let names: String = lhs.text().collect();
 
                 // Get the parameters associated with this description.
-                let pattern = Regex::new("\\s*,\\s*").unwrap();
-                let names = pattern.split(names.as_str()).collect::<Vec<_>>();
+                let names = RE_COMMA_SEPARATOR.split(names.as_str()).collect::<Vec<_>>();
 
                 // Get the parameter description.
                 let Some(rhs) = cells.next() else {
