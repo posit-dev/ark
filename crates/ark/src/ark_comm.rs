@@ -93,7 +93,7 @@ impl ArkComm {
                 },
 
                 CommMsg::Rpc { .. } => {
-                    self.comm.handle_request(msg, |req| Self::handle_rpc(req));
+                    self.comm.handle_request(msg, Self::handle_rpc);
                 },
 
                 CommMsg::Close => {

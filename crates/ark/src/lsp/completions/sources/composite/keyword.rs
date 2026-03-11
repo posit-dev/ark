@@ -113,7 +113,7 @@ const KEYWORD_SNIPPETS: &[KeywordSnippet] = &[
 
 fn add_bare_keywords(completions: &mut Vec<CompletionItem>) {
     for keyword in BARE_KEYWORDS {
-        let item = completion_item(keyword.to_string(), CompletionData::Keyword {
+        let item = completion_item(keyword, CompletionData::Keyword {
             name: keyword.to_string(),
         });
 
@@ -140,7 +140,7 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
         label_details_description,
     } in KEYWORD_SNIPPETS
     {
-        let item = completion_item(label.to_string(), CompletionData::Snippet {
+        let item = completion_item(label, CompletionData::Snippet {
             text: snippet.to_string(),
         });
 
@@ -154,7 +154,7 @@ fn add_keyword_snippets(completions: &mut Vec<CompletionItem>) {
 
         // Markup shows up in the quick suggestion documentation window,
         // so you can see what the snippet expands to
-        let markup = vec!["```r", snippet, "```"].join("\n");
+        let markup = ["```r", snippet, "```"].join("\n");
         let markup = MarkupContent {
             kind: MarkupKind::Markdown,
             value: markup,

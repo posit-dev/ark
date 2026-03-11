@@ -211,7 +211,7 @@ fn is_identifier_like(x: Node) -> bool {
         return true;
     }
 
-    return false;
+    false
 }
 
 #[cfg(test)]

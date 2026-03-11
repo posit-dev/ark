@@ -20,6 +20,7 @@ use crate::vector::CharacterVector;
 use crate::vector::Vector;
 use crate::RObject;
 
+#[derive(Default)]
 pub struct RParseOptions {
     pub srcfile: Option<RObject>,
 }
@@ -35,12 +36,6 @@ pub enum ParseResult {
 pub enum ParseInput<'a> {
     Text(&'a str),
     SrcFile(&'a srcref::SrcFile),
-}
-
-impl Default for RParseOptions {
-    fn default() -> Self {
-        Self { srcfile: None }
-    }
 }
 
 /// Returns a single expression
@@ -75,7 +70,7 @@ pub fn parse_exprs_with_srcrefs(text: &str) -> crate::Result<RObject> {
 pub fn parse_exprs_ext<'a>(input: &ParseInput<'a>) -> crate::Result<RObject> {
     let status = parse_status(input)?;
     match status {
-        ParseResult::Complete(x) => Ok(RObject::from(x)),
+        ParseResult::Complete(x) => Ok(x),
         ParseResult::Incomplete => Err(crate::Error::ParseError {
             code: parse_input_as_string(input).unwrap_or(String::from("Conversion error")),
             message: String::from("Incomplete code"),

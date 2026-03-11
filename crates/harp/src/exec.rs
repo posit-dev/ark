@@ -493,8 +493,8 @@ pub fn r_peek_error_buffer() -> String {
     let cstr = unsafe { CStr::from_ptr(buffer) };
 
     match cstr.to_str() {
-        Ok(value) => return value.to_string(),
-        Err(_) => return "".to_string(),
+        Ok(value) => value.to_string(),
+        Err(_) => "".to_string(),
     }
 }
 

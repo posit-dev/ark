@@ -71,7 +71,7 @@ impl FormattedVector {
         // Check if the index is allowed
         let length = r_length(self.vector.sexp);
 
-        if index < 0 || index >= length as isize {
+        if index < 0 || index >= length {
             return Err(anyhow!("Index out of bounds"));
         }
 
@@ -212,7 +212,7 @@ impl FormattedVectorIter {
             },
         };
 
-        return Ok(Self { vector, indices });
+        Ok(Self { vector, indices })
     }
 }
 

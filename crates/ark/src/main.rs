@@ -25,7 +25,7 @@ use notify::Watcher;
 use stdext::unwrap;
 
 thread_local! {
-    pub static ON_R_THREAD: Cell<bool> = Cell::new(false);
+    pub static ON_R_THREAD: Cell<bool> = const { Cell::new(false) };
 }
 
 fn print_usage() {
@@ -287,7 +287,7 @@ fn main() -> anyhow::Result<()> {
             },
             "--" => {
                 // Consume the rest of the arguments for passthrough delivery to R
-                while let Some(arg) = argv.next() {
+                for arg in argv.by_ref() {
                     r_args.push(arg);
                 }
                 break;
@@ -412,7 +412,7 @@ fn main() -> anyhow::Result<()> {
             let trace = append_trace(info);
             log::error!("Panic! {loc} {info:}{trace}");
         } else if let Some(info) = info.downcast_ref::<String>() {
-            let trace = append_trace(&info);
+            let trace = append_trace(info);
             log::error!("Panic! {loc} {info:}{trace}");
         } else {
             let trace = format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());

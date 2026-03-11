@@ -62,7 +62,7 @@ pub fn completions_from_document(
 
     loop {
         // If this is a brace list, or the document root, recurse to find identifiers.
-        if node.is_braced_expression() || node.parent() == None {
+        if node.is_braced_expression() || node.parent().is_none() {
             completions.append(&mut completions_from_document_variables(&node, context));
         }
 
@@ -116,29 +116,27 @@ fn completions_from_document_variables(
                 }
 
                 // return true in case we have nested assignments
-                return true;
+                true
             },
 
             NodeType::BinaryOperator(BinaryOperatorType::RightAssignment) |
             NodeType::BinaryOperator(BinaryOperatorType::RightSuperAssignment) => {
                 // return true for nested assignments
-                return true;
+                true
             },
 
             NodeType::Call => {
                 // don't recurse into calls for certain functions
-                return !call_uses_nse(&node, context);
+                !call_uses_nse(&node, context)
             },
 
             NodeType::FunctionDefinition => {
                 // don't recurse into function definitions, as these create as new scope
                 // for variable definitions (and so such definitions are no longer visible)
-                return false;
+                false
             },
 
-            _ => {
-                return true;
-            },
+            _ => true,
         }
     });
 

@@ -120,7 +120,7 @@ fn locate_extractor_node(node: Node, node_type: NodeType) -> Option<Node> {
     match node.node_type() {
         NodeType::Anonymous(operator) if matches!(operator.as_str(), "$" | "@") => {
             // Cursor should be on the RHS of the `operator`
-            return Some(parent);
+            Some(parent)
         },
         NodeType::Identifier => {
             // Only provide completions for the RHS child

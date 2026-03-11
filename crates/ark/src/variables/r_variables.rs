@@ -200,7 +200,7 @@ impl RVariables {
     fn update_bindings(&mut self, new_bindings: RThreadSafe<Vec<Binding>>) -> u64 {
         // Updating will `drop()` the old `current_bindings` on the main R thread
         self.current_bindings = new_bindings;
-        self.version = self.version + 1;
+        self.version += 1;
 
         self.version
     }
@@ -307,9 +307,7 @@ impl RVariables {
                 .param("envir", env)
                 .call();
 
-            if let Err(err) = result {
-                return Err(err);
-            }
+            result?;
             Ok(())
         })
     }
@@ -321,14 +319,14 @@ impl RVariables {
     ) -> anyhow::Result<String> {
         r_task(|| {
             let env = self.env.get().clone();
-            PositronVariable::clip(env, &path, &format)
+            PositronVariable::clip(env, path, &format)
         })
     }
 
     fn inspect(&mut self, path: &Vec<String>) -> anyhow::Result<Vec<Variable>> {
         r_task(|| {
             let env = self.env.get().clone();
-            PositronVariable::inspect(env, &path)
+            PositronVariable::inspect(env, path)
         })
     }
 
@@ -340,7 +338,7 @@ impl RVariables {
     fn view(&mut self, path: &Vec<String>) -> Result<Option<String>, harp::error::Error> {
         r_task(|| {
             let env = self.env.get().clone();
-            let obj = PositronVariable::resolve_data_object(env.clone(), &path)?;
+            let obj = PositronVariable::resolve_data_object(env.clone(), path)?;
 
             // Try custom view method first (e.g., for connections)
             if try_dispatch_view(obj.sexp).map_err(harp::Error::Anyhow)? {
@@ -348,7 +346,7 @@ impl RVariables {
             }
 
             if r_is_function(obj.sexp) {
-                harp::as_result(view(&obj, &path, &env))?;
+                harp::as_result(view(&obj, path, &env))?;
                 return Ok(None);
             }
 
@@ -360,10 +358,10 @@ impl RVariables {
             };
 
             let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
-                .map_err(|err| harp::Error::Anyhow(err))?;
+                .map_err(harp::Error::Anyhow)?;
             let viewer_id = Console::get_mut()
                 .comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
-                .map_err(|err| harp::Error::Anyhow(err))?;
+                .map_err(harp::Error::Anyhow)?;
             Ok(Some(viewer_id))
         })
     }
@@ -381,7 +379,7 @@ impl RVariables {
     ) -> anyhow::Result<QueryTableSummaryResult> {
         r_task(|| {
             let env = self.env.get().clone();
-            let table = PositronVariable::resolve_data_object(env, &path)?;
+            let table = PositronVariable::resolve_data_object(env, path)?;
 
             let kind = if harp::utils::r_is_data_frame(table.sexp) {
                 harp::TableKind::Dataframe
@@ -409,7 +407,7 @@ impl RVariables {
             let column_schemas: Vec<String> = shapes
                 .columns
                 .iter()
-                .map(|schema| serde_json::to_string(schema))
+                .map(serde_json::to_string)
                 .collect::<Result<Vec<_>, _>>()?;
 
             let mut column_profiles: Vec<String> = vec![];
@@ -537,7 +535,7 @@ impl RVariables {
                     // No more old, collect last new into added
                     (None, Some(mut new)) => {
                         loop {
-                            assigned.push(PositronVariable::new(&new).var());
+                            assigned.push(PositronVariable::new(new).var());
 
                             match new_iter.next() {
                                 Some(x) => {
@@ -568,7 +566,7 @@ impl RVariables {
                     (Some(old), Some(new)) => {
                         if old.name == new.name {
                             if old.value.id() != new.value.id() {
-                                assigned.push(PositronVariable::new(&new).var());
+                                assigned.push(PositronVariable::new(new).var());
                             }
                             old_next = old_iter.next();
                             new_next = new_iter.next();
@@ -576,14 +574,14 @@ impl RVariables {
                             removed.push(old.name.to_string());
                             old_next = old_iter.next();
                         } else {
-                            assigned.push(PositronVariable::new(&new).var());
+                            assigned.push(PositronVariable::new(new).var());
                             new_next = new_iter.next();
                         }
                     },
                 }
             }
 
-            if assigned.len() > 0 || removed.len() > 0 {
+            if !assigned.is_empty() || !removed.is_empty() {
                 self.update_bindings(new_bindings);
                 self.send_event(VariablesFrontendEvent::Update(UpdateParams {
                     assigned,

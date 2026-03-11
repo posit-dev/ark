@@ -134,7 +134,7 @@ impl std::iter::Iterator for ListIter {
         }
 
         let item = unsafe { *self.ptr.wrapping_add(self.index) };
-        self.index = self.index + 1;
+        self.index += 1;
         Some(item)
     }
 }

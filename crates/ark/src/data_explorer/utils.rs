@@ -17,19 +17,12 @@ pub fn tbl_subset_with_view_indices(
     j: Option<Vec<i64>>,
 ) -> anyhow::Result<RObject> {
     let i = match view_indices {
-        Some(view_indices) => match i {
-            Some(i) => Some(i.iter().map(|i| view_indices[*i as usize] as i64).collect()),
-            None => None,
+        Some(view_indices) => {
+            i.map(|i| i.iter().map(|i| view_indices[*i as usize] as i64).collect())
         },
-        None => match i {
-            Some(i) => Some(i.iter().map(|i| i + 1).collect()),
-            None => None,
-        },
+        None => i.map(|i| i.iter().map(|i| i + 1).collect()),
     };
-    let j = match j {
-        Some(j) => Some(j.iter().map(|j| j + 1).collect()),
-        None => None,
-    };
+    let j = j.map(|j| j.iter().map(|j| j + 1).collect());
     tbl_subset(x, i, j)
 }
 
@@ -106,12 +99,12 @@ pub fn display_type(x: SEXP) -> ColumnDisplayType {
     }
 
     match r_typeof(x) {
-        LGLSXP => return ColumnDisplayType::Boolean,
-        INTSXP => return ColumnDisplayType::Integer,
-        REALSXP => return ColumnDisplayType::Floating,
-        CPLXSXP => return ColumnDisplayType::Floating,
-        STRSXP => return ColumnDisplayType::String,
-        VECSXP => return ColumnDisplayType::Unknown,
-        _ => return ColumnDisplayType::Unknown,
+        LGLSXP => ColumnDisplayType::Boolean,
+        INTSXP => ColumnDisplayType::Integer,
+        REALSXP => ColumnDisplayType::Floating,
+        CPLXSXP => ColumnDisplayType::Floating,
+        STRSXP => ColumnDisplayType::String,
+        VECSXP => ColumnDisplayType::Unknown,
+        _ => ColumnDisplayType::Unknown,
     }
 }

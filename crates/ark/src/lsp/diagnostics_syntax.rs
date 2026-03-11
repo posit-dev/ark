@@ -96,7 +96,7 @@ fn syntax_diagnostic_default(
 
     // The most common case, a localized syntax error that doesn't span too many rows
     let message = String::from("Syntax error");
-    new_syntax_diagnostic(message, range, &context)
+    new_syntax_diagnostic(message, range, context)
 }
 
 // If the syntax error spans more than 20 rows, just target the starting position
@@ -119,7 +119,7 @@ fn syntax_diagnostic_truncated_default(
     let end_row = range.end_point.row + 1;
     let message = format!("Syntax error. Starts here and ends on line {end_row}.");
 
-    new_syntax_diagnostic(message, start_range, &context)
+    new_syntax_diagnostic(message, start_range, context)
 }
 
 fn diagnose_missing(
@@ -286,7 +286,7 @@ fn diagnose_missing_if(
     };
 
     let range = token.range();
-    let message = format!("Invalid if statement. Missing a body.");
+    let message = "Invalid if statement. Missing a body.".to_string();
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())
@@ -313,7 +313,7 @@ fn diagnose_missing_function_definition(
     };
 
     let range = name.range();
-    let message = format!("Invalid function definition. Missing a body.");
+    let message = "Invalid function definition. Missing a body.".to_string();
     diagnostics.push(new_syntax_diagnostic(message, range, context)?);
 
     Ok(())

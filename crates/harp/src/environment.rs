@@ -21,16 +21,11 @@ pub struct Environment {
     filter: EnvironmentFilter,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum EnvironmentFilter {
+    #[default]
     None,
     ExcludeHidden,
-}
-
-impl Default for EnvironmentFilter {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 pub struct REnvs {
@@ -142,8 +137,7 @@ impl Environment {
             EnvironmentFilter::ExcludeHidden => self
                 .iter()
                 .filter_map(|b| b.ok())
-                .filter(|b| !b.is_hidden())
-                .next()
+                .find(|b| !b.is_hidden())
                 .is_none(),
         }
     }

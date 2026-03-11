@@ -158,7 +158,7 @@ where
         //       The compromise that was used in cpp11 is to use
         //       GET_REGION and work on partial materialization
         let item = self.data.get_unchecked(self.index);
-        self.index = self.index + 1;
+        self.index += 1;
         Some(item)
     }
 }
@@ -180,7 +180,7 @@ where
             result.push(x);
         }
 
-        return Ok(result);
+        Ok(result)
     }
 }
 

@@ -29,7 +29,7 @@ pub fn r_command<F>(build: F) -> io::Result<Output>
 where
     F: Fn(&mut Command),
 {
-    assert!(COMMAND_R_NAMES.len() > 0);
+    assert!(!COMMAND_R_NAMES.is_empty());
 
     // Safety: Caller must ensure `R_HOME` is defined. That's usually the case
     // once Ark has properly started.
@@ -98,7 +98,7 @@ pub fn r_command_from_path<F>(build: F) -> io::Result<Output>
 where
     F: Fn(&mut Command),
 {
-    assert!(COMMAND_R_NAMES.len() > 0);
+    assert!(!COMMAND_R_NAMES.is_empty());
 
     // Use the bare command names so they are found from the `PATH`
     let locations: Vec<PathBuf> = COMMAND_R_NAMES

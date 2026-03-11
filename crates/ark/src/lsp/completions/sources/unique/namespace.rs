@@ -201,7 +201,7 @@ fn completions_from_namespace_lazydata(
 
         let names = RObject::to::<Vec<String>>(RObject::from(R_lsInternal(env, Rboolean_TRUE)))?;
 
-        if names.len() == 0 {
+        if names.is_empty() {
             return Ok(None);
         }
 
@@ -219,7 +219,7 @@ fn completions_from_namespace_lazydata(
 }
 
 fn list_namespace_symbols(namespace: SEXP) -> RObject {
-    return unsafe { RObject::new(R_lsInternal(namespace, 1)) };
+    unsafe { RObject::new(R_lsInternal(namespace, 1)) }
 }
 
 fn list_namespace_exports(namespace: SEXP) -> RObject {
@@ -234,7 +234,7 @@ fn list_namespace_exports(namespace: SEXP) -> RObject {
             return RObject::null();
         }
 
-        return RObject::new(R_lsInternal(exports, 1));
+        RObject::new(R_lsInternal(exports, 1))
     }
 }
 

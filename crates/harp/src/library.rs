@@ -60,7 +60,7 @@ pub(crate) fn find_r_shared_library(home: &PathBuf, name: &str) -> PathBuf {
     let path = folder.join(name.as_str());
 
     match path.try_exists() {
-        Ok(true) => return path,
+        Ok(true) => path,
         Ok(false) => panic!("Can't find R shared library '{}' at '{}'. If this is a custom build of R, ensure it is compiled with `--enable-R-shlib`.", name, path.display()),
         Err(err) => panic!("Can't determine if R shared library path exists: {err:?}"),
     }

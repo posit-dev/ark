@@ -734,7 +734,7 @@ impl ServerHandler for Dap {
             )
         });
 
-        return Ok(());
+        Ok(())
     }
 }
 

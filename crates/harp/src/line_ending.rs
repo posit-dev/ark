@@ -9,8 +9,8 @@ pub use sys::line_ending::NATIVE_LINE_ENDING;
 
 use crate::sys;
 
-pub const POSIX_LINE_ENDING: &'static str = "\n";
-pub const WINDOWS_LINE_ENDING: &'static str = "\r\n";
+pub const POSIX_LINE_ENDING: &str = "\n";
+pub const WINDOWS_LINE_ENDING: &str = "\r\n";
 
 #[derive(Debug)]
 pub enum LineEnding {

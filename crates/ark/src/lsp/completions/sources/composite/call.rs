@@ -93,7 +93,7 @@ fn completions_from_call(
         },
     };
 
-    completions_from_arguments(document_context, &callee, object)
+    completions_from_arguments(document_context, callee, object)
 }
 
 fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<Option<RObject>> {

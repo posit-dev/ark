@@ -41,9 +41,8 @@ pub(crate) fn push_ignore_user_r_profile(args: &mut Vec<String>) {
 // Mimics `R_OpenSiteFile()`
 // https://github.com/wch/r-source/blob/ee6b15303be885d118d49b441e32a9cff5cda778/src/main/startup.c#L96
 pub(crate) fn source_site_r_profile(r_home: &PathBuf) {
-    match find_site_r_profile(r_home) {
-        Some(path) => source_r_profile(&path),
-        None => (),
+    if let Some(path) = find_site_r_profile(r_home) {
+        source_r_profile(&path)
     }
 }
 
@@ -51,9 +50,8 @@ pub(crate) fn source_site_r_profile(r_home: &PathBuf) {
 // Windows: https://github.com/wch/r-source/blob/ee6b15303be885d118d49b441e32a9cff5cda778/src/gnuwin32/sys-win32.c#L40
 // Unix: https://github.com/wch/r-source/blob/ee6b15303be885d118d49b441e32a9cff5cda778/src/unix/sys-unix.c#L68
 pub(crate) fn source_user_r_profile() {
-    match find_user_r_profile() {
-        Some(path) => source_r_profile(&path),
-        None => (),
+    if let Some(path) = find_user_r_profile() {
+        source_r_profile(&path)
     }
 }
 
@@ -110,21 +108,18 @@ fn source_r_profile(path: &PathBuf) {
 
 fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {
     // Try from env var first
-    match std::env::var("R_PROFILE") {
-        Ok(path) => {
-            if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {
-                if !path.exists() {
-                    log::warn!(
-                        "`R_PROFILE` detected but '{path}' does not exist",
-                        path = path.to_string_lossy()
-                    );
-                    return None;
-                } else {
-                    return Some(path);
-                }
+    if let Ok(path) = std::env::var("R_PROFILE") {
+        if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {
+            if !path.exists() {
+                log::warn!(
+                    "`R_PROFILE` detected but '{path}' does not exist",
+                    path = path.to_string_lossy()
+                );
+                return None;
+            } else {
+                return Some(path);
             }
-        },
-        Err(_) => (),
+        }
     };
 
     // Then try arch specific `Rprofile.site` location
@@ -149,21 +144,18 @@ fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {
 
 fn find_user_r_profile() -> Option<PathBuf> {
     // Try from env var first
-    match std::env::var("R_PROFILE_USER") {
-        Ok(path) => {
-            if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {
-                if !path.exists() {
-                    log::warn!(
-                        "`R_PROFILE_USER` detected but '{path}' does not exist",
-                        path = path.to_string_lossy()
-                    );
-                    return None;
-                } else {
-                    return Some(path);
-                }
+    if let Ok(path) = std::env::var("R_PROFILE_USER") {
+        if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {
+            if !path.exists() {
+                log::warn!(
+                    "`R_PROFILE_USER` detected but '{path}' does not exist",
+                    path = path.to_string_lossy()
+                );
+                return None;
+            } else {
+                return Some(path);
             }
-        },
-        Err(_) => (),
+        }
     };
 
     // Then from current directory level `.Rprofile`
@@ -175,18 +167,14 @@ fn find_user_r_profile() -> Option<PathBuf> {
         },
         Err(_) => {
             // Swallow any errors and try other sources
-            ()
         },
     }
 
     // Then from user level home `.Rprofile`
-    match sys::path::r_user_home().map(|dir| dir.join(".Rprofile")) {
-        Some(path) => {
-            if path.exists() {
-                return Some(path);
-            }
-        },
-        None => (),
+    if let Some(path) = sys::path::r_user_home().map(|dir| dir.join(".Rprofile")) {
+        if path.exists() {
+            return Some(path);
+        }
     }
 
     None

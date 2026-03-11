@@ -35,7 +35,7 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
             .and_then(|c| c.get(1))
             .map(|c| c.as_str())
         {
-            for pkg in vec!["amalthea", "harp", "stdext"] {
+            for pkg in ["amalthea", "harp", "stdext"] {
                 if let Ok(directive) = format!("{pkg}={level}").parse() {
                     env_filter = env_filter.add_directive(directive);
                 }
@@ -94,7 +94,6 @@ pub fn init(log_file: Option<&str>, profile_file: Option<&str>) {
 fn non_blocking(file: Option<&str>, cell: &OnceCell<WorkerGuard>) -> BoxMakeWriter {
     let file = file.and_then(|file| {
         std::fs::OpenOptions::new()
-            .write(true)
             .append(true)
             .create(true)
             .open(file)

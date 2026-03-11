@@ -108,9 +108,9 @@ impl PendingInputs {
         let exprs = match status {
             harp::ParseResult::Complete(exprs) => exprs,
             harp::ParseResult::Incomplete => {
-                return Ok(ParseResult::SyntaxError(format!(
-                    "Can't parse incomplete input"
-                )));
+                return Ok(ParseResult::SyntaxError(
+                    "Can't parse incomplete input".to_string(),
+                ));
             },
             harp::ParseResult::SyntaxError { message, .. } => {
                 return Ok(ParseResult::SyntaxError(format!("Syntax error: {message}")));
@@ -755,7 +755,7 @@ impl Console {
 
         // Increment counter if we are storing this execution in history
         if req.store_history {
-            self.execution_count = self.execution_count + 1;
+            self.execution_count += 1;
         }
 
         // If the code is not to be executed silently, re-broadcast the
@@ -993,7 +993,7 @@ impl Console {
             // have priority. `select` chooses at random.
             if let WaitFor::ExecuteRequest = wait_for {
                 if let Ok(req) = r_request_rx.try_recv() {
-                    if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
+                    if let Some(input) = self.handle_execute_request(req, info, buf, buflen) {
                         return input;
                     }
                 }
@@ -1010,7 +1010,7 @@ impl Console {
                         return ConsoleResult::Disconnected;
                     };
 
-                    if let Some(input) = self.handle_execute_request(req, &info, buf, buflen) {
+                    if let Some(input) = self.handle_execute_request(req, info, buf, buflen) {
                         return input;
                     }
                 },
@@ -1024,7 +1024,7 @@ impl Console {
                 // We've got a kernel request
                 i if i == kernel_request_index => {
                     let req = oper.recv(&kernel_request_rx).unwrap();
-                    self.handle_kernel_request(req, &info);
+                    self.handle_kernel_request(req, info);
                 },
 
                 // An interrupt task woke us up
@@ -1089,11 +1089,11 @@ impl Console {
             PromptKind::TopLevel
         };
 
-        return PromptInfo {
+        PromptInfo {
             input_prompt: prompt,
             continuation_prompt,
             kind,
-        };
+        }
     }
 
     /// Take result from `self.autoprint_output` and R's `.Last.value` object
@@ -1114,7 +1114,7 @@ impl Console {
             // Jupyter frontends are not expecting
             autoprint.pop();
         }
-        if autoprint.len() != 0 {
+        if !autoprint.is_empty() {
             data.insert("text/plain".to_string(), json!(autoprint));
         }
 
@@ -1338,23 +1338,21 @@ impl Console {
                 // Evaluate first expression if there is one
                 if let Some(input) = self.pop_pending() {
                     Some(self.handle_pending_input(input, buf, buflen))
+                } else if self.debug_is_debugging &&
+                    !harp::options::get_option_bool("browserNLdisabled")
+                {
+                    // Empty input in the debugger counts as `n` unless
+                    // `browserNLdisabled` is TRUE. This matches RStudio
+                    // and base R behaviour.
+                    // https://github.com/posit-dev/ark/issues/1006
+                    Some(self.debug_forward_command(buf, buflen, String::from("n")))
                 } else {
-                    if self.debug_is_debugging &&
-                        !harp::options::get_option_bool("browserNLdisabled")
-                    {
-                        // Empty input in the debugger counts as `n` unless
-                        // `browserNLdisabled` is TRUE. This matches RStudio
-                        // and base R behaviour.
-                        // https://github.com/posit-dev/ark/issues/1006
-                        Some(self.debug_forward_command(buf, buflen, String::from("n")))
-                    } else {
-                        // Otherwise we got an empty input, e.g. `""` and there's
-                        // nothing to do. Close active request.
-                        self.handle_active_request(info, ConsoleValue::Success(Default::default()));
+                    // Otherwise we got an empty input, e.g. `""` and there's
+                    // nothing to do. Close active request.
+                    self.handle_active_request(info, ConsoleValue::Success(Default::default()));
 
-                        // And return to event loop
-                        None
-                    }
+                    // And return to event loop
+                    None
                 }
             },
 
@@ -1590,24 +1588,22 @@ impl Console {
 
         log::warn!("Detected invalid `input_request` outside an `execute_request`. Preparing to throw an R error.");
 
-        let message = vec![
-            "Can't request input from the user at this time.",
-            "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."
-        ].join("\n");
+        let message = ["Can't request input from the user at this time.",
+            "Are you calling `readline()` or `menu()` from an `.Rprofile` or `.Rprofile.site` file? If so, that is the issue and you should remove that code."].join("\n");
 
-        return ConsoleResult::Error(message);
+        ConsoleResult::Error(message)
     }
 
     fn handle_invalid_input_request_after_error(&self) -> ConsoleResult {
         log::warn!("Detected invalid `input_request` after error (probably from `getOption('error')`). Preparing to throw an R error.");
 
-        let message = vec![
+        let message = [
             "Can't request input from the user at this time.",
             "Are you calling `readline()` or `menu()` from `options(error = )`?",
         ]
         .join("\n");
 
-        return ConsoleResult::Error(message);
+        ConsoleResult::Error(message)
     }
 
     /// Load `fallback_sources` with this stack's text sources
@@ -1642,7 +1638,7 @@ impl Console {
         // steps here because we can't remove stuff from
         // `self.lsp_virtual_documents` while borrowing it to loop over it.
         let mut debug_uris = Vec::new();
-        for (uri, _) in &self.lsp_virtual_documents {
+        for uri in self.lsp_virtual_documents.keys() {
             if Self::is_ark_debug_path(uri) {
                 debug_uris.push(uri.clone());
             }
@@ -1813,12 +1809,12 @@ impl Console {
         };
 
         let awaker = waker.clone().into();
-        let mut ctxt = &mut std::task::Context::from_waker(&awaker);
+        let ctxt = &mut std::task::Context::from_waker(&awaker);
 
         match waker
             .start_info
             .span
-            .in_scope(|| r_sandbox(|| fut.as_mut().poll(&mut ctxt)).unwrap())
+            .in_scope(|| r_sandbox(|| fut.as_mut().poll(ctxt)).unwrap())
         {
             Poll::Ready(()) => {
                 start_info.bump_elapsed(tick.elapsed());
@@ -1936,7 +1932,7 @@ impl Console {
                     user_expressions: json!({}),
                 });
 
-                let result = if data.len() > 0 {
+                let result = if !data.is_empty() {
                     Some(IOPubMessage::ExecuteResult(ExecuteResult {
                         execution_count: exec_count,
                         data: serde_json::Value::Object(data),
@@ -2589,18 +2585,16 @@ fn r_read_console_impl(
                 console.verify_breakpoints(RObject::from(srcref));
 
                 libr::Rf_unprotect(2);
-                return 1;
+                1
             }
         },
 
-        ConsoleResult::NewInput => {
-            return 1;
-        },
+        ConsoleResult::NewInput => 1,
 
         ConsoleResult::Disconnected => {
             // Cause parent consoles to shutdown too
             console.read_console_shutdown.set(true);
-            return 0;
+            0
         },
 
         ConsoleResult::Interrupt => {
@@ -2611,7 +2605,7 @@ fn r_read_console_impl(
 
             // This normally does not return
             log::error!("`Rf_onintr()` did not longjump");
-            return 0;
+            0
         },
 
         ConsoleResult::Error(message) => {
@@ -2622,7 +2616,7 @@ fn r_read_console_impl(
             console.r_error_buffer = Some(new_cstring(message));
             unsafe { Rf_error(console.r_error_buffer.as_ref().unwrap().as_ptr()) }
         },
-    };
+    }
 }
 
 fn new_cstring(x: String) -> CString {

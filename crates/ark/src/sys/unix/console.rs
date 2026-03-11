@@ -129,7 +129,7 @@ pub fn run_activity_handlers() {
         // responsive for that as well (posit-dev/positron#7235).
         let mut fdset = R_checkActivity(0, 1);
 
-        while fdset != std::ptr::null_mut() {
+        while !fdset.is_null() {
             R_runHandlers(libr::get(R_InputHandlers), fdset);
             fdset = R_checkActivity(0, 1);
         }

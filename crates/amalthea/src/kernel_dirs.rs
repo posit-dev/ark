@@ -21,10 +21,8 @@ pub fn jupyter_kernel_path() -> Option<PathBuf> {
 pub fn jupyter_dir() -> Option<PathBuf> {
     if let Ok(envpath) = env::var("JUPYTER_PATH") {
         Some(PathBuf::from(envpath))
-    } else if let Some(userpath) = jupyter_xdg_dir() {
-        Some(userpath)
     } else {
-        None
+        jupyter_xdg_dir()
     }
 }
 

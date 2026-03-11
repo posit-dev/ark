@@ -42,7 +42,7 @@ impl Names {
                 None => (self.default)(index),
 
                 Some(name) => {
-                    if name.len() == 0 {
+                    if name.is_empty() {
                         // empty name
                         (self.default)(index)
                     } else {

@@ -121,7 +121,7 @@ impl Control {
             warn!("Failed to restore kernel status to idle: {err}");
         }
 
-        return result;
+        result
     }
 
     fn handle_shutdown_request(&self, req: JupyterMessage<ShutdownRequest>) -> Result<(), Error> {

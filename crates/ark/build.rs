@@ -21,7 +21,7 @@ fn main() {
     // fails, we'll just use the string "<unknown>" to indicate that the git hash
     // could not be determined..
     let git_hash = match Command::new("git")
-        .args(&["rev-parse", "--short", "HEAD"])
+        .args(["rev-parse", "--short", "HEAD"])
         .output()
     {
         Ok(output) => String::from_utf8(output.stdout).unwrap(),
@@ -30,7 +30,7 @@ fn main() {
     println!("cargo:rustc-env=BUILD_GIT_HASH={}", git_hash);
 
     let git_branch = match Command::new("git")
-        .args(&["branch", "--show-current"])
+        .args(["branch", "--show-current"])
         .output()
     {
         Ok(output) => String::from_utf8(output.stdout).unwrap(),

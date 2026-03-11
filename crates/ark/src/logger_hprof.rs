@@ -220,7 +220,7 @@ impl Node {
                 let _ = write!(out, " ({} calls)", self.count);
             }
 
-            let _ = write!(out, "\n");
+            let _ = writeln!(out);
 
             for child in &self.children {
                 child.go(level + 1, filter, out)

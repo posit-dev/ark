@@ -68,7 +68,7 @@ use crate::lsp::statement_range::StatementRangeResponse;
 use crate::lsp::symbols;
 use crate::r_task;
 
-pub static ARK_VDOC_REQUEST: &'static str = "ark/internal/virtualDocument";
+pub static ARK_VDOC_REQUEST: &str = "ark/internal/virtualDocument";
 
 #[derive(Debug, Eq, PartialEq, Clone, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -129,13 +129,11 @@ pub(crate) fn handle_symbol(
     params: WorkspaceSymbolParams,
     state: &WorldState,
 ) -> LspResult<Option<Vec<SymbolInformation>>> {
-    symbols::symbols(&params, state)
-        .map(|res| Some(res))
-        .or_else(|err| {
-            // Missing doc: Why are we not propagating errors to the frontend?
-            lsp::log_error!("{err:?}");
-            Ok(None)
-        })
+    symbols::symbols(&params, state).map(Some).or_else(|err| {
+        // Missing doc: Why are we not propagating errors to the frontend?
+        lsp::log_error!("{err:?}");
+        Ok(None)
+    })
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -192,7 +190,7 @@ pub(crate) fn handle_completion(
     let trigger = params.context.and_then(|ctxt| ctxt.trigger_character);
 
     // Build the document context.
-    let context = DocumentContext::new(&document, point, trigger);
+    let context = DocumentContext::new(document, point, trigger);
     lsp::log_info!("Completion context: {:#?}", context);
 
     let completions = r_task(|| provide_completions(&context, state))?;
@@ -219,7 +217,7 @@ pub(crate) fn handle_hover(params: HoverParams, state: &WorldState) -> LspResult
     let point = document.tree_sitter_point_from_lsp_position(position)?;
 
     // build document context
-    let context = DocumentContext::new(&document, point, None);
+    let context = DocumentContext::new(document, point, None);
 
     // request hover information
     let result = r_task(|| r_hover(&context));
@@ -253,7 +251,7 @@ pub(crate) fn handle_signature_help(
     let position = params.text_document_position_params.position;
     let point = document.tree_sitter_point_from_lsp_position(position)?;
 
-    let context = DocumentContext::new(&document, point, None);
+    let context = DocumentContext::new(document, point, None);
 
     // request signature help
     let result = r_task(|| r_signature_help(&context));
@@ -279,7 +277,7 @@ pub(crate) fn handle_goto_definition(
 ) -> LspResult<Option<GotoDefinitionResponse>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
-    Ok(goto_definition(&document, params).log_err().flatten())
+    Ok(goto_definition(document, params).log_err().flatten())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
@@ -303,7 +301,7 @@ pub(crate) fn handle_selection_range(
     // Convert tree-sitter points to LSP positions everywhere
     let selections = selections
         .into_iter()
-        .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(selection, &document))
+        .map(|selection| convert_selection_range_from_tree_sitter_to_lsp(selection, document))
         .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Some(selections))
@@ -345,7 +343,7 @@ pub(crate) fn handle_help_topic(
 ) -> LspResult<Option<HelpTopicResponse>> {
     let document = state.get_document(&params.text_document.uri)?;
     let point = document.tree_sitter_point_from_lsp_position(params.position)?;
-    help_topic(point, &document)
+    help_topic(point, document)
 }
 
 #[tracing::instrument(level = "info", skip_all)]

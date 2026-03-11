@@ -16,8 +16,8 @@ use crate::lsp::indexer;
 use crate::lsp::traits::node::NodeExt;
 use crate::treesitter::NodeTypeExt;
 
-pub fn goto_definition<'a>(
-    document: &'a Document,
+pub fn goto_definition(
+    document: &Document,
     params: GotoDefinitionParams,
 ) -> Result<Option<GotoDefinitionResponse>> {
     // get reference to AST

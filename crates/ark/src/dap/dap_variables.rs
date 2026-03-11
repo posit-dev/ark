@@ -107,8 +107,7 @@ fn env_variables(x: SEXP) -> Vec<RVariable> {
 
     names
         .into_iter()
-        .map(|name| env_binding_variable(name, x))
-        .flatten()
+        .filter_map(|name| env_binding_variable(name, x))
         .collect()
 }
 
@@ -123,7 +122,6 @@ fn env_binding_variable(name: String, x: SEXP) -> Option<RVariable> {
     match r_env_binding_is_active(x, symbol) {
         Ok(false) => {
             // Continue with standard environment variable creation
-            ()
         },
         Ok(true) => {
             // We can't even extract out the object for active bindings so they
@@ -419,7 +417,7 @@ fn is_ignored_name(x: &str) -> bool {
         return true;
     }
 
-    return false;
+    false
 }
 
 #[cfg(test)]

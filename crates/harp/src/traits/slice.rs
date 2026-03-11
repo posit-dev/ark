@@ -23,7 +23,7 @@ impl<T> AsSlice<T> for &T {
 
 impl<T> AsSlice<T> for [T] {
     fn as_slice(&self) -> &[T] {
-        &self[..]
+        self
     }
 }
 

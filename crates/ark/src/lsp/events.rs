@@ -13,4 +13,4 @@ pub struct Events {
     pub environment_changed: Event<()>,
 }
 
-pub static EVENTS: Lazy<Events> = Lazy::new(|| Events::default());
+pub static EVENTS: Lazy<Events> = Lazy::new(Events::default);

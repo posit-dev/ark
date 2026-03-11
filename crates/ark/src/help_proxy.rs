@@ -73,7 +73,7 @@ async fn task(source_port: u16, target_port: u16) -> anyhow::Result<()> {
     let help_proxy = HelpProxy::new(source_port, target_port)?;
 
     // Run the help proxy.
-    Ok(help_proxy.run().await?)
+    help_proxy.run().await
 }
 
 // AppState struct.
@@ -183,7 +183,7 @@ async fn proxy_request(req: HttpRequest, app_state: web::Data<AppState>) -> Http
             if response.status() != reqwest::StatusCode::OK {
                 log::error!(
                     "Got status {status} proxying {url:?}: {response:?}",
-                    status = response.status().to_string(),
+                    status = response.status(),
                     url = target_url.to_string(),
                     response = match response.text().await {
                         Ok(response) => response,

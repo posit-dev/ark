@@ -88,13 +88,13 @@ pub(crate) struct LspConfig {
     pub(crate) workspace_symbols: WorkspaceSymbolsConfig,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct SymbolsConfig {
     /// Whether to emit assignments in `{` bloks as document symbols.
     pub include_assignments_in_blocks: bool,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct WorkspaceSymbolsConfig {
     /// Whether to include sections like `# My section ---` in workspace symbols.
     pub include_comment_sections: bool,
@@ -125,22 +125,6 @@ pub struct IndentationConfig {
 pub enum IndentStyle {
     Tab,
     Space,
-}
-
-impl Default for SymbolsConfig {
-    fn default() -> Self {
-        Self {
-            include_assignments_in_blocks: false,
-        }
-    }
-}
-
-impl Default for WorkspaceSymbolsConfig {
-    fn default() -> Self {
-        Self {
-            include_comment_sections: false,
-        }
-    }
 }
 
 impl Default for IndentationConfig {

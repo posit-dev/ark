@@ -123,10 +123,10 @@ impl Console {
                 JsonRpcReply::Error(reply) => {
                     let message = reply.error.message;
 
-                    return Err(anyhow::anyhow!(
+                    Err(anyhow::anyhow!(
                         "While calling frontend method:\n\
                          {message}",
-                    ));
+                    ))
                 },
             },
             // If an interrupt was signalled, return `NULL`. This should not be
@@ -261,7 +261,7 @@ impl Console {
     }
 
     pub(crate) fn has_virtual_document(&self, uri: &String) -> bool {
-        let uri = uri.strip_prefix("ark:").unwrap_or(&uri).to_string();
+        let uri = uri.strip_prefix("ark:").unwrap_or(uri).to_string();
         self.lsp_virtual_documents.contains_key(&uri)
     }
 

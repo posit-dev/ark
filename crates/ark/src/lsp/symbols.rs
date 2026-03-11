@@ -392,7 +392,7 @@ where
             let comment_text = child.node_as_str(&doc.contents)?;
 
             // If we have a section comment, add it to our stack and close any sections if needed
-            if let Some((level, title)) = parse_comment_as_section(&comment_text) {
+            if let Some((level, title)) = parse_comment_as_section(comment_text) {
                 // Close any sections with equal or higher level
                 while !active_sections.is_empty() && active_sections.last().unwrap().level >= level
                 {
@@ -525,9 +525,9 @@ fn collect_function_parameters(
     doc: &Document,
     symbols: &mut Vec<DocumentSymbol>,
 ) -> anyhow::Result<()> {
-    collect_sections(ctx, &node, doc, symbols, |_ctx, _child, _doc, _symbols| {
+    collect_sections(ctx, node, doc, symbols, |_ctx, _child, _doc, _symbols| {
         // We only collect sections and don't recurse inside parameters
-        return Ok(());
+        Ok(())
     })
 }
 

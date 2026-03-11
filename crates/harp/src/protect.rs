@@ -26,7 +26,7 @@ impl RProtect {
     /// SAFETY: Assumes that the R lock is held.
     pub unsafe fn add(&mut self, object: SEXP) -> SEXP {
         self.count += 1;
-        return Rf_protect(object);
+        Rf_protect(object)
     }
 }
 

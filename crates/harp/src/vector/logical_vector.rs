@@ -48,7 +48,7 @@ impl Vector for LogicalVector {
             let vector = Rf_allocVector(Self::SEXPTYPE, count as R_xlen_t);
             let dataptr = DATAPTR(vector) as *mut Self::Type;
             it.enumerate().for_each(|(index, value)| {
-                *(dataptr.offset(index as isize)) = *value.as_ref();
+                *(dataptr.add(index)) = *value.as_ref();
             });
 
             Self::new_unchecked(vector)

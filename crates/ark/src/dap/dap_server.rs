@@ -720,7 +720,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
             let fallback_sources = &state.fallback_sources;
             match &state.stack {
                 Some(stack) => stack
-                    .into_iter()
+                    .iter()
                     .map(|frame| into_dap_frame(frame, fallback_sources))
                     .collect(),
                 _ => vec![],

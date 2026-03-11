@@ -62,8 +62,8 @@ impl RCall {
 pub fn r_expr_quote(x: impl Into<SEXP>) -> RObject {
     let x = x.into();
     match r_typeof(x) {
-        SYMSXP | LANGSXP => return RFunction::new("base", "quote").add(x).call.build(),
-        _ => return x.into(),
+        SYMSXP | LANGSXP => RFunction::new("base", "quote").add(x).call.build(),
+        _ => x.into(),
     }
 }
 

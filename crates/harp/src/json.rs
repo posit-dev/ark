@@ -147,7 +147,7 @@ impl TryFrom<RObject> for Value {
                 // under the hood
                 let val = Option::<String>::try_from(obj)?;
                 match val {
-                    Some(value) => return Ok(Value::String(value)),
+                    Some(value) => Ok(Value::String(value)),
                     None => Ok(Value::Null),
                 }
             },
@@ -192,12 +192,10 @@ impl TryFrom<RObject> for Value {
                     // this identically to an unnamed list.
                     let mut all_empty = true;
                     if let Some(names) = &names {
-                        for name in names {
-                            if let Some(name) = name {
-                                if !name.is_empty() {
-                                    all_empty = false;
-                                    break;
-                                }
+                        for name in names.iter().flatten() {
+                            if !name.is_empty() {
+                                all_empty = false;
+                                break;
                             }
                         }
                     }
@@ -322,7 +320,7 @@ impl TryFrom<Vec<Value>> for RObject {
                 let val = RObject::try_from(val.clone())?;
                 SET_VECTOR_ELT(list.sexp, i as isize, val.sexp);
             }
-            return Ok(list);
+            Ok(list)
         }
     }
 }

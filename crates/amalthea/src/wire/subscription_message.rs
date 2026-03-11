@@ -45,9 +45,9 @@ impl SubscriptionMessage {
             ));
         }
 
-        let buf = bufs.get(0).unwrap();
+        let buf = bufs.first().unwrap();
 
-        if buf.len() == 0 {
+        if buf.is_empty() {
             return Err(crate::anyhow!(
                 "Subscription message on XPUB must be at least length 1 to determine subscribe/unsubscribe."
             ));
@@ -63,7 +63,7 @@ impl SubscriptionMessage {
         let buf = &buf[1..];
 
         // The rest of the message is the UTF-8 `subscription`
-        let subscription = match std::str::from_utf8(&buf) {
+        let subscription = match std::str::from_utf8(buf) {
             Ok(subscription) => subscription,
             Err(err) => {
                 return Err(Error::Utf8Error(

@@ -71,13 +71,13 @@ pub fn profile_histogram(
     let bin_edges = unwrap!(results.get("bin_edges"), None => {
         return Err(anyhow!("`bin_edges` were not computed."));
     });
-    let bin_edges_formatted = format_string(bin_edges.sexp, &format_options);
+    let bin_edges_formatted = format_string(bin_edges.sexp, format_options);
 
     // The quantile values should also be formattable
     let quantile_values = unwrap!(results.get("quantiles"), None => {
         return Err(anyhow!("`quantiles` were not computed"));
     });
-    let quantile_values_formatted = format_string(quantile_values.sexp, &format_options);
+    let quantile_values_formatted = format_string(quantile_values.sexp, format_options);
 
     // Counts the amount of elements for each bin.
     let bin_counts: Vec<i32> = unwrap!(results.get("bin_counts"), None => {
@@ -86,7 +86,7 @@ pub fn profile_histogram(
     .clone()
     .try_into()?;
 
-    if bin_counts.len() > 0 && bin_counts.len() != (bin_edges_formatted.len() - 1) {
+    if !bin_counts.is_empty() && bin_counts.len() != (bin_edges_formatted.len() - 1) {
         return Err(anyhow!(
             "`bin_counts` not compatible with `bin_edges`. `bin_counts.len()` ({}) and `bin_edges_formatted.len()` ({})",
             bin_counts.len(),
@@ -101,7 +101,7 @@ pub fn profile_histogram(
         .clone()
         .unwrap_or(vec![])
         .into_iter()
-        .zip(quantile_values_formatted.into_iter())
+        .zip(quantile_values_formatted)
         .map(|(q, value)| ColumnQuantileValue {
             q,
             value,

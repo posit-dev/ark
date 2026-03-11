@@ -358,7 +358,7 @@ pub fn read_connection(connection_file: &str) -> (ConnectionFile, Option<Registr
             log::info!("Loaded registration information from frontend in {connection_file}");
             log::info!("Registration data: {registration:?}");
             let connection = registration.as_connection_file();
-            return (connection, Some(registration));
+            (connection, Some(registration))
         },
         Err(err) => {
             panic!("Failed to load `connection_file` as both `ConnectionFile` and `RegistrationFile`:\n{err:?}")
@@ -716,7 +716,7 @@ fn handshake(
         iopub_port,
         hb_port,
     };
-    let message = JupyterMessage::create(message, None, &session);
+    let message = JupyterMessage::create(message, None, session);
 
     message.send(&registration_socket)?;
 
@@ -753,10 +753,10 @@ fn port_finalize(socket: &Socket, port: u16) -> crate::Result<u16> {
     if port == 0 {
         // Server provided the port, extract it from the socket
         // since we gave zmq a port number of `0` to begin with.
-        return port_from_socket(socket);
+        port_from_socket(socket)
     } else {
         // Client provided the port, just use that
-        return Ok(port);
+        Ok(port)
     }
 }
 

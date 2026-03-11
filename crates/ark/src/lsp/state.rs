@@ -93,7 +93,7 @@ where
     let mut fallback = || {
         let contents = std::fs::read_to_string(path)?;
         let document = Document::new(contents.as_str(), None);
-        return callback(&document);
+        callback(&document)
     };
 
     // If we have a cached copy of the document (because we're monitoring it)
@@ -112,7 +112,7 @@ where
         return fallback();
     };
 
-    return callback(document);
+    callback(document)
 }
 
 pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {

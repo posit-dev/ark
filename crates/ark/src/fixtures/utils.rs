@@ -39,7 +39,7 @@ pub fn point_and_offset_from_cursor(x: &str, cursor: u8) -> (String, Point, usiz
     let cursor_for_replace = str::from_utf8(&cursor_for_replace).unwrap();
 
     for (line_row, line) in lines.into_iter().enumerate() {
-        for (char_column, char) in line.as_bytes().into_iter().enumerate() {
+        for (char_column, char) in line.as_bytes().iter().enumerate() {
             if char == &cursor {
                 let x = x.replace(cursor_for_replace, "");
                 let point = Point {
@@ -51,7 +51,7 @@ pub fn point_and_offset_from_cursor(x: &str, cursor: u8) -> (String, Point, usiz
             }
         }
         // `+ 1` for the removed `\n` at the end of this line
-        offset += line.as_bytes().len() + 1;
+        offset += line.len() + 1;
     }
 
     panic!("`x` must include a `@` character!");

@@ -185,7 +185,7 @@ impl Console {
 
         // If we have `frames`, update the `last_start_line` with the context
         // frame's start line
-        if let Some(frame) = frames.get(0) {
+        if let Some(frame) = frames.first() {
             self.debug_last_line = Some(frame.start_line);
         }
 
@@ -694,7 +694,7 @@ fn breakpoint_label(uri: &UrlId, line: u32) -> String {
     let filename = uri
         .as_url()
         .path_segments()
-        .and_then(|s| s.last())
+        .and_then(|mut s| s.next_back())
         .unwrap_or("unknown");
     let display_line = line + 1;
     let display = format!("{filename}#{display_line}");

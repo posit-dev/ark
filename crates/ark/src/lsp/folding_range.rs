@@ -83,12 +83,12 @@ fn parse_ts_node(
             // Nested comment section handling
             if let Some(comment_line) = document.get_line(start.row) {
                 if let Err(err) =
-                    nested_processor(comment_stack, folding_ranges, start.row, &comment_line)
+                    nested_processor(comment_stack, folding_ranges, start.row, comment_line)
                 {
                     lsp::log_error!("Can't process comment: {err:?}");
                 };
-                region_processor(folding_ranges, region_marker, start.row, &comment_line);
-                cell_processor(folding_ranges, cell_marker, start.row, &comment_line);
+                region_processor(folding_ranges, region_marker, start.row, comment_line);
+                cell_processor(folding_ranges, cell_marker, start.row, comment_line);
             };
         },
         _ => (),

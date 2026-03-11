@@ -114,7 +114,7 @@ pub(crate) fn indent_edit(doc: &Document, line: usize) -> LspResult<Option<Vec<T
         parent if parent.is_binary_operator() => {
             let anchor = node
                 .ancestors()
-                .find(|n| n.parent().map_or(true, |p| !p.is_binary_operator()))
+                .find(|n| n.parent().is_none_or(|p| !p.is_binary_operator()))
                 .unwrap_or(parent); // Should not happen
 
             (node_line_indent(anchor), config.indent_size)
@@ -228,12 +228,12 @@ pub fn line_indent(text: &str, line: usize, config: &IndentationConfig) -> (usiz
 
     for next_char in line_text.chars() {
         if next_char == ' ' {
-            indent = indent + 1;
-            byte_indent = byte_indent + 1;
+            indent += 1;
+            byte_indent += 1;
             continue;
         } else if next_char == '\t' {
-            indent = indent + config.tab_width;
-            byte_indent = byte_indent + 1;
+            indent += config.tab_width;
+            byte_indent += 1;
             continue;
         }
         break;

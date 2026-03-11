@@ -149,7 +149,7 @@ fn build_context(uri: &Url, position: Position, state: &WorldState) -> anyhow::R
         Ok(Context { kind, symbol })
     });
 
-    return context;
+    context
 }
 
 fn find_references_in_folder(
@@ -159,7 +159,7 @@ fn find_references_in_folder(
     state: &WorldState,
 ) {
     let walker = WalkDir::new(path);
-    for entry in walker.into_iter().filter_entry(|entry| filter_entry(entry)) {
+    for entry in walker.into_iter().filter_entry(filter_entry) {
         let entry = unwrap!(entry, Err(_) => { continue; });
         let path = entry.path();
         let ext = unwrap!(path.extension(), None => { continue; });
@@ -193,11 +193,11 @@ fn find_references_in_document(
 
     let mut cursor = ast.walk();
     cursor.recurse(|node| {
-        if found_match(&node, contents, &context) {
+        if found_match(&node, contents, context) {
             add_reference(&node, document, path, locations).log_err();
         }
 
-        return true;
+        true
     });
     Ok(())
 }
@@ -226,5 +226,5 @@ pub(crate) fn find_references(
         }
     }
 
-    return Ok(locations);
+    Ok(locations)
 }

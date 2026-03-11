@@ -121,6 +121,12 @@ impl RLocalInteractive {
     }
 }
 
+impl Default for RLocalSandbox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RLocalSandbox {
     pub fn new() -> Self {
         Self {

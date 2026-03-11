@@ -771,8 +771,7 @@ impl AnnotationRewriter<'_> {
             }
 
             let bp_line = bp.line as i32;
-            let in_range =
-                start.map_or(true, |s| bp_line >= s) && end.map_or(true, |e| bp_line <= e);
+            let in_range = start.is_none_or(|s| bp_line >= s) && end.is_none_or(|e| bp_line <= e);
             if in_range {
                 bp.state = BreakpointState::Invalid(reason);
             }

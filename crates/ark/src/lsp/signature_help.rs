@@ -393,7 +393,7 @@ fn obj_label(x: SEXP) -> String {
         CPLXSXP => vec_label(x, cpl_to_pretty_string),
         STRSXP => vec_label(x, chr_to_pretty_string),
         VECSXP => list_label(),
-        _ => return type_label(x),
+        _ => type_label(x),
     }
 }
 

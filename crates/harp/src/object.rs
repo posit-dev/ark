@@ -78,7 +78,7 @@ unsafe fn protect(object: SEXP) -> SEXP {
 
     // Uncomment if debugging protection issues
     // trace!("Protecting cell:   {:?}", cell);
-    return cell;
+    cell
 }
 
 unsafe fn unprotect(cell: SEXP) {
@@ -516,7 +516,7 @@ impl RObject {
     }
 
     pub fn inherits(&self, class: &str) -> bool {
-        return r_inherits(self.sexp, class);
+        r_inherits(self.sexp, class)
     }
 
     pub fn class(&self) -> harp::Result<Option<Vec<String>>> {
@@ -593,7 +593,7 @@ impl From<bool> for RObject {
     fn from(value: bool) -> Self {
         unsafe {
             let value = Rf_ScalarLogical(value as c_int);
-            return RObject::new(value);
+            RObject::new(value)
         }
     }
 }
@@ -602,7 +602,7 @@ impl From<i32> for RObject {
     fn from(value: i32) -> Self {
         unsafe {
             let value = Rf_ScalarInteger(value as c_int);
-            return RObject::new(value);
+            RObject::new(value)
         }
     }
 }
@@ -620,7 +620,7 @@ impl TryFrom<i64> for RObject {
                 });
             }
             let value = Rf_ScalarInteger(value as c_int);
-            return Ok(RObject::new(value));
+            Ok(RObject::new(value))
         }
     }
 }
@@ -629,7 +629,7 @@ impl From<f64> for RObject {
     fn from(value: f64) -> Self {
         unsafe {
             let value = Rf_ScalarReal(value);
-            return RObject::new(value);
+            RObject::new(value)
         }
     }
 }
@@ -645,7 +645,7 @@ impl From<&str> for RObject {
             );
             SET_STRING_ELT(vector, 0, element);
             Rf_unprotect(1);
-            return RObject::new(vector);
+            RObject::new(vector)
         }
     }
 }
@@ -668,7 +668,7 @@ impl From<Vec<String>> for RObject {
                 );
                 SET_STRING_ELT(vector.sexp, idx as isize, value_str);
             }
-            return vector;
+            vector
         }
     }
 }
@@ -680,7 +680,7 @@ impl From<&Vec<i64>> for RObject {
             for idx in 0..values.len() {
                 SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
             }
-            return vector;
+            vector
         }
     }
 }
@@ -692,7 +692,7 @@ impl From<&Vec<f64>> for RObject {
             for idx in 0..values.len() {
                 SET_REAL_ELT(vector.sexp, idx as isize, values[idx] as c_double);
             }
-            return vector;
+            vector
         }
     }
 }
@@ -1005,9 +1005,9 @@ impl TryFrom<RObject> for Vec<Option<String>> {
             let n = Rf_xlength(*value);
             let mut result: Vec<Option<String>> = Vec::with_capacity(n as usize);
             for i in 0..n {
-                result.push(value.get_string(i as isize)?);
+                result.push(value.get_string(i)?);
             }
-            return Ok(result);
+            Ok(result)
         }
     }
 }
@@ -1042,7 +1042,7 @@ impl TryFrom<Vec<RObject>> for RObject {
                 r_list_poke(out.sexp, i as isize, value[i].sexp)
             }
 
-            return Ok(out);
+            Ok(out)
         }
     }
 }
@@ -1064,7 +1064,7 @@ impl TryFrom<&Vec<bool>> for RObject {
             }
         }
 
-        return Ok(out);
+        Ok(out)
     }
 }
 
@@ -1083,10 +1083,10 @@ impl TryFrom<&Vec<i32>> for RObject {
                 if x == R_NaInt {
                     return Err(crate::Error::MissingValueError);
                 }
-                *(v_out.offset(i as isize)) = x;
+                *(v_out.add(i)) = x;
             }
 
-            return Ok(out);
+            Ok(out)
         }
     }
 }
