@@ -65,7 +65,7 @@ use url::Url;
 /// representation, and a canonical URI (e.g. `/private/tmp/...` instead of
 /// `/tmp/...`) could be treated as a different file (e.g. open a new editor in
 /// the frontend instead of an existing one).
-
+///
 /// A canonicalized file URI for use as a stable identity key.
 ///
 /// Wraps a [`Url`] that has been canonicalized to resolve symlinks,

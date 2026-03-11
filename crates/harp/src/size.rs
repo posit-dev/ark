@@ -8,7 +8,6 @@
 use std::collections::HashSet;
 use std::ffi::c_void;
 use std::os::raw::c_int;
-use std::u32;
 
 use libc::c_double;
 use libr::*;
@@ -394,10 +393,7 @@ fn obj_size_tree(
 }
 
 fn is_linked_list(x: SEXP) -> bool {
-    match r_typeof(x) {
-        DOTSXP | LISTSXP | LANGSXP => true,
-        _ => false,
-    }
+    matches!(r_typeof(x), DOTSXP | LISTSXP | LANGSXP)
 }
 
 fn is_namespace(x: SEXP) -> bool {

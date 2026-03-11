@@ -5,6 +5,7 @@
  *
  */
 
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -27,7 +28,7 @@ pub struct RLibraries {
 }
 
 impl RLibraries {
-    pub fn from_r_home_path(path: &PathBuf) -> Self {
+    pub fn from_r_home_path(path: &Path) -> Self {
         let r_path = find_r_shared_library(&path, "R");
         let r = open_and_leak_r_shared_library(&r_path);
 
@@ -75,7 +76,7 @@ impl RLibraries {
     }
 }
 
-pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libloading::Error> {
+pub fn open_r_shared_library(path: &Path) -> Result<libloading::Library, libloading::Error> {
     // Check if we should use the standard DLL search path. Note that Windows' standard DLL
     // search path includes the PATH environment variable, so this is useful for R installations
     // that depend on DLLs other than those in system folders and R install folder, such as Conda.
@@ -103,7 +104,7 @@ pub fn open_r_shared_library(path: &PathBuf) -> Result<libloading::Library, libl
     library
 }
 
-pub fn find_r_shared_library_folder(path: &PathBuf) -> PathBuf {
+pub fn find_r_shared_library_folder(path: &Path) -> PathBuf {
     #[cfg(target_arch = "aarch64")]
     {
         // arm64 has a flatter structure
