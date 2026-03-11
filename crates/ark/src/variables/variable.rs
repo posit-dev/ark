@@ -409,7 +409,6 @@ impl WorkspaceVariableDisplayType {
     /// - value: The R object to create the display type and type info for.
     /// - include_length: Whether to include the length of the object in the
     ///   display type.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn from(value: SEXP, include_length: bool) -> Self {
         match Self::try_from_method(value, include_length) {
             Err(err) => log::error!(

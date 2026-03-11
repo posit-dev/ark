@@ -303,7 +303,7 @@ impl RVariables {
             let env = self.env.get().clone();
 
             let result = RFunction::new("base", "rm")
-                .param("list", CharacterVector::create(variables).cast())
+                .param("list", CharacterVector::create(variables))
                 .param("envir", env)
                 .call();
 

@@ -370,7 +370,7 @@ impl RObject {
 
     /// Address in hexadecimal format
     pub fn address(&self) -> String {
-        format!("{:p}", self.sexp as *const _)
+        format!("{:p}", self.sexp)
     }
 
     /// String accessor; get a string value from a vector of strings.
