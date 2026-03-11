@@ -522,24 +522,18 @@ pub(crate) fn node_is_namespaced_call(
 /// structure.
 pub(crate) fn node_find_parent_call<'tree>(node: &Node<'tree>) -> Option<Node<'tree>> {
     // Find the `Argument` node
-    let Some(node) = node.parent() else {
-        return None;
-    };
+    let node = node.parent()?;
     if !node.is_argument() {
         return None;
     }
 
     // Find the `Arguments` node
-    let Some(node) = node.parent() else {
-        return None;
-    };
+    let node = node.parent()?;
     if !node.is_arguments() {
         return None;
     }
 
-    let Some(node) = node.parent() else {
-        return None;
-    };
+    let node = node.parent()?;
     if !node.is_call() && !node.is_subset() && !node.is_subset2() {
         return None;
     }
@@ -555,15 +549,9 @@ pub(crate) fn node_arg_value<'tree>(
     if args.node_type() != NodeType::Argument {
         return None;
     }
-    let Some(name_node) = args.child_by_field_name("name") else {
-        return None;
-    };
-    let Some(value_node) = args.child_by_field_name("value") else {
-        return None;
-    };
-    let Some(name_text) = name_node.node_as_str(contents).log_err() else {
-        return None;
-    };
+    let name_node = args.child_by_field_name("name")?;
+    let value_node = args.child_by_field_name("value")?;
+    let name_text = name_node.node_as_str(contents).log_err()?;
     (name_text == name).then_some(value_node)
 }
 
