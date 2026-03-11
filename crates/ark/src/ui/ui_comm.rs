@@ -35,6 +35,7 @@ use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum UiCommMessage {
     Event(UiFrontendEvent),
     Request(UiCommFrontendRequest),
