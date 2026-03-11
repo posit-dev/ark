@@ -1464,9 +1464,7 @@ impl Console {
     }
 
     fn pop_pending(&mut self) -> Option<PendingInput> {
-        let Some(pending_inputs) = self.pending_inputs.as_mut() else {
-            return None;
-        };
+        let pending_inputs = self.pending_inputs.as_mut()?;
 
         let Some(input) = pending_inputs.pop() else {
             self.pending_inputs = None;
