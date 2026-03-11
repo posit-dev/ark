@@ -160,6 +160,8 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 - Keep `Cargo.toml` dependencies in alphabetical order.
 
+- All dependencies must be declared in the workspace root's `Cargo.toml`. Individual crates reference them with `dep.workspace = true`.
+
 - When writing tests, prefer simple assertion macros without custom error messages:
     - Use `assert_eq!(actual, expected);` instead of `assert_eq!(actual, expected, "custom message");`
     - Use `assert!(condition);` instead of `assert!(condition, "custom message");`

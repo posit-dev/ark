@@ -19,3 +19,12 @@ jobs:
 
       - name: "Check formatting"
         run: cargo +nightly fmt --all --check
+
+  dependencies:
+    name: "Check only workspace dependencies"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Check only workspace dependencies"
+        run: python3 ./scripts/check-only-workspace-dependencies.py

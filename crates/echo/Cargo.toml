@@ -8,9 +8,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-amalthea = { path = "../amalthea" }
-log = "0.4.17"
-env_logger = "0.10.0"
-serde_json = { version = "1.0.94", features = ["preserve_order"]}
-async-trait = "0.1.66"
-crossbeam = { version = "0.8.2", features = ["crossbeam-channel"] }
+amalthea.workspace = true
+async-trait.workspace = true
+crossbeam.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde_json.workspace = true
