@@ -13,6 +13,7 @@ use amalthea::wire::execute_request::JupyterPositronLocation;
 use amalthea::wire::execute_request::JupyterPositronPosition;
 use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::DummyArkFrontend;
+#[cfg(target_os = "macos")]
 use ark_test::SourceFile;
 use url::Url;
 
