@@ -181,11 +181,14 @@ mod tests {
 
     #[test]
     fn exported_symbols_are_sorted_and_unique() {
-        let mut ns = Namespace::default();
-        ns.exports = vec!["b".to_string(), "a".to_string(), "a".to_string()];
+        let ns = Namespace {
+            exports: vec!["b".to_string(), "a".to_string(), "a".to_string()],
+            ..Default::default()
+        };
 
-        let mut index = Index::default();
-        index.names = vec!["c".to_string(), "a".to_string(), "a".to_string()];
+        let index = Index {
+            names: vec!["c".to_string(), "a".to_string(), "a".to_string()],
+        };
 
         let pkg = new_package("foo", ns, index);
         assert_eq!(pkg.exported_symbols, vec!["a", "b", "c"]);

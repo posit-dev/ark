@@ -1003,7 +1003,7 @@ impl Console {
                     }
                 }
                 if let Ok(req) = kernel_request_rx.try_recv() {
-                    self.handle_kernel_request(req, &info);
+                    self.handle_kernel_request(req, info);
                     continue;
                 }
             }

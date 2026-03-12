@@ -790,7 +790,7 @@ mod tests {
 
         dap.did_change_document(&uri);
 
-        assert!(dap.breakpoints.get(&uri).is_none());
+        assert!(!dap.breakpoints.contains_key(&uri));
 
         let event1 = rx.try_recv().unwrap();
         let event2 = rx.try_recv().unwrap();
@@ -848,8 +848,8 @@ mod tests {
 
         dap.did_change_document(&uri1);
 
-        assert!(dap.breakpoints.get(&uri1).is_none());
-        assert!(dap.breakpoints.get(&uri2).is_some());
+        assert!(!dap.breakpoints.contains_key(&uri1));
+        assert!(dap.breakpoints.contains_key(&uri2));
 
         let event = rx.try_recv().unwrap();
         assert!(matches!(event, DapBackendEvent::BreakpointState {
@@ -897,6 +897,6 @@ mod tests {
         dap.did_change_document(&uri);
 
         // Breakpoints should still be removed
-        assert!(dap.breakpoints.get(&uri).is_none());
+        assert!(!dap.breakpoints.contains_key(&uri));
     }
 }
