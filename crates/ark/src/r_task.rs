@@ -454,7 +454,8 @@ pub(crate) fn spawn(task: RTask) {
 //    oneshot, letting the idle task finish and drop its capture cleanly.
 
 #[cfg(debug_assertions)]
-static PENDING_TASK_TX: Mutex<Option<futures::channel::oneshot::Sender<()>>> = Mutex::new(None);
+static TEST_PENDING_TASK_TX: Mutex<Option<futures::channel::oneshot::Sender<()>>> =
+    Mutex::new(None);
 
 /// Clone of the kernel-request channel sender, stored at startup when
 /// `IS_TESTING` is true. Allows R-callable test helpers (e.g.
@@ -481,7 +482,7 @@ unsafe extern "C-unwind" fn ps_test_spawn_pending_task() -> anyhow::Result<SEXP>
     harp::parse_eval_base("options(ark.test.task_polled = FALSE)")?;
 
     let (tx, rx) = futures::channel::oneshot::channel::<()>();
-    *PENDING_TASK_TX.lock().unwrap() = Some(tx);
+    *TEST_PENDING_TASK_TX.lock().unwrap() = Some(tx);
 
     spawn(RTask::idle(async move |_| {
         // Signal that we've been polled (capture is now active)
@@ -505,7 +506,7 @@ unsafe extern "C-unwind" fn ps_test_spawn_pending_task() -> anyhow::Result<SEXP>
 unsafe extern "C-unwind" fn ps_test_complete_pending_task() -> anyhow::Result<SEXP> {
     stdext::assert_testing();
 
-    if let Some(tx) = PENDING_TASK_TX.lock().unwrap().take() {
+    if let Some(tx) = TEST_PENDING_TASK_TX.lock().unwrap().take() {
         let _ = tx.send(());
     }
 
