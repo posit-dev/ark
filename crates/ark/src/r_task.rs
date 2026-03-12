@@ -530,9 +530,9 @@ unsafe extern "C-unwind" fn ps_test_spawn_sleeping_idle_tasks(
     let sleep_duration = Duration::from_millis(sleep_ms as u64);
 
     for _ in 0..n {
-        spawn_idle(async move |_capture| {
+        spawn(RTask::idle(async move |_capture| {
             std::thread::sleep(sleep_duration);
-        });
+        }));
     }
 
     Ok(libr::R_NilValue)
