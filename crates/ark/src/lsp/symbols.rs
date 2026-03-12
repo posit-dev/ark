@@ -1135,12 +1135,16 @@ outer <- 4
 
             let code = "# Section ----\nfoo <- 1";
 
-            let mut config = LspConfig::default();
-            config.workspace_symbols = WorkspaceSymbolsConfig {
-                include_comment_sections,
+            let config = LspConfig {
+                workspace_symbols: WorkspaceSymbolsConfig {
+                    include_comment_sections,
+                },
+                ..Default::default()
             };
-            let mut state = WorldState::default();
-            state.config = config;
+            let state = WorldState {
+                config,
+                ..Default::default()
+            };
 
             // Index the document
             let doc = Document::new(code, None);
