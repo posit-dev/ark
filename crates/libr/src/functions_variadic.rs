@@ -29,6 +29,7 @@ macro_rules! generate {
             paste::paste! {
                 $(#[doc=$doc])*
                 $(#[cfg($cfg)])*
+                #[allow(clippy::not_unsafe_ptr_arg_deref)]
                 pub fn $name($($pname: $pty), *) $(-> $ret)* {
                     unsafe { (*std::ptr::addr_of!([<$name _opt>])).unwrap_unchecked()($($pname), *) }
                 }
