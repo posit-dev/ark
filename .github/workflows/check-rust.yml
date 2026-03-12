@@ -34,6 +34,12 @@ jobs:
       - name: "Install clippy"
         run: rustup component add clippy
 
+      - name: Toolchain versions
+        run: |
+          rustc -Vv
+          cargo -V
+          cargo clippy -V
+
       - name: "Check clippy"
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
