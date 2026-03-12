@@ -68,7 +68,7 @@ impl Capabilities {
         code_action_literal_support: bool,
     ) -> Self {
         self.code_action_literal_support = code_action_literal_support;
-        return self;
+        self
     }
 
     pub(crate) fn workspace_edit_document_changes(&self) -> bool {
@@ -82,7 +82,7 @@ impl Capabilities {
         workspace_edit_document_changes: bool,
     ) -> Self {
         self.workspace_edit_document_changes = workspace_edit_document_changes;
-        return self;
+        self
     }
 
     pub(crate) fn code_action_provider_capability(&self) -> Option<CodeActionProviderCapability> {

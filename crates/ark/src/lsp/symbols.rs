@@ -1153,9 +1153,8 @@ outer <- 4
                 ..Default::default()
             };
             let result = super::symbols(&params, &state).unwrap();
-            let out = result.into_iter().map(|s| s.name).collect();
 
-            out
+            result.into_iter().map(|s| s.name).collect()
         }
 
         // Should include section when true

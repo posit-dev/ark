@@ -218,7 +218,7 @@ fn test_dap_error_during_debug() {
 
     // We're at browser(), stack should have 1 frame
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Should have at least 1 frame");
+    assert!(!stack.is_empty(), "Should have at least 1 frame");
 
     // Step to execute the error
     frontend.debug_send_step_command("n");

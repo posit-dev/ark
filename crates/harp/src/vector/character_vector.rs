@@ -150,7 +150,7 @@ mod test {
         crate::r_task(|| {
             let vector = CharacterVector::create(&["hello", "world"]);
             assert!(vector == ["hello", "world"]);
-            assert!(vector == &["hello", "world"]);
+            assert!(vector == ["hello", "world"]);
 
             let mut it = vector.iter();
 
@@ -160,7 +160,7 @@ mod test {
 
             let vector = CharacterVector::create(["hello".to_string(), "world".to_string()]);
             assert!(vector == ["hello", "world"]);
-            assert!(vector == &["hello", "world"]);
+            assert!(vector == ["hello", "world"]);
 
             assert!(vector.get_unchecked(0) == Some(String::from("hello")));
             assert!(vector.get_unchecked(1) == Some(String::from("world")));

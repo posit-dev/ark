@@ -446,7 +446,7 @@ f@n <- function(a, b) {}
         let text_edits = changes.get(&uri).unwrap();
         assert_eq!(text_edits.len(), 1);
 
-        let text_edit = text_edits.get(0).unwrap();
+        let text_edit = text_edits.first().unwrap();
         assert_eq!(text_edit.range.start.line, 1);
         assert_eq!(text_edit.range.start.character, 0);
         assert_eq!(text_edit.range.end, text_edit.range.start);

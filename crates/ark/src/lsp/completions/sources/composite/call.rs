@@ -300,7 +300,7 @@ mod tests {
 
             // We detect this as a `name` position and return all possible completions
             assert_eq!(completions.len(), 4);
-            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.first().unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
 
             // Right after `tab`
@@ -314,7 +314,7 @@ mod tests {
             // We detect this as a `name` position and return all possible completions
             // (TODO: Should not return `x` as a possible completion)
             assert_eq!(completions.len(), 4);
-            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.first().unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
         })
     }
@@ -354,7 +354,7 @@ mod tests {
             assert_eq!(completions.len(), 2);
 
             // Retains positional ordering
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "y = ");
 
             let completion = completions.get(1).unwrap();
@@ -418,7 +418,7 @@ mod tests {
             let completions = completions_from_call(&context).unwrap().unwrap();
 
             assert_eq!(completions.len(), 4);
-            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.first().unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
 
             // Partially typed argument
@@ -430,7 +430,7 @@ mod tests {
             let completions = completions_from_call(&context).unwrap().unwrap();
 
             assert_eq!(completions.len(), 4);
-            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.first().unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
 
             // Partially typed second argument
@@ -442,7 +442,7 @@ mod tests {
             let completions = completions_from_call(&context).unwrap().unwrap();
 
             assert_eq!(completions.len(), 4);
-            assert_eq!(completions.get(0).unwrap().label, "x = ");
+            assert_eq!(completions.first().unwrap().label, "x = ");
             assert_eq!(completions.get(1).unwrap().label, "table = ");
         })
     }

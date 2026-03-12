@@ -231,7 +231,7 @@ mod tests {
             assert_eq!(completions.len(), 2);
 
             // Note, no sorting done!
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "b".to_string());
 
             let completion = completions.get(1).unwrap();
@@ -342,7 +342,7 @@ mod tests {
             // All names of `foo`, the frontend filters them
             let completions = completions_from_dollar(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 2);
-            assert_eq!(completions.get(0).unwrap().label, String::from("abcd"));
+            assert_eq!(completions.first().unwrap().label, String::from("abcd"));
             assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
 
             let (text, point) = point_from_cursor("foo$a@bc");
@@ -352,7 +352,7 @@ mod tests {
             // Same as above
             let completions = completions_from_dollar(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 2);
-            assert_eq!(completions.get(0).unwrap().label, String::from("abcd"));
+            assert_eq!(completions.first().unwrap().label, String::from("abcd"));
             assert_eq!(completions.get(1).unwrap().label, String::from("wxyz"));
 
             // Clean up

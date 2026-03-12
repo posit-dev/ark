@@ -23,7 +23,7 @@ use harp::object::RObject;
 use stdext::assert_match;
 
 fn open_dummy_connection() -> (socket::comm::CommSocket, Receiver<IOPubMessage>) {
-    print!("testing!\n");
+    println!("testing!");
 
     let (comm_event_tx, comm_event_rx) = bounded::<CommEvent>(0);
     // Create a dummy iopub channel to receive responses.
@@ -91,7 +91,7 @@ fn socket_rpc(
     iopub_rx: &Receiver<IOPubMessage>,
     req: ConnectionsBackendRequest,
 ) -> ConnectionsBackendReply {
-    socket_rpc_request::<ConnectionsBackendRequest, ConnectionsBackendReply>(&socket, iopub_rx, req)
+    socket_rpc_request::<ConnectionsBackendRequest, ConnectionsBackendReply>(socket, iopub_rx, req)
 }
 
 #[test]

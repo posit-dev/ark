@@ -29,7 +29,7 @@ fn test_dap_source_and_step() {
 
     // Check stack at browser() - line 4, end_column 10 for `browser()`
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame");
+    assert!(!stack.is_empty(), "Expected at least 1 frame");
     assert_file_frame(&stack[0], &file.filename, 5, 12);
 
     frontend.debug_send_step_command("n");
@@ -38,7 +38,7 @@ fn test_dap_source_and_step() {
 
     // After stepping, we should be at line 5 (the `3` expression after browser())
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame after step");
+    assert!(!stack.is_empty(), "Expected at least 1 frame after step");
     assert_file_frame(&stack[0], &file.filename, 6, 4);
 
     // Exit with Q via Jupyter

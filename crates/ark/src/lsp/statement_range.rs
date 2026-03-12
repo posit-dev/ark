@@ -869,17 +869,17 @@ mod tests {
         let mut in_end = false;
 
         for (line_row, line) in lines.into_iter().enumerate() {
-            for (char_column, char) in line.as_bytes().into_iter().enumerate() {
+            for (char_column, char) in line.as_bytes().iter().enumerate() {
                 if in_start {
                     // We are in a `<`. Whatever happens next, we will exit the "in start" state.
                     in_start = false;
 
                     // Found a `<<`
                     if char == &mark_start {
-                        if !sel_end.is_none() {
+                        if sel_end.is_some() {
                             panic!("`<<` must be used before `>>`.");
                         }
-                        if !sel_start.is_none() {
+                        if sel_start.is_some() {
                             panic!("`<<` must only be used once.");
                         }
 
@@ -911,7 +911,7 @@ mod tests {
                         if sel_start.is_none() {
                             panic!("`<<` must be used before `>>`.");
                         }
-                        if !sel_end.is_none() {
+                        if sel_end.is_some() {
                             panic!("`>>` must only be used once.");
                         }
 
@@ -954,7 +954,7 @@ mod tests {
                 }
 
                 if char == &mark_cursor {
-                    if !cursor.is_none() {
+                    if cursor.is_some() {
                         panic!("`@` must only be used once.");
                     }
 

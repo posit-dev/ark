@@ -139,6 +139,20 @@ impl std::iter::Iterator for ListIter {
     }
 }
 
+impl TryFrom<SEXP> for List {
+    type Error = harp::Error;
+    fn try_from(value: SEXP) -> harp::Result<Self> {
+        super::try_r_vector_from_r_sexp(value)
+    }
+}
+
+impl TryFrom<&List> for Vec<RObject> {
+    type Error = harp::Error;
+    fn try_from(value: &List) -> harp::Result<Self> {
+        super::try_vec_from_r_vector(value)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::fixtures::r_task;
@@ -165,19 +179,5 @@ mod test {
             ));
             assert!(it.next().is_none());
         })
-    }
-}
-
-impl TryFrom<SEXP> for List {
-    type Error = harp::Error;
-    fn try_from(value: SEXP) -> harp::Result<Self> {
-        super::try_r_vector_from_r_sexp(value)
-    }
-}
-
-impl TryFrom<&List> for Vec<RObject> {
-    type Error = harp::Error;
-    fn try_from(value: &List) -> harp::Result<Self> {
-        super::try_vec_from_r_vector(value)
     }
 }

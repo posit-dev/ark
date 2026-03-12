@@ -677,7 +677,7 @@ mod tests {
             // ok SEXP
             let ok: harp::Result<RObject> = try_catch(|| Rf_ScalarInteger(42).into());
             assert_match!(ok, Ok(value) => {
-                assert_eq!(r_typeof(value.sexp), INTSXP as u32);
+                assert_eq!(r_typeof(value.sexp), INTSXP);
                 assert_eq!(INTEGER_ELT(value.sexp, 0), 42);
             });
 
@@ -763,8 +763,8 @@ mod tests {
             let result = exec_with_cleanup(
                 || {
                     // Create a simple R object and return it directly (T = RObject)
-                    let obj = RObject::from(Rf_ScalarInteger(42));
-                    obj
+
+                    RObject::from(Rf_ScalarInteger(42))
                 },
                 || {
                     *cleanup_called_clone.lock().unwrap() = true;
