@@ -109,7 +109,7 @@ pub trait Vector: Sized {
         Rf_xlength(self.data()) as usize
     }
 
-    unsafe fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.len() == 0
     }
 

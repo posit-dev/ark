@@ -93,7 +93,7 @@ impl RWeakRef {
             return None;
         }
 
-        Some(RObject::new({ libr::R_WeakRefValue(self.weak_ref.sexp) }))
+        Some(RObject::new(libr::R_WeakRefValue(self.weak_ref.sexp)))
     }
 }
 
