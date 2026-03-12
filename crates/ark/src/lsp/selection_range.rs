@@ -154,7 +154,7 @@ mod tests {
         let selections = selection_range(&tree, points).unwrap();
 
         // Two selections, the braces and the whole document
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(1, 0));
         assert_eq!(selection.range.end_point, Point::new(3, 1));
 
@@ -189,7 +189,7 @@ mod tests {
         let selections = selection_range(&tree, points).unwrap();
 
         // Just 1 selection, the whole document
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(0, 0));
         assert_eq!(selection.range.end_point, Point::new(6, 0));
         assert!(selection.parent.is_none());
@@ -221,7 +221,7 @@ fn <- function(x, arg) {
         let selections = selection_range(&tree, points).unwrap();
 
         // Braces for if statement
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(2, 20));
         assert_eq!(selection.range.end_point, Point::new(4, 3));
 
@@ -272,7 +272,7 @@ fn <- function() {
         let selections = selection_range(&tree, points).unwrap();
 
         // `f` identifier
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(2, 9));
         assert_eq!(selection.range.end_point, Point::new(2, 10));
 
@@ -306,7 +306,7 @@ fn(@a, b, c)
         let selections = selection_range(&tree, points).unwrap();
 
         // `<<a>>` `identifier` node
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(1, 3));
         assert_eq!(selection.range.end_point, Point::new(1, 4));
 
@@ -346,7 +346,7 @@ x[a, @fn(), c]
         let selections = selection_range(&tree, points).unwrap();
 
         // `<<fn>>` `identifier` node
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(1, 5));
         assert_eq!(selection.range.end_point, Point::new(1, 7));
 
@@ -391,7 +391,7 @@ x[[a, @fn(), c]]
         let selections = selection_range(&tree, points).unwrap();
 
         // `<<fn>>` `identifier` node
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(1, 6));
         assert_eq!(selection.range.end_point, Point::new(1, 8));
 
@@ -436,7 +436,7 @@ p@kg::fn(a)
         let selections = selection_range(&tree, points).unwrap();
 
         // `<<pkg>>` `identifier` node
-        let selection = selections.get(0).unwrap();
+        let selection = selections.first().unwrap();
         assert_eq!(selection.range.start_point, Point::new(1, 0));
         assert_eq!(selection.range.end_point, Point::new(1, 3));
 

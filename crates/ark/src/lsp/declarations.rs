@@ -131,26 +131,26 @@ mod test {
     fn test_declare_diagnostics() {
         let doc = Document::new("", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
-        assert_eq!(decls.diagnostics, true);
+        assert!(decls.diagnostics);
 
         let doc = Document::new("declare(ark(diagnostics(enable = TRUE)))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
-        assert_eq!(decls.diagnostics, true);
+        assert!(decls.diagnostics);
 
         let doc = Document::new("declare(ark(diagnostics(enable = NULL)))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
-        assert_eq!(decls.diagnostics, true);
+        assert!(decls.diagnostics);
 
         let doc = Document::new("declare(ark(diagnostics(enable = invalid())))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
-        assert_eq!(decls.diagnostics, true);
+        assert!(decls.diagnostics);
 
         let doc = Document::new("~declare()", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
-        assert_eq!(decls.diagnostics, true);
+        assert!(decls.diagnostics);
 
         let doc = Document::new("declare(ark(diagnostics(enable = FALSE)))", None);
         let decls = top_level_declare(&doc.ast, &doc.contents);
-        assert_eq!(decls.diagnostics, false);
+        assert!(!decls.diagnostics);
     }
 }

@@ -24,7 +24,6 @@ use amalthea::wire::kernel_info_request::KernelInfoRequest;
 use amalthea::wire::status::ExecutionState;
 use assert_matches::assert_matches;
 use dummy_frontend::DummyAmaltheaFrontend;
-use serde_json;
 
 #[test]
 fn test_amalthea_kernel_info() {
@@ -74,7 +73,7 @@ fn test_amalthea_shutdown_request() {
 
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
-    assert_eq!(reply.restart, false);
+    assert!(!reply.restart);
     frontend.recv_iopub_idle();
 
     // Test again with restart = true.
@@ -85,7 +84,7 @@ fn test_amalthea_shutdown_request() {
 
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
-    assert_eq!(reply.restart, true);
+    assert!(reply.restart);
     frontend.recv_iopub_idle();
 }
 

@@ -185,7 +185,7 @@ mod tests {
             assert_match!(
                 parse_status(&ParseInput::Text("")),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP);
                     assert_eq!(r_length(out.sexp), 0);
                 }
             );
@@ -194,15 +194,15 @@ mod tests {
             assert_match!(
                 parse_status(&ParseInput::Text("force(42)")),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP);
 
                     let call = libr::VECTOR_ELT(out.sexp, 0);
-                    assert_eq!(r_typeof(call), libr::LANGSXP as u32);
+                    assert_eq!(r_typeof(call), libr::LANGSXP);
                     assert_eq!(libr::Rf_xlength(call), 2);
                     assert_eq!(libr::CAR(call), r_symbol!("force"));
 
                     let arg = libr::CADR(call);
-                    assert_eq!(r_typeof(arg), libr::REALSXP as u32);
+                    assert_eq!(r_typeof(arg), libr::REALSXP);
                     assert_eq!(*libr::REAL(arg), 42.0);
                 }
             );
@@ -233,7 +233,7 @@ mod tests {
             assert_match!(
                 parse_status(&ParseInput::Text("x<-\r\n1\r\npi")),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP);
                     assert_eq!(r_stringify(out.sexp, "").unwrap(), "expression(x <- 1, pi)");
                 }
             );
@@ -242,7 +242,7 @@ mod tests {
             assert_match!(
                 parse_status(&ParseInput::Text(r#"'a\r\nb'"#)),
                 Ok(ParseResult::Complete(out)) => {
-                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP as u32);
+                    assert_eq!(r_typeof(out.sexp), libr::EXPRSXP);
                     assert_eq!(r_stringify(out.sexp, "").unwrap(), r#"expression("a\r\nb")"#);
                 }
             );
@@ -257,7 +257,7 @@ mod tests {
                 "foo\nbar"
             );
 
-            let input = srcref::SrcFile::try_from("foo\nbar").unwrap();
+            let input = srcref::SrcFile::from("foo\nbar");
             assert_eq!(
                 parse_input_as_string(&ParseInput::SrcFile(&input)).unwrap(),
                 "foo\nbar"

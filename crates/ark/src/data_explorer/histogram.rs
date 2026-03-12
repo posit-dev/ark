@@ -248,7 +248,7 @@ mod tests {
         .unwrap();
 
         assert_match!(hist, ColumnHistogram { quantiles, .. }  => {
-            format_string(RObject::try_from(expected).unwrap().sexp, &default_options()).
+            format_string(RObject::from(expected).sexp, &default_options()).
             into_iter().
             zip(quantiles.into_iter()).
             for_each(|(expected, quantile)| {
@@ -275,7 +275,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(freq_table, ColumnFrequencyTable {
-            values: format_string(RObject::try_from(values).unwrap().sexp, &default_options())
+            values: format_string(RObject::from(values).sexp, &default_options())
                 .into_iter()
                 .map(ColumnValue::FormattedValue)
                 .collect(),

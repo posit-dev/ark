@@ -449,7 +449,7 @@ mod tests {
         let newlines = "\n".repeat(20);
         let text = String::from("('") + newlines.as_str() + ")";
         let diagnostics = text_diagnostics(text.as_str());
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 0));
@@ -459,21 +459,21 @@ mod tests {
     fn test_unmatched_call_delimiter() {
         let diagnostics = text_diagnostics("match(a, b");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 5));
         assert_eq!(diagnostic.range.end, Position::new(0, 6));
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[a, b");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
         assert_eq!(diagnostic.range.end, Position::new(0, 4));
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("foo[[a, b");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         assert_eq!(diagnostic.range.start, Position::new(0, 3));
         assert_eq!(diagnostic.range.end, Position::new(0, 5));
         insta::assert_snapshot!(diagnostic.message);
@@ -494,7 +494,7 @@ identity(1)
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the unmatched `(`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(1, 5));
         assert_eq!(diagnostic.range.end, Position::new(1, 6));
@@ -504,12 +504,12 @@ identity(1)
     fn test_unmatched_braces() {
         let diagnostics = text_diagnostics("{");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("{ 1 + 2");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("{}");
@@ -523,24 +523,24 @@ identity(1)
     fn test_unmatched_parentheses() {
         let diagnostics = text_diagnostics("(");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("( 1 + 2");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
         // tree-sitter grammar knows R doesn't allow empty `()` without a body
         let diagnostics = text_diagnostics("()");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
         // tree-sitter grammar knows R doesn't allow >1 expressions in `()`
         let diagnostics = text_diagnostics("(1+2\n1+2)");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
 
         let diagnostics = text_diagnostics("( 1 + 2 )");
@@ -553,7 +553,7 @@ identity(1)
         // but it should always be decent
         let diagnostics = text_diagnostics("sum(1 * 2 + )");
         assert_eq!(diagnostics.len(), 1);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 12));
         assert_eq!(diagnostic.range.end, Position::new(0, 13));
@@ -561,7 +561,7 @@ identity(1)
 
     #[test]
     fn test_unmatched_closing_token() {
-        let close = vec!["}", ")", "]"];
+        let close = ["}", ")", "]"];
 
         for delimiter in close.iter() {
             // i.e. `1 + 1 }`
@@ -571,7 +571,7 @@ identity(1)
             assert_eq!(diagnostics.len(), 1);
 
             // Diagnostic highlights the `{delimiter}`
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
             assert_eq!(diagnostic.range.start, Position::new(0, 6));
             assert_eq!(diagnostic.range.end, Position::new(0, 7));
@@ -584,7 +584,7 @@ identity(1)
         // Should target the `}` specifically, not `+ }`.
         let text = "1 + }";
         let diagnostics = text_diagnostics(text);
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 4));
         assert_eq!(diagnostic.range.end, Position::new(0, 5));
@@ -602,7 +602,7 @@ identity(1)
         let diagnostics = text_diagnostics(text);
         assert_eq!(diagnostics.len(), 1);
 
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(3, 0));
         assert_eq!(diagnostic.range.end, Position::new(3, 1));
@@ -620,7 +620,7 @@ function(x {
         let diagnostics = text_diagnostics(text);
         assert_eq!(diagnostics.len(), 2);
 
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(1, 11));
         assert_eq!(diagnostic.range.end, Position::new(1, 12));
@@ -639,7 +639,7 @@ function(x {
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the `for`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 3));
@@ -653,7 +653,7 @@ function(x {
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the `while`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 5));
@@ -667,7 +667,7 @@ function(x {
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the `repeat`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(1, 0));
         assert_eq!(diagnostic.range.end, Position::new(1, 6));
@@ -682,7 +682,7 @@ function(x {
 
         // Diagnostic highlights the `if`
         // We call if an if "body" even though tree-sitter calls it a "consequence"
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 2));
@@ -696,7 +696,7 @@ function(x {
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the `function`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 8));
@@ -708,7 +708,7 @@ function(x {
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the `function`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 0));
         assert_eq!(diagnostic.range.end, Position::new(0, 1));
@@ -722,7 +722,7 @@ function(x {
         assert_eq!(diagnostics.len(), 1);
 
         // Diagnostic highlights the `2`
-        let diagnostic = diagnostics.get(0).unwrap();
+        let diagnostic = diagnostics.first().unwrap();
         insta::assert_snapshot!(diagnostic.message);
         assert_eq!(diagnostic.range.start, Position::new(0, 9));
         assert_eq!(diagnostic.range.end, Position::new(0, 10));

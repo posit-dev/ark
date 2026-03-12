@@ -19,9 +19,9 @@ mod tests {
 
     #[test]
     fn test_any() {
-        assert!(any!() == false);
-        assert!(any!(false false) == false);
-        assert!(any!(true false) == true);
-        assert!(any!(true true) == true);
+        assert!(!any!());
+        assert!(!any!(false false));
+        assert!(any!(true false));
+        assert!(any!(true true));
     }
 }

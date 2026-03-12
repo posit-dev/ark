@@ -146,16 +146,16 @@ mod tests {
     #[test]
     fn test_parse_data() {
         crate::r_task(|| {
-            let srcfile = srcref::SrcFile::try_from("foo\nbar").unwrap();
+            let srcfile = srcref::SrcFile::from("foo\nbar");
             let exprs = parse::parse_exprs_ext(&parse::ParseInput::SrcFile(&srcfile)).unwrap();
             let srcrefs: Vec<harp::srcref::SrcRef> = exprs.srcrefs().unwrap();
 
             let parse_data = ParseData::from_srcfile(&srcfile).unwrap();
             let top_level = parse_data.filter_top_level();
 
-            let parse_first = top_level.nodes.get(0).unwrap();
+            let parse_first = top_level.nodes.first().unwrap();
             let parse_second = top_level.nodes.get(1).unwrap();
-            let srcref_first = srcrefs.get(0).unwrap();
+            let srcref_first = srcrefs.first().unwrap();
             let srcref_second = srcrefs.get(1).unwrap();
 
             assert_eq!(parse_first.line, srcref_first.line);

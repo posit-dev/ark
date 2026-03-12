@@ -127,13 +127,10 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
     let inner = r_task(|| -> anyhow::Result<TestInner> {
         let object = harp::parse_eval_global(expr)?;
 
-        let binding = match bind {
-            Some(name) => Some(DataObjectEnvInfo {
-                name: name.to_string(),
-                env: RObject::view(R_ENVS.global),
-            }),
-            None => None,
-        };
+        let binding = bind.map(|name| DataObjectEnvInfo {
+            name: name.to_string(),
+            env: RObject::view(R_ENVS.global),
+        });
         let handler = RDataExplorer::new(String::from("obj"), object, binding)?;
         Ok(TestInner(handler, ctx))
     })?;
@@ -804,8 +801,8 @@ fn expect_column_profile_results(
     let reply: DataExplorerBackendReply = match msg {
         CommMsg::Rpc { data: value, .. } => {
             println!("<-- {:?}", value);
-            let reply = serde_json::from_value(value).unwrap();
-            reply
+
+            serde_json::from_value(value).unwrap()
         },
         _ => panic!("Unexpected Comm Message"),
     };
@@ -1058,7 +1055,7 @@ fn test_summary_stats() {
     // Request summary stats for all 3 columns
     let req = RequestBuilder::get_column_profiles(
         String::from("id"),
-        (0..3).map(|i| ProfileBuilder::summary_stats(i)).collect(),
+        (0..3).map(ProfileBuilder::summary_stats).collect(),
     );
 
     expect_column_profile_results(&setup, req, |data| {
@@ -2010,7 +2007,7 @@ fn test_row_names_matrix() {
     });
     assert_match!(setup.rpc(DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
-            assert_eq!(state.has_row_labels, true)
+            assert!(state.has_row_labels)
         }
     );
 
@@ -2029,7 +2026,7 @@ fn test_row_names_matrix() {
             .unwrap();
     assert_match!(setup2.rpc(DataExplorerBackendRequest::GetState),
         DataExplorerBackendReply::GetStateReply(state) => {
-            assert_eq!(state.has_row_labels, false)
+            assert!(!state.has_row_labels)
         }
     );
 }
@@ -2057,14 +2054,12 @@ fn test_schema_identification() {
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 6);
 
-            let expected_types = vec![
-                (ColumnDisplayType::Floating, "dbl"),
+            let expected_types = [(ColumnDisplayType::Floating, "dbl"),
                 (ColumnDisplayType::String, "str"),
                 (ColumnDisplayType::Boolean, "lgl"),
                 (ColumnDisplayType::String, "fct(3)"),
                 (ColumnDisplayType::Date, "Date"),
-                (ColumnDisplayType::Datetime, "POSIXct"),
-            ];
+                (ColumnDisplayType::Datetime, "POSIXct")];
 
             for (i, (expected_display, expected_name)) in expected_types.iter().enumerate() {
                 assert_eq!(schema.columns[i].type_display, *expected_display);
@@ -2886,14 +2881,12 @@ fn test_empty_data_frame_schema() {
         DataExplorerBackendReply::GetSchemaReply(schema) => {
             assert_eq!(schema.columns.len(), 6);
 
-            let expected_types = vec![
-                (ColumnDisplayType::Floating, "dbl"),
+            let expected_types = [(ColumnDisplayType::Floating, "dbl"),
                 (ColumnDisplayType::String, "str"),
                 (ColumnDisplayType::Boolean, "lgl"),
                 (ColumnDisplayType::String, "fct(0)"),
                 (ColumnDisplayType::Date, "Date"),
-                (ColumnDisplayType::Datetime, "POSIXct"),
-            ];
+                (ColumnDisplayType::Datetime, "POSIXct")];
 
             for (i, (expected_display, expected_name)) in expected_types.iter().enumerate() {
                 assert_eq!(schema.columns[i].type_display, *expected_display);
