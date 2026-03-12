@@ -23,9 +23,9 @@ use libr::SEXP;
 use url::Url;
 
 use crate::console::Console;
-use crate::dap::dap::Breakpoint;
-use crate::dap::dap::BreakpointState;
-use crate::dap::dap::InvalidReason;
+use crate::dap::dap_state::Breakpoint;
+use crate::dap::dap_state::BreakpointState;
+use crate::dap::dap_state::InvalidReason;
 use crate::url::UrlId;
 
 /// Function name used for auto-stepping over injected calls such as breakpoints

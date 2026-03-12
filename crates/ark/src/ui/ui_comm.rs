@@ -1,5 +1,5 @@
 //
-// ui.rs
+// ui_comm.rs
 //
 // Copyright (C) 2023-2026 by Posit Software, PBC
 //

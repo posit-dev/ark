@@ -1,5 +1,5 @@
 //
-// dap.rs
+// dap_state.rs
 //
 // Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //

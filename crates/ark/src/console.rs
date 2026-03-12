@@ -134,7 +134,7 @@ pub use console_repl::SessionMode;
 
 use crate::comm_handler::ConsoleComm;
 use crate::comm_handler::EnvironmentChanged;
-use crate::dap::dap::Breakpoint;
+use crate::dap::dap_state::Breakpoint;
 use crate::dap::Dap;
 use crate::help::message::HelpEvent;
 use crate::help::r_help::RHelp;
