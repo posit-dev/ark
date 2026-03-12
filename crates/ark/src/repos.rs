@@ -278,14 +278,14 @@ fn get_ppm_linux_repo(repo_url: Option<url::Url>, linux_name: String) -> anyhow:
 fn get_p3m_linux_codename(id: String, version: String, version_codename: String) -> String {
     // For Debian and Ubuntu, we can just use the codename
     if id == "debian" || id == "ubuntu" || id == "pop" {
-        return version_codename.to_string();
+        version_codename.to_string()
     } else if id == "rhel" {
         // For RHEL, we use the id and major version number
         let parts: Vec<&str> = version.split('.').collect();
         if parts.len() > 1 {
-            return format!("{}{}", id, parts[0]);
+            format!("{}{}", id, parts[0])
         } else {
-            return format!("{}{}", id, version);
+            format!("{}{}", id, version)
         }
     } else if id == "sles" || id.starts_with("opensuse") {
         // For sles and opensuse we use the id and major and minor version number
@@ -294,12 +294,12 @@ fn get_p3m_linux_codename(id: String, version: String, version_codename: String)
 
         let parts: Vec<&str> = version.split('.').collect();
         if parts.len() > 1 {
-            return format!("{}{}{}", distro_id, parts[0], parts[1]);
+            format!("{}{}{}", distro_id, parts[0], parts[1])
         } else {
-            return format!("{}{}", distro_id, version);
+            format!("{}{}", distro_id, version)
         }
     } else {
-        return String::new();
+        String::new()
     }
 }
 
@@ -322,7 +322,7 @@ fn get_ppm_binary_package_repo(repo_url: Option<url::Url>) -> String {
         if let Ok(file) = File::open("/etc/os-release") {
             let reader = BufReader::new(file);
 
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if version_codename.is_empty() && line.starts_with(version_codename_key) {
                     version_codename = line[version_codename_key.len()..].to_string();
                 } else if id.is_empty() && line.starts_with(id_key) {
