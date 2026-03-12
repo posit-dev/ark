@@ -20,6 +20,29 @@ jobs:
       - name: "Check formatting"
         run: cargo +nightly fmt --all --check
 
+  clippy:
+    name: "Check clippy"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: "Install clippy"
+        run: rustup component add clippy
+
+      - name: Toolchain versions
+        run: |
+          rustc -Vv
+          cargo -V
+          cargo clippy -V
+
+      - name: "Check clippy"
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
   dependencies:
     name: "Check only workspace dependencies"
     runs-on: ubuntu-latest

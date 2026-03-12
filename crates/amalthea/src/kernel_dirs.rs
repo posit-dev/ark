@@ -30,23 +30,12 @@ pub fn jupyter_dir() -> Option<PathBuf> {
 #[cfg(not(target_os = "macos"))]
 fn jupyter_xdg_dir() -> Option<PathBuf> {
     // On Windows/Linux, the path is XDG_DATA_DIR/jupyter
-    if let Some(path) = dirs::data_dir() {
-        Some(path.join("jupyter"))
-    } else {
-        None
-    }
+    dirs::data_dir().map(|path| path.join("jupyter"))
 }
 
 #[cfg(target_os = "macos")]
 fn jupyter_xdg_dir() -> Option<PathBuf> {
     // On MacOS, XDG_DATA_DIR is ~/Library/Application Support, but Jupyter
     // looks in ~/Library/Jupyter.
-    if let Some(path) = dirs::data_dir() {
-        if let Some(parent) = path.parent() {
-            return Some(parent.join("Jupyter"));
-        } else {
-            return None;
-        }
-    }
-    None
+    dirs::data_dir().and_then(|path| path.parent().map(|parent| parent.join("Jupyter")))
 }
