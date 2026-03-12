@@ -52,7 +52,10 @@ macro_rules! assert_match {
     };
 
     ($expression:expr, $pattern:pat_param) => {
-        assert!(matches!($expression, $pattern))
+        #[allow(clippy::redundant_pattern_matching)]
+        {
+            assert!(matches!($expression, $pattern))
+        }
     };
 }
 
