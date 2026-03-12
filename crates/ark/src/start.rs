@@ -59,6 +59,11 @@ pub fn start_kernel(
     let (r_request_tx, r_request_rx) = bounded::<RRequest>(1);
     let (kernel_request_tx, kernel_request_rx) = bounded::<KernelRequest>(1);
 
+    #[cfg(debug_assertions)]
+    if stdext::IS_TESTING {
+        crate::r_task::set_test_kernel_request_tx(kernel_request_tx.clone());
+    }
+
     // Async communication channel with the R thread (Console)
     let (console_notification_tx, console_notification_rx) =
         tokio::sync::mpsc::unbounded_channel::<ConsoleNotification>();

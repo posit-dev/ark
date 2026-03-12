@@ -989,13 +989,22 @@ impl Console {
             // reset the flag
             set_interrupts_pending(false);
 
-            // First handle execute requests outside of `select` to ensure they
-            // have priority. `select` chooses at random.
+            // First handle execute requests and kernel requests outside of
+            // `select` to ensure they have priority over idle tasks. `select`
+            // chooses at random among ready channels, including idle tasks,
+            // which could include e.g. a lot of data explorer column profile
+            // computations. The intent is for idle tasks to operate in the
+            // background while R is idle and there is no user requests to
+            // handle, so we should handle those with absolute priority.
             if let WaitFor::ExecuteRequest = wait_for {
                 if let Ok(req) = r_request_rx.try_recv() {
                     if let Some(input) = self.handle_execute_request(req, info, buf, buflen) {
                         return input;
                     }
+                }
+                if let Ok(req) = kernel_request_rx.try_recv() {
+                    self.handle_kernel_request(req, &info);
+                    continue;
                 }
             }
 
