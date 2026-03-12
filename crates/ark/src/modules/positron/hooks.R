@@ -162,11 +162,7 @@ check_version <- function(pkg) {
 
 #' @export
 .ps.run_session_init_hooks <- function(is_new_session) {
-    hook_names <- c(
-        "positron.sessionInit",
-        "rstudio.sessionInit",
-        "ark.sessionInit"
-    )
+    hook_names <- c("positron.sessionInit", "rstudio.sessionInit", "ark.sessionInit")
 
     for (hook_name in hook_names) {
         hooks <- getHook(hook_name)
