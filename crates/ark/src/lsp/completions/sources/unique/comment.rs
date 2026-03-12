@@ -203,7 +203,7 @@ fn test_roxygen_comment() {
             .iter()
             .filter(|item| item.label == "description")
             .collect();
-        let description = description.get(0).unwrap();
+        let description = description.first().unwrap();
         assert_eq!(
             description.insert_text,
             Some(String::from(

@@ -539,7 +539,7 @@ mod tests {
                 thousands_sep: None,
                 max_value_length: 100,
             };
-            let expected = vec![
+            let expected = [
                 "0.00",
                 "1.00",
                 "1.01",
@@ -567,7 +567,7 @@ mod tests {
                 max_value_length: 100,
             };
 
-            let expected = vec![
+            let expected = [
                 "0.000",
                 "1.000",
                 "1.010",

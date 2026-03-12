@@ -146,7 +146,7 @@ mod tests {
                 .unwrap();
             assert_eq!(completions.len(), 2);
 
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "b".to_string());
             // Not enquoting, so uses `label` directly
             assert_eq!(completion.insert_text, None);
@@ -238,7 +238,7 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(completions.len(), 2);
-            assert_eq!(completions.get(0).unwrap().label, "a".to_string());
+            assert_eq!(completions.first().unwrap().label, "a".to_string());
             assert_eq!(completions.get(1).unwrap().label, "b".to_string());
 
             // Clean up

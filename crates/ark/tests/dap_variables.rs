@@ -25,7 +25,7 @@ local({
 
     // Get the stack trace to get frame_id
     let stack = dap.stack_trace();
-    assert!(stack.len() >= 1, "Expected at least 1 frame");
+    assert!(!stack.is_empty(), "Expected at least 1 frame");
     let frame_id = stack[0].id;
 
     // Get scopes for the frame

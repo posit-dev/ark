@@ -59,6 +59,6 @@ mod test {
         let value = ["hello"];
         let slice = value.as_slice();
         assert!(slice.len() == 1);
-        assert!(*slice.get(0).unwrap() == "hello");
+        assert!(*slice.first().unwrap() == "hello");
     }
 }
