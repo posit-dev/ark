@@ -68,6 +68,7 @@ pub mod graphapp {
 ///
 /// NOTE: Must be `Copy`, as you can't move out of a raw pointer, so every access to
 /// the pointer value generates a copy, but it should be cheap.
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn get<T>(x: *mut T) -> T
 where
     T: Copy,
@@ -76,6 +77,7 @@ where
 }
 
 /// Set the value of a mutable global using its pointer
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn set<T>(x: *mut T, value: T) {
     unsafe { *x = value };
 }
