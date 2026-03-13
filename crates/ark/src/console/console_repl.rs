@@ -2790,3 +2790,16 @@ unsafe extern "C-unwind" fn ps_get_virtual_document(uri: SEXP) -> anyhow::Result
         None => Ok(RObject::null().sexp),
     }
 }
+
+/// Returns the currently active execute request as an R named list,
+/// or NULL if no execute request is in flight.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_active_request() -> anyhow::Result<SEXP> {
+    let Some(req) = Console::get().get_active_execute_request() else {
+        return Ok(libr::R_NilValue);
+    };
+
+    let json = serde_json::to_value(req)?;
+    let r_obj = RObject::try_from(json)?;
+    Ok(r_obj.sexp)
+}
