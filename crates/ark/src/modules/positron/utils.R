@@ -56,8 +56,11 @@
     ark_version
 }
 
-#' @export
-.ps.active_request <- function() {
+# Return the active (in flight) execute_request data structure; useful for
+# inspecting what metadata has been sent from the front end.
+#
+# Internal utility; invoke with: `.ps.internal(active_request())`
+active_request <- function() {
     .ps.Call("ps_active_request")
 }
 
