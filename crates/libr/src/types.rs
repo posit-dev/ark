@@ -58,7 +58,7 @@ pub struct SEXPREC {
 /// across FFI boundaries.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
-pub struct SEXP(pub *mut SEXPREC);
+pub struct SEXP(*mut SEXPREC);
 
 impl SEXP {
     pub const fn null() -> Self {
