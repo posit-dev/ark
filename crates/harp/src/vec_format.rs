@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_vec_format_methods() {
-        crate::r_task(|| unsafe {
+        crate::r_task(|| {
             let x = RObject::from(r_alloc_integer(2));
             r_int_poke(x.sexp, 0, 1);
             r_int_poke(x.sexp, 1, r_int_na());

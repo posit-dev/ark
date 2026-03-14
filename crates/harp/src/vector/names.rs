@@ -17,19 +17,17 @@ pub struct Names {
 
 impl Names {
     pub fn new(x: SEXP, default: impl Fn(isize) -> String + 'static) -> Self {
-        unsafe {
-            let names = RObject::view(x).get_attribute_names();
-            let default = Box::new(default);
-            match names {
-                Some(names) => Self {
-                    data: Some(CharacterVector::new_unchecked(names.sexp)),
-                    default,
-                },
-                None => Self {
-                    data: None,
-                    default,
-                },
-            }
+        let names = RObject::view(x).get_attribute_names();
+        let default = Box::new(default);
+        match names {
+            Some(names) => Self {
+                data: Some(CharacterVector::new_unchecked(names.sexp)),
+                default,
+            },
+            None => Self {
+                data: None,
+                default,
+            },
         }
     }
 

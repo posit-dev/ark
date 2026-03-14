@@ -359,7 +359,7 @@ fn get_ppm_binary_package_repo(repo_url: Option<url::Url>) -> String {
 
 #[harp::register]
 pub extern "C-unwind" fn ps_get_ppm_binary_url(url: SEXP) -> anyhow::Result<SEXP> {
-    let url_string = unsafe {
+    let url_string = {
         RObject::view(url)
             .to::<String>()
             .context("`url` must be a string")?

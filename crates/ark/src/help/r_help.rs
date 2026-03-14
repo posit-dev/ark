@@ -235,7 +235,7 @@ impl RHelp {
         let topic = HelpTopic::parse(topic);
 
         let found = match topic {
-            HelpTopic::Simple(symbol) => r_task(|| unsafe {
+            HelpTopic::Simple(symbol) => r_task(|| {
                 // Try evaluating the help handler first and then fall back to
                 // the default help topic display function.
 

@@ -53,7 +53,7 @@ impl Environment {
     /// environment
     pub fn new_empty() -> Self {
         // Passing `size = 0` causes default size to be picked up
-        let env = unsafe { libr::R_NewEnv(R_ENVS.empty, 1, 0) };
+        let env = libr::R_NewEnv(R_ENVS.empty, 1, 0);
         Self::new(RObject::new(env))
     }
 
@@ -85,9 +85,7 @@ impl Environment {
     }
 
     pub fn bind(&self, name: RSymbol, value: &RObject) {
-        unsafe {
-            Rf_defineVar(name.sexp, value.sexp, self.inner.sexp);
-        }
+        Rf_defineVar(name.sexp, value.sexp, self.inner.sexp);
     }
 
     pub fn force_bind(&self, name: RSymbol, value: &RObject) {
@@ -108,7 +106,7 @@ impl Environment {
     }
 
     pub fn exists(&self, name: impl Into<RSymbol>) -> bool {
-        unsafe { libr::R_existsVarInFrame(self.inner.sexp, name.into().sexp) != 0 }
+        libr::R_existsVarInFrame(self.inner.sexp, name.into().sexp) != 0
     }
 
     pub fn find(&self, name: impl Into<RSymbol>) -> harp::Result<SEXP> {
@@ -187,8 +185,7 @@ impl Environment {
         // `all = all_names`, `sorted = false`
         // We don't sort the elements when fetchhing from R, but sort them
         // later in Rust
-        let names =
-            RObject::from(unsafe { R_lsInternal3(self.inner.sexp, all_names, Rboolean_FALSE) });
+        let names = RObject::from(R_lsInternal3(self.inner.sexp, all_names, Rboolean_FALSE));
         let mut names = Vec::<String>::try_from(names).unwrap_or(Vec::new());
         names.sort();
 
@@ -196,29 +193,23 @@ impl Environment {
     }
 
     pub fn lock(&self, bindings: bool) {
-        unsafe {
-            libr::R_LockEnvironment(self.inner.sexp, bindings.into());
-        }
+        libr::R_LockEnvironment(self.inner.sexp, bindings.into());
     }
 
     pub fn lock_binding(&self, name: RSymbol) {
-        unsafe {
-            libr::R_LockBinding(name.sexp, self.inner.sexp);
-        }
+        libr::R_LockBinding(name.sexp, self.inner.sexp);
     }
 
     pub fn unlock_binding(&self, name: RSymbol) {
-        unsafe {
-            libr::R_unLockBinding(name.sexp, self.inner.sexp);
-        }
+        libr::R_unLockBinding(name.sexp, self.inner.sexp);
     }
 
     pub fn is_locked(&self) -> bool {
-        unsafe { libr::R_EnvironmentIsLocked(self.inner.sexp) != 0 }
+        libr::R_EnvironmentIsLocked(self.inner.sexp) != 0
     }
 
     pub fn is_locked_binding(&self, name: RSymbol) -> bool {
-        unsafe { libr::R_BindingIsLocked(name.sexp, self.inner.sexp) != 0 }
+        libr::R_BindingIsLocked(name.sexp, self.inner.sexp) != 0
     }
 
     pub fn is_active(&self, name: RSymbol) -> harp::Result<bool> {
@@ -282,16 +273,14 @@ mod tests {
             .call()
             .unwrap();
 
-        unsafe {
-            let sym = r_symbol!("a");
-            Rf_defineVar(sym, Rf_ScalarInteger(42), test_env.sexp);
+        let sym = r_symbol!("a");
+        Rf_defineVar(sym, Rf_ScalarInteger(42), test_env.sexp);
 
-            let sym = r_symbol!("b");
-            Rf_defineVar(sym, Rf_ScalarInteger(43), test_env.sexp);
+        let sym = r_symbol!("b");
+        Rf_defineVar(sym, Rf_ScalarInteger(43), test_env.sexp);
 
-            let sym = r_symbol!("c");
-            Rf_defineVar(sym, Rf_ScalarInteger(44), test_env.sexp);
-        }
+        let sym = r_symbol!("c");
+        Rf_defineVar(sym, Rf_ScalarInteger(44), test_env.sexp);
 
         Environment::new(test_env)
     }

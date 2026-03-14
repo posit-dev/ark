@@ -473,219 +473,219 @@ constant_globals::generate! {
     pub static R_NaInt: std::ffi::c_int;
 
     #[doc = "The \"global\" environment"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_GlobalEnv: SEXP;
 
     #[doc = "An empty environment at the root of the\nenvironment tree"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_EmptyEnv: SEXP;
 
     #[doc = "The base environment; formerly R_NilValue"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BaseEnv: SEXP;
 
     #[doc = "The (fake) namespace for base"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BaseNamespace: SEXP;
 
     #[doc = "Registry for registered namespaces"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NamespaceRegistry: SEXP;
 
     #[doc = "The nil object"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NilValue: SEXP;
 
     #[doc = "Unbound marker"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_UnboundValue: SEXP;
 
     #[doc = "Missing argument marker"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_MissingArg: SEXP;
 
     #[doc = "To be found in BC interp. state\n(marker)"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_InBCInterpreter: SEXP;
 
     #[doc = "Use current expression (marker)"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_CurrentExpression: SEXP;
 
     #[doc = "Marker for restarted function calls"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_RestartToken: SEXP;
 
     #[doc = "\"as.character\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_AsCharacterSymbol: SEXP;
 
     #[doc = "\"@\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_AtsignSymbol: SEXP;
 
     #[doc = "\"base\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BaseSymbol: SEXP;
 
     #[doc = "\"{\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BraceSymbol: SEXP;
 
     #[doc = "\"\\[\\[\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_Bracket2Symbol: SEXP;
 
     #[doc = "\"\\[\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BracketSymbol: SEXP;
 
     #[doc = "\"class\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_ClassSymbol: SEXP;
 
     #[doc = "\".Device\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DeviceSymbol: SEXP;
 
     #[doc = "\"dimnames\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DimNamesSymbol: SEXP;
 
     #[doc = "\"dim\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DimSymbol: SEXP;
 
     #[doc = "\"$\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DollarSymbol: SEXP;
 
     #[doc = "\"...\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DotsSymbol: SEXP;
 
     #[doc = "\"::\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DoubleColonSymbol: SEXP;
 
     #[doc = "\"drop\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_DropSymbol: SEXP;
 
     #[doc = "\"eval\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_EvalSymbol: SEXP;
 
     #[doc = "\"function\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_FunctionSymbol: SEXP;
 
     #[doc = "\".Last.value\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_LastvalueSymbol: SEXP;
 
     #[doc = "\"levels\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_LevelsSymbol: SEXP;
 
     #[doc = "\"mode\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_ModeSymbol: SEXP;
 
     #[doc = "\"na.rm\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NaRmSymbol: SEXP;
 
     #[doc = "\"name\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NameSymbol: SEXP;
 
     #[doc = "\"names\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NamesSymbol: SEXP;
 
     #[doc = "\".__NAMESPACE__.\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NamespaceEnvSymbol: SEXP;
 
     #[doc = "\"package\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_PackageSymbol: SEXP;
 
     #[doc = "\"previous\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_PreviousSymbol: SEXP;
 
     #[doc = "\"quote\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_QuoteSymbol: SEXP;
 
     #[doc = "\"row.names\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_RowNamesSymbol: SEXP;
 
     #[doc = "\".Random.seed\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_SeedsSymbol: SEXP;
 
     #[doc = "\"sort.list\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_SortListSymbol: SEXP;
 
     #[doc = "\"source\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_SourceSymbol: SEXP;
 
     #[doc = "\"spec\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_SpecSymbol: SEXP;
 
     #[doc = "\":::\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_TripleColonSymbol: SEXP;
 
     #[doc = "\"srcfile\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_SrcfileSymbol: SEXP;
 
     #[doc = "\"srcref\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_SrcrefSymbol: SEXP;
 
     #[doc = "\"tsp\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_TspSymbol: SEXP;
 
     #[doc = "\".defined\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_dot_defined: SEXP;
 
     #[doc = "\".Method\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_dot_Method: SEXP;
 
     #[doc = "\".packageName\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_dot_packageName: SEXP;
 
     #[doc = "\".target\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_dot_target: SEXP;
 
     #[doc = "\".Generic\""]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_dot_Generic: SEXP;
 
     #[doc = "NA_STRING as a CHARSXP"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_NaString: SEXP;
 
     #[doc = "\"\" as a CHARSXP"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BlankString: SEXP;
 
     #[doc = "\"\" as a STRSXP"]
-    #[default = std::ptr::null_mut()]
+    #[default = SEXP::null()]
     pub static R_BlankScalarString: SEXP;
 
     #[default = 4503599627370496]

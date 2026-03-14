@@ -457,7 +457,7 @@ impl DeviceContext {
         match result {
             Ok(kind) => {
                 // Safety: We just called an R function that returns a string
-                unsafe { kind.to::<String>() }.unwrap_or_else(|err| {
+                kind.to::<String>().unwrap_or_else(|err| {
                     log::warn!("Failed to convert plot kind to string: {err:?}");
                     "plot".to_string()
                 })
@@ -942,7 +942,7 @@ impl DeviceContext {
     fn render_plot(&self, id: &PlotId, settings: &PlotRenderSettings) -> anyhow::Result<String> {
         log::trace!("Rendering plot");
 
-        let image_path = r_task(|| unsafe {
+        let image_path = r_task(|| {
             RFunction::from(".ps.graphics.render_plot_from_recording")
                 .param("id", id)
                 .param("width", RObject::try_from(settings.size.width)?)

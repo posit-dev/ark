@@ -71,14 +71,14 @@ impl Deref for RSymbol {
 
 impl From<RSymbol> for String {
     fn from(symbol: RSymbol) -> Self {
-        unsafe { r_str_to_owned_utf8_unchecked(PRINTNAME(*symbol)) }
+        r_str_to_owned_utf8_unchecked(PRINTNAME(*symbol))
     }
 }
 
 impl From<&str> for RSymbol {
     fn from(value: &str) -> Self {
         RSymbol {
-            sexp: unsafe { r_symbol!(value) },
+            sexp: r_symbol!(value),
         }
     }
 }

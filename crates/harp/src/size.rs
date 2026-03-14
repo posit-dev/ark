@@ -87,20 +87,20 @@ fn obj_size_tree(
 
     // Use sizeof(SEXPREC) and sizeof(VECTOR_SEXPREC) computed in R.
     // CHARSXP are treated as vectors for this purpose
-    let mut size = if unsafe { Rf_isVector(x) == Rboolean_TRUE } || r_typeof(x) == CHARSXP {
+    let mut size = if Rf_isVector(x) == Rboolean_TRUE || r_typeof(x) == CHARSXP {
         sizeof_vector
     } else {
         sizeof_node
     };
 
     if r_is_altrep(x) {
-        let klass = unsafe { libr::ALTREP_CLASS(x) };
+        let klass = libr::ALTREP_CLASS(x);
         size += 3 * size_of::<SEXP>();
 
         size += obj_size_tree(klass, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
 
         size += obj_size_tree(
-            unsafe { libr::R_altrep_data1(x) },
+            libr::R_altrep_data1(x),
             base_env,
             sizeof_node,
             sizeof_vector,
@@ -108,7 +108,7 @@ fn obj_size_tree(
             depth + 1,
         );
         size += obj_size_tree(
-            unsafe { libr::R_altrep_data2(x) },
+            libr::R_altrep_data2(x),
             base_env,
             sizeof_node,
             sizeof_vector,
@@ -183,7 +183,7 @@ fn obj_size_tree(
                         size += sizeof_node
                     }
                     size += obj_size_tree(
-                        unsafe { libr::TAG(cons) },
+                        libr::TAG(cons),
                         base_env,
                         sizeof_node,
                         sizeof_vector,
@@ -191,14 +191,14 @@ fn obj_size_tree(
                         depth + 1,
                     );
                     size += obj_size_tree(
-                        unsafe { libr::CAR(cons) },
+                        libr::CAR(cons),
                         base_env,
                         sizeof_node,
                         sizeof_vector,
                         seen,
                         depth + 1,
                     );
-                    cons = unsafe { libr::CDR(cons) };
+                    cons = libr::CDR(cons);
                 }
                 // Handle non-nil CDRs
                 size += obj_size_tree(cons, base_env, sizeof_node, sizeof_vector, seen, depth + 1);
@@ -206,7 +206,7 @@ fn obj_size_tree(
         },
         BCODESXP => {
             size += obj_size_tree(
-                unsafe { libr::TAG(x) },
+                libr::TAG(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -214,7 +214,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::CAR(x) },
+                libr::CAR(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -222,7 +222,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::CDR(x) },
+                libr::CDR(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -334,7 +334,7 @@ fn obj_size_tree(
         },
         PROMSXP => {
             size += obj_size_tree(
-                unsafe { libr::PRVALUE(x) },
+                libr::PRVALUE(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -342,7 +342,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::PRCODE(x) },
+                libr::PRCODE(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -350,7 +350,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::PRENV(x) },
+                libr::PRENV(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -361,7 +361,7 @@ fn obj_size_tree(
         EXTPTRSXP => {
             size += size_of::<*mut c_void>(); // the actual pointer
             size += obj_size_tree(
-                unsafe { libr::R_ExternalPtrProtected(x) },
+                libr::R_ExternalPtrProtected(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -369,7 +369,7 @@ fn obj_size_tree(
                 depth + 1,
             );
             size += obj_size_tree(
-                unsafe { libr::R_ExternalPtrTag(x) },
+                libr::R_ExternalPtrTag(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,
@@ -379,7 +379,7 @@ fn obj_size_tree(
         },
         S4SXP => {
             size += obj_size_tree(
-                unsafe { libr::TAG(x) },
+                libr::TAG(x),
                 base_env,
                 sizeof_node,
                 sizeof_vector,

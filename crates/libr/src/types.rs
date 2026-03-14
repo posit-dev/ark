@@ -50,7 +50,37 @@ pub const FUNSXP: u32 = 99;
 pub struct SEXPREC {
     _unused: [u8; 0],
 }
-pub type SEXP = *mut SEXPREC;
+
+/// SEXP as a newtype rather than a type alias for `*mut SEXPREC`. This way
+/// clippy doesn't see it as a raw pointer, avoiding
+/// `clippy::not_unsafe_ptr_arg_deref` on every public function that takes a
+/// SEXP. `#[repr(transparent)]` guarantees the same ABI as `*mut SEXPREC`
+/// across FFI boundaries.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+pub struct SEXP(*mut SEXPREC);
+
+impl SEXP {
+    pub const fn null() -> Self {
+        Self(std::ptr::null_mut())
+    }
+
+    pub fn is_null(self) -> bool {
+        self.0.is_null()
+    }
+}
+
+impl std::fmt::Debug for SEXP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SEXP({:?})", self.0)
+    }
+}
+
+impl std::fmt::Pointer for SEXP {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Pointer::fmt(&self.0, f)
+    }
+}
 
 #[doc = "R 4.3 redefined `Rcomplex` to a union for compatibility with Fortran.\n But the old definition is compatible both the union version\n and the struct version.\n See: https://github.com/extendr/extendr/issues/524"]
 #[repr(C)]

@@ -240,7 +240,7 @@ async fn preview_rd(params: web::Query<PreviewRdParams>) -> HttpResponse {
         return HttpResponse::BadGateway().finish();
     }
 
-    let content = r_task(|| unsafe {
+    let content = r_task(|| {
         RFunction::from(".ps.Rd2HTML")
             .param("rd_file", file)
             .call()

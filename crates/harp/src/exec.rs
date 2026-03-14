@@ -57,21 +57,19 @@ impl RFunction {
     }
 
     fn new_ext(package: &str, function: &str, internal: bool) -> Self {
-        unsafe {
-            let is_namespaced = !package.is_empty();
+        let is_namespaced = !package.is_empty();
 
-            let fun = if is_namespaced {
-                let op = if internal { ":::" } else { "::" };
-                Rf_lang3(r_symbol!(op), r_symbol!(package), r_symbol!(function))
-            } else {
-                r_symbol!(function)
-            };
-            let fun = RObject::new(fun);
+        let fun = if is_namespaced {
+            let op = if internal { ":::" } else { "::" };
+            Rf_lang3(r_symbol!(op), r_symbol!(package), r_symbol!(function))
+        } else {
+            r_symbol!(function)
+        };
+        let fun = RObject::new(fun);
 
-            RFunction {
-                call: RCall::new(fun),
-                is_namespaced,
-            }
+        RFunction {
+            call: RCall::new(fun),
+            is_namespaced,
         }
     }
 
@@ -98,11 +96,11 @@ impl RFunction {
 ///
 /// Calls `Rf_eval()` inside `try_catch()`.
 pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
-    let mut res = try_catch(|| unsafe { Rf_eval(expr, env) }).map(RObject::from);
+    let mut res = try_catch(|| Rf_eval(expr, env)).map(RObject::from);
 
     if let Err(Error::TryCatchError { ref mut call, .. }) = res {
         if call.is_none() {
-            *call = Some(unsafe { r_stringify(expr, "\n")? });
+            *call = Some(r_stringify(expr, "\n")?);
         }
     }
 
@@ -175,7 +173,7 @@ pub type CallingErrorHandlerCallback =
 /// a local calling error handler on `R_HandlerStack`. Local handlers have
 /// priority over global handlers, which is useful when you need to intercept
 /// errors before other handlers (like R's debug handler) can catch them.
-pub unsafe fn with_calling_error_handler(
+pub fn with_calling_error_handler(
     body: CallingErrorHandlerBody,
     body_data: *mut c_void,
     handler: CallingErrorHandlerCallback,
@@ -291,14 +289,12 @@ where
         };
 
         // We've dropped our non-POD types and are ready to jump
-        unsafe {
-            libr::Rf_protect(call);
-            libr::Rf_eval(call, R_ENVS.base);
-        }
+        libr::Rf_protect(call);
+        libr::Rf_eval(call, R_ENVS.base);
         unreachable!();
     }
 
-    let longjump = top_level_exec(|| unsafe {
+    let longjump = top_level_exec(|| {
         with_calling_error_handler(callback::<F, T>, payload, handler::<F, T>, payload);
     });
 
@@ -370,7 +366,7 @@ where
         *(data.res) = Some(Ok(closure()));
     }
 
-    unsafe { R_ToplevelExec(Some(callback::<F, T>), payload) };
+    R_ToplevelExec(Some(callback::<F, T>), payload);
 
     match res {
         Some(res) => res,
@@ -472,7 +468,7 @@ where
     }
 
     // Call into R; the callbacks will populate `res` and always return R_NilValue.
-    unsafe {
+    {
         R_ExecWithCleanup(
             Some(exec_callback::<F, C, T>),
             payload,
@@ -487,7 +483,7 @@ where
 
 pub fn r_peek_error_buffer() -> String {
     // SAFETY: Returns pointer to static memory buffer owned by R.
-    let buffer = unsafe { R_curErrorBuf() };
+    let buffer = R_curErrorBuf();
 
     // SAFETY: The aforementioned buffer is never null.
     let cstr = unsafe { CStr::from_ptr(buffer) };
@@ -540,9 +536,7 @@ where
         Ok(out) => {
             // First check for interrupts since we might just have spent some
             // time in a sandbox
-            unsafe {
-                R_CheckUserInterrupt();
-            }
+            R_CheckUserInterrupt();
             return out;
         },
         Err(err) => format!("{err:}"),
@@ -556,9 +550,7 @@ where
     // protection stack. We're relying on automatic unprotection after an
     // error, which requires `r_unwrap()` to be run within an R context
     // frame such as `.Call()` or `R_ExecWithCleanup()`.
-    unsafe {
-        Rf_protect(sexp_msg);
-    }
+    Rf_protect(sexp_msg);
 
     // Clear the Rust stack. We only need to drop `robj_msg` because `out`
     // was moved to `msg` and `msg` to `robj_msg` already.
@@ -576,37 +568,35 @@ where
 /// close to the limit. The latter case is useful for stopping recursive
 /// algorithms from blowing the stack.
 pub fn r_check_stack(size: Option<usize>) -> Result<()> {
-    unsafe {
-        let out = top_level_exec(|| {
-            if let Some(size) = size {
-                R_CheckStack2(size);
-            } else {
-                R_CheckStack();
-            }
-        });
-
-        match out {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                // Reset error buffer because we detect stack overflows by
-                // inspecting this buffer, see `peek_execute_response()`
-                let _ = RFunction::new("base", "stop").call();
-
-                // Convert TopLevelExecError to StackUsageError
-                match err {
-                    Error::TopLevelExecError {
-                        message,
-                        backtrace,
-                        span_trace,
-                    } => Err(Error::StackUsageError {
-                        message,
-                        backtrace,
-                        span_trace,
-                    }),
-                    _ => unreachable!(),
-                }
-            },
+    let out = top_level_exec(|| {
+        if let Some(size) = size {
+            R_CheckStack2(size);
+        } else {
+            R_CheckStack();
         }
+    });
+
+    match out {
+        Ok(_) => Ok(()),
+        Err(err) => {
+            // Reset error buffer because we detect stack overflows by
+            // inspecting this buffer, see `peek_execute_response()`
+            let _ = RFunction::new("base", "stop").call();
+
+            // Convert TopLevelExecError to StackUsageError
+            match err {
+                Error::TopLevelExecError {
+                    message,
+                    backtrace,
+                    span_trace,
+                } => Err(Error::StackUsageError {
+                    message,
+                    backtrace,
+                    span_trace,
+                }),
+                _ => unreachable!(),
+            }
+        },
     }
 }
 
@@ -624,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_basic_function() {
-        crate::r_task(|| unsafe {
+        crate::r_task(|| {
             // try adding some numbers
             let result = RFunction::new("", "+").add(2).add(2).call().unwrap();
 
@@ -649,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_utf8_strings() {
-        crate::r_task(|| unsafe {
+        crate::r_task(|| {
             // try sending some UTF-8 strings to and from R
             let result = RFunction::new("base", "paste")
                 .add("世界")
@@ -669,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_named_arguments() {
-        crate::r_task(|| unsafe {
+        crate::r_task(|| {
             let result = RFunction::new("stats", "rnorm")
                 .add(1.0)
                 .param("mean", 10)
@@ -684,7 +674,7 @@ mod tests {
 
     #[test]
     fn test_try_catch_error() {
-        crate::r_task(|| unsafe {
+        crate::r_task(|| {
             // ok SEXP
             let ok: harp::Result<RObject> = try_catch(|| Rf_ScalarInteger(42).into());
             assert_match!(ok, Ok(value) => {
@@ -774,7 +764,7 @@ mod tests {
             let result = exec_with_cleanup(
                 || {
                     // Create a simple R object and return it directly (T = RObject)
-                    let obj = RObject::from(unsafe { Rf_ScalarInteger(42) });
+                    let obj = RObject::from(Rf_ScalarInteger(42));
                     obj
                 },
                 || {
@@ -782,7 +772,7 @@ mod tests {
                 },
             );
 
-            assert_eq!(unsafe { Rf_asInteger(*result) }, 42);
+            assert_eq!(Rf_asInteger(*result), 42);
             assert!(
                 *cleanup_called.lock().unwrap(),
                 "Cleanup should have been called"
@@ -796,7 +786,7 @@ mod tests {
                 exec_with_cleanup(
                     || -> RObject {
                         let msg = CString::new("ouch").unwrap(); // This leaks
-                        unsafe { Rf_error(msg.as_ptr()) };
+                        Rf_error(msg.as_ptr());
                     },
                     || {
                         *cleanup_called_error_clone.lock().unwrap() = true;

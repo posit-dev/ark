@@ -14,12 +14,14 @@ pub struct ExternalPointer<'a, T: 'a> {
 }
 
 impl<'a, T> ExternalPointer<'a, T> {
-    pub unsafe fn new(object: &T) -> Self {
-        let pointer = RObject::from(R_MakeExternalPtr(
-            object as *const T as *const c_void as *mut c_void,
-            R_NilValue,
-            R_NilValue,
-        ));
+    pub fn new(object: &T) -> Self {
+        let pointer = unsafe {
+            RObject::from(R_MakeExternalPtr(
+                object as *const T as *const c_void as *mut c_void,
+                R_NilValue,
+                R_NilValue,
+            ))
+        };
 
         Self {
             pointer,
@@ -27,7 +29,7 @@ impl<'a, T> ExternalPointer<'a, T> {
         }
     }
 
-    pub unsafe fn reference(pointer: SEXP) -> &'static T {
+    pub fn reference(pointer: SEXP) -> &'static T {
         unsafe { &*(R_ExternalPtrAddr(pointer) as *const c_void as *const T) }
     }
 }

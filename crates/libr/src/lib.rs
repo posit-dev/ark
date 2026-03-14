@@ -68,14 +68,14 @@ pub mod graphapp {
 ///
 /// NOTE: Must be `Copy`, as you can't move out of a raw pointer, so every access to
 /// the pointer value generates a copy, but it should be cheap.
-pub unsafe fn get<T>(x: *mut T) -> T
+pub fn get<T>(x: *mut T) -> T
 where
     T: Copy,
 {
-    *x
+    unsafe { *x }
 }
 
 /// Set the value of a mutable global using its pointer
-pub unsafe fn set<T>(x: *mut T, value: T) {
-    *x = value;
+pub fn set<T>(x: *mut T, value: T) {
+    unsafe { *x = value };
 }

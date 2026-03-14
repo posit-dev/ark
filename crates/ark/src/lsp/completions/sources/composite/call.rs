@@ -211,7 +211,7 @@ fn completions_from_session_arguments(
         return Ok(Some(completions));
     }
 
-    let strings = unsafe {
+    let strings = {
         RFunction::from(".ps.completions.formalNames")
             .add(r_callable)
             .add(object)

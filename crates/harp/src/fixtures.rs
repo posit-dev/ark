@@ -72,9 +72,7 @@ pub fn r_test_init() {
         libraries.initialize_post_setup_r();
 
         // Initialize harp globals
-        unsafe {
-            crate::routines::r_register_routines();
-        }
+        crate::routines::r_register_routines();
         // After routine registration
         crate::initialize();
     });

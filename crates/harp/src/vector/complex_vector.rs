@@ -42,7 +42,7 @@ impl Vector for ComplexVector {
     type UnderlyingType = Complex;
     type CompareType = Complex;
 
-    unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
+    fn new_unchecked(object: impl Into<SEXP>) -> Self {
         Self {
             object: RObject::new(object.into()),
         }
@@ -73,11 +73,11 @@ impl Vector for ComplexVector {
     }
 
     fn is_na(x: &Self::UnderlyingType) -> bool {
-        unsafe { R_IsNA(x.r) == 1 || R_IsNA(x.i) == 1 }
+        R_IsNA(x.r) == 1 || R_IsNA(x.i) == 1
     }
 
     fn get_unchecked_elt(&self, index: isize) -> Self::UnderlyingType {
-        unsafe { Complex::new(COMPLEX_ELT(self.data(), index as R_xlen_t)) }
+        Complex::new(COMPLEX_ELT(self.data(), index as R_xlen_t))
     }
 
     fn convert_value(x: &Self::UnderlyingType) -> Self::Type {

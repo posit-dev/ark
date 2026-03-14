@@ -28,7 +28,7 @@ where
 }
 
 pub fn init_modules() -> anyhow::Result<()> {
-    let namespace = unsafe {
+    let namespace = {
         let new_env_call = RCall::new(r_symbol!("new.env")).build();
         Rf_eval(new_env_call.sexp, R_ENVS.base)
     };
@@ -41,13 +41,11 @@ pub fn init_modules() -> anyhow::Result<()> {
     // We don't have `safe_eval()` yet so source the init file manually
     with_asset::<HarpModuleAsset, _>("init.R", |source| {
         let exprs = harp::parse_exprs(source)?;
-        unsafe {
-            let source_call = RCall::new(r_symbol!("source"))
-                .param("exprs", exprs)
-                .param("local", namespace)
-                .build();
-            top_level_exec(|| Rf_eval(source_call.sexp, R_ENVS.base))?;
-        }
+        let source_call = RCall::new(r_symbol!("source"))
+            .param("exprs", exprs)
+            .param("local", namespace)
+            .build();
+        top_level_exec(|| Rf_eval(source_call.sexp, R_ENVS.base))?;
         Ok(())
     })?;
 

@@ -117,7 +117,7 @@ fn env_binding_variable(name: String, x: SEXP) -> Option<RVariable> {
         return None;
     }
 
-    let symbol = unsafe { r_symbol!(name) };
+    let symbol = r_symbol!(name);
 
     match r_env_binding_is_active(x, symbol) {
         Ok(false) => {
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn test_env_binding_variable_base() {
-        r_task(|| unsafe {
+        r_task(|| {
             let env = RFunction::new("base", "new.env")
                 .param("parent", R_ENVS.base)
                 .call()

@@ -69,7 +69,7 @@ fn summary_stats_number(
 ) -> anyhow::Result<SummaryStatsNumber> {
     let r_stats = call_summary_fn("summary_stats_number", column)?;
 
-    let names = unsafe { CharacterVector::new_unchecked(r_names2(r_stats.sexp)) };
+    let names = CharacterVector::new_unchecked(r_names2(r_stats.sexp));
     let values = format_string(r_stats.sexp, format_options);
 
     let r_stats: HashMap<String, String> = names

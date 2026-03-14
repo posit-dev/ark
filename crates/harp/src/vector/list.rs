@@ -29,7 +29,7 @@ pub struct ListIter {
 
 impl List {
     pub fn iter(&self) -> ListIter {
-        unsafe { ListIter::new_unchecked(self.obj.sexp) }
+        ListIter::new_unchecked(self.obj.sexp)
     }
 }
 
@@ -40,7 +40,7 @@ impl super::Vector for List {
     type UnderlyingType = SEXP;
     type CompareType = RObject;
 
-    unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self {
+    fn new_unchecked(object: impl Into<SEXP>) -> Self {
         let object: SEXP = object.into();
         let ptr = crate::list_cbegin(object);
 
@@ -109,11 +109,11 @@ impl ListIter {
             },
         };
 
-        Ok(unsafe { Self::new_unchecked(x) })
+        Ok(Self::new_unchecked(x))
     }
 
     /// SAFETY: Assumes `x` is VECSXP or EXPRSXP
-    pub unsafe fn new_unchecked(x: SEXP) -> Self {
+    pub fn new_unchecked(x: SEXP) -> Self {
         let ptr = list_cbegin(x);
 
         Self {

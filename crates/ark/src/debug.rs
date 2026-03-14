@@ -34,7 +34,7 @@ static _ARK_DISPLAY_VALUE: unsafe extern "C" fn(x: libr::SEXP) -> *const ffi::c_
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
-        unsafe { libr::Rf_PrintValue(x) };
+        libr::Rf_PrintValue(x);
     })
 }
 
@@ -57,7 +57,7 @@ pub extern "C-unwind" fn ark_inspect_rs(x: libr::SEXP) -> *const ffi::c_char {
         // messing with namedness and refcounts:
         // https://github.com/r-lib/lobstr/issues/77
         let out = RFunction::new("lobstr", "sxp").add(x).call().unwrap();
-        unsafe { libr::Rf_PrintValue(out.sexp) };
+        libr::Rf_PrintValue(out.sexp);
     })
 }
 
@@ -82,7 +82,7 @@ pub extern "C-unwind" fn ark_trace_back_rs() -> *const ffi::c_char {
 
 #[cfg_attr(not(test), no_mangle)]
 pub extern "C-unwind" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
-    let value = unsafe {
+    let value = {
         let kind = tidy_kind(r_typeof(x));
         let tag = format!("<{kind}>");
 

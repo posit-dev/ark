@@ -98,7 +98,7 @@ impl TryFrom<RObject> for SrcRef {
             end: line_end,
         };
 
-        let line_parsed = if unsafe { value.len() >= 8 } {
+        let line_parsed = if value.len() >= 8 {
             let line_parsed_start = adjust_start(value.get_value(6)?);
             let line_parsed_end = adjust_end(value.get_value(7)?);
             std::ops::Range {
@@ -222,7 +222,7 @@ pub fn srcref_list_get(srcrefs: libr::SEXP, ind: isize) -> RObject {
         return RObject::null();
     }
 
-    if unsafe { libr::TYPEOF(result) as u32 } != libr::INTSXP {
+    if libr::TYPEOF(result) as u32 != libr::INTSXP {
         return RObject::null();
     }
 
@@ -239,7 +239,7 @@ pub fn srcref_list_get(srcrefs: libr::SEXP, ind: isize) -> RObject {
 pub fn get_srcref_list(call: libr::SEXP) -> Option<RObject> {
     let srcrefs = unsafe { libr::Rf_getAttrib(call, libr::R_SrcrefSymbol) };
 
-    if unsafe { libr::TYPEOF(srcrefs) as u32 } == libr::VECSXP {
+    if libr::TYPEOF(srcrefs) as u32 == libr::VECSXP {
         return Some(RObject::new(srcrefs));
     }
 

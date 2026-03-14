@@ -27,8 +27,8 @@ macro_rules! generate {
             paste::paste! {
                 $(#[doc=$doc])*
                 $(#[cfg($cfg)])*
-                pub unsafe fn $name($($pname: $pty), *) $(-> $ret)* {
-                    [<$name _opt>].unwrap_unchecked()($($pname), *)
+                pub fn $name($($pname: $pty), *) $(-> $ret)* {
+                    unsafe { [<$name _opt>].unwrap_unchecked()($($pname), *) }
                 }
             }
         )+
@@ -42,8 +42,8 @@ macro_rules! generate {
                 paste::paste! {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
-                    pub unsafe fn $name() -> bool {
-                        matches!([<$name _opt>], Some(_))
+                    pub fn $name() -> bool {
+                        unsafe { matches!([<$name _opt>], Some(_)) }
                     }
                 }
             )+

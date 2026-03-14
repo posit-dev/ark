@@ -44,7 +44,7 @@ impl DataFrame {
         for obj in list.iter() {
             let obj = RObject::view(obj);
 
-            if unsafe { libr::Rf_isVector(obj.sexp) == 0 } {
+            if libr::Rf_isVector(obj.sexp) == 0 {
                 return Err(harp::anyhow!("Data frame column must be a vector"));
             }
 

@@ -144,7 +144,7 @@ impl<T: Into<RObject>> RObjectExt<T> for RObject {
 }
 
 pub fn r_length(x: SEXP) -> isize {
-    unsafe { Rf_xlength(x) }
+    Rf_xlength(x)
 }
 
 /// Raw access to the underlying `R_DimSymbol` attribute
@@ -153,30 +153,30 @@ pub fn r_dim(x: SEXP) -> SEXP {
 }
 
 pub fn r_lgl_get(x: SEXP, i: isize) -> i32 {
-    unsafe { LOGICAL_ELT(x, i) }
+    LOGICAL_ELT(x, i)
 }
 pub fn r_int_get(x: SEXP, i: isize) -> i32 {
-    unsafe { INTEGER_ELT(x, i) }
+    INTEGER_ELT(x, i)
 }
 pub fn r_dbl_get(x: SEXP, i: isize) -> f64 {
-    unsafe { REAL_ELT(x, i) }
+    REAL_ELT(x, i)
 }
 pub fn r_cpl_get(x: SEXP, i: isize) -> Rcomplex {
-    unsafe { COMPLEX_ELT(x, i) }
+    COMPLEX_ELT(x, i)
 }
 pub fn r_chr_get(x: SEXP, i: isize) -> SEXP {
-    unsafe { STRING_ELT(x, i) }
+    STRING_ELT(x, i)
 }
 
 // TODO: Once we have a Rust list type, move this back to unsafe.
 // Should be unsafe because the type and bounds are not checked and
 // will result in a crash if used incorrectly.
 pub fn list_get(x: SEXP, i: isize) -> SEXP {
-    unsafe { VECTOR_ELT(x, i) }
+    VECTOR_ELT(x, i)
 }
 
 pub fn list_poke(x: SEXP, i: isize, value: SEXP) {
-    unsafe { SET_VECTOR_ELT(x, i, value) };
+    SET_VECTOR_ELT(x, i, value);
 }
 
 pub fn r_lgl_na() -> i32 {
@@ -207,71 +207,69 @@ pub fn r_dbl_negative_infinity() -> f64 {
 }
 
 pub fn r_dbl_is_na(x: f64) -> bool {
-    unsafe { R_IsNA(x) != 0 }
+    R_IsNA(x) != 0
 }
 pub fn r_dbl_is_nan(x: f64) -> bool {
-    unsafe { R_IsNaN(x) != 0 }
+    R_IsNaN(x) != 0
 }
 /// Returns `true` if `x` is not `NA`, `NaN`, `Inf`, or `-Inf`
 pub fn r_dbl_is_finite(x: f64) -> bool {
-    unsafe { R_finite(x) != 0 }
+    R_finite(x) != 0
 }
 
 pub fn r_lgl_poke(x: SEXP, i: R_xlen_t, value: i32) {
-    unsafe { SET_LOGICAL_ELT(x, i, value) }
+    SET_LOGICAL_ELT(x, i, value)
 }
 pub fn r_int_poke(x: SEXP, i: R_xlen_t, value: i32) {
-    unsafe { SET_INTEGER_ELT(x, i, value) }
+    SET_INTEGER_ELT(x, i, value)
 }
 pub fn r_dbl_poke(x: SEXP, i: R_xlen_t, value: f64) {
-    unsafe { SET_REAL_ELT(x, i, value) }
+    SET_REAL_ELT(x, i, value)
 }
 pub fn r_cpl_poke(x: SEXP, i: R_xlen_t, value: Rcomplex) {
-    unsafe { SET_COMPLEX_ELT(x, i, value) }
+    SET_COMPLEX_ELT(x, i, value)
 }
 pub fn r_chr_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
-    unsafe { SET_STRING_ELT(x, i, value) }
+    SET_STRING_ELT(x, i, value)
 }
 pub fn r_list_poke(x: SEXP, i: R_xlen_t, value: SEXP) {
-    unsafe {
-        SET_VECTOR_ELT(x, i, value);
-    }
+    SET_VECTOR_ELT(x, i, value);
 }
 
 pub fn r_lgl_begin(x: SEXP) -> *mut i32 {
-    unsafe { LOGICAL(x) }
+    LOGICAL(x)
 }
 pub fn r_int_begin(x: SEXP) -> *mut i32 {
-    unsafe { INTEGER(x) }
+    INTEGER(x)
 }
 pub fn r_dbl_begin(x: SEXP) -> *mut f64 {
-    unsafe { REAL(x) }
+    REAL(x)
 }
 
-pub unsafe fn chr_cbegin(x: SEXP) -> *const SEXP {
+pub fn chr_cbegin(x: SEXP) -> *const SEXP {
     libr::DATAPTR_RO(x) as *const SEXP
 }
 
 pub fn list_cbegin(x: SEXP) -> *const SEXP {
-    unsafe { libr::DATAPTR_RO(x) as *const SEXP }
+    libr::DATAPTR_RO(x) as *const SEXP
 }
 
 // TODO: Make these wrappers robust to allocation failures
 // https://github.com/posit-dev/positron/issues/2600
 pub fn r_alloc_logical(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(LGLSXP, size) }
+    Rf_allocVector(LGLSXP, size)
 }
 pub fn r_alloc_integer(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(INTSXP, size) }
+    Rf_allocVector(INTSXP, size)
 }
 pub fn r_alloc_double(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(REALSXP, size) }
+    Rf_allocVector(REALSXP, size)
 }
 pub fn r_alloc_complex(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(CPLXSXP, size) }
+    Rf_allocVector(CPLXSXP, size)
 }
 pub fn r_alloc_character(size: R_xlen_t) -> SEXP {
-    unsafe { Rf_allocVector(STRSXP, size) }
+    Rf_allocVector(STRSXP, size)
 }
 
 pub fn alloc_list(size: usize) -> crate::Result<SEXP> {
@@ -280,7 +278,7 @@ pub fn alloc_list(size: usize) -> crate::Result<SEXP> {
 
 fn alloc_vector(kind: libr::SEXPTYPE, size: usize) -> crate::Result<SEXP> {
     let size = as_r_ssize(size)?;
-    let res = crate::try_catch(|| unsafe { Rf_allocVector(kind, size) });
+    let res = crate::try_catch(|| Rf_allocVector(kind, size));
 
     match res {
         Ok(_) => res,
@@ -299,18 +297,18 @@ pub fn as_r_ssize(size: usize) -> crate::Result<R_xlen_t> {
 }
 
 pub fn r_node_car(x: SEXP) -> SEXP {
-    unsafe { CAR(x) }
+    CAR(x)
 }
 pub fn r_node_tag(x: SEXP) -> SEXP {
-    unsafe { TAG(x) }
+    TAG(x)
 }
 pub fn r_node_cdr(x: SEXP) -> SEXP {
-    unsafe { CDR(x) }
+    CDR(x)
 }
 
 pub fn is_identical(x: SEXP, y: SEXP) -> bool {
     // 16 corresponds to the default arguments of the R-level `identical()`
-    unsafe { libr::R_compute_identical(x, y, 16) != 0 }
+    libr::R_compute_identical(x, y, 16) != 0
 }
 
 impl RObject {
@@ -336,7 +334,7 @@ impl RObject {
     }
 
     // A helper function that makes '.try_into()' more ergonomic to use.
-    pub unsafe fn to<U: TryFrom<RObject, Error = crate::error::Error>>(self) -> Result<U, Error> {
+    pub fn to<U: TryFrom<RObject, Error = crate::error::Error>>(self) -> Result<U, Error> {
         TryInto::<U>::try_into(self)
     }
 
@@ -370,7 +368,7 @@ impl RObject {
 
     /// Address in hexadecimal format
     pub fn address(&self) -> String {
-        format!("{:p}", self.sexp as *const _)
+        format!("{:p}", self.sexp)
     }
 
     /// String accessor; get a string value from a vector of strings.
@@ -453,11 +451,9 @@ impl RObject {
     ///
     /// Returns an RObject representing the value at the given index.
     pub fn vector_elt(&self, idx: isize) -> crate::error::Result<RObject> {
-        unsafe {
-            r_assert_type(self.sexp, &[VECSXP])?;
-            r_assert_capacity(self.sexp, idx as usize)?;
-            Ok(RObject::new(VECTOR_ELT(self.sexp, idx)))
-        }
+        r_assert_type(self.sexp, &[VECSXP])?;
+        r_assert_capacity(self.sexp, idx as usize)?;
+        Ok(RObject::new(VECTOR_ELT(self.sexp, idx)))
     }
 
     /// Gets a vector containing names for the object's values (from the `names`
@@ -473,17 +469,15 @@ impl RObject {
     }
 
     pub fn set_attribute(&self, name: &str, value: SEXP) {
-        unsafe {
-            Rf_protect(value);
-            Rf_setAttrib(self.sexp, r_symbol!(name), value);
-            Rf_unprotect(1);
-        }
+        Rf_protect(value);
+        Rf_setAttrib(self.sexp, r_symbol!(name), value);
+        Rf_unprotect(1);
     }
 
     /// Gets a named attribute from the object. Returns `None` if the attribute
     /// was `NULL`.
     pub fn get_attribute(&self, name: &str) -> Option<RObject> {
-        self.get_attribute_from_symbol(unsafe { r_symbol!(name) })
+        self.get_attribute_from_symbol(r_symbol!(name))
     }
 
     /// Gets the [R_NamesSymbol] attribute from the object. Returns `None` if there are no
@@ -507,7 +501,7 @@ impl RObject {
     }
 
     fn get_attribute_from_symbol(&self, symbol: SEXP) -> Option<RObject> {
-        let out = unsafe { Rf_getAttrib(self.sexp, symbol) };
+        let out = Rf_getAttrib(self.sexp, symbol);
         if r_is_null(out) {
             None
         } else {
@@ -534,11 +528,11 @@ impl RObject {
     }
 
     pub fn duplicate(&self) -> RObject {
-        unsafe { RObject::new(libr::Rf_duplicate(self.sexp)) }
+        RObject::new(libr::Rf_duplicate(self.sexp))
     }
 
     pub fn shallow_duplicate(&self) -> RObject {
-        unsafe { RObject::new(libr::Rf_shallow_duplicate(self.sexp)) }
+        RObject::new(libr::Rf_shallow_duplicate(self.sexp))
     }
 }
 
@@ -591,62 +585,52 @@ impl From<()> for RObject {
 
 impl From<bool> for RObject {
     fn from(value: bool) -> Self {
-        unsafe {
-            let value = Rf_ScalarLogical(value as c_int);
-            RObject::new(value)
-        }
+        let value = Rf_ScalarLogical(value as c_int);
+        RObject::new(value)
     }
 }
 
 impl From<i32> for RObject {
     fn from(value: i32) -> Self {
-        unsafe {
-            let value = Rf_ScalarInteger(value as c_int);
-            RObject::new(value)
-        }
+        let value = Rf_ScalarInteger(value as c_int);
+        RObject::new(value)
     }
 }
 
 impl TryFrom<i64> for RObject {
     type Error = crate::error::Error;
     fn try_from(value: i64) -> Result<Self, Error> {
-        unsafe {
-            // Ensure the value is within the range of an i32.
-            if value < i32::MIN as i64 || value > i32::MAX as i64 {
-                return Err(Error::ValueOutOfRange {
-                    value,
-                    min: i32::MIN as i64,
-                    max: i32::MAX as i64,
-                });
-            }
-            let value = Rf_ScalarInteger(value as c_int);
-            Ok(RObject::new(value))
+        // Ensure the value is within the range of an i32.
+        if value < i32::MIN as i64 || value > i32::MAX as i64 {
+            return Err(Error::ValueOutOfRange {
+                value,
+                min: i32::MIN as i64,
+                max: i32::MAX as i64,
+            });
         }
+        let value = Rf_ScalarInteger(value as c_int);
+        Ok(RObject::new(value))
     }
 }
 
 impl From<f64> for RObject {
     fn from(value: f64) -> Self {
-        unsafe {
-            let value = Rf_ScalarReal(value);
-            RObject::new(value)
-        }
+        let value = Rf_ScalarReal(value);
+        RObject::new(value)
     }
 }
 
 impl From<&str> for RObject {
     fn from(value: &str) -> Self {
-        unsafe {
-            let vector = Rf_protect(Rf_allocVector(STRSXP, 1));
-            let element = Rf_mkCharLenCE(
-                value.as_ptr() as *mut c_char,
-                value.len() as i32,
-                cetype_t_CE_UTF8,
-            );
-            SET_STRING_ELT(vector, 0, element);
-            Rf_unprotect(1);
-            RObject::new(vector)
-        }
+        let vector = Rf_protect(Rf_allocVector(STRSXP, 1));
+        let element = Rf_mkCharLenCE(
+            value.as_ptr() as *mut c_char,
+            value.len() as i32,
+            cetype_t_CE_UTF8,
+        );
+        SET_STRING_ELT(vector, 0, element);
+        Rf_unprotect(1);
+        RObject::new(vector)
     }
 }
 
@@ -658,42 +642,36 @@ impl From<String> for RObject {
 
 impl From<Vec<String>> for RObject {
     fn from(values: Vec<String>) -> Self {
-        unsafe {
-            let vector = RObject::from(Rf_allocVector(STRSXP, values.len() as isize));
-            for idx in 0..values.len() {
-                let value_str = Rf_mkCharLenCE(
-                    values[idx].as_ptr() as *mut c_char,
-                    values[idx].len() as i32,
-                    cetype_t_CE_UTF8,
-                );
-                SET_STRING_ELT(vector.sexp, idx as isize, value_str);
-            }
-            vector
+        let vector = RObject::from(Rf_allocVector(STRSXP, values.len() as isize));
+        for idx in 0..values.len() {
+            let value_str = Rf_mkCharLenCE(
+                values[idx].as_ptr() as *mut c_char,
+                values[idx].len() as i32,
+                cetype_t_CE_UTF8,
+            );
+            SET_STRING_ELT(vector.sexp, idx as isize, value_str);
         }
+        vector
     }
 }
 
 impl From<&Vec<i64>> for RObject {
     fn from(values: &Vec<i64>) -> Self {
-        unsafe {
-            let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
-            for idx in 0..values.len() {
-                SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
-            }
-            vector
+        let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
+        for idx in 0..values.len() {
+            SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
         }
+        vector
     }
 }
 
 impl From<&Vec<f64>> for RObject {
     fn from(values: &Vec<f64>) -> Self {
-        unsafe {
-            let vector = RObject::from(Rf_allocVector(REALSXP, values.len() as isize));
-            for idx in 0..values.len() {
-                SET_REAL_ELT(vector.sexp, idx as isize, values[idx] as c_double);
-            }
-            vector
+        let vector = RObject::from(Rf_allocVector(REALSXP, values.len() as isize));
+        for idx in 0..values.len() {
+            SET_REAL_ELT(vector.sexp, idx as isize, values[idx] as c_double);
         }
+        vector
     }
 }
 
@@ -999,16 +977,14 @@ impl TryFrom<&RObject> for Vec<String> {
 impl TryFrom<RObject> for Vec<Option<String>> {
     type Error = crate::error::Error;
     fn try_from(value: RObject) -> Result<Self, Self::Error> {
-        unsafe {
-            r_assert_type(*value, &[STRSXP, NILSXP])?;
+        r_assert_type(*value, &[STRSXP, NILSXP])?;
 
-            let n = Rf_xlength(*value);
-            let mut result: Vec<Option<String>> = Vec::with_capacity(n as usize);
-            for i in 0..n {
-                result.push(value.get_string(i)?);
-            }
-            Ok(result)
+        let n = Rf_xlength(*value);
+        let mut result: Vec<Option<String>> = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            result.push(value.get_string(i)?);
         }
+        Ok(result)
     }
 }
 
@@ -1030,20 +1006,18 @@ impl TryFrom<&RObject> for Vec<RObject> {
 impl TryFrom<Vec<RObject>> for RObject {
     type Error = crate::error::Error;
     fn try_from(value: Vec<RObject>) -> Result<Self, Self::Error> {
-        unsafe {
-            let n = value.len();
+        let n = value.len();
 
-            // Create the list object.
-            let out_raw = Rf_allocVector(VECSXP, n as R_xlen_t);
-            let out = RObject::new(out_raw);
+        // Create the list object.
+        let out_raw = Rf_allocVector(VECSXP, n as R_xlen_t);
+        let out = RObject::new(out_raw);
 
-            // Copy the values into the list.
-            for i in 0..n {
-                r_list_poke(out.sexp, i as isize, value[i].sexp)
-            }
-
-            Ok(out)
+        // Copy the values into the list.
+        for i in 0..n {
+            r_list_poke(out.sexp, i as isize, value[i].sexp)
         }
+
+        Ok(out)
     }
 }
 
@@ -1102,7 +1076,7 @@ impl TryFrom<RObject> for HashMap<String, String> {
             return Err(Error::UnexpectedType(NILSXP, vec![STRSXP]));
         };
 
-        let value = RObject::new(unsafe { Rf_coerceVector(value.sexp, STRSXP) });
+        let value = RObject::new(Rf_coerceVector(value.sexp, STRSXP));
 
         let n = names.length();
         let mut map = HashMap::<String, String>::with_capacity(n as usize);
@@ -1130,7 +1104,7 @@ impl TryFrom<RObject> for HashMap<String, i32> {
             return Err(Error::UnexpectedType(NILSXP, vec![STRSXP]));
         };
 
-        let value = RObject::new(unsafe { Rf_coerceVector(value.sexp, INTSXP) });
+        let value = RObject::new(Rf_coerceVector(value.sexp, INTSXP));
 
         let n = names.length();
         let mut map = HashMap::<String, i32>::with_capacity(n as usize);

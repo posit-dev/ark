@@ -152,7 +152,7 @@ pub fn initialize() -> anyhow::Result<RObject> {
     // Do this separately with a bare eval because `errors_initialize()` should
     // be called without any condition handlers on the stack
     let init = RFunction::from("initialize_errors");
-    unsafe { libr::Rf_eval(init.call.build().sexp, namespace.sexp) };
+    libr::Rf_eval(init.call.build().sexp, namespace.sexp);
 
     // Lock all module environments now that loading is complete. In debug
     // builds we skip the lock so modules can be hot-reloaded by the watcher.
@@ -303,10 +303,8 @@ mod debug {
 }
 
 fn r_poke_option_ark_testing() {
-    unsafe {
-        let value = Rf_ScalarLogical(1);
-        r_poke_option(r_symbol!("ark.testing"), value);
-    }
+    let value = Rf_ScalarLogical(1);
+    r_poke_option(r_symbol!("ark.testing"), value);
 }
 
 #[harp::register]

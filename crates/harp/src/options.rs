@@ -9,7 +9,7 @@ use crate::r_symbol;
 use crate::RObject;
 
 pub fn get_option(name: &str) -> RObject {
-    unsafe { libr::Rf_GetOption1(r_symbol!(name)).into() }
+    libr::Rf_GetOption1(r_symbol!(name)).into()
 }
 
 pub fn get_option_bool(name: &str) -> bool {

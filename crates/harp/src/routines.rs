@@ -26,14 +26,14 @@ static R_ROUTINES: Mutex<Vec<CallMethodDef>> = Mutex::new(vec![]);
 // NOTE: This function is used via the #[harp::register] macro,
 // which ensures that routines are initialized and executed on
 // application startup.
-pub unsafe fn add(def: R_CallMethodDef) {
+pub fn add(def: R_CallMethodDef) {
     R_ROUTINES
         .lock()
         .unwrap()
         .push(CallMethodDef { inner: def });
 }
 
-pub unsafe fn r_register_routines() {
+pub fn r_register_routines() {
     let info = R_getEmbeddingDllInfo();
     if info.is_null() {
         error!("internal error: no embedding DllInfo available");

@@ -89,17 +89,11 @@ fn format_values(x: SEXP, format_options: &FormatOptions) -> anyhow::Result<Vec<
     }
 
     match r_typeof(x) {
-        REALSXP => Ok(format_dbl(
-            unsafe { NumericVector::new_unchecked(x) },
-            format_options,
-        )),
-        INTSXP => Ok(format_int(
-            unsafe { IntegerVector::new_unchecked(x) },
-            format_options,
-        )),
-        STRSXP => Ok(format_chr(unsafe { CharacterVector::new_unchecked(x) })),
-        LGLSXP => Ok(format_lgl(unsafe { LogicalVector::new_unchecked(x) })),
-        CPLXSXP => Ok(format_cpl(unsafe { ComplexVector::new_unchecked(x) })),
+        REALSXP => Ok(format_dbl(NumericVector::new_unchecked(x), format_options)),
+        INTSXP => Ok(format_int(IntegerVector::new_unchecked(x), format_options)),
+        STRSXP => Ok(format_chr(CharacterVector::new_unchecked(x))),
+        LGLSXP => Ok(format_lgl(LogicalVector::new_unchecked(x))),
+        CPLXSXP => Ok(format_cpl(ComplexVector::new_unchecked(x))),
         VECSXP => Ok(format_list(x)),
         _ => Err(anyhow::anyhow!("Unsupported column type")),
     }
@@ -147,7 +141,7 @@ fn format_object(x: SEXP) -> Vec<FormattedValue> {
         return formatted.collect();
     });
 
-    unsafe { LogicalVector::new_unchecked(is_na.sexp) }
+    LogicalVector::new_unchecked(is_na.sexp)
         .iter()
         .zip(formatted)
         .map(|(is_na, v)| {

@@ -3,59 +3,49 @@ use libr::SEXP;
 // --- Closure accessors ---
 
 pub fn fn_formals(x: SEXP) -> SEXP {
-    unsafe { libr::FORMALS(x) }
+    libr::FORMALS(x)
 }
 
 pub fn fn_body(x: SEXP) -> SEXP {
-    unsafe {
-        if libr::has::R_ClosureBody() {
-            libr::R_ClosureBody(x)
-        } else {
-            libr::BODY(x)
-        }
+    if libr::has::R_ClosureBody() {
+        libr::R_ClosureBody(x)
+    } else {
+        libr::BODY(x)
     }
 }
 
 pub fn fn_env(x: SEXP) -> SEXP {
-    unsafe {
-        if libr::has::R_ClosureEnv() {
-            libr::R_ClosureEnv(x)
-        } else {
-            libr::CLOENV(x)
-        }
+    if libr::has::R_ClosureEnv() {
+        libr::R_ClosureEnv(x)
+    } else {
+        libr::CLOENV(x)
     }
 }
 
 pub fn new_function(formals: SEXP, body: SEXP, env: SEXP) -> SEXP {
-    unsafe {
-        if libr::has::R_mkClosure() {
-            libr::R_mkClosure(formals, body, env)
-        } else {
-            let out = libr::Rf_allocSExp(libr::CLOSXP);
-            libr::SET_FORMALS(out, formals);
-            libr::SET_BODY(out, body);
-            libr::SET_CLOENV(out, env);
-            out
-        }
+    if libr::has::R_mkClosure() {
+        libr::R_mkClosure(formals, body, env)
+    } else {
+        let out = libr::Rf_allocSExp(libr::CLOSXP);
+        libr::SET_FORMALS(out, formals);
+        libr::SET_BODY(out, body);
+        libr::SET_CLOENV(out, env);
+        out
     }
 }
 
 // --- Environment bindings ---
 
 pub fn env_binding_is_locked(env: SEXP, sym: SEXP) -> bool {
-    unsafe { libr::R_BindingIsLocked(sym, env) != 0 }
+    libr::R_BindingIsLocked(sym, env) != 0
 }
 
 pub fn env_binding_lock(env: SEXP, sym: SEXP) {
-    unsafe {
-        libr::R_LockBinding(sym, env);
-    }
+    libr::R_LockBinding(sym, env);
 }
 
 pub fn env_binding_unlock(env: SEXP, sym: SEXP) {
-    unsafe {
-        libr::R_unLockBinding(sym, env);
-    }
+    libr::R_unLockBinding(sym, env);
 }
 
 /// Binds a value in an environment, temporarily unlocking the binding if needed.
@@ -64,9 +54,7 @@ pub fn env_bind_force(env: SEXP, sym: SEXP, value: SEXP) {
     if locked {
         env_binding_unlock(env, sym);
     }
-    unsafe {
-        libr::Rf_defineVar(sym, value, env);
-    }
+    libr::Rf_defineVar(sym, value, env);
     if locked {
         env_binding_lock(env, sym);
     }
@@ -74,12 +62,10 @@ pub fn env_bind_force(env: SEXP, sym: SEXP, value: SEXP) {
 
 /// Returns the parent (enclosing) environment.
 pub fn env_parent(env: SEXP) -> SEXP {
-    unsafe {
-        if libr::has::R_ParentEnv() {
-            libr::R_ParentEnv(env)
-        } else {
-            libr::ENCLOS(env)
-        }
+    if libr::has::R_ParentEnv() {
+        libr::R_ParentEnv(env)
+    } else {
+        libr::ENCLOS(env)
     }
 }
 
@@ -87,13 +73,11 @@ pub fn env_parent(env: SEXP) -> SEXP {
 
 /// Gets an attribute from `x`.
 pub fn attrib_get(x: SEXP, tag: SEXP) -> SEXP {
-    unsafe { libr::Rf_getAttrib(x, tag) }
+    libr::Rf_getAttrib(x, tag)
 }
 
 pub fn attrib_poke(x: SEXP, tag: SEXP, value: SEXP) {
-    unsafe {
-        libr::Rf_setAttrib(x, tag, value);
-    }
+    libr::Rf_setAttrib(x, tag, value);
 }
 
 /// Returns `true` if `x` has any attributes.
@@ -118,7 +102,7 @@ pub fn attrib_for_each<F: FnMut(SEXP, SEXP)>(x: SEXP, mut f: F) {
             ) -> SEXP {
                 let f = &mut *(data as *mut F);
                 f(tag, val);
-                std::ptr::null_mut()
+                SEXP::null()
             }
             let data = &mut f as *mut F as *mut std::ffi::c_void;
             libr::R_mapAttrib(x, Some(trampoline::<F>), data);
@@ -137,7 +121,5 @@ pub fn attrib_for_each<F: FnMut(SEXP, SEXP)>(x: SEXP, mut f: F) {
 
 /// Shallow-copies all attributes from `src` to `dst`.
 pub fn attrib_poke_from(dst: SEXP, src: SEXP) {
-    unsafe {
-        libr::SHALLOW_DUPLICATE_ATTRIB(dst, src);
-    }
+    libr::SHALLOW_DUPLICATE_ATTRIB(dst, src);
 }
