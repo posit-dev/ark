@@ -35,6 +35,7 @@ impl CommOutgoingTx {
     }
 
     /// Send an outgoing comm message through IOPub.
+    #[allow(clippy::result_large_err)]
     pub fn send(&self, msg: CommMsg) -> Result<(), SendError<IOPubMessage>> {
         self.iopub_tx
             .send(IOPubMessage::CommOutgoing(self.comm_id.clone(), msg))
@@ -110,8 +111,8 @@ impl CommSocket {
      *   determine whether the comm is owned by the frontend or the back end.
      * - `comm_id`: The comm's unique identifier.
      * - `comm_name`: The comm's name. This is a freeform string since comm
-     *    names have no restrictions in the Jupyter protocol, but it's typically a
-     *    member of the Comm enum.
+     *   names have no restrictions in the Jupyter protocol, but it's typically a
+     *   member of the Comm enum.
      * - `iopub_tx`: The IOPub channel for sending messages to the frontend.
      */
     pub fn new(

@@ -286,7 +286,7 @@ mod debug {
         Ok(())
     }
 
-    pub fn import_file(path: &PathBuf, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
+    pub fn import_file(path: &Path, src: RModuleSource, env: SEXP) -> anyhow::Result<()> {
         let fun = match src {
             RModuleSource::Positron => "import_positron_path",
             RModuleSource::RStudio => "import_rstudio_path",

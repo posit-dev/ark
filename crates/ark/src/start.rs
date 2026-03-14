@@ -118,15 +118,19 @@ pub fn start_kernel(
         "ark",
         connection_file,
         registration_file,
-        shell,
-        control,
-        server_handlers,
+        kernel::Handlers {
+            shell_handler: shell,
+            control_handler: control,
+            server_handlers,
+        },
         stream_behavior,
-        iopub_tx.clone(),
-        iopub_rx,
-        comm_event_rx,
-        stdin_request_rx,
-        stdin_reply_tx,
+        kernel::ConnectionChannels {
+            iopub_tx: iopub_tx.clone(),
+            iopub_rx,
+            comm_event_rx,
+            stdin_request_rx,
+            stdin_reply_tx,
+        },
     );
     if let Err(err) = res {
         panic!("Couldn't connect to frontend: {err:?}");

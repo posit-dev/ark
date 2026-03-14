@@ -79,11 +79,15 @@ impl Control {
             Message::InterruptRequest(req) => {
                 self.handle_request(req, |r| self.handle_interrupt_request(r))
             },
-            _ => Err(Error::UnsupportedMessage(message, String::from("control"))),
+            _ => Err(Error::UnsupportedMessage(
+                Box::new(message),
+                String::from("control"),
+            )),
         }
     }
 
     /// Sets the kernel state by sending a message on the IOPub channel.
+    #[allow(clippy::result_large_err)]
     fn send_state<T: ProtocolMessage>(
         &self,
         parent: JupyterMessage<T>,

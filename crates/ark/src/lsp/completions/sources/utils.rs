@@ -32,7 +32,7 @@ pub(crate) fn has_priority_prefix(sort_text: &str) -> bool {
     sort_text.starts_with("0-")
 }
 
-pub(super) fn set_sort_text_by_first_appearance(completions: &mut Vec<CompletionItem>) {
+pub(super) fn set_sort_text_by_first_appearance(completions: &mut [CompletionItem]) {
     let size = completions.len();
 
     // Surely there's a better way to figure out what factor of 10 the `size`
@@ -211,8 +211,8 @@ pub(super) fn completions_from_evaluated_object_names(
         Ok(object) => object,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
-            Error::TryCatchError { message, .. } => {
-                log::trace!("Can't evaluate object: {message}");
+            Error::TryCatchError(err) => {
+                log::trace!("Can't evaluate object: {}", err.message);
                 return Ok(None);
             },
             _ => {

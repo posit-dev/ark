@@ -50,7 +50,7 @@ use crate::object::RObject;
 ///   - e.g.: list(1L, TRUE, "applesauce") -> [1, true, "applesauce"]
 /// - Named lists become JSON maps/objects
 ///   - e.g.: list(a = 1L, b = TRUE, c = "applesauce") ->
-///           {"a": 1, "b": true, "c": "applesauce"}
+///     {"a": 1, "b": true, "c": "applesauce"}
 /// - Named lists with duplicate keys have the values combined into an array
 ///   - e.g.: list(a = 1L, a = 2L, a = 3L) -> {"a": [1, 2, 3]}
 impl TryFrom<RObject> for Value {

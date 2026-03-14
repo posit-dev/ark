@@ -62,15 +62,15 @@ pub trait TreeCursorExt {
     // Move the cursor to the parent node satisfying some callback condition.
     fn find_parent<Callback: FnMut(Node) -> bool>(&mut self, callback: Callback) -> bool;
 
-    /// Move this cursor to the node that is at or closest to (but not after)
-    /// the requested point.
-    ///
-    /// Returns `false` if the cursor is after the `point`.
-    ///
-    /// TODO: It would be nice to use this, but there is a bug in tree sitter
-    /// that makes it impossible right now:
-    /// https://github.com/tree-sitter/tree-sitter/issues/2767
-    /// For now, use `node.find_closest_node_for_point()`.
+    // /// Move this cursor to the node that is at or closest to (but not after)
+    // /// the requested point.
+    // ///
+    // /// Returns `false` if the cursor is after the `point`.
+    // ///
+    // /// TODO: It would be nice to use this, but there is a bug in tree sitter
+    // /// that makes it impossible right now:
+    // /// https://github.com/tree-sitter/tree-sitter/issues/2767
+    // /// For now, use `node.find_closest_node_for_point()`.
     // fn goto_closest_node_for_point(&mut self, point: Point) -> bool;
 
     /// Move this cursor to the first child of its current node that extends

@@ -95,8 +95,8 @@ impl ArkGenerics {
     pub fn register_method(&self, class: &str, method: RObject) -> anyhow::Result<()> {
         let generic_name: &str = self.into();
         RFunction::new("", ".ark.register_method")
-            .add(RObject::try_from(generic_name)?)
-            .add(RObject::try_from(class)?)
+            .add(RObject::from(generic_name))
+            .add(RObject::from(class))
             .add(method)
             .call_in(ARK_ENVS.positron_ns)?;
         Ok(())

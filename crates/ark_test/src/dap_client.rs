@@ -745,16 +745,9 @@ impl DapClient {
         };
 
         let mut unexpected = Vec::new();
-        loop {
-            match self.recv() {
-                Ok(Sendable::Event(event)) => {
-                    trace_dap_event(&event);
-                    unexpected.push(event);
-                },
-                Ok(Sendable::Response(_)) | Ok(Sendable::ReverseRequest(_)) | Err(_) => {
-                    break;
-                },
-            }
+        while let Ok(Sendable::Event(event)) = self.recv() {
+            trace_dap_event(&event);
+            unexpected.push(event);
         }
 
         // Restore original timeout

@@ -216,9 +216,7 @@ fn find_roxygen_examples_section(node: Node, contents: &str) -> Option<tree_sitt
     // Check that the `node` we start on is a valid roxygen comment line.
     // We check this `node` specially because the loops below start on the previous/next
     // sibling, and this one would go unchecked.
-    let Some(text) = as_roxygen_comment_text(&node, contents) else {
-        return None;
-    };
+    let text = as_roxygen_comment_text(&node, contents)?;
 
     // Drop `#'` from the comment's text
     let text = RE_ROXYGEN2_COMMENT.replace(&text, "");
@@ -384,12 +382,9 @@ fn adjust_roxygen_examples_success(
     let subdocument_range = subdocument_statement_range.range;
 
     // Slice out code to execute from the subdocument
-    let Some(slice) = subdocument
+    let slice = subdocument
         .contents
-        .get(subdocument_range.start_byte..subdocument_range.end_byte)
-    else {
-        return None;
-    };
+        .get(subdocument_range.start_byte..subdocument_range.end_byte)?;
     let subdocument_code = slice.to_string();
 
     // Map the `subdocument_range` that covers the executable code back to a `range`

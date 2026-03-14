@@ -102,8 +102,8 @@ fn eval_pipe_root(name: &str) -> Option<RObject> {
         Ok(value) => value,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return None,
-            Error::TryCatchError { message, .. } => {
-                log::trace!("Can't evaluate pipe root: {message}");
+            Error::TryCatchError(err) => {
+                log::trace!("Can't evaluate pipe root: {}", err.message);
                 return None;
             },
             _ => {
