@@ -5,6 +5,8 @@
 //
 //
 
+#![allow(clippy::missing_safety_doc)]
+
 macro_rules! generate {
     (
         $(
@@ -41,8 +43,9 @@ macro_rules! generate {
                 paste::paste! {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
-                    pub fn $name() -> bool {
-                        unsafe { [<$name _has>] }
+                    #[allow(clippy::missing_safety_doc)]
+                    pub unsafe fn $name() -> bool {
+                        [<$name _has>]
                     }
                 }
             )+
