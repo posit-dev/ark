@@ -2794,7 +2794,7 @@ unsafe extern "C-unwind" fn ps_get_virtual_document(uri: SEXP) -> anyhow::Result
 /// Returns the currently active execute request as an R named list,
 /// or NULL if no execute request is in flight.
 #[harp::register]
-pub unsafe extern "C-unwind" fn ps_active_request() -> anyhow::Result<SEXP> {
+pub unsafe extern "C-unwind" fn ps_get_active_request() -> anyhow::Result<SEXP> {
     let Some(req) = Console::get().get_active_execute_request() else {
         return Ok(libr::R_NilValue);
     };

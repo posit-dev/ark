@@ -61,7 +61,7 @@
 #
 # Internal utility; invoke with: `.ps.internal(active_request())`
 active_request <- function() {
-    .ps.Call("ps_active_request")
+    .ps.Call("ps_get_active_request")
 }
 
 # Sleep that doesn't check for interrupts to test an unresponsive runtime.
