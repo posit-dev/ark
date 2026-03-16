@@ -57,6 +57,12 @@ just test <test_name>
 just test -p ark
 ```
 
+### Running Clippy
+
+```sh
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
 ### Kernel and DAP Test Infrastructure
 
 Integration tests for the kernel and DAP server live in `crates/ark/tests/` and use the test utilities from `crates/ark_test/`.
