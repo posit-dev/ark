@@ -110,7 +110,7 @@ pub trait Vector: Sized {
     }
 
     fn is_empty(&self) -> bool {
-        self.len() == 0
+        unsafe { self.len() == 0 }
     }
 
     fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String;

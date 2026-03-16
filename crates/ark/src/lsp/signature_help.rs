@@ -624,12 +624,10 @@ fn <- function(
     #[test]
     fn test_argument_label_call() {
         crate::r_task(|| {
-            let x = unsafe {
-                RCall::new(r_symbol!("source"))
-                    .add(r_symbol!("exprs"))
-                    .param("local", r_symbol!("is_local"))
-                    .build()
-            };
+            let x = RCall::new(r_symbol!("source"))
+                .add(r_symbol!("exprs"))
+                .param("local", r_symbol!("is_local"))
+                .build();
             let label = argument_label(String::from("x"), x.sexp);
             assert_eq!(label, String::from("x = source(exprs, local = is_local)"));
         })

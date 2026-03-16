@@ -352,17 +352,17 @@ pub fn r_envir_name(envir: SEXP) -> Result<String> {
 
     if r_env_is_pkg_env(envir) {
         let name = RObject::from(r_pkg_env_name(envir));
-        return name.to::<String>();
+        return unsafe { name.to::<String>() };
     }
 
     if r_env_is_ns_env(envir) {
         let name = RObject::from(r_ns_env_name(envir));
-        return name.to::<String>();
+        return unsafe { name.to::<String>() };
     }
 
-    let name = Rf_getAttrib(envir, r_symbol!("name"));
+    let name = unsafe { Rf_getAttrib(envir, r_symbol!("name")) };
     if r_typeof(name) == STRSXP {
-        let name = RObject::view(name).to::<String>()?;
+        let name = unsafe { RObject::view(name).to::<String>()? };
         return Ok(name);
     }
 
@@ -448,7 +448,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
 pub fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
     // handle SYMSXPs upfront
     if r_typeof(object) == SYMSXP {
-        return RObject::view(object).to::<String>();
+        return unsafe { RObject::view(object).to::<String>() };
     }
 
     // call format on the object
@@ -517,17 +517,17 @@ pub fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
     // We can take advantage of this to identify promises in namespaces
     // that correspond to symbols we should evaluate when generating completions.
 
-    let expr = PRCODE(x);
+    let expr = unsafe { PRCODE(x) };
 
     if r_typeof(expr) != LANGSXP {
         return false;
     }
 
-    if Rf_xlength(expr) == 0 {
+    if unsafe { Rf_xlength(expr) } == 0 {
         return false;
     }
 
-    let expr = CAR(expr);
+    let expr = unsafe { CAR(expr) };
 
     if r_typeof(expr) != SYMSXP {
         return false;
@@ -593,7 +593,7 @@ pub fn r_pkg_env_name(env: SEXP) -> SEXP {
 pub fn r_env_is_ns_env(env: SEXP) -> bool {
     // Does handle `R_BaseNamespace`
     // https://github.com/wch/r-source/blob/1cb35ff692d3eb3ab546e0db4761102b5ea4ac89/src/main/envir.c#L3689
-    R_IsNamespaceEnv(env) == Rboolean_TRUE
+    unsafe { R_IsNamespaceEnv(env) == Rboolean_TRUE }
 }
 
 pub fn r_ns_env_name(env: SEXP) -> SEXP {
