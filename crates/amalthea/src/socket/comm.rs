@@ -35,7 +35,6 @@ impl CommOutgoingTx {
     }
 
     /// Send an outgoing comm message through IOPub.
-    #[allow(clippy::result_large_err)]
     pub fn send(&self, msg: CommMsg) -> Result<(), SendError<IOPubMessage>> {
         self.iopub_tx
             .send(IOPubMessage::CommOutgoing(self.comm_id.clone(), msg))

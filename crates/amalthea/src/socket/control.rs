@@ -87,7 +87,6 @@ impl Control {
     }
 
     /// Sets the kernel state by sending a message on the IOPub channel.
-    #[allow(clippy::result_large_err)]
     fn send_state<T: ProtocolMessage>(
         &self,
         parent: JupyterMessage<T>,
