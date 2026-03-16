@@ -389,6 +389,10 @@ fn test_plot_get_metadata_with_origin() {
                     },
                 },
             }),
+            fig_width: None,
+            fig_height: None,
+            output_width_px: None,
+            output_pixel_ratio: None,
         }),
         ..ExecuteRequestOptions::default()
     });

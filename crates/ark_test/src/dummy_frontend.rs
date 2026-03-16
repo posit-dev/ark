@@ -987,6 +987,10 @@ impl DummyArkFrontend {
         self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
             positron: Some(ExecuteRequestPositron {
                 code_location: Some(code_location),
+                fig_width: None,
+                fig_height: None,
+                output_width_px: None,
+                output_pixel_ratio: None,
             }),
             ..Default::default()
         })
@@ -1172,6 +1176,10 @@ impl DummyArkFrontend {
         self.send_execute_request(&code, ExecuteRequestOptions {
             positron: Some(ExecuteRequestPositron {
                 code_location: Some(file.location()),
+                fig_width: None,
+                fig_height: None,
+                output_width_px: None,
+                output_pixel_ratio: None,
             }),
             ..Default::default()
         });
