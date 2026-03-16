@@ -32,7 +32,6 @@ static _ARK_DISPLAY_VALUE: unsafe extern "C" fn(x: libr::SEXP) -> *const ffi::c_
 // Implementations for entry points in `debug.c`.
 
 #[cfg_attr(not(test), no_mangle)]
-#[expect(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C-unwind" fn ark_print_rs(x: libr::SEXP) -> *const ffi::c_char {
     capture_console_output(|| {
         unsafe { libr::Rf_PrintValue(x) };
@@ -82,7 +81,6 @@ pub extern "C-unwind" fn ark_trace_back_rs() -> *const ffi::c_char {
 }
 
 #[cfg_attr(not(test), no_mangle)]
-#[expect(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C-unwind" fn ark_display_value_rs(x: libr::SEXP) -> *const ffi::c_char {
     let value = unsafe {
         let kind = tidy_kind(r_typeof(x));

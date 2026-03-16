@@ -49,7 +49,6 @@ impl<T> RLocal<T>
 where
     T: Copy,
 {
-    #[expect(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(new_value: T, variable: *mut T) -> RLocal<T> {
         unsafe {
             let old_value = libr::get(variable);
