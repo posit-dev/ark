@@ -94,7 +94,7 @@ fn completions_from_namespace(
         list_namespace_symbols(*namespace)
     };
 
-    let strings = unsafe { symbols.to::<Vec<String>>()? };
+    let strings = symbols.to::<Vec<String>>()?;
 
     for string in strings.iter() {
         let item = unsafe {

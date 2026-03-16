@@ -71,7 +71,7 @@ impl TryFrom<RObject> for Value {
 
                 // A single integer becomes a JSON number
                 1 => {
-                    let value = unsafe { obj.to::<i32>()? };
+                    let value = obj.to::<i32>()?;
                     Ok(Value::Number(value.into()))
                 },
 
@@ -96,7 +96,7 @@ impl TryFrom<RObject> for Value {
 
                 // A single value becomes a JSON number
                 1 => {
-                    let value = unsafe { obj.to::<f64>()? };
+                    let value = obj.to::<f64>()?;
                     // There's no try/into implicit conversion from f64 to a
                     // JSON number, but json! handles it.
                     Ok(json!(value))
@@ -123,7 +123,7 @@ impl TryFrom<RObject> for Value {
 
                 // A single value becomes a JSON true/false value
                 1 => {
-                    let value = unsafe { obj.to::<bool>()? };
+                    let value = obj.to::<bool>()?;
                     Ok(Value::Bool(value))
                 },
 
@@ -159,7 +159,7 @@ impl TryFrom<RObject> for Value {
 
                 // With exactly one value, convert to a string
                 1 => {
-                    let str = unsafe { obj.to::<String>()? };
+                    let str = obj.to::<String>()?;
                     Ok(Value::String(str))
                 },
 

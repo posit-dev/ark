@@ -64,13 +64,11 @@ fn completions_from_comment(
 
     // TODO: cache these?
     // TODO: use an indexer to build the tag list?
-    let tags = unsafe {
-        RFunction::new("base", "system.file")
-            .param("package", "roxygen2")
-            .add("roxygen2-tags.yml")
-            .call()?
-            .to::<String>()?
-    };
+    let tags = RFunction::new("base", "system.file")
+        .param("package", "roxygen2")
+        .add("roxygen2-tags.yml")
+        .call()?
+        .to::<String>()?;
 
     if tags.is_empty() {
         return Ok(Some(completions));

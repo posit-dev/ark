@@ -1572,7 +1572,7 @@ impl PositronVariable {
                 // 1. Provide the name and the index for the `get_child_at` method.
                 // 2. (Not necessary) Given an access key, we can detect if we want to apply a custom get_child_method.
                 let list = List::new(value.sexp)?;
-                let n = unsafe { list.len() };
+                let n = list.len();
 
                 let names = match value.names() {
                     None => vec![None; n],

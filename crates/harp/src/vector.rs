@@ -55,6 +55,7 @@ pub trait Vector: Sized {
     type UnderlyingType;
     type CompareType;
 
+    #[allow(clippy::missing_safety_doc)]
     unsafe fn new_unchecked(object: impl Into<SEXP>) -> Self;
     fn data(&self) -> SEXP;
     fn is_na(x: &Self::UnderlyingType) -> bool;
@@ -91,12 +92,14 @@ pub trait Vector: Sized {
         unsafe { Ok(Self::new_unchecked(object)) }
     }
 
-    unsafe fn with_length(size: usize) -> Self
+    fn with_length(size: usize) -> Self
     where
         Self: Sized,
     {
-        let data = Rf_allocVector(Self::SEXPTYPE, size as isize);
-        Self::new_unchecked(data)
+        unsafe {
+            let data = Rf_allocVector(Self::SEXPTYPE, size as isize);
+            Self::new_unchecked(data)
+        }
     }
 
     fn create<T>(data: T) -> Self
@@ -105,12 +108,12 @@ pub trait Vector: Sized {
         <T as IntoIterator>::IntoIter: ExactSizeIterator,
         <T as IntoIterator>::Item: AsRef<Self::Item>;
 
-    unsafe fn len(&self) -> usize {
-        Rf_xlength(self.data()) as usize
+    fn len(&self) -> usize {
+        unsafe { Rf_xlength(self.data()) as usize }
     }
 
     fn is_empty(&self) -> bool {
-        unsafe { self.len() == 0 }
+        self.len() == 0
     }
 
     fn format_one(&self, x: Self::Type, options: Option<&FormatOptions>) -> String;
@@ -123,7 +126,7 @@ pub trait Vector: Sized {
     }
 
     fn iter(&self) -> harp::vector::VectorIterator<'_, Self> {
-        let size = unsafe { self.len() as isize };
+        let size = self.len() as isize;
         harp::vector::VectorIterator {
             data: self,
             index: 0,
@@ -174,18 +177,16 @@ pub(crate) fn try_vec_from_r_vector<VectorType>(
 where
     VectorType: Vector,
 {
-    unsafe {
-        let mut result: Vec<VectorType::Type> = Vec::with_capacity(value.len());
+    let mut result: Vec<VectorType::Type> = Vec::with_capacity(value.len());
 
-        for val in value.iter() {
-            let Some(x) = val else {
-                return Err(harp::Error::MissingValueError);
-            };
-            result.push(x);
-        }
-
-        Ok(result)
+    for val in value.iter() {
+        let Some(x) = val else {
+            return Err(harp::Error::MissingValueError);
+        };
+        result.push(x);
     }
+
+    Ok(result)
 }
 
 pub(crate) fn try_r_vector_from_r_sexp<VectorType>(value: SEXP) -> harp::Result<VectorType>
@@ -193,7 +194,7 @@ where
     VectorType: Vector,
 {
     if value == harp::RObject::null().sexp {
-        return Ok(unsafe { VectorType::with_length(0) });
+        return Ok(VectorType::with_length(0));
     }
 
     VectorType::new(value)

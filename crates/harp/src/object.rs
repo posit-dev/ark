@@ -247,8 +247,8 @@ pub fn r_dbl_begin(x: SEXP) -> *mut f64 {
     unsafe { REAL(x) }
 }
 
-pub unsafe fn chr_cbegin(x: SEXP) -> *const SEXP {
-    libr::DATAPTR_RO(x) as *const SEXP
+pub fn chr_cbegin(x: SEXP) -> *const SEXP {
+    unsafe { libr::DATAPTR_RO(x) as *const SEXP }
 }
 
 pub fn list_cbegin(x: SEXP) -> *const SEXP {
@@ -335,7 +335,7 @@ impl RObject {
     }
 
     // A helper function that makes '.try_into()' more ergonomic to use.
-    pub unsafe fn to<U: TryFrom<RObject, Error = crate::error::Error>>(self) -> Result<U, Error> {
+    pub fn to<U: TryFrom<RObject, Error = crate::error::Error>>(self) -> Result<U, Error> {
         TryInto::<U>::try_into(self)
     }
 
