@@ -267,10 +267,7 @@ mod tests {
                 .unwrap()
                 .try_into()
                 .unwrap();
-        match res {
-            Some(res) => res,
-            None => false,
-        }
+        res.unwrap_or_default()
     }
 
     /// Test a selection with all supported formats (CSV, TSV, and HTML if knitr is available)

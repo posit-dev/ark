@@ -128,6 +128,39 @@ impl Package {
 }
 
 #[cfg(test)]
+pub(crate) fn temp_palmerpenguin() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Write DESCRIPTION
+    let description = "\
+Package: penguins
+Version: 1.0
+";
+    fs::write(dir.path().join("DESCRIPTION"), description).unwrap();
+
+    // Write NAMESPACE
+    let namespace = "\
+export(path_to_file)
+export(penguins)
+";
+    fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
+
+    // Write INDEX
+    let index = "\
+path_to_file            Get file path to 'penguins.csv' and
+                    'penguins_raw.csv' files
+penguins                Size measurements for adult foraging penguins
+                    near Palmer Station, Antarctica
+penguins_raw            Penguin size, clutch, and blood isotope data
+                    for foraging adults near Palmer Station,
+                    Antarctica
+";
+    fs::write(dir.path().join("INDEX"), index).unwrap();
+
+    dir
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::lsp::inputs::package_description::Description;
@@ -180,37 +213,4 @@ mod tests {
         ]);
         assert_eq!(pkg.description.name, "penguins");
     }
-}
-
-#[cfg(test)]
-pub(crate) fn temp_palmerpenguin() -> tempfile::TempDir {
-    let dir = tempfile::tempdir().unwrap();
-
-    // Write DESCRIPTION
-    let description = "\
-Package: penguins
-Version: 1.0
-";
-    fs::write(dir.path().join("DESCRIPTION"), description).unwrap();
-
-    // Write NAMESPACE
-    let namespace = "\
-export(path_to_file)
-export(penguins)
-";
-    fs::write(dir.path().join("NAMESPACE"), namespace).unwrap();
-
-    // Write INDEX
-    let index = "\
-path_to_file            Get file path to 'penguins.csv' and
-                    'penguins_raw.csv' files
-penguins                Size measurements for adult foraging penguins
-                    near Palmer Station, Antarctica
-penguins_raw            Penguin size, clutch, and blood isotope data
-                    for foraging adults near Palmer Station,
-                    Antarctica
-";
-    fs::write(dir.path().join("INDEX"), index).unwrap();
-
-    dir
 }

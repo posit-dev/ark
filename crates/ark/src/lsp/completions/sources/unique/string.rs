@@ -123,21 +123,21 @@ mod tests {
             assert_match!(
                 completions_from_string(&context).unwrap(),
                 Some(items) => {
-                    assert!(items.len() > 0)
+                    assert!(!items.is_empty())
                 }
             );
 
             // `Some` trigger -> Should return empty completion set
             let context = DocumentContext::new(&document, point, Some(String::from("$")));
             let res = completions_from_string(&context).unwrap();
-            assert_match!(res, Some(items) => { assert!(items.len() == 0) });
+            assert_match!(res, Some(items) => { assert!(items.is_empty()) });
 
             // Check for same result when consulting (potentially all) unique sources
             let state = WorldState::default();
             let completion_context = CompletionContext::new(&context, &state);
             let res = unique::get_completions(&completion_context).unwrap();
 
-            assert_match!(res, Some(items) => { assert!(items.len() == 0) });
+            assert_match!(res, Some(items) => { assert!(items.is_empty()) });
         })
     }
 }

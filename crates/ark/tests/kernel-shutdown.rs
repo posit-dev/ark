@@ -30,7 +30,7 @@ fn test_shutdown_request() {
 
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
-    assert_eq!(reply.restart, false);
+    assert!(!reply.restart);
 
     frontend.recv_iopub_idle();
 
@@ -48,7 +48,7 @@ fn test_shutdown_request_with_restart() {
 
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
-    assert_eq!(reply.restart, true);
+    assert!(reply.restart);
 
     frontend.recv_iopub_idle();
 
@@ -85,7 +85,7 @@ fn test_shutdown_request_browser() {
     // messages concurrently instead of sequentially.
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
-    assert_eq!(reply.restart, true);
+    assert!(reply.restart);
 
     frontend.recv_iopub_idle();
 
@@ -114,7 +114,7 @@ fn test_shutdown_request_while_busy() {
 
     let reply = frontend.recv_control_shutdown_reply();
     assert_eq!(reply.status, Status::Ok);
-    assert_eq!(reply.restart, false);
+    assert!(!reply.restart);
 
     // Drain any streams from the interrupted Sys.sleep execution. The stream
     // could arrive before or after the shutdown idle (race condition), so we

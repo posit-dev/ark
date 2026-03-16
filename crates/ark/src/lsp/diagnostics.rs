@@ -1147,7 +1147,7 @@ mod tests {
     use crate::r_task;
 
     // Default state that includes installed packages and default scopes.
-    static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(|| current_state());
+    static DEFAULT_STATE: Lazy<WorldState> = Lazy::new(current_state);
 
     fn generate_diagnostics(doc: Document, state: WorldState) -> Vec<lsp_types::Diagnostic> {
         super::generate_diagnostics(doc, state, false)
@@ -1176,7 +1176,7 @@ foo
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 2);
 
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
             assert_eq!(diagnostic.range.start, Position::new(3, 2));
             assert_eq!(diagnostic.range.end, Position::new(3, 3));
@@ -1209,7 +1209,7 @@ foo
             let document = Document::new(text, None);
             let diagnostics = generate_diagnostics(document, DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
         })
     }
@@ -1296,7 +1296,7 @@ foo
             assert_eq!(diagnostics.len(), 1);
 
             // Only marks the `x` before the `x <- 1`
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             assert_eq!(diagnostic.range.start.line, 1)
         })
     }
@@ -1331,7 +1331,7 @@ foo
             let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
         })
     }
@@ -1351,7 +1351,7 @@ foo
             let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
         })
     }
@@ -1372,7 +1372,7 @@ foo
             let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
         })
     }
@@ -1392,7 +1392,7 @@ foo
             let diagnostics = generate_diagnostics(document.clone(), DEFAULT_STATE.clone());
             assert_eq!(diagnostics.len(), 1);
 
-            let diagnostic = diagnostics.get(0).unwrap();
+            let diagnostic = diagnostics.first().unwrap();
             insta::assert_snapshot!(diagnostic.message);
         })
     }
@@ -1688,7 +1688,7 @@ foo
             assert_eq!(diagnostics.len(), 2);
 
             assert!(diagnostics
-                .get(0)
+                .first()
                 .unwrap()
                 .message
                 .contains("No symbol named 'undefined' in scope"));

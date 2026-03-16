@@ -9,7 +9,7 @@ fn test_source_local() {
     let frontend = DummyArkFrontend::lock();
 
     let mut file = tempfile::NamedTempFile::new().unwrap();
-    write!(file, "foobar\n").unwrap();
+    writeln!(file, "foobar").unwrap();
 
     let path = file.path().to_str().unwrap().replace("\\", "/");
 
@@ -43,7 +43,7 @@ fn test_source_global() {
     let frontend = DummyArkFrontend::lock();
 
     let mut file = tempfile::NamedTempFile::new().unwrap();
-    write!(file, "foo\n").unwrap();
+    writeln!(file, "foo").unwrap();
 
     let path = file.path().to_str().unwrap().replace("\\", "/");
 

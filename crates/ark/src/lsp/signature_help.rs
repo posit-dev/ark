@@ -526,8 +526,14 @@ mod tests {
             assert_eq!(help.signatures.len(), 1);
 
             // Looking for the label offset into `library(package, ...etc)` for `package`
-            let signature = help.signatures.get(0).unwrap();
-            let label = &signature.parameters.as_ref().unwrap().get(0).unwrap().label;
+            let signature = help.signatures.first().unwrap();
+            let label = &signature
+                .parameters
+                .as_ref()
+                .unwrap()
+                .first()
+                .unwrap()
+                .label;
             assert_eq!(label, &ParameterLabel::LabelOffsets([8, 15]));
         })
     }
@@ -577,7 +583,7 @@ fn <- function(
             let help = help.unwrap().unwrap();
 
             // Check expected signature label
-            let signature = help.signatures.get(0).unwrap();
+            let signature = help.signatures.first().unwrap();
             assert_eq!(
                 signature.label,
                 String::from(

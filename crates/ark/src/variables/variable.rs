@@ -1781,12 +1781,12 @@ mod tests {
 
             assert_eq!(variable.display_type, String::from("foo (3)"));
 
-            assert_eq!(variable.has_children, true);
+            assert!(variable.has_children);
 
             assert_eq!(variable.kind, VariableKind::Other);
 
             // The has_viewer method returns TRUE, so the object has a viewer
-            assert_eq!(variable.has_viewer, true);
+            assert!(variable.has_viewer);
 
             // Now inspect `x`
             let path = vec![String::from("x")];
@@ -2063,7 +2063,7 @@ mod tests {
             let vars = inspect_from_expr("matrix(0, ncol = 10000, nrow = 10000)");
             assert_eq!(vars.len(), MAX_DISPLAY_VALUE_ENTRIES);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
-            assert_eq!(vars[0].is_truncated, true);
+            assert!(vars[0].is_truncated);
 
             let vars = inspect_from_expr("new.env(parent=emptyenv())");
             assert_eq!(vars.len(), 0);
@@ -2079,7 +2079,7 @@ mod tests {
             );
             assert_eq!(vars.len(), 10);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
-            assert_eq!(vars[0].is_truncated, true);
+            assert!(vars[0].is_truncated);
 
             let vars = inspect_from_expr(
                 "structure(1:10, names = rep(paste(rep(letters, length.out = 10000), collapse = ''), 10))",
@@ -2101,12 +2101,12 @@ mod tests {
 
             let vars = inspect_from_expr("list(x = x ~ {y + z + a})");
             assert_eq!(vars[0].display_value, "x ~ { ...");
-            assert_eq!(vars[0].is_truncated, true);
+            assert!(vars[0].is_truncated);
 
             let formula: String = (0..100).map(|i| format!("x{i}")).collect_vec().join(" + ");
             let vars = inspect_from_expr(format!("list(x = x ~ {formula})").as_str());
 
-            assert_eq!(vars[0].is_truncated, true);
+            assert!(vars[0].is_truncated);
             // The deparser truncates the formula at 70 characters so we don't expect to get to
             // MAX_DISPLAY_VALUE_LENGTH. We do have protections if this behavior changes, though.
             assert_eq!(vars[0].display_value.len(), 70);
@@ -2144,7 +2144,7 @@ mod tests {
             let vars = PositronVariable::inspect(env.into(), &path).unwrap();
             assert_eq!(vars.len(), 1);
             assert_eq!(vars[0].display_value.len(), MAX_DISPLAY_VALUE_LENGTH);
-            assert_eq!(vars[0].is_truncated, true);
+            assert!(vars[0].is_truncated);
 
             // Test for the empty string
             let env = Environment::new_empty();

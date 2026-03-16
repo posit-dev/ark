@@ -1618,7 +1618,7 @@ mod tests {
         crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
             let v = harp::parse_eval_global("list(x = 1L, y = 2L, x = 3L)").unwrap();
-            assert_eq!(v.length(), 3 as isize);
+            assert_eq!(v.length(), 3_isize);
 
             // Ensure we created an object of the same size as the map.
             let out: HashMap<String, i32> = v.try_into().unwrap();
@@ -1640,7 +1640,7 @@ mod tests {
         crate::r_task(|| {
             // Create a map of pizza toppings to their acceptability.
             let v = harp::parse_eval_global("list(x = c(1L, 2L), y = c('a', 'b'))").unwrap();
-            assert_eq!(v.length(), 2 as isize);
+            assert_eq!(v.length(), 2_isize);
 
             // Ensure we can convert the object back into a map with the same values.
             let out: HashMap<String, RObject> = v.try_into().unwrap();

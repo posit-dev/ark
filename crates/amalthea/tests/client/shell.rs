@@ -145,7 +145,7 @@ impl ShellHandler for Shell {
     ) -> amalthea::Result<ExecuteReply> {
         // Increment counter if we are storing this execution in history
         if req.store_history {
-            self.execution_count = self.execution_count + 1;
+            self.execution_count += 1;
         }
 
         // If the code is not to be executed silently, re-broadcast the

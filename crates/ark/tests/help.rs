@@ -150,8 +150,5 @@ fn test_custom_help_handlers() {
     });
 
     r_help.test_topic("obj$hello", "help-test-id-4");
-    assert_eq!(
-        r_task(|| unsafe { harp::parse_eval_global("called").unwrap().to::<bool>() }).unwrap(),
-        true,
-    );
+    assert!(r_task(|| unsafe { harp::parse_eval_global("called").unwrap().to::<bool>() }).unwrap());
 }

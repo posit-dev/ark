@@ -115,7 +115,7 @@ mod tests {
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 2);
 
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "b".to_string());
             assert_eq!(completion.insert_text, Some("\"b\"".to_string()));
 
@@ -159,7 +159,7 @@ mod tests {
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
 
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "mpg".to_string());
             assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
 
@@ -171,7 +171,7 @@ mod tests {
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
 
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "mpg".to_string());
             assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
 
@@ -183,7 +183,7 @@ mod tests {
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
 
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             // TODO: ideally we could assert that mpg doesn't appear again, or appears at the end
             assert_eq!(completion.label, "mpg".to_string());
             assert_eq!(completion.insert_text, None); // No enquote, means the label is used directly
@@ -196,7 +196,7 @@ mod tests {
             let completions = completions_from_subset(&context).unwrap().unwrap();
             assert_eq!(completions.len(), 11);
 
-            let completion = completions.get(0).unwrap();
+            let completion = completions.first().unwrap();
             assert_eq!(completion.label, "mpg".to_string());
             assert_eq!(completion.insert_text, Some("\"mpg\"".to_string())); // Enquoted result
 

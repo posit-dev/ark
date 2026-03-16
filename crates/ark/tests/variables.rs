@@ -89,7 +89,7 @@ fn test_variables_list() {
     let evt: VariablesFrontendEvent = serde_json::from_value(data).unwrap();
     match evt {
         VariablesFrontendEvent::Refresh(params) => {
-            assert!(params.variables.len() == 0);
+            assert!(params.variables.is_empty());
             assert_eq!(params.version, 1);
         },
         _ => panic!("Expected refresh event"),

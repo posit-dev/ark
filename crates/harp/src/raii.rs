@@ -189,14 +189,14 @@ mod tests {
 
             {
                 let _guard = RLocalShowErrorMessageOption::new(true);
-                assert_eq!(get(), true);
+                assert!(get());
 
                 {
                     let _guard = RLocalShowErrorMessageOption::new(false);
-                    assert_eq!(get(), false);
+                    assert!(!get());
                 }
 
-                assert_eq!(get(), true);
+                assert!(get());
             }
 
             assert_eq!(get(), old);
