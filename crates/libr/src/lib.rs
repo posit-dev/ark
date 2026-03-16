@@ -5,6 +5,8 @@
 //
 //
 
+#![allow(clippy::missing_safety_doc)]
+
 mod constant_globals;
 mod functions;
 mod functions_variadic;
