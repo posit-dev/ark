@@ -63,7 +63,7 @@ use crate::r_task;
 // server. The `Disabled` enum variant is an indicator of this state. We could
 // have just created an anyhow error passed through the `Result` variant but that
 // would flood the LSP logs with irrelevant backtraces.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum RequestResponse {
     Disabled,
     Crashed(anyhow::Error),
@@ -120,7 +120,7 @@ fn report_crash() {
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum LspMessage {
     Notification(LspNotification),
     Request(LspRequest, TokioUnboundedSender<RequestResponse>),
@@ -142,7 +142,7 @@ pub(crate) enum LspNotification {
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum LspRequest {
     Initialize(InitializeParams),
     WorkspaceSymbol(WorkspaceSymbolParams),
@@ -166,7 +166,7 @@ pub(crate) enum LspRequest {
 }
 
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub(crate) enum LspResponse {
     Initialize(InitializeResult),
     WorkspaceSymbol(Option<Vec<SymbolInformation>>),

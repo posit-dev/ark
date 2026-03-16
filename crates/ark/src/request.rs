@@ -15,7 +15,7 @@ use crate::ui::UiCommMessage;
 
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum RRequest {
     /// Fulfill an execution request from the frontend, producing either a
     /// Reply or an Exception
@@ -53,7 +53,7 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 
 /// Represents requests to the kernel.
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant)]
 pub enum KernelRequest {
     /// Establish a channel to the UI comm which forwards messages to the frontend
     EstablishUiCommChannel(Sender<UiCommMessage>),
