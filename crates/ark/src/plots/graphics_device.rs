@@ -651,7 +651,7 @@ impl DeviceContext {
                         let intrinsic = self.intrinsic_sizes.borrow().get(id).cloned();
                         match intrinsic {
                             Some(intrinsic) => {
-                                Self::intrinsic_size_to_plot_size(&intrinsic, plot_meta.pixel_ratio)
+                                Self::intrinsic_size_to_plot_size(&intrinsic)
                             },
                             None => {
                                 return Err(anyhow!(
@@ -725,16 +725,19 @@ impl DeviceContext {
     /// Default aspect ratio (width:height) used when only output_width_px is provided.
     const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
 
-    /// Convert an intrinsic size (in inches) to a pixel-based `PlotSize`.
-    fn intrinsic_size_to_plot_size(intrinsic: &IntrinsicSize, pixel_ratio: f64) -> PlotSize {
+    /// Convert an intrinsic size (in inches) to a logical-pixel-based `PlotSize`.
+    ///
+    /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
+    /// physical pixel scaling via the separate `pixel_ratio` parameter.
+    fn intrinsic_size_to_plot_size(intrinsic: &IntrinsicSize) -> PlotSize {
         match intrinsic.unit {
             PlotUnit::Inches => PlotSize {
-                width: (intrinsic.width * Self::DEFAULT_DPI * pixel_ratio) as i64,
-                height: (intrinsic.height * Self::DEFAULT_DPI * pixel_ratio) as i64,
+                width: (intrinsic.width * Self::DEFAULT_DPI) as i64,
+                height: (intrinsic.height * Self::DEFAULT_DPI) as i64,
             },
             PlotUnit::Pixels => PlotSize {
-                width: (intrinsic.width * pixel_ratio) as i64,
-                height: (intrinsic.height * pixel_ratio) as i64,
+                width: intrinsic.width as i64,
+                height: intrinsic.height as i64,
             },
         }
     }
@@ -758,9 +761,12 @@ impl DeviceContext {
 
     /// Compute prerender `PlotRenderSettings` overrides from sizing metadata.
     ///
-    /// Returns the plot size and pixel ratio to use for pre-rendering.
-    /// If `fig_width`/`fig_height` are set, converts inches to pixels using the
-    /// output pixel ratio (or 1.0 as default).
+    /// Returns the plot size (in logical/CSS pixels) and pixel ratio to use for
+    /// pre-rendering. The R rendering layer handles physical pixel scaling
+    /// internally by multiplying dimensions and DPI by `pixel_ratio`, so the
+    /// sizes here must be in logical pixels to avoid double-scaling.
+    ///
+    /// If `fig_width`/`fig_height` are set, converts inches to logical pixels.
     /// If only `output_width_px` is set, uses it as width with a default aspect ratio.
     /// Otherwise returns `None` (use the default prerender settings).
     fn prerender_overrides_from_metadata(
@@ -769,22 +775,20 @@ impl DeviceContext {
         let pixel_ratio = sizing.output_pixel_ratio.unwrap_or(1.0);
 
         if let (Some(w), Some(h)) = (sizing.fig_width, sizing.fig_height) {
-            let dpi = Self::DEFAULT_DPI * pixel_ratio;
             return Some((
                 PlotSize {
-                    width: (w * dpi) as i64,
-                    height: (h * dpi) as i64,
+                    width: (w * Self::DEFAULT_DPI) as i64,
+                    height: (h * Self::DEFAULT_DPI) as i64,
                 },
                 pixel_ratio,
             ));
         }
 
         if let Some(width_px) = sizing.output_width_px {
-            let width = width_px * pixel_ratio;
             return Some((
                 PlotSize {
-                    width: width as i64,
-                    height: (width / Self::DEFAULT_ASPECT_RATIO) as i64,
+                    width: width_px as i64,
+                    height: (width_px / Self::DEFAULT_ASPECT_RATIO) as i64,
                 },
                 pixel_ratio,
             ));
