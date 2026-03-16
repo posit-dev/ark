@@ -41,7 +41,7 @@ pub struct ExecuteRequest {
 }
 
 #[serde_with::skip_serializing_none]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ExecuteRequestPositron {
     pub code_location: Option<JupyterPositronLocation>,
 

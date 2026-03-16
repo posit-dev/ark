@@ -18,6 +18,10 @@ fn png_dimensions(base64_data: &str) -> (u32, u32) {
             base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned)
         })
         .expect("Failed to decode base64 PNG data");
+    // Validate PNG signature and minimum size for IHDR
+    let png_signature: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    assert!(bytes.len() >= 24);
+    assert_eq!(bytes[..8], png_signature);
     // PNG IHDR: 8-byte signature, 4-byte chunk length, 4-byte "IHDR", then width (4) and height (4)
     let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
     let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
@@ -406,10 +410,7 @@ fn test_plot_get_metadata_with_origin() {
                     },
                 },
             }),
-            fig_width: None,
-            fig_height: None,
-            output_width_px: None,
-            output_pixel_ratio: None,
+            ..Default::default()
         }),
         ..ExecuteRequestOptions::default()
     });
@@ -614,11 +615,9 @@ fn test_plot_with_fig_size_metadata() {
     let code = "plot(1:10)";
     frontend.send_execute_request(code, ExecuteRequestOptions {
         positron: Some(ExecuteRequestPositron {
-            code_location: None,
             fig_width: Some(5.0),
             fig_height: Some(4.0),
-            output_width_px: None,
-            output_pixel_ratio: None,
+            ..Default::default()
         }),
         ..ExecuteRequestOptions::default()
     });
@@ -648,11 +647,8 @@ fn test_plot_with_output_width_metadata() {
     let code = "plot(1:10)";
     frontend.send_execute_request(code, ExecuteRequestOptions {
         positron: Some(ExecuteRequestPositron {
-            code_location: None,
-            fig_width: None,
-            fig_height: None,
             output_width_px: Some(600.0),
-            output_pixel_ratio: None,
+            ..Default::default()
         }),
         ..ExecuteRequestOptions::default()
     });

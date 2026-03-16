@@ -732,12 +732,12 @@ impl DeviceContext {
     fn intrinsic_size_to_plot_size(intrinsic: &IntrinsicSize) -> PlotSize {
         match intrinsic.unit {
             PlotUnit::Inches => PlotSize {
-                width: (intrinsic.width * Self::DEFAULT_DPI) as i64,
-                height: (intrinsic.height * Self::DEFAULT_DPI) as i64,
+                width: (intrinsic.width * Self::DEFAULT_DPI).round() as i64,
+                height: (intrinsic.height * Self::DEFAULT_DPI).round() as i64,
             },
             PlotUnit::Pixels => PlotSize {
-                width: intrinsic.width as i64,
-                height: intrinsic.height as i64,
+                width: intrinsic.width.round() as i64,
+                height: intrinsic.height.round() as i64,
             },
         }
     }
@@ -749,7 +749,7 @@ impl DeviceContext {
     /// size but is not an intrinsic size).
     fn intrinsic_size_from_metadata(sizing: &PlotSizingMetadata) -> Option<IntrinsicSize> {
         match (sizing.fig_width, sizing.fig_height) {
-            (Some(w), Some(h)) => Some(IntrinsicSize {
+            (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(IntrinsicSize {
                 width: w,
                 height: h,
                 unit: PlotUnit::Inches,
@@ -775,23 +775,27 @@ impl DeviceContext {
         let pixel_ratio = sizing.output_pixel_ratio.unwrap_or(1.0);
 
         if let (Some(w), Some(h)) = (sizing.fig_width, sizing.fig_height) {
-            return Some((
-                PlotSize {
-                    width: (w * Self::DEFAULT_DPI) as i64,
-                    height: (h * Self::DEFAULT_DPI) as i64,
-                },
-                pixel_ratio,
-            ));
+            if w > 0.0 && h > 0.0 {
+                return Some((
+                    PlotSize {
+                        width: (w * Self::DEFAULT_DPI).round() as i64,
+                        height: (h * Self::DEFAULT_DPI).round() as i64,
+                    },
+                    pixel_ratio,
+                ));
+            }
         }
 
         if let Some(width_px) = sizing.output_width_px {
-            return Some((
-                PlotSize {
-                    width: width_px as i64,
-                    height: (width_px / Self::DEFAULT_ASPECT_RATIO) as i64,
-                },
-                pixel_ratio,
-            ));
+            if width_px > 0.0 {
+                return Some((
+                    PlotSize {
+                        width: width_px.round() as i64,
+                        height: (width_px / Self::DEFAULT_ASPECT_RATIO).round() as i64,
+                    },
+                    pixel_ratio,
+                ));
+            }
         }
 
         None
@@ -857,26 +861,7 @@ impl DeviceContext {
         log::trace!("Notifying Positron of new plot");
 
         let ctx = self.capture_execution_context();
-        let kind = self.detect_plot_kind(id);
-        let name = self.generate_plot_name(&kind);
-        let origin = self.take_pending_origin(&ctx);
-
-        // Store intrinsic size if Quarto sizing metadata is present
-        if let Some(sizing) = &ctx.plot_sizing {
-            if let Some(intrinsic) = Self::intrinsic_size_from_metadata(sizing) {
-                self.intrinsic_sizes
-                    .borrow_mut()
-                    .insert(id.clone(), intrinsic);
-            }
-        }
-
-        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
-            name,
-            kind,
-            execution_id: ctx.execution_id.clone(),
-            code: ctx.code.clone(),
-            origin,
-        });
+        self.store_plot_context(id, &ctx);
 
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
@@ -929,26 +914,7 @@ impl DeviceContext {
         log::trace!("Notifying Jupyter frontend of new plot");
 
         let ctx = self.capture_execution_context();
-        let kind = self.detect_plot_kind(id);
-        let name = self.generate_plot_name(&kind);
-        let origin = self.take_pending_origin(&ctx);
-
-        // Store intrinsic size if Quarto sizing metadata is present
-        if let Some(sizing) = &ctx.plot_sizing {
-            if let Some(intrinsic) = Self::intrinsic_size_from_metadata(sizing) {
-                self.intrinsic_sizes
-                    .borrow_mut()
-                    .insert(id.clone(), intrinsic);
-            }
-        }
-
-        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
-            name,
-            kind,
-            execution_id: ctx.execution_id.clone(),
-            code: ctx.code.clone(),
-            origin,
-        });
+        self.store_plot_context(id, &ctx);
 
         let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
@@ -976,6 +942,29 @@ impl DeviceContext {
                 transient,
             }))
             .log_err();
+    }
+
+    /// Store intrinsic size and metadata for a new plot from the execution context.
+    fn store_plot_context(&self, id: &PlotId, ctx: &ExecutionContext) {
+        let kind = self.detect_plot_kind(id);
+        let name = self.generate_plot_name(&kind);
+        let origin = self.take_pending_origin(ctx);
+
+        if let Some(sizing) = &ctx.plot_sizing {
+            if let Some(intrinsic) = Self::intrinsic_size_from_metadata(sizing) {
+                self.intrinsic_sizes
+                    .borrow_mut()
+                    .insert(id.clone(), intrinsic);
+            }
+        }
+
+        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
+            name,
+            kind,
+            execution_id: ctx.execution_id.clone(),
+            code: ctx.code.clone(),
+            origin,
+        });
     }
 
     fn process_update_plot(&self, id: &PlotId) {
