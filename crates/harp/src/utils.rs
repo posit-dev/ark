@@ -352,17 +352,17 @@ pub fn r_envir_name(envir: SEXP) -> Result<String> {
 
     if r_env_is_pkg_env(envir) {
         let name = RObject::from(r_pkg_env_name(envir));
-        return unsafe { name.to::<String>() };
+        return name.to::<String>();
     }
 
     if r_env_is_ns_env(envir) {
         let name = RObject::from(r_ns_env_name(envir));
-        return unsafe { name.to::<String>() };
+        return name.to::<String>();
     }
 
     let name = unsafe { Rf_getAttrib(envir, r_symbol!("name")) };
     if r_typeof(name) == STRSXP {
-        let name = unsafe { RObject::view(name).to::<String>()? };
+        let name = RObject::view(name).to::<String>()?;
         return Ok(name);
     }
 
@@ -397,12 +397,12 @@ pub fn r_envir_remove(symbol: &str, envir: SEXP) {
 ///
 /// Note that it does not use S3 dispatch for length or names.
 pub fn r_names2(x: SEXP) -> SEXP {
-    let mut protect = unsafe { RProtect::new() };
+    let mut protect = RProtect::new();
 
     let size = r_length(x);
 
     let names = unsafe { Rf_getAttrib(x, R_NamesSymbol) };
-    unsafe { protect.add(names) };
+    protect.add(names);
 
     if r_is_null(names) {
         // Comes initialized with `""`.
@@ -430,7 +430,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
     }
 
     let out = r_alloc_character(size);
-    unsafe { protect.add(out) };
+    protect.add(out);
 
     for i in 0..size {
         let elt = r_chr_get(names, i);
@@ -448,7 +448,7 @@ pub fn r_names2(x: SEXP) -> SEXP {
 pub fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
     // handle SYMSXPs upfront
     if r_typeof(object) == SYMSXP {
-        return unsafe { RObject::view(object).to::<String>() };
+        return RObject::view(object).to::<String>();
     }
 
     // call format on the object
@@ -457,13 +457,11 @@ pub fn r_stringify(object: SEXP, delimiter: &str) -> Result<String> {
         .call()?;
 
     // paste into a single string
-    let object = unsafe {
-        RFunction::new("base", "paste")
-            .add(object)
-            .param("collapse", delimiter)
-            .call()?
-            .to::<String>()?
-    };
+    let object = RFunction::new("base", "paste")
+        .add(object)
+        .param("collapse", delimiter)
+        .call()?
+        .to::<String>()?;
 
     Ok(object)
 }
@@ -651,15 +649,13 @@ pub fn r_normalize_path(x: RObject) -> anyhow::Result<String> {
     if !r_is_string(x.sexp) {
         anyhow::bail!("Expected string for srcfile's filename");
     }
-    unsafe {
-        let path = RFunction::new("base", "normalizePath")
-            .param("path", x)
-            .param("winslash", "/")
-            .param("mustWork", false)
-            .call()?
-            .to::<String>()?;
-        Ok(path)
-    }
+    let path = RFunction::new("base", "normalizePath")
+        .param("path", x)
+        .param("winslash", "/")
+        .param("mustWork", false)
+        .call()?
+        .to::<String>()?;
+    Ok(path)
 }
 
 pub fn save_rds(x: SEXP, path: &str) {

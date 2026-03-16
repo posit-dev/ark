@@ -176,6 +176,7 @@ pub type CallingErrorHandlerCallback =
 /// a local calling error handler on `R_HandlerStack`. Local handlers have
 /// priority over global handlers, which is useful when you need to intercept
 /// errors before other handlers (like R's debug handler) can catch them.
+#[allow(clippy::missing_safety_doc)]
 pub unsafe fn with_calling_error_handler(
     body: CallingErrorHandlerBody,
     body_data: *mut c_void,

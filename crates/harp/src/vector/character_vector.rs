@@ -112,17 +112,15 @@ impl TryFrom<&[SEXP]> for CharacterVector {
     type Error = harp::Error;
 
     fn try_from(value: &[SEXP]) -> harp::Result<Self> {
-        unsafe {
-            let vec = Self::with_length(value.len());
-            let sexp = vec.object.sexp;
+        let vec = Self::with_length(value.len());
+        let sexp = vec.object.sexp;
 
-            for (i, elt) in value.iter().enumerate() {
-                r_assert_type(*elt, &[libr::CHARSXP])?;
-                r_chr_poke(sexp, i as R_xlen_t, *elt);
-            }
-
-            Ok(vec)
+        for (i, elt) in value.iter().enumerate() {
+            r_assert_type(*elt, &[libr::CHARSXP])?;
+            r_chr_poke(sexp, i as R_xlen_t, *elt);
         }
+
+        Ok(vec)
     }
 }
 

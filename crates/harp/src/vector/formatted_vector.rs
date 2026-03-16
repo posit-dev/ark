@@ -150,15 +150,13 @@ impl AtomicVector {
     }
 
     fn len(&self) -> usize {
-        unsafe {
-            match self {
-                AtomicVector::Raw(v) => v.len(),
-                AtomicVector::Logical(v) => v.len(),
-                AtomicVector::Integer(v) => v.len(),
-                AtomicVector::Numeric(v) => v.len(),
-                AtomicVector::Character(v) => v.len(),
-                AtomicVector::Complex(v) => v.len(),
-            }
+        match self {
+            AtomicVector::Raw(v) => v.len(),
+            AtomicVector::Logical(v) => v.len(),
+            AtomicVector::Integer(v) => v.len(),
+            AtomicVector::Numeric(v) => v.len(),
+            AtomicVector::Character(v) => v.len(),
+            AtomicVector::Complex(v) => v.len(),
         }
     }
 }

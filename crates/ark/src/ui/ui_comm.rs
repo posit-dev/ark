@@ -181,7 +181,7 @@ impl UiComm {
         let method = format!(".ps.rpc.{}", request.method);
 
         // Use the `exists` function to see if the method exists
-        let exists = r_task(|| unsafe {
+        let exists = r_task(|| {
             let exists = RFunction::from("exists")
                 .param("x", method.clone())
                 .call()?;
@@ -348,7 +348,7 @@ mod tests {
         let ui_comm_tx = UiComm::start(comm_socket.clone(), stdin_request_tx, graphics_device_tx);
 
         // Get the current console width
-        let old_width = r_task(|| unsafe {
+        let old_width = r_task(|| {
             let width = RFunction::from("getOption")
                 .param("x", "width")
                 .call()
@@ -388,7 +388,7 @@ mod tests {
         }
 
         // Get the new console width
-        let new_width = r_task(|| unsafe {
+        let new_width = r_task(|| {
             let width = RFunction::from("getOption")
                 .param("x", "width")
                 .call()

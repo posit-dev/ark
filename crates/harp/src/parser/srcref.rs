@@ -98,7 +98,7 @@ impl TryFrom<RObject> for SrcRef {
             end: line_end,
         };
 
-        let line_parsed = if unsafe { value.len() >= 8 } {
+        let line_parsed = if value.len() >= 8 {
             let line_parsed_start = adjust_start(value.get_value(6)?);
             let line_parsed_end = adjust_end(value.get_value(7)?);
             std::ops::Range {

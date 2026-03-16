@@ -113,6 +113,7 @@ impl ListIter {
     }
 
     /// SAFETY: Assumes `x` is VECSXP or EXPRSXP
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn new_unchecked(x: SEXP) -> Self {
         let ptr = list_cbegin(x);
 

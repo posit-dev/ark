@@ -211,13 +211,11 @@ fn completions_from_session_arguments(
         return Ok(Some(completions));
     }
 
-    let strings = unsafe {
-        RFunction::from(".ps.completions.formalNames")
-            .add(r_callable)
-            .add(object)
-            .call()?
-            .to::<Vec<String>>()?
-    };
+    let strings = RFunction::from(".ps.completions.formalNames")
+        .add(r_callable)
+        .add(object)
+        .call()?
+        .to::<Vec<String>>()?;
 
     // Return the names of these formals.
     for string in strings.iter() {
