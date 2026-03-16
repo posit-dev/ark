@@ -60,7 +60,7 @@ just test -p ark
 ### Running Clippy
 
 ```sh
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+just clippy
 ```
 
 ### Kernel and DAP Test Infrastructure

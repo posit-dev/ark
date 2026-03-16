@@ -11,3 +11,7 @@ test-verbose:
 # Run the insta tests in update mode
 test-insta:
   cargo insta test --test-runner nextest
+
+# Run clippy
+clippy:
+  cargo clippy --workspace --all-targets --all-features -- -D warnings
