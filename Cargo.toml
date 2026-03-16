@@ -26,6 +26,7 @@ authors = ["Posit Software, PBC"]
 
 [workspace.lints.clippy]
 result_large_err = "allow"
+too_many_arguments = "allow"
 
 [workspace.dependencies]
 actix-web = "4.4.0"

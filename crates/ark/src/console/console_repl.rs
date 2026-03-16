@@ -324,7 +324,6 @@ impl Console {
     /// Sets up the main R thread, initializes the `CONSOLE` singleton,
     /// and starts R. Does not return!
     /// SAFETY: Must be called only once. Enforced with a panic.
-    #[expect(clippy::too_many_arguments)]
     pub(crate) fn start(
         r_args: Vec<String>,
         startup_file: Option<String>,
@@ -588,7 +587,6 @@ impl Console {
         R_INIT.set(()).expect("`R_INIT` can only be set once");
     }
 
-    #[expect(clippy::too_many_arguments)]
     fn new(
         tasks_interrupt_rx: Receiver<QueuedRTask>,
         tasks_idle_rx: Receiver<QueuedRTask>,
