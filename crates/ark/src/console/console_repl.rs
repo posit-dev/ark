@@ -721,6 +721,11 @@ impl Console {
         }
     }
 
+    /// Get the active execute request, if any.
+    pub(crate) fn get_active_execute_request(&self) -> Option<&ExecuteRequest> {
+        self.active_request.as_ref().map(|req| &req.request)
+    }
+
     /// Get the current execution context if an active request exists.
     /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
     pub(crate) fn get_execution_context(&self) -> Option<(String, String)> {
@@ -2789,4 +2794,17 @@ unsafe extern "C-unwind" fn ps_get_virtual_document(uri: SEXP) -> anyhow::Result
         Some(content) => Ok(RObject::from(content).sexp),
         None => Ok(RObject::null().sexp),
     }
+}
+
+/// Returns the currently active execute request as an R named list,
+/// or NULL if no execute request is in flight.
+#[harp::register]
+pub unsafe extern "C-unwind" fn ps_get_active_request() -> anyhow::Result<SEXP> {
+    let Some(req) = Console::get().get_active_execute_request() else {
+        return Ok(libr::R_NilValue);
+    };
+
+    let json = serde_json::to_value(req)?;
+    let r_obj = RObject::try_from(json)?;
+    Ok(r_obj.sexp)
 }

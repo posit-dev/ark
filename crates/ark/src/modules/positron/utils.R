@@ -56,6 +56,14 @@
     ark_version
 }
 
+# Return the active (in flight) execute_request data structure; useful for
+# inspecting what metadata has been sent from the front end.
+#
+# Internal utility; invoke with: `.ps.internal(active_request())`
+active_request <- function() {
+    .ps.Call("ps_get_active_request")
+}
+
 # Sleep that doesn't check for interrupts to test an unresponsive runtime.
 #' @export
 .ps.deep_sleep <- function(secs) {
