@@ -118,7 +118,7 @@ pub fn attrib_for_each<F: FnMut(SEXP, SEXP)>(x: SEXP, mut f: F) {
             ) -> SEXP {
                 let f = &mut *(data as *mut F);
                 f(tag, val);
-                std::ptr::null_mut()
+                SEXP::null()
             }
             let data = &mut f as *mut F as *mut std::ffi::c_void;
             libr::R_mapAttrib(x, Some(trampoline::<F>), data);
