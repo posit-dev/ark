@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::i32;
 use std::ops::Deref;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
@@ -483,7 +482,7 @@ impl RObject {
     /// Gets a named attribute from the object. Returns `None` if the attribute
     /// was `NULL`.
     pub fn get_attribute(&self, name: &str) -> Option<RObject> {
-        self.get_attribute_from_symbol(unsafe { r_symbol!(name) })
+        self.get_attribute_from_symbol(r_symbol!(name))
     }
 
     /// Gets the [R_NamesSymbol] attribute from the object. Returns `None` if there are no
@@ -660,10 +659,10 @@ impl From<Vec<String>> for RObject {
     fn from(values: Vec<String>) -> Self {
         unsafe {
             let vector = RObject::from(Rf_allocVector(STRSXP, values.len() as isize));
-            for idx in 0..values.len() {
+            for (idx, value) in values.into_iter().enumerate() {
                 let value_str = Rf_mkCharLenCE(
-                    values[idx].as_ptr() as *mut c_char,
-                    values[idx].len() as i32,
+                    value.as_ptr() as *mut c_char,
+                    value.len() as i32,
                     cetype_t_CE_UTF8,
                 );
                 SET_STRING_ELT(vector.sexp, idx as isize, value_str);
@@ -677,8 +676,8 @@ impl From<&Vec<i64>> for RObject {
     fn from(values: &Vec<i64>) -> Self {
         unsafe {
             let vector = RObject::from(Rf_allocVector(INTSXP, values.len() as isize));
-            for idx in 0..values.len() {
-                SET_INTEGER_ELT(vector.sexp, idx as isize, values[idx] as c_int);
+            for (idx, value) in values.iter().enumerate() {
+                SET_INTEGER_ELT(vector.sexp, idx as isize, *value as c_int);
             }
             vector
         }
@@ -689,8 +688,8 @@ impl From<&Vec<f64>> for RObject {
     fn from(values: &Vec<f64>) -> Self {
         unsafe {
             let vector = RObject::from(Rf_allocVector(REALSXP, values.len() as isize));
-            for idx in 0..values.len() {
-                SET_REAL_ELT(vector.sexp, idx as isize, values[idx] as c_double);
+            for (idx, value) in values.iter().enumerate() {
+                SET_REAL_ELT(vector.sexp, idx as isize, *value as c_double);
             }
             vector
         }
@@ -739,7 +738,6 @@ impl From<HashMap<String, String>> for RObject {
 }
 
 /// Convert RObject into other types.
-
 impl From<RObject> for SEXP {
     fn from(object: RObject) -> Self {
         object.sexp
@@ -1038,8 +1036,8 @@ impl TryFrom<Vec<RObject>> for RObject {
             let out = RObject::new(out_raw);
 
             // Copy the values into the list.
-            for i in 0..n {
-                r_list_poke(out.sexp, i as isize, value[i].sexp)
+            for (i, item) in value.into_iter().enumerate() {
+                r_list_poke(out.sexp, i as isize, item.sexp)
             }
 
             Ok(out)
@@ -1058,9 +1056,9 @@ impl TryFrom<&Vec<bool>> for RObject {
         let out = RObject::from(r_alloc_logical(n as R_xlen_t));
         let v_out = r_lgl_begin(out.sexp);
 
-        for i in 0..n {
+        for (i, val) in value.iter().enumerate() {
             unsafe {
-                *v_out.add(i) = value[i] as i32;
+                *v_out.add(i) = *val as i32;
             }
         }
 
@@ -1078,12 +1076,11 @@ impl TryFrom<&Vec<i32>> for RObject {
             let out = RObject::new(out_raw);
             let v_out = DATAPTR(out_raw) as *mut i32;
 
-            for i in 0..n {
-                let x = value[i];
-                if x == R_NaInt {
+            for (i, x) in value.iter().enumerate() {
+                if *x == R_NaInt {
                     return Err(crate::Error::MissingValueError);
                 }
-                *(v_out.add(i)) = x;
+                *(v_out.add(i)) = *x;
             }
 
             Ok(out)

@@ -53,15 +53,19 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
         "echo",
         connection_file,
         registration_file,
-        shell,
-        control,
-        server_handlers,
+        kernel::Handlers {
+            shell_handler: shell,
+            control_handler: control,
+            server_handlers,
+        },
+        kernel::ConnectionChannels {
+            iopub_tx,
+            iopub_rx,
+            comm_event_rx,
+            stdin_request_rx,
+            stdin_reply_tx,
+        },
         StreamBehavior::None,
-        iopub_tx,
-        iopub_rx,
-        comm_event_rx,
-        stdin_request_rx,
-        stdin_reply_tx,
     ) {
         panic!("Couldn't connect to frontend: {err:?}");
     }

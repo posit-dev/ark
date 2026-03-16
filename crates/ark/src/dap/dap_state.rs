@@ -331,7 +331,7 @@ impl Dap {
         }
     }
 
-    fn load_variables_references(&mut self, stack: &mut Vec<FrameInfo>) {
+    fn load_variables_references(&mut self, stack: &mut [FrameInfo]) {
         // Reset the last step's maps. The frontend should never ask for these variable
         // references or variables again (and if it does due to some race condition, we
         // end up replying with an error). This lets us free our references to the
@@ -388,7 +388,7 @@ impl Dap {
         variables_reference
     }
 
-    pub fn into_variables(&mut self, variables: Vec<RVariable>) -> Vec<Variable> {
+    pub fn make_variables(&mut self, variables: Vec<RVariable>) -> Vec<Variable> {
         let mut out = Vec::with_capacity(variables.len());
 
         for variable in variables.into_iter() {
@@ -696,7 +696,7 @@ impl Dap {
 
 fn evaluate_error_message(err: harp::Error) -> String {
     match err {
-        harp::Error::TryCatchError { message, .. } => message,
+        harp::Error::TryCatchError(err) => err.message,
         harp::Error::ParseSyntaxError { message } => message,
         err => format!("{err}"),
     }

@@ -228,7 +228,7 @@ pub(super) struct PromptInfo {
 }
 
 enum ConsoleInput {
-    EOF,
+    EndOfFile,
     Input(String, Option<CodeLocation>),
 }
 
@@ -316,7 +316,7 @@ impl Drop for ConsoleOutputCapture {
 
         // Restore previous capture state
         console.captured_output = self.previous_output.take();
-        unsafe { r_poke_option(r_symbol!("warn"), self.previous_warn.sexp) };
+        r_poke_option(r_symbol!("warn"), self.previous_warn.sexp);
     }
 }
 
@@ -1294,7 +1294,7 @@ impl Console {
                 input
             },
 
-            RRequest::Shutdown(_) => ConsoleInput::EOF,
+            RRequest::Shutdown(_) => ConsoleInput::EndOfFile,
 
             RRequest::DebugCommand(cmd) => {
                 // Just ignore command in case we left the debugging state already
@@ -1365,7 +1365,7 @@ impl Console {
                 }
             },
 
-            ConsoleInput::EOF => Some(ConsoleResult::Disconnected),
+            ConsoleInput::EndOfFile => Some(ConsoleResult::Disconnected),
         }
     }
 
@@ -1464,9 +1464,7 @@ impl Console {
     }
 
     fn pop_pending(&mut self) -> Option<PendingInput> {
-        let Some(pending_inputs) = self.pending_inputs.as_mut() else {
-            return None;
-        };
+        let pending_inputs = self.pending_inputs.as_mut()?;
 
         let Some(input) = pending_inputs.pop() else {
             self.pending_inputs = None;
@@ -1622,7 +1620,7 @@ impl Console {
     /// in duplicate virtual editors being opened on the client side.
     pub(super) fn load_fallback_sources(
         &mut self,
-        stack: &Vec<console_debug::FrameInfo>,
+        stack: &[console_debug::FrameInfo],
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
 
@@ -2218,7 +2216,7 @@ impl Console {
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
-        if let Err(_) = r_check_stack(Some(128 * 1024)) {
+        if r_check_stack(Some(128 * 1024)).is_err() {
             return;
         }
 

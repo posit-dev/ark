@@ -409,7 +409,6 @@ impl WorkspaceVariableDisplayType {
     /// - value: The R object to create the display type and type info for.
     /// - include_length: Whether to include the length of the object in the
     ///   display type.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn from(value: SEXP, include_length: bool) -> Self {
         match Self::try_from_method(value, include_length) {
             Err(err) => log::error!(
@@ -538,7 +537,7 @@ impl WorkspaceVariableDisplayType {
     fn try_from_method(value: SEXP, include_length: bool) -> anyhow::Result<Option<Self>> {
         let args = vec![RArgument::new(
             "include_length",
-            RObject::try_from(include_length)?,
+            RObject::from(include_length),
         )];
         let result: Option<String> = ArkGenerics::VariableDisplayType.try_dispatch(value, args)?;
         Ok(result.map(Self::simple))
@@ -996,7 +995,7 @@ impl PositronVariable {
 
     pub fn clip(
         env: RObject,
-        path: &Vec<String>,
+        path: &[String],
         _format: &ClipboardFormatFormat,
     ) -> anyhow::Result<String> {
         let node = Self::resolve_object_from_path(env, path)?;
@@ -1034,14 +1033,16 @@ impl PositronVariable {
 
     pub fn resolve_data_object(
         env: RObject,
-        path: &Vec<String>,
+        path: &[String],
     ) -> Result<RObject, harp::error::Error> {
         let resolved = Self::resolve_object_from_path(env, path)?;
 
         match resolved {
             EnvironmentVariableNode::Concrete { object } => Ok(object),
 
-            _ => Err(harp::error::Error::InspectError { path: path.clone() }),
+            _ => Err(harp::error::Error::InspectError {
+                path: path.to_vec(),
+            }),
         }
     }
 
@@ -1049,7 +1050,7 @@ impl PositronVariable {
         object: RObject,
         access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
-        let symbol = unsafe { r_symbol!(access_key) };
+        let symbol = r_symbol!(access_key);
         let mut x = unsafe { Rf_findVarInFrame(object.sexp, symbol) };
 
         if r_typeof(x) == PROMSXP {
@@ -1122,7 +1123,7 @@ impl PositronVariable {
 
         // For S4 objects, we acess child nodes using R_do_slot.
         if object.is_s4() {
-            let name = unsafe { r_symbol!(access_key) };
+            let name = r_symbol!(access_key);
             let child: RObject =
                 harp::try_catch(|| unsafe { R_do_slot(object.sexp, name) }.into())?;
             return Ok(EnvironmentVariableNode::Concrete { object: child });
@@ -1226,7 +1227,7 @@ impl PositronVariable {
 
     fn resolve_object_from_path(
         object: RObject,
-        path: &Vec<String>,
+        path: &[String],
     ) -> harp::Result<EnvironmentVariableNode> {
         let mut node = EnvironmentVariableNode::Concrete { object };
 
@@ -1611,7 +1612,7 @@ impl PositronVariable {
     }
 }
 
-fn parse_custom_access_key(access_key: &String) -> anyhow::Result<Option<(RObject, i32)>> {
+fn parse_custom_access_key(access_key: &str) -> anyhow::Result<Option<(RObject, i32)>> {
     let parsed_access_key: Vec<&str> = access_key.splitn(4, '-').collect();
 
     if parsed_access_key.len() != 4 {
@@ -1658,11 +1659,10 @@ fn try_from_method_variable_kind(value: SEXP) -> anyhow::Result<Option<VariableK
 }
 
 pub fn is_binding_fancy(binding: &Binding) -> bool {
-    match &binding.value {
-        BindingValue::Active { .. } => true,
-        BindingValue::Altrep { .. } => true,
-        _ => false,
-    }
+    matches!(
+        &binding.value,
+        BindingValue::Active { .. } | BindingValue::Altrep { .. }
+    )
 }
 
 pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RObject> {
@@ -1673,7 +1673,7 @@ pub fn plain_binding_force_with_rollback(binding: &Binding) -> anyhow::Result<RO
     }
 }
 
-fn parse_index(x: &String) -> harp::Result<isize> {
+fn parse_index(x: &str) -> harp::Result<isize> {
     x.parse::<isize>().map_err(|err| {
         harp::Error::Anyhow(anyhow!("Expected to be able to parse into integer: {err}"))
     })

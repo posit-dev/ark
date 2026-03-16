@@ -5,6 +5,7 @@
 //
 //
 
+use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -20,12 +21,12 @@ use stdext::result::ResultExt;
 use crate::console::Console;
 use crate::sys;
 
-pub(crate) fn should_ignore_site_r_profile(args: &Vec<String>) -> bool {
+pub(crate) fn should_ignore_site_r_profile(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--no-site-file" || arg == "--vanilla")
 }
 
-pub(crate) fn should_ignore_user_r_profile(args: &Vec<String>) -> bool {
+pub(crate) fn should_ignore_user_r_profile(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--no-init-file" || arg == "--vanilla")
 }
@@ -40,7 +41,7 @@ pub(crate) fn push_ignore_user_r_profile(args: &mut Vec<String>) {
 
 // Mimics `R_OpenSiteFile()`
 // https://github.com/wch/r-source/blob/ee6b15303be885d118d49b441e32a9cff5cda778/src/main/startup.c#L96
-pub(crate) fn source_site_r_profile(r_home: &PathBuf) {
+pub(crate) fn source_site_r_profile(r_home: &Path) {
     if let Some(path) = find_site_r_profile(r_home) {
         source_r_profile(&path)
     }
@@ -55,7 +56,7 @@ pub(crate) fn source_user_r_profile() {
     }
 }
 
-fn source_r_profile(path: &PathBuf) {
+fn source_r_profile(path: &Path) {
     let path = path.to_string_lossy().to_string();
     let path = path.as_str();
 
@@ -106,7 +107,7 @@ fn source_r_profile(path: &PathBuf) {
     Console::get().iopub_tx().send(message).unwrap()
 }
 
-fn find_site_r_profile(r_home: &PathBuf) -> Option<PathBuf> {
+fn find_site_r_profile(r_home: &Path) -> Option<PathBuf> {
     // Try from env var first
     if let Ok(path) = std::env::var("R_PROFILE") {
         if let Some(path) = PathBuf::from_str(path.as_str()).log_err() {

@@ -7,6 +7,7 @@
 
 use std::env::consts::DLL_PREFIX;
 use std::env::consts::DLL_SUFFIX;
+use std::path::Path;
 use std::path::PathBuf;
 
 use crate::sys;
@@ -14,7 +15,7 @@ pub use crate::sys::library::RLibraries;
 
 /// Open an R shared library located at the specified `path`.
 /// Returned with `'static` lifetime because we `Box::leak()` the `Library`.
-pub(crate) fn open_and_leak_r_shared_library(path: &PathBuf) -> &'static libloading::Library {
+pub(crate) fn open_and_leak_r_shared_library(path: &Path) -> &'static libloading::Library {
     // Call system specific open helper
     let library = sys::library::open_r_shared_library(path);
 
@@ -47,7 +48,7 @@ pub(crate) fn open_and_leak_r_shared_library(path: &PathBuf) -> &'static libload
 /// This assumes that the shared library is in the "standard place" below `R_HOME`, which
 /// may not always prove to be true. If this ever fails, we will need to revisit our
 /// assumptions.
-pub(crate) fn find_r_shared_library(home: &PathBuf, name: &str) -> PathBuf {
+pub(crate) fn find_r_shared_library(home: &Path, name: &str) -> PathBuf {
     // Navigate to system specific library folder from `R_HOME`
     let folder = crate::sys::library::find_r_shared_library_folder(home);
 

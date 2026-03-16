@@ -141,9 +141,7 @@ impl FunctionContext {
 /// The alleged function node has to either be an identifier or a
 /// namespace operator. Otherwise, we return `None`.
 fn get_effective_function_node(node: Node) -> Option<Node> {
-    let Some(parent) = node.parent() else {
-        return None;
-    };
+    let parent = node.parent()?;
 
     if parent.is_namespace_operator() {
         Some(parent)

@@ -260,7 +260,7 @@ impl Console {
         ))
     }
 
-    pub(crate) fn has_virtual_document(&self, uri: &String) -> bool {
+    pub(crate) fn has_virtual_document(&self, uri: &str) -> bool {
         let uri = uri.strip_prefix("ark:").unwrap_or(uri).to_string();
         self.lsp_virtual_documents.contains_key(&uri)
     }

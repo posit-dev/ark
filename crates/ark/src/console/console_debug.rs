@@ -525,10 +525,10 @@ fn as_frame_info(info: libr::SEXP, id: i64) -> Result<FrameInfo> {
             frame_name,
             source,
             environment,
-            start_line: start_line.try_into()?,
-            start_column: start_column.try_into()?,
-            end_line: end_line.try_into()?,
-            end_column: end_column.try_into()?,
+            start_line: start_line.into(),
+            start_column: start_column.into(),
+            end_line: end_line.into(),
+            end_column: end_column.into(),
         })
     }
 }
@@ -684,7 +684,7 @@ fn eval_log_message(template: &str, env: RObject) -> String {
         .call_in(env.sexp)
     {
         Ok(val) => String::try_from(val).unwrap_or_default(),
-        Err(harp::Error::TryCatchError { message, .. }) => format!("Error: {message}"),
+        Err(harp::Error::TryCatchError(err)) => format!("Error: {}", err.message),
         Err(err) => format!("Error: {err}"),
     }
 }
@@ -716,8 +716,8 @@ fn eval_condition(condition: &str, envir: RObject) -> (bool, Option<String>) {
 
     let result = match harp::parse_eval0(&code, envir) {
         Ok(val) => val,
-        Err(harp::Error::TryCatchError { message, .. }) => {
-            return (true, Some(format!("Error: {message}\n")));
+        Err(harp::Error::TryCatchError(err)) => {
+            return (true, Some(format!("Error: {}\n", err.message)));
         },
         Err(err) => {
             return (true, Some(format!("Error: {err}\n")));

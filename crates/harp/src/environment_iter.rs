@@ -133,11 +133,7 @@ impl Binding {
     }
 
     pub fn is_active(&self) -> bool {
-        if let BindingValue::Active { .. } = self.value {
-            true
-        } else {
-            false
-        }
+        matches!(self.value, BindingValue::Active { .. })
     }
 
     // Use id() to compare bindings by their pointers.

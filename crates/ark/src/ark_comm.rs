@@ -132,7 +132,7 @@ impl ArkComm {
     fn send_event(&self, message: ArkFrontendEvent) -> anyhow::Result<()> {
         let event = serde_json::to_value(message)?;
 
-        if let Err(_) = self.comm.outgoing_tx.send(CommMsg::Data(event)) {
+        if self.comm.outgoing_tx.send(CommMsg::Data(event)).is_err() {
             self.closed.set(true);
         }
 

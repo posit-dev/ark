@@ -201,7 +201,6 @@ impl Node {
         self.go(0, filter, writer)
     }
 
-    #[allow(clippy::print_stderr)]
     fn go<W>(&self, level: usize, filter: &WriteFilter, out: &mut W)
     where
         W: std::io::Write,

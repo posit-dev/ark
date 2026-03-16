@@ -141,8 +141,8 @@ fn get_first_argument(context: &DocumentContext, node: &Node) -> anyhow::Result<
         Ok(value) => value,
         Err(err) => match err {
             Error::UnsafeEvaluationError(_) => return Ok(None),
-            Error::TryCatchError { message, .. } => {
-                log::trace!("Can't evaluate first argument: {message}");
+            Error::TryCatchError(err) => {
+                log::trace!("Can't evaluate first argument: {}", err.message);
                 return Ok(None);
             },
             _ => {

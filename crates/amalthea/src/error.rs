@@ -34,7 +34,7 @@ pub enum Error {
     SocketBindError(String, String, zmq::Error),
     SocketConnectError(String, String, zmq::Error),
     UnsupportedSocketType(zmq::SocketType),
-    UnsupportedMessage(Message, String),
+    UnsupportedMessage(Box<Message>, String),
     SendError(String),
     ReceiveError(String),
     ZmqError(String, zmq::Error),
@@ -160,7 +160,7 @@ impl fmt::Display for Error {
                     socket_type
                 )
             },
-            Error::UnsupportedMessage(msg, socket) => {
+            Error::UnsupportedMessage(ref msg, ref socket) => {
                 write!(f, "Unsupported message received on '{}': {:?}", socket, msg)
             },
             Error::SendError(err) => {

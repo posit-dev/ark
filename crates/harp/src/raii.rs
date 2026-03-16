@@ -49,7 +49,6 @@ impl<T> RLocal<T>
 where
     T: Copy,
 {
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(new_value: T, variable: *mut T) -> RLocal<T> {
         unsafe {
             let old_value = libr::get(variable);
@@ -76,7 +75,7 @@ where
 
 impl RLocalOption {
     pub fn new(option: &str, new_value: libr::SEXP) -> RLocalOption {
-        let option = crate::RSymbol::new_unchecked(unsafe { crate::r_symbol!(option) });
+        let option = crate::RSymbol::new_unchecked(crate::r_symbol!(option));
         let old_value = crate::r_poke_option(option.sexp, new_value);
 
         Self {

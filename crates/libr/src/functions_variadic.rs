@@ -45,7 +45,7 @@ macro_rules! generate {
                     $(#[doc=$doc])*
                     $(#[cfg($cfg)])*
                     pub unsafe fn $name() -> bool {
-                        matches!([<$name _opt>], Some(_))
+                        (*std::ptr::addr_of!([<$name _opt>])).is_some()
                     }
                 }
             )+
@@ -69,7 +69,7 @@ macro_rules! generate {
                             Err(_) => None
                         };
 
-                        unsafe { [<$name _opt>] = pointer };
+                        unsafe { std::ptr::addr_of_mut!([<$name _opt>]).write(pointer) };
                     }
                 )+
             }

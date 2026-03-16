@@ -22,13 +22,7 @@ pub enum Error {
         code: String,
         message: String,
     },
-    TryCatchError {
-        call: Option<String>,
-        message: String,
-        class: Option<Vec<String>>,
-        r_trace: String,
-        rust_trace: Option<Backtrace>,
-    },
+    TryCatchError(Box<TryCatchError>),
     TopLevelExecError {
         message: String,
         backtrace: Backtrace,
@@ -68,6 +62,14 @@ pub enum Error {
     Anyhow(anyhow::Error),
 }
 
+pub struct TryCatchError {
+    pub call: Option<String>,
+    pub message: String,
+    pub class: Option<Vec<String>>,
+    pub r_trace: String,
+    pub rust_trace: Option<Backtrace>,
+}
+
 pub const R_BACKTRACE_HEADER: &str = "R thread backtrace:";
 
 // empty implementation required for 'anyhow'
@@ -96,30 +98,24 @@ impl fmt::Display for Error {
                 write!(f, "Error parsing {}: {}", code, message)
             },
 
-            Error::TryCatchError {
-                call,
-                message,
-                r_trace,
-                rust_trace,
-                ..
-            } => {
-                if let Some(call) = call {
+            Error::TryCatchError(err) => {
+                if let Some(call) = &err.call {
                     let code = truncate_lines(call.to_owned(), 50);
-                    write!(f, "Error evaluating '{code}': {message}")?;
+                    write!(f, "Error evaluating '{code}': {}", err.message)?;
                 } else {
-                    write!(f, "{message}")?;
+                    write!(f, "{}", err.message)?;
                 }
 
                 // We display intercepting backtraces in Display instead of
                 // Debug because anyhow doesn't propagate the `?` flag:
                 // https://users.rust-lang.org/t/why-doesnt-anyhows-debug-formatter-include-the-underlying-debug-formatting/44227
 
-                if !r_trace.is_empty() {
-                    let r_trace = truncate_lines(r_trace.to_owned(), 500);
+                if !err.r_trace.is_empty() {
+                    let r_trace = truncate_lines(err.r_trace.to_owned(), 500);
                     writeln!(f, "\n\nR backtrace:\n{r_trace}")?;
                 }
 
-                if let Some(rust_trace) = rust_trace {
+                if let Some(rust_trace) = &err.rust_trace {
                     writeln!(f, "\n\n{R_BACKTRACE_HEADER}\n{rust_trace}")?;
                 }
 

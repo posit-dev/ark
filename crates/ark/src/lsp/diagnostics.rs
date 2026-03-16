@@ -284,10 +284,10 @@ fn recurse(
             recurse_subset_or_subset2(node, context, diagnostics)
         },
         NodeType::Call => recurse_call(node, context, diagnostics),
-        NodeType::UnaryOperator(op) => match op {
-            UnaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
-            _ => recurse_default(node, context, diagnostics),
+        NodeType::UnaryOperator(UnaryOperatorType::Tilde) => {
+            recurse_formula(node, context, diagnostics)
         },
+        NodeType::UnaryOperator(_) => recurse_default(node, context, diagnostics),
         NodeType::BinaryOperator(op) => match op {
             BinaryOperatorType::Tilde => recurse_formula(node, context, diagnostics),
             BinaryOperatorType::LeftAssignment => {
@@ -868,10 +868,10 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     // Just bail if `character.only` is passed, even if it's actually `FALSE`.
     // We'll do better when we have a more capable argument inspection
     // infrastructure.
-    if let Some(_) = node
+    if node
         .arguments_names_as_string(&context.doc.contents)
         .flatten()
-        .find(|n| n == "character.only")
+        .any(|n| n == "character.only")
     {
         return Ok(());
     }

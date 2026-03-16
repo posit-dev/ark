@@ -11,8 +11,13 @@
 
 pub mod base_comm;
 pub mod comm_channel;
+
+// The large enum variant comes from code generated from the frontend. For now
+// just silence it.
 #[rustfmt::skip]
+#[expect(clippy::large_enum_variant)]
 pub mod data_explorer_comm;
+
 pub mod event;
 #[rustfmt::skip]
 pub mod help_comm;

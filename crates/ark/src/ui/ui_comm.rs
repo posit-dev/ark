@@ -35,6 +35,7 @@ use crate::plots::graphics_device::GraphicsDeviceNotification;
 use crate::r_task;
 
 #[derive(Debug)]
+#[expect(clippy::large_enum_variant)]
 pub enum UiCommMessage {
     Event(UiFrontendEvent),
     Request(UiCommFrontendRequest),
@@ -273,7 +274,7 @@ impl UiComm {
             })),
             Err(err) => {
                 let message = match err {
-                    harp::Error::TryCatchError { message, .. } => message,
+                    harp::Error::TryCatchError(err) => err.message,
                     harp::Error::ParseError { message, .. } => message,
                     harp::Error::ParseSyntaxError { message } => message,
                     _ => format!("{err}"),

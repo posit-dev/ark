@@ -51,28 +51,39 @@ pub enum StreamBehavior {
     None,
 }
 
+/// Handler implementations provided by the language runtime.
+pub struct Handlers {
+    pub shell_handler: Box<dyn ShellHandler>,
+    pub control_handler: Arc<Mutex<dyn ControlHandler>>,
+    pub server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
+}
+
+/// Channel endpoints used by the kernel to communicate with the language
+/// runtime and the frontend.
+pub struct ConnectionChannels {
+    pub iopub_tx: Sender<IOPubMessage>,
+    pub iopub_rx: Receiver<IOPubMessage>,
+    pub comm_event_rx: Receiver<CommEvent>,
+    /// Receiver channel for the stdin socket; when input is needed, the
+    /// language runtime can request it by sending an StdInRequest::Input to
+    /// this channel. The frontend will prompt the user for input and
+    /// the reply will be delivered via `stdin_reply_tx`.
+    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel.
+    /// Note that we've extended the StdIn socket to support synchronous requests
+    /// from a comm, see `StdInRequest::Comm`.
+    pub stdin_request_rx: Receiver<StdInRequest>,
+    /// Transmission channel for StdIn replies
+    pub stdin_reply_tx: Sender<crate::Result<InputReply>>,
+}
+
 /// Connects the Kernel to the frontend
 pub fn connect(
     name: &str,
     connection_file: ConnectionFile,
     registration_file: Option<RegistrationFile>,
-    shell_handler: Box<dyn ShellHandler>,
-    control_handler: Arc<Mutex<dyn ControlHandler>>,
-    server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
+    handlers: Handlers,
+    channels: ConnectionChannels,
     stream_behavior: StreamBehavior,
-    iopub_tx: Sender<IOPubMessage>,
-    iopub_rx: Receiver<IOPubMessage>,
-    comm_event_rx: Receiver<CommEvent>,
-    // Receiver channel for the stdin socket; when input is needed, the
-    // language runtime can request it by sending an StdInRequest::Input to
-    // this channel. The frontend will prompt the user for input and
-    // the reply will be delivered via `stdin_reply_tx`.
-    // https://jupyter-client.readthedocs.io/en/stable/messaging.html#messages-on-the-stdin-router-dealer-channel.
-    // Note that we've extended the StdIn socket to support synchronous requests
-    // from a comm, see `StdInRequest::Comm`.
-    stdin_request_rx: Receiver<StdInRequest>,
-    // Transmission channel for StdIn replies
-    stdin_reply_tx: Sender<crate::Result<InputReply>>,
 ) -> Result<(), Error> {
     let ctx = zmq::Context::new();
 
@@ -117,15 +128,15 @@ pub fn connect(
     // notifier watches `comm_manager_rx` and forwards events via `shell_comm_tx`.
     let (shell_comm_tx, shell_comm_rx) = unbounded::<CommEvent>();
 
-    let iopub_tx_clone = iopub_tx.clone();
+    let iopub_tx_clone = channels.iopub_tx.clone();
     spawn!(format!("{name}-shell"), move || {
         shell_thread(
             shell_socket,
             iopub_tx_clone,
             shell_comm_notif_socket_rx,
             shell_comm_rx,
-            shell_handler,
-            server_handlers,
+            handlers.shell_handler,
+            handlers.server_handlers,
         )
     });
 
@@ -153,7 +164,7 @@ pub fn connect(
 
     spawn!(format!("{name}-iopub"), move || {
         iopub_thread(
-            iopub_rx,
+            channels.iopub_rx,
             iopub_inbound_rx,
             iopub_outbound_tx,
             iopub_subscription_tx,
@@ -198,8 +209,8 @@ pub fn connect(
         stdin_thread(
             stdin_inbound_rx,
             stdin_outbound_tx,
-            stdin_request_rx,
-            stdin_reply_tx,
+            channels.stdin_request_rx,
+            channels.stdin_reply_tx,
             stdin_interrupt_rx,
             stdin_session,
         )
@@ -207,7 +218,7 @@ pub fn connect(
 
     // Create the thread that handles stdout and stderr, if requested
     if stream_behavior == StreamBehavior::Capture {
-        let iopub_tx_clone = iopub_tx.clone();
+        let iopub_tx_clone = channels.iopub_tx.clone();
         spawn!(format!("{name}-output-capture"), move || {
             output_capture_thread(iopub_tx_clone)
         });
@@ -273,34 +284,32 @@ pub fn connect(
             outbound_rx,
             zmq_outbound_tx,
             shell_comm_notif_socket_tx,
-            comm_event_rx,
+            channels.comm_event_rx,
             shell_comm_tx,
         )
     });
 
-    let iopub_tx_clone = iopub_tx.clone();
+    let iopub_tx_clone = channels.iopub_tx.clone();
 
     spawn!(format!("{name}-control"), || {
         control_thread(
             control_socket,
             iopub_tx_clone,
-            control_handler,
+            handlers.control_handler,
             stdin_interrupt_tx,
         );
         log::error!("Control thread exited");
     });
 
     if let Some(registration_file) = registration_file {
-        handshake(
-            registration_file,
-            &ctx,
-            &session,
+        let request = HandshakeRequest {
             control_port,
             shell_port,
             stdin_port,
             iopub_port,
             hb_port,
-        )?;
+        };
+        handshake(registration_file, &ctx, &session, request)?;
     };
 
     // Wait until we have our first (and usually only) IOPub subscription message come in.
@@ -479,12 +488,8 @@ fn socket_bridge_thread(
     };
 
     // This function checks that a 0MQ message from the frontend is ready.
-    let has_inbound = |socket: &Socket| -> bool {
-        match socket.socket.poll(zmq::POLLIN, 0) {
-            Ok(n) if n > 0 => true,
-            _ => false,
-        }
-    };
+    let has_inbound =
+        |socket: &Socket| -> bool { matches!(socket.socket.poll(zmq::POLLIN, 0), Ok(n) if n > 0) };
 
     // Drain all pending outbound messages and forward to ZMQ.
     let forward_outbound = || {
@@ -692,11 +697,7 @@ fn handshake(
     registration_file: RegistrationFile,
     ctx: &zmq::Context,
     session: &Session,
-    control_port: u16,
-    shell_port: u16,
-    stdin_port: u16,
-    iopub_port: u16,
-    hb_port: u16,
+    request: HandshakeRequest,
 ) -> crate::Result<()> {
     // Create a temporary registration socket to send the handshake request over.
     // This socket `Drop`s and closes when this function exits.
@@ -709,14 +710,7 @@ fn handshake(
         registration_file.endpoint(),
     )?;
 
-    let message = HandshakeRequest {
-        control_port,
-        shell_port,
-        stdin_port,
-        iopub_port,
-        hb_port,
-    };
-    let message = JupyterMessage::create(message, None, session);
+    let message = JupyterMessage::create(request, None, session);
 
     message.send(&registration_socket)?;
 

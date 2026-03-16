@@ -134,11 +134,9 @@ impl Environment {
     pub fn is_empty(&self) -> bool {
         match self.filter {
             EnvironmentFilter::None => self.inner.length() == 0,
-            EnvironmentFilter::ExcludeHidden => self
-                .iter()
-                .filter_map(|b| b.ok())
-                .find(|b| !b.is_hidden())
-                .is_none(),
+            EnvironmentFilter::ExcludeHidden => {
+                !self.iter().filter_map(|b| b.ok()).any(|b| !b.is_hidden())
+            },
         }
     }
 

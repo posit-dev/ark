@@ -533,7 +533,7 @@ pub fn r_promise_is_lazy_load_binding(x: SEXP) -> bool {
         return false;
     }
 
-    expr == unsafe { r_symbol!("lazyLoadDBfetch") }
+    expr == r_symbol!("lazyLoadDBfetch")
 }
 
 pub fn r_bytecode_expr(x: SEXP) -> SEXP {

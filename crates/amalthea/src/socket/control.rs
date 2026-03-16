@@ -79,7 +79,10 @@ impl Control {
             Message::InterruptRequest(req) => {
                 self.handle_request(req, |r| self.handle_interrupt_request(r))
             },
-            _ => Err(Error::UnsupportedMessage(message, String::from("control"))),
+            _ => Err(Error::UnsupportedMessage(
+                Box::new(message),
+                String::from("control"),
+            )),
         }
     }
 

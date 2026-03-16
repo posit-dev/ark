@@ -34,36 +34,36 @@ use crate::treesitter::NodeTypeExt;
 
 #[derive(Debug, PartialEq)]
 enum ReferenceKind {
-    SymbolName, // a regular R symbol
-    DollarName, // a dollar name, following '$'
-    AtName,     // a slot name, following '@'
+    Symbol, // a regular R symbol
+    Dollar, // a dollar name, following '$'
+    At,     // a slot name, following '@'
 }
 
 // Assuming `x` is an `identifier`, is it the RHS of a `$` or `@`?
 fn node_reference_kind(x: &Node) -> ReferenceKind {
     let Some(parent) = x.parent() else {
         // No `parent`, must be a regular symbol
-        return ReferenceKind::SymbolName;
+        return ReferenceKind::Symbol;
     };
 
     let parent_type = parent.node_type();
 
     if !matches!(parent_type, NodeType::ExtractOperator(_)) {
         // Parent not `$` or `@`
-        return ReferenceKind::SymbolName;
+        return ReferenceKind::Symbol;
     }
 
     // Need to check that we actually came from the RHS
     let Some(rhs) = parent.child_by_field_name("rhs") else {
-        return ReferenceKind::SymbolName;
+        return ReferenceKind::Symbol;
     };
     if &rhs != x {
-        return ReferenceKind::SymbolName;
+        return ReferenceKind::Symbol;
     };
 
     match parent_type {
-        NodeType::ExtractOperator(ExtractOperatorType::Dollar) => ReferenceKind::DollarName,
-        NodeType::ExtractOperator(ExtractOperatorType::At) => ReferenceKind::AtName,
+        NodeType::ExtractOperator(ExtractOperatorType::Dollar) => ReferenceKind::Dollar,
+        NodeType::ExtractOperator(ExtractOperatorType::At) => ReferenceKind::At,
         _ => std::unreachable!(),
     }
 }

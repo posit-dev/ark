@@ -9,6 +9,9 @@ license.workspace = true
 [lib]
 proc-macro = true
 
+[lints]
+workspace = true
+
 [dependencies]
 quote.workspace = true
 syn.workspace = true

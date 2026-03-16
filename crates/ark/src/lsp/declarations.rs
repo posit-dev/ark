@@ -62,9 +62,7 @@ fn top_level_declare_args<'tree>(
 
     // The declarations are allowed to appear after top comments
     let mut iter = iter.skip_while(|n| n.is_comment());
-    let Some(mut first) = iter.next() else {
-        return None;
-    };
+    let mut first = iter.next()?;
 
     // For backward compatibility with R < 4.4.0, declarations may be wrapped in
     // a tilde call

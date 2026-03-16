@@ -964,7 +964,7 @@ pub unsafe extern "C-unwind" fn ps_annotate_source(
         breakpoints.retain(|bp| !matches!(bp.state, BreakpointState::Disabled));
     }
 
-    Ok(RObject::try_from(annotated)?.sexp)
+    Ok(RObject::from(annotated).sexp)
 }
 
 #[cfg(test)]

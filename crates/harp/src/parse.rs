@@ -115,8 +115,10 @@ pub fn parse_status<'a>(input: &ParseInput<'a>) -> crate::Result<ParseResult> {
                 // error.
                 // https://github.com/posit-dev/ark/issues/598
                 // https://github.com/posit-dev/ark/issues/722
-                crate::Error::TryCatchError { message, .. } => {
-                    return Ok(ParseResult::SyntaxError { message });
+                crate::Error::TryCatchError(err) => {
+                    return Ok(ParseResult::SyntaxError {
+                        message: err.message,
+                    });
                 },
                 _ => {
                     return Err(err);

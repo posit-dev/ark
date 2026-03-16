@@ -30,5 +30,8 @@ serde_json.workspace = true
 stdext.workspace = true
 tracing-error.workspace = true
 
+[lints]
+workspace = true
+
 [build-dependencies]
 embed-resource.workspace = true

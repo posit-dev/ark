@@ -18,6 +18,7 @@ use crate::call::RCall;
 use crate::environment::R_ENVS;
 use crate::error::Error;
 use crate::error::Result;
+use crate::error::TryCatchError;
 use crate::modules::HARP_ENV;
 use crate::object::r_null_or_try_into;
 use crate::object::RObject;
@@ -100,9 +101,9 @@ impl RFunction {
 pub fn try_eval(expr: SEXP, env: SEXP) -> crate::Result<RObject> {
     let mut res = try_catch(|| unsafe { Rf_eval(expr, env) }).map(RObject::from);
 
-    if let Err(Error::TryCatchError { ref mut call, .. }) = res {
-        if call.is_none() {
-            *call = Some(r_stringify(expr, "\n")?);
+    if let Err(Error::TryCatchError(ref mut err)) = res {
+        if err.call.is_none() {
+            err.call = Some(r_stringify(expr, "\n")?);
         }
     }
 
@@ -266,13 +267,13 @@ where
 
             let rust_trace = std::backtrace::Backtrace::force_capture();
 
-            *(data.res) = Some(Err(Error::TryCatchError {
+            *(data.res) = Some(Err(Error::TryCatchError(Box::new(TryCatchError {
                 call,
                 message,
                 class,
                 r_trace,
                 rust_trace: Some(rust_trace),
-            }));
+            }))));
 
             Ok(())
         })() {
@@ -478,8 +479,8 @@ where
             payload,
             Some(cleanup_callback::<F, C, T>),
             payload,
-        )
-    };
+        );
+    }
 
     // Unwrap Safety: If we get here, we're in the happy path and the result is Some
     result.unwrap()
@@ -699,9 +700,9 @@ mod tests {
                 Rf_error(msg.as_ptr());
             });
 
-            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
-                assert_eq!(message, "ouch");
-                assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
+            assert_match!(out, Err(Error::TryCatchError(err)) => {
+                assert_eq!(err.message, "ouch");
+                assert_eq!(err.class.unwrap(), ["simpleError", "error", "condition"]);
             });
         })
     }
@@ -758,9 +759,9 @@ mod tests {
             let out: Result<RObject> =
                 try_catch(|| r_unwrap(|| Err::<RObject, anyhow::Error>(anyhow::anyhow!("ouch"))));
 
-            assert_match!(out, Err(Error::TryCatchError { message, class, .. }) => {
-                assert_eq!(message, "ouch");
-                assert_eq!(class.unwrap(), ["simpleError", "error", "condition"]);
+            assert_match!(out, Err(Error::TryCatchError(err)) => {
+                assert_eq!(err.message, "ouch");
+                assert_eq!(err.class.unwrap(), ["simpleError", "error", "condition"]);
             });
         })
     }

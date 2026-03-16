@@ -125,7 +125,7 @@ fn generate_source(
     binding: &Binding,
     ns_env: SEXP,
     line: usize,
-    uri: &String,
+    uri: &str,
 ) -> anyhow::Result<Option<Vec<String>>> {
     if is_binding_fancy(binding) {
         return Ok(None);
@@ -143,14 +143,14 @@ fn generate_source(
     }
 
     // Ignore functions that already have sources
-    if let Some(_) = old.get_attribute("srcref") {
+    if old.get_attribute("srcref").is_some() {
         return Ok(None);
     }
 
     let reparsed = RFunction::new("", "reparse_with_srcref")
         .add(old.clone())
         .param("name", r_expr_quote(binding.name.sexp))
-        .param("uri", uri.clone())
+        .param("uri", uri)
         .param("line", (line + 1) as i32)
         .call_in(ARK_ENVS.positron_ns)?;
 
@@ -275,8 +275,8 @@ unsafe extern "C-unwind" fn ps_ns_populate_srcref_without_vdoc_insertion(
     };
 
     // Would ideally be a named list but currently inconvenient to create
-    let uri: RObject = uri.try_into()?;
-    let contents: RObject = contents.try_into()?;
+    let uri: RObject = uri.into();
+    let contents: RObject = contents.into();
     let out: RObject = vec![uri, contents].try_into()?;
 
     Ok(out.sexp)

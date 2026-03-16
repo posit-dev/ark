@@ -368,7 +368,7 @@ fn collect_function(
 /// - In particular, `inner` does not close `middle` or `top`. If it
 ///   were able to close another section across the syntax tree, this
 ///   would create a confusing outline where e.g. the rest of R6 methods
-///  (`bar` in this case) would be pulled at top-level.
+///   (`bar` in this case) would be pulled at top-level.
 fn collect_sections<F>(
     ctx: &mut CollectContext,
     node: &Node,
@@ -478,9 +478,8 @@ fn collect_call(
 
     if callee.is_identifier() {
         let fun_symbol = callee.node_as_str(&doc.contents)?;
-        match fun_symbol {
-            "test_that" => return collect_call_test_that(ctx, node, doc, symbols),
-            _ => {}, // fallthrough
+        if fun_symbol == "test_that" {
+            return collect_call_test_that(ctx, node, doc, symbols);
         }
     }
 
