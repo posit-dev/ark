@@ -1292,9 +1292,9 @@ impl Console {
                 // and optional sizing metadata from Quarto.
                 let code_location = exec_req.code_location().log_err().flatten();
                 let plot_sizing = exec_req.positron.as_ref().and_then(|p| {
-                    let has_sizing = p.fig_width.is_some()
-                        || p.fig_height.is_some()
-                        || p.output_width_px.is_some();
+                    let has_sizing = p.fig_width.is_some() ||
+                        p.fig_height.is_some() ||
+                        p.output_width_px.is_some();
                     has_sizing.then_some(graphics_device::PlotSizingMetadata {
                         fig_width: p.fig_width,
                         fig_height: p.fig_height,

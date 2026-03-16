@@ -650,9 +650,7 @@ impl DeviceContext {
                         // No explicit size requested — use intrinsic size if available
                         let intrinsic = self.intrinsic_sizes.borrow().get(id).cloned();
                         match intrinsic {
-                            Some(intrinsic) => {
-                                Self::intrinsic_size_to_plot_size(&intrinsic)
-                            },
+                            Some(intrinsic) => Self::intrinsic_size_to_plot_size(&intrinsic),
                             None => {
                                 return Err(anyhow!(
                                     "Intrinsically sized plots are not yet supported."
@@ -769,9 +767,7 @@ impl DeviceContext {
     /// If `fig_width`/`fig_height` are set, converts inches to logical pixels.
     /// If only `output_width_px` is set, uses it as width with a default aspect ratio.
     /// Otherwise returns `None` (use the default prerender settings).
-    fn prerender_overrides_from_metadata(
-        sizing: &PlotSizingMetadata,
-    ) -> Option<(PlotSize, f64)> {
+    fn prerender_overrides_from_metadata(sizing: &PlotSizingMetadata) -> Option<(PlotSize, f64)> {
         let pixel_ratio = sizing.output_pixel_ratio.unwrap_or(1.0);
 
         if let (Some(w), Some(h)) = (sizing.fig_width, sizing.fig_height) {
@@ -1058,7 +1054,13 @@ impl DeviceContext {
             .plot_sizing
             .as_ref()
             .and_then(Self::prerender_overrides_from_metadata)
-            .unwrap_or((PlotSize { width: 800, height: 600 }, 1.0));
+            .unwrap_or((
+                PlotSize {
+                    width: 800,
+                    height: 600,
+                },
+                1.0,
+            ));
 
         let settings = PlotRenderSettings {
             size,

@@ -14,9 +14,7 @@ fn png_dimensions(base64_data: &str) -> (u32, u32) {
     let cleaned: String = base64_data.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&cleaned)
-        .or_else(|_| {
-            base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned)
-        })
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned))
         .expect("Failed to decode base64 PNG data");
     // Validate PNG signature and minimum size for IHDR
     let png_signature: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
