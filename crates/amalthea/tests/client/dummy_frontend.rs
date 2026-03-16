@@ -91,7 +91,6 @@ impl DummyAmaltheaFrontend {
                         control_handler: control,
                         server_handlers,
                     },
-                    StreamBehavior::None,
                     kernel::ConnectionChannels {
                         iopub_tx,
                         iopub_rx,
@@ -99,6 +98,7 @@ impl DummyAmaltheaFrontend {
                         stdin_request_rx,
                         stdin_reply_tx,
                     },
+                    StreamBehavior::None,
                 ) {
                     panic!("Error connecting kernel: {err:?}");
                 };

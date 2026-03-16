@@ -58,7 +58,6 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
             control_handler: control,
             server_handlers,
         },
-        StreamBehavior::None,
         kernel::ConnectionChannels {
             iopub_tx,
             iopub_rx,
@@ -66,6 +65,7 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
             stdin_request_rx,
             stdin_reply_tx,
         },
+        StreamBehavior::None,
     ) {
         panic!("Couldn't connect to frontend: {err:?}");
     }

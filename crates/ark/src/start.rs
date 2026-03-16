@@ -128,7 +128,6 @@ pub fn start_kernel(
             control_handler: control,
             server_handlers,
         },
-        stream_behavior,
         kernel::ConnectionChannels {
             iopub_tx: iopub_tx.clone(),
             iopub_rx,
@@ -136,6 +135,7 @@ pub fn start_kernel(
             stdin_request_rx,
             stdin_reply_tx,
         },
+        stream_behavior,
     );
     if let Err(err) = res {
         panic!("Couldn't connect to frontend: {err:?}");

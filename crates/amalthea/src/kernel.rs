@@ -82,21 +82,9 @@ pub fn connect(
     connection_file: ConnectionFile,
     registration_file: Option<RegistrationFile>,
     handlers: Handlers,
-    stream_behavior: StreamBehavior,
     channels: ConnectionChannels,
+    stream_behavior: StreamBehavior,
 ) -> Result<(), Error> {
-    let Handlers {
-        shell_handler,
-        control_handler,
-        server_handlers,
-    } = handlers;
-    let ConnectionChannels {
-        iopub_tx,
-        iopub_rx,
-        comm_event_rx,
-        stdin_request_rx,
-        stdin_reply_tx,
-    } = channels;
     let ctx = zmq::Context::new();
 
     let session = Session::create(connection_file.key.as_str())?;
@@ -140,15 +128,15 @@ pub fn connect(
     // notifier watches `comm_manager_rx` and forwards events via `shell_comm_tx`.
     let (shell_comm_tx, shell_comm_rx) = unbounded::<CommEvent>();
 
-    let iopub_tx_clone = iopub_tx.clone();
+    let iopub_tx_clone = channels.iopub_tx.clone();
     spawn!(format!("{name}-shell"), move || {
         shell_thread(
             shell_socket,
             iopub_tx_clone,
             shell_comm_notif_socket_rx,
             shell_comm_rx,
-            shell_handler,
-            server_handlers,
+            handlers.shell_handler,
+            handlers.server_handlers,
         )
     });
 
@@ -176,7 +164,7 @@ pub fn connect(
 
     spawn!(format!("{name}-iopub"), move || {
         iopub_thread(
-            iopub_rx,
+            channels.iopub_rx,
             iopub_inbound_rx,
             iopub_outbound_tx,
             iopub_subscription_tx,
@@ -221,8 +209,8 @@ pub fn connect(
         stdin_thread(
             stdin_inbound_rx,
             stdin_outbound_tx,
-            stdin_request_rx,
-            stdin_reply_tx,
+            channels.stdin_request_rx,
+            channels.stdin_reply_tx,
             stdin_interrupt_rx,
             stdin_session,
         )
@@ -230,7 +218,7 @@ pub fn connect(
 
     // Create the thread that handles stdout and stderr, if requested
     if stream_behavior == StreamBehavior::Capture {
-        let iopub_tx_clone = iopub_tx.clone();
+        let iopub_tx_clone = channels.iopub_tx.clone();
         spawn!(format!("{name}-output-capture"), move || {
             output_capture_thread(iopub_tx_clone)
         });
@@ -296,18 +284,18 @@ pub fn connect(
             outbound_rx,
             zmq_outbound_tx,
             shell_comm_notif_socket_tx,
-            comm_event_rx,
+            channels.comm_event_rx,
             shell_comm_tx,
         )
     });
 
-    let iopub_tx_clone = iopub_tx.clone();
+    let iopub_tx_clone = channels.iopub_tx.clone();
 
     spawn!(format!("{name}-control"), || {
         control_thread(
             control_socket,
             iopub_tx_clone,
-            control_handler,
+            handlers.control_handler,
             stdin_interrupt_tx,
         );
         log::error!("Control thread exited");
