@@ -1050,7 +1050,7 @@ impl PositronVariable {
         object: RObject,
         access_key: &String,
     ) -> harp::Result<EnvironmentVariableNode> {
-        let symbol = unsafe { r_symbol!(access_key) };
+        let symbol = r_symbol!(access_key);
         let mut x = unsafe { Rf_findVarInFrame(object.sexp, symbol) };
 
         if r_typeof(x) == PROMSXP {
@@ -1123,7 +1123,7 @@ impl PositronVariable {
 
         // For S4 objects, we acess child nodes using R_do_slot.
         if object.is_s4() {
-            let name = unsafe { r_symbol!(access_key) };
+            let name = r_symbol!(access_key);
             let child: RObject =
                 harp::try_catch(|| unsafe { R_do_slot(object.sexp, name) }.into())?;
             return Ok(EnvironmentVariableNode::Concrete { object: child });

@@ -156,13 +156,19 @@ macro_rules! r_symbol {
     ($id:literal) => {{
         use std::os::raw::c_char;
         let value = concat!($id, "\0");
-        unsafe { libr::Rf_install(value.as_ptr() as *const c_char) }
+        #[allow(unused_unsafe)]
+        unsafe {
+            libr::Rf_install(value.as_ptr() as *const c_char)
+        }
     }};
 
     ($id:expr) => {{
         use std::os::raw::c_char;
         let cstr = [&*$id, "\0"].concat();
-        unsafe { libr::Rf_install(cstr.as_ptr() as *const c_char) }
+        #[allow(unused_unsafe)]
+        unsafe {
+            libr::Rf_install(cstr.as_ptr() as *const c_char)
+        }
     }};
 }
 

@@ -482,7 +482,7 @@ impl RObject {
     /// Gets a named attribute from the object. Returns `None` if the attribute
     /// was `NULL`.
     pub fn get_attribute(&self, name: &str) -> Option<RObject> {
-        self.get_attribute_from_symbol(unsafe { r_symbol!(name) })
+        self.get_attribute_from_symbol(r_symbol!(name))
     }
 
     /// Gets the [R_NamesSymbol] attribute from the object. Returns `None` if there are no

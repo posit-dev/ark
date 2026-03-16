@@ -117,7 +117,7 @@ fn env_binding_variable(name: String, x: SEXP) -> Option<RVariable> {
         return None;
     }
 
-    let symbol = unsafe { r_symbol!(name) };
+    let symbol = r_symbol!(name);
 
     match r_env_binding_is_active(x, symbol) {
         Ok(false) => {

@@ -23,20 +23,18 @@ pub fn zap_srcref(x: SEXP) -> RObject {
 }
 
 fn zap_srcref_fn(x: SEXP) -> RObject {
-    unsafe {
-        let formals = fn_formals(x);
-        let body = fn_body(x);
-        let env = fn_env(x);
+    let formals = fn_formals(x);
+    let body = fn_body(x);
+    let env = fn_env(x);
 
-        let new_body = zap_srcref(body);
-        let out = RObject::new(new_function(formals, new_body.sexp, env));
+    let new_body = zap_srcref(body);
+    let out = RObject::new(new_function(formals, new_body.sexp, env));
 
-        // Copy attributes from the original, but zap `srcref`
-        attrib_poke_from(out.sexp, x);
-        attrib_poke(out.sexp, r_symbol!("srcref"), r_null());
+    // Copy attributes from the original, but zap `srcref`
+    attrib_poke_from(out.sexp, x);
+    attrib_poke(out.sexp, r_symbol!("srcref"), r_null());
 
-        out
-    }
+    out
 }
 
 fn zap_srcref_call(x: SEXP) -> RObject {

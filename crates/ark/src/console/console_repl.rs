@@ -316,7 +316,7 @@ impl Drop for ConsoleOutputCapture {
 
         // Restore previous capture state
         console.captured_output = self.previous_output.take();
-        unsafe { r_poke_option(r_symbol!("warn"), self.previous_warn.sexp) };
+        r_poke_option(r_symbol!("warn"), self.previous_warn.sexp);
     }
 }
 
