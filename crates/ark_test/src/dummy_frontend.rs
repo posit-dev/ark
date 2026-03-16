@@ -625,6 +625,19 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive from IOPub and assert DisplayData message, returning the content.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_display_data_content(
+        &self,
+    ) -> amalthea::wire::display_data::DisplayData {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::DisplayData(data) => data.content,
+            other => panic!("Expected DisplayData, got {:?}", other),
+        }
+    }
+
     /// Receive from IOPub and assert CommMsg message.
     /// Automatically skips any Stream messages.
     #[track_caller]
