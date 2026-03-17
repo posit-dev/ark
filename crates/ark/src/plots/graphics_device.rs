@@ -144,6 +144,12 @@ struct ExecutionContext {
     intrinsic_size: Option<IntrinsicSize>,
 }
 
+/// Per-plot context captured at creation time.
+struct PlotContext {
+    metadata: PlotMetadata,
+    intrinsic_size: Option<IntrinsicSize>,
+}
+
 struct DeviceContext {
     /// Channel for sending [CommEvent]s to Positron when plot events occur
     comm_event_tx: Sender<CommEvent>,
@@ -194,11 +200,8 @@ struct DeviceContext {
     /// rendered results to the frontend.
     sockets: RefCell<HashMap<PlotId, CommSocket>>,
 
-    /// Mapping of plot ID to its metadata (captured at creation time)
-    metadata: RefCell<HashMap<PlotId, PlotMetadata>>,
-
-    /// Mapping of plot ID to its intrinsic size (set when Quarto specifies fig-width/fig-height)
-    intrinsic_sizes: RefCell<HashMap<PlotId, IntrinsicSize>>,
+    /// Per-plot context captured at creation time (metadata and optional intrinsic size).
+    plot_contexts: RefCell<HashMap<PlotId, PlotContext>>,
 
     /// Counters for generating unique plot names by kind
     kind_counters: RefCell<HashMap<String, u32>>,
@@ -237,8 +240,7 @@ impl DeviceContext {
             should_render: Cell::new(true),
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
-            metadata: RefCell::new(HashMap::new()),
-            intrinsic_sizes: RefCell::new(HashMap::new()),
+            plot_contexts: RefCell::new(HashMap::new()),
             kind_counters: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
             prerender_settings: Cell::new(PlotRenderSettings {
@@ -608,18 +610,20 @@ impl DeviceContext {
         match message {
             PlotBackendRequest::GetIntrinsicSize => {
                 log::trace!("PlotBackendRequest::GetIntrinsicSize");
-                let intrinsic_size = self.intrinsic_sizes.borrow().get(id).cloned();
+                let intrinsic_size = self
+                    .plot_contexts
+                    .borrow()
+                    .get(id)
+                    .and_then(|ctx| ctx.intrinsic_size.clone());
                 Ok(PlotBackendReply::GetIntrinsicSizeReply(intrinsic_size))
             },
             PlotBackendRequest::GetMetadata => {
                 log::trace!("PlotBackendRequest::GetMetadata");
 
                 // Metadata was captured at plot creation time, just retrieve it
-                let stored_metadata = self.metadata.borrow();
-                let info = stored_metadata.get(id);
-
-                let plot_metadata = match info {
-                    Some(info) => info.clone(),
+                let contexts = self.plot_contexts.borrow();
+                let plot_metadata = match contexts.get(id) {
+                    Some(ctx) => ctx.metadata.clone(),
                     None => {
                         // Fallback if metadata wasn't captured (shouldn't happen)
                         log::warn!("No metadata found for plot id {id}");
@@ -642,7 +646,11 @@ impl DeviceContext {
                     Some(size) => size,
                     None => {
                         // No explicit size requested — use intrinsic size if available
-                        let intrinsic = self.intrinsic_sizes.borrow().get(id).cloned();
+                        let intrinsic = self
+                            .plot_contexts
+                            .borrow()
+                            .get(id)
+                            .and_then(|ctx| ctx.intrinsic_size.clone());
                         match intrinsic {
                             Some(intrinsic) => Self::intrinsic_size_to_plot_size(&intrinsic),
                             None => {
@@ -679,10 +687,7 @@ impl DeviceContext {
     fn close_plot(&self, id: &PlotId) {
         // RefCell safety: Short borrows in the file
         self.sockets.borrow_mut().remove(id);
-
-        // Remove metadata and intrinsic size for this plot
-        self.metadata.borrow_mut().remove(id);
-        self.intrinsic_sizes.borrow_mut().remove(id);
+        self.plot_contexts.borrow_mut().remove(id);
 
         // The plot data is stored at R level. Assumes we're called on the R
         // thread at idle time so there's no race issues (see
@@ -874,19 +879,19 @@ impl DeviceContext {
         let name = self.generate_plot_name(&kind);
         let origin = self.take_pending_origin(ctx);
 
-        if let Some(intrinsic) = &ctx.intrinsic_size {
-            self.intrinsic_sizes
-                .borrow_mut()
-                .insert(id.clone(), intrinsic.clone());
-        }
-
-        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
-            name,
-            kind,
-            execution_id: ctx.execution_id.clone(),
-            code: ctx.code.clone(),
-            origin,
-        });
+        self.plot_contexts.borrow_mut().insert(
+            id.clone(),
+            PlotContext {
+                metadata: PlotMetadata {
+                    name,
+                    kind,
+                    execution_id: ctx.execution_id.clone(),
+                    code: ctx.code.clone(),
+                    origin,
+                },
+                intrinsic_size: ctx.intrinsic_size.clone(),
+            },
+        );
     }
 
     fn process_update_plot(&self, id: &PlotId) {
@@ -1447,9 +1452,10 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
     let plot_id = PlotId(id_str);
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        let metadata = cell.metadata.borrow();
-        match metadata.get(&plot_id) {
-            Some(info) => {
+        let contexts = cell.plot_contexts.borrow();
+        match contexts.get(&plot_id) {
+            Some(ctx) => {
+                let info = &ctx.metadata;
                 let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
 
                 // Create a list with the metadata values

@@ -1294,7 +1294,7 @@ impl Console {
                 let (render_settings, intrinsic_size) = exec_req
                     .positron
                     .as_ref()
-                    .map(|p| graphics_device::compute_plot_overrides(p))
+                    .map(graphics_device::compute_plot_overrides)
                     .unwrap_or((None, None));
                 graphics_device::on_execute_request(
                     originator.header.msg_id.clone(),
