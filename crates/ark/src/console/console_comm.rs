@@ -30,15 +30,11 @@ impl Console {
     }
 
     pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
-        if self.ui_comm_id.as_deref() == Some(comm_id) {
-            self.ui_comm_id = None;
-        }
-
-        let Some(mut reg) = self.comms.remove(comm_id) else {
+        let Some(mut comm) = self.comm_remove(comm_id) else {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
         };
-        reg.handler.handle_close(&reg.ctx);
+        comm.handler.handle_close(&comm.ctx);
     }
 
     /// Register a backend-initiated comm on the R thread.
@@ -91,7 +87,7 @@ impl Console {
         if comm_name == UI_COMM_NAME {
             if let Some(old_id) = self.ui_comm_id.take() {
                 log::info!("Replacing an existing UI comm.");
-                if let Some(mut old) = self.comms.remove(&old_id) {
+                if let Some(mut old) = self.comm_remove(&old_id) {
                     old.handler.handle_close(&old.ctx);
                 }
             }
@@ -108,6 +104,14 @@ impl Console {
         self.drain_closed();
     }
 
+    /// Remove a comm from the map, clearing `ui_comm_id` if it matches.
+    fn comm_remove(&mut self, comm_id: &str) -> Option<ConsoleComm> {
+        if self.ui_comm_id.as_deref() == Some(comm_id) {
+            self.ui_comm_id = None;
+        }
+        self.comms.remove(comm_id)
+    }
+
     /// Remove all comms whose handler requested closing via `ctx.close_on_exit()`.
     fn drain_closed(&mut self) {
         let closed_ids: Vec<String> = self
@@ -118,12 +122,7 @@ impl Console {
             .collect();
 
         for comm_id in closed_ids {
-            // We're not expecting the UI comm to close itself but we handle the
-            // case explicitly to be defensive
-            if self.ui_comm_id.as_deref() == Some(comm_id.as_str()) {
-                self.ui_comm_id = None;
-            }
-            if let Some(reg) = self.comms.remove(&comm_id) {
+            if let Some(reg) = self.comm_remove(&comm_id) {
                 self.comm_notify_closed(&comm_id, &reg);
             }
         }
