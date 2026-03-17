@@ -1504,3 +1504,10 @@ unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<S
     DEVICE_CONTEXT.with_borrow(|cell| cell.pop_source_context());
     Ok(harp::r_null())
 }
+
+/// Returns the default DPI for the current OS.
+/// Called from R to avoid duplicating OS-detection logic.
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_default_dpi() -> anyhow::Result<SEXP> {
+    Ok(RObject::from(DEFAULT_DPI as i32).sexp)
+}
