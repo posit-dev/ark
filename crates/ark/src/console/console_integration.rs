@@ -230,10 +230,10 @@ impl UiCommRef<'_> {
                 JsonRpcReply::Error(reply) => {
                     let message = reply.error.message;
 
-                    return Err(anyhow!(
+                    Err(anyhow!(
                         "While calling frontend method:\n\
                          {message}",
-                    ));
+                    ))
                 },
             },
             // If an interrupt was signalled, return `NULL`. This should not be

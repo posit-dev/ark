@@ -54,7 +54,6 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 
 /// Represents requests to the kernel.
 #[derive(Debug)]
-#[expect(clippy::large_enum_variant)]
 pub enum KernelRequest {
     /// Register a frontend-initiated comm handler on the R thread.
     /// The handler is constructed on the Shell thread and sent here for registration.
