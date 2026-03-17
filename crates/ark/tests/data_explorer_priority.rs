@@ -21,21 +21,20 @@ use ark_test::DummyArkFrontend;
 /// Verify that Shell requests (`get_schema`) are prioritized over idle tasks.
 ///
 /// 1. Open a data explorer so we have a comm to send RPCs on.
-/// 2. In a single execute request, spawn 5 idle tasks that each sleep for
-///    200ms **and** enqueue a `get_schema` kernel request directly on the
-///    kernel-request channel. Because both happen inside the same execute
-///    window, the kernel request is already pending when R returns to the
-///    event loop — no race.
-/// 3. Assert that the reply arrives in well under a single sleep duration.
-///    With the priority fix the kernel request is serviced before any
-///    sleeping idle task runs, so the reply is near-instant. Without the
-///    fix `select` picks randomly, so at least one 200ms sleeper runs
-///    first.
+/// 2. Spawn 5 idle tasks that each sleep for 200ms.
+/// 3. After the execute request completes, send `get_schema` through Shell.
+///    Shell dispatches a `KernelRequest` to the R thread and blocks until
+///    it's processed, so the ordering on IOPub is deterministic:
+///    Busy -> CommMsg -> Idle.
+/// 4. With the priority fix, R processes the kernel request after finishing
+///    at most one idle task (~200ms). Without the fix, `select` picks
+///    randomly among ready channels, so multiple idle tasks could run
+///    first (~600ms+).
 #[test]
 fn test_kernel_request_priority_over_idle_tasks() {
     let frontend = DummyArkFrontend::lock();
 
-    // A small data frame is enough — the contention comes from the
+    // A small data frame is enough -- the contention comes from the
     // sleeping idle tasks, not from profile computation.
     frontend.send_execute_request(
         "test_priority_df <- data.frame(a = 1:5)",
@@ -48,35 +47,41 @@ fn test_kernel_request_priority_over_idle_tasks() {
 
     let comm_id = frontend.open_data_explorer("test_priority_df");
 
-    // Build the JSON for the `get_schema` RPC.
+    // Build the get_schema RPC data. The `id` field marks it as an RPC
+    // so Shell creates a `CommMsg::Rpc`.
     let schema_request = DataExplorerBackendRequest::GetSchema(GetSchemaParams {
         column_indices: vec![0],
     });
-    let schema_json = serde_json::to_string(&schema_request).unwrap();
+    let mut data = serde_json::to_value(&schema_request).unwrap();
+    data["id"] = serde_json::Value::String(String::from("test-rpc"));
 
-    // In a single execute request:
-    // - Spawn 5 idle tasks that each block the R thread for 200ms
-    // - Enqueue a `get_schema` kernel request directly on the
-    //   kernel-request channel via `ps_test_send_kernel_comm_request`
-    //
-    // Both are pending when R returns to the event loop.
-    let code = format!(
-        r#"
-        invisible(.Call("ps_test_spawn_sleeping_idle_tasks", 5L, 200L))
-        invisible(.Call("ps_test_send_kernel_comm_request", "{comm_id}", '{schema_json}'))
-        "#,
+    // Spawn 5 idle tasks that each block the R thread for 200ms.
+    // After this execute request completes, R enters the event loop with
+    // all 5 tasks ready on the idle-task channel.
+    frontend.send_execute_request(
+        r#"invisible(.Call("ps_test_spawn_sleeping_idle_tasks", 5L, 200L))"#,
+        ExecuteRequestOptions::default(),
     );
-    frontend.send_execute_request(&code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // The kernel request was enqueued directly (bypassing Shell), so the
-    // RPC reply arrives on IOPub without the Shell's Busy/Idle wrapper.
+    // Send get_schema through Shell. Shell dispatches a `KernelRequest`
+    // to the R thread and blocks on `done_rx`, so the IOPub ordering is
+    // deterministic: Busy -> CommMsg -> Idle (no race).
+    //
+    // R is likely already executing an idle task (sleeping for 200ms).
+    // When it finishes, the priority check at the top of the event loop
+    // picks up the kernel request before `select` can hand R another
+    // idle task.
     let start = Instant::now();
+    frontend.send_shell_comm_msg(comm_id.clone(), data);
+
+    frontend.recv_iopub_busy();
     let msg = frontend.recv_iopub_comm_msg();
     let schema_latency = start.elapsed();
+    frontend.recv_iopub_idle();
 
     assert_eq!(msg.comm_id, comm_id);
     let reply: DataExplorerBackendReply = serde_json::from_value(msg.data).unwrap();
@@ -88,12 +93,13 @@ fn test_kernel_request_priority_over_idle_tasks() {
         other => panic!("Expected GetSchemaReply, got: {other:?}"),
     }
 
-    // With the priority fix the kernel request is serviced before any
-    // sleeping idle task runs, so the reply is near-instant. Without the
-    // fix, `select` picks randomly between the kernel-request channel and
-    // the idle-task channel, so at least one 200ms sleeper runs first.
+    // With the priority fix the kernel request is serviced after at most
+    // one sleeping idle task (~200ms). Without the fix, `select` picks
+    // randomly among ready channels, so multiple 200ms sleepers could
+    // run first (~600ms+). The 350ms threshold is 200ms for one idle
+    // task plus 150ms headroom for slow CI machines.
     assert!(
-        schema_latency < Duration::from_millis(150),
+        schema_latency < Duration::from_millis(350),
         "get_schema took {schema_latency:?}, which suggests kernel requests \
          are being starved by idle tasks"
     );
