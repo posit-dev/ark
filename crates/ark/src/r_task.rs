@@ -12,8 +12,6 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use amalthea::comm::comm_channel::CommMsg;
-use amalthea::wire::header::JupyterHeader;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
@@ -24,7 +22,6 @@ use uuid::Uuid;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 use crate::fixtures::r_test_init;
-use crate::request::KernelRequest;
 
 /// Task channels for interrupt-time tasks
 static INTERRUPT_TASKS: LazyLock<TaskChannels> = LazyLock::new(TaskChannels::new);
@@ -457,22 +454,6 @@ pub(crate) fn spawn(task: RTask) {
 static TEST_PENDING_TASK_TX: Mutex<Option<futures::channel::oneshot::Sender<()>>> =
     Mutex::new(None);
 
-/// Clone of the kernel-request channel sender, stored at startup when
-/// `IS_TESTING` is true. Allows R-callable test helpers (e.g.
-/// `ps_test_send_kernel_comm_request`) to enqueue kernel requests directly
-/// from the R thread, bypassing the Shell thread. This is used to create
-/// deterministic contention between kernel requests and idle tasks in the
-/// event loop without any race window.
-#[cfg(debug_assertions)]
-static TEST_KERNEL_REQUEST_TX: Mutex<Option<Sender<KernelRequest>>> = Mutex::new(None);
-
-/// Store a clone of `kernel_request_tx` so test helpers can enqueue kernel
-/// requests directly from the R thread.
-#[cfg(debug_assertions)]
-pub(crate) fn set_test_kernel_request_tx(tx: Sender<KernelRequest>) {
-    *TEST_KERNEL_REQUEST_TX.lock().unwrap() = Some(tx);
-}
-
 #[cfg(debug_assertions)]
 #[harp::register]
 unsafe extern "C-unwind" fn ps_test_spawn_pending_task() -> anyhow::Result<SEXP> {
@@ -535,54 +516,6 @@ unsafe extern "C-unwind" fn ps_test_spawn_sleeping_idle_tasks(
             std::thread::sleep(sleep_duration);
         }));
     }
-
-    Ok(libr::R_NilValue)
-}
-
-/// Send a comm RPC request directly onto the kernel-request channel from
-/// the R thread. This bypasses the Shell thread entirely, so the request
-/// is already pending when R enters the event loop.
-///
-/// Used by integration tests to create deterministic contention between
-/// kernel requests and idle tasks, without any race window.
-#[cfg(debug_assertions)]
-#[harp::register]
-unsafe extern "C-unwind" fn ps_test_send_kernel_comm_request(
-    comm_id: SEXP,
-    data: SEXP,
-) -> anyhow::Result<SEXP> {
-    stdext::assert_testing();
-
-    let comm_id: String = harp::RObject::view(comm_id).try_into()?;
-    let data: String = harp::RObject::view(data).try_into()?;
-    let json: serde_json::Value = serde_json::from_str(&data)?;
-
-    let msg = CommMsg::Rpc {
-        id: String::from("test-rpc"),
-        parent_header: JupyterHeader::create(
-            String::from("comm_msg"),
-            String::from("test-session"),
-            String::from("test-user"),
-        ),
-        data: json,
-    };
-
-    // We don't wait on `done_rx`. When the event loop processes the
-    // request it will send on `done_tx`, which harmlessly fails since the
-    // receiver is already dropped.
-    let (done_tx, _done_rx) = bounded(0);
-
-    let tx = TEST_KERNEL_REQUEST_TX.lock().unwrap();
-    let tx = tx
-        .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("kernel_request_tx not set; is the kernel running?"))?;
-
-    tx.try_send(KernelRequest::CommMsg {
-        comm_id,
-        msg,
-        done_tx,
-    })
-    .map_err(|err| anyhow::anyhow!("Failed to send kernel request: {err}"))?;
 
     Ok(libr::R_NilValue)
 }
