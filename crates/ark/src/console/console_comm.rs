@@ -21,11 +21,11 @@ use crate::ui::UI_COMM_NAME;
 
 impl Console {
     pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
-        let Some(reg) = self.comms.get_mut(comm_id) else {
+        let Some(comm) = self.comms.get_mut(comm_id) else {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
         };
-        reg.handler.handle_msg(msg, &reg.ctx);
+        comm.handler.handle_msg(msg, &comm.ctx);
         self.drain_closed();
     }
 
@@ -98,8 +98,8 @@ impl Console {
     }
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {
-        for (_, reg) in self.comms.iter_mut() {
-            reg.handler.handle_environment(event, &reg.ctx);
+        for (_, comm) in self.comms.iter_mut() {
+            comm.handler.handle_environment(event, &comm.ctx);
         }
         self.drain_closed();
     }
@@ -117,13 +117,13 @@ impl Console {
         let closed_ids: Vec<String> = self
             .comms
             .iter()
-            .filter(|(_, reg)| reg.ctx.is_closed())
+            .filter(|(_, comm)| comm.ctx.is_closed())
             .map(|(id, _)| id.clone())
             .collect();
 
         for comm_id in closed_ids {
-            if let Some(reg) = self.comm_remove(&comm_id) {
-                self.comm_notify_closed(&comm_id, &reg);
+            if let Some(comm) = self.comm_remove(&comm_id) {
+                self.comm_notify_closed(&comm_id, &comm);
             }
         }
     }
