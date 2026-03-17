@@ -879,9 +879,9 @@ impl DeviceContext {
         let name = self.generate_plot_name(&kind);
         let origin = self.take_pending_origin(ctx);
 
-        self.plot_contexts.borrow_mut().insert(
-            id.clone(),
-            PlotContext {
+        self.plot_contexts
+            .borrow_mut()
+            .insert(id.clone(), PlotContext {
                 metadata: PlotMetadata {
                     name,
                     kind,
@@ -890,8 +890,7 @@ impl DeviceContext {
                     origin,
                 },
                 intrinsic_size: ctx.intrinsic_size.clone(),
-            },
-        );
+            });
     }
 
     fn process_update_plot(&self, id: &PlotId) {
@@ -981,13 +980,20 @@ impl DeviceContext {
         id: &PlotId,
         ctx: &ExecutionContext,
     ) -> Result<serde_json::Value, anyhow::Error> {
-        let settings = ctx.render_settings.unwrap_or(PlotRenderSettings {
-            size: PlotSize {
-                width: 800,
-                height: 600,
-            },
-            pixel_ratio: 1.0,
-            format: PlotRenderFormat::Png,
+        let settings = ctx.render_settings.unwrap_or_else(|| {
+            let width = r_option_positive_f64("ark.plot.width")
+                .map(|w| (w * DEFAULT_DPI).round() as i64)
+                .unwrap_or(800);
+            let height = r_option_positive_f64("ark.plot.height")
+                .map(|h| (h * DEFAULT_DPI).round() as i64)
+                .unwrap_or(600);
+            let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio").unwrap_or(1.0);
+
+            PlotRenderSettings {
+                size: PlotSize { width, height },
+                pixel_ratio,
+                format: PlotRenderFormat::Png,
+            }
         });
 
         let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
@@ -1124,7 +1130,11 @@ pub(crate) fn on_process_idle_events() {
 /// Default DPI for converting inches to pixels.
 /// Matches R's default: 96 on macOS, 72 on Linux/Windows.
 /// See `default_resolution_in_pixels_per_inch()` in graphics.R.
-const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") { 96.0 } else { 72.0 };
+const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
+    96.0
+} else {
+    72.0
+};
 
 /// Default aspect ratio (width:height) used when only output_width_px is provided.
 const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
@@ -1510,4 +1520,19 @@ unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<S
 #[harp::register]
 unsafe extern "C-unwind" fn ps_graphics_default_dpi() -> anyhow::Result<SEXP> {
     Ok(RObject::from(DEFAULT_DPI as i32).sexp)
+}
+
+/// Read a positive `f64` from an R option. Returns `None` if the option is
+/// unset, not numeric, or not positive.
+fn r_option_positive_f64(name: &str) -> Option<f64> {
+    let value = r_task(|| {
+        RFunction::from("getOption")
+            .param("x", name)
+            .call()?
+            .to::<f64>()
+    });
+    match value {
+        Ok(v) if v > 0.0 => Some(v),
+        _ => None,
+    }
 }
