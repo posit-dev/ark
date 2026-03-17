@@ -34,6 +34,7 @@ use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::execute_request::CodeLocation;
+use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
@@ -1121,61 +1122,83 @@ const DEFAULT_DPI: f64 = 96.0;
 /// Default aspect ratio (width:height) used when only output_width_px is provided.
 const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
 
+trait FromExecuteRequest: Sized {
+    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self>;
+}
+
+impl FromExecuteRequest for PlotRenderSettings {
+    /// Create render settings from an execute request's Positron metadata.
+    ///
+    /// If `fig_width`/`fig_height` are both set (Quarto), returns settings with
+    /// size in logical pixels (inches * 96 DPI).
+    ///
+    /// Otherwise if `output_width_px` is set, returns settings at that width
+    /// with a 4:3 aspect ratio.
+    ///
+    /// Sizes are in CSS/logical pixels. The R rendering layer handles physical
+    /// pixel scaling via the separate `pixel_ratio` parameter.
+    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
+        let pixel_ratio = req.output_pixel_ratio.unwrap_or(1.0);
+
+        if let (Some(w), Some(h)) = (req.fig_width, req.fig_height) {
+            if w > 0.0 && h > 0.0 {
+                return Some(Self {
+                    size: PlotSize {
+                        width: (w * DEFAULT_DPI).round() as i64,
+                        height: (h * DEFAULT_DPI).round() as i64,
+                    },
+                    pixel_ratio,
+                    format: PlotRenderFormat::Png,
+                });
+            }
+        }
+
+        if let Some(width_px) = req.output_width_px {
+            if width_px > 0.0 {
+                return Some(Self {
+                    size: PlotSize {
+                        width: width_px.round() as i64,
+                        height: (width_px / DEFAULT_ASPECT_RATIO).round() as i64,
+                    },
+                    pixel_ratio,
+                    format: PlotRenderFormat::Png,
+                });
+            }
+        }
+
+        None
+    }
+}
+
+impl FromExecuteRequest for IntrinsicSize {
+    /// Create an intrinsic size from an execute request's Positron metadata.
+    ///
+    /// Only returns `Some` when both `fig_width` and `fig_height` are set
+    /// (i.e. Quarto sizing), providing the intrinsic size in inches.
+    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
+        if let (Some(w), Some(h)) = (req.fig_width, req.fig_height) {
+            if w > 0.0 && h > 0.0 {
+                return Some(Self {
+                    width: w,
+                    height: h,
+                    unit: PlotUnit::Inches,
+                    source: String::from("Quarto"),
+                });
+            }
+        }
+
+        None
+    }
+}
+
 /// Compute render settings and intrinsic size from execute request metadata.
-///
-/// If `fig_width`/`fig_height` are both set (Quarto), returns:
-///   - `PlotRenderSettings` with size in logical pixels (inches * 96 DPI)
-///   - `IntrinsicSize` in inches for the GetIntrinsicSize RPC
-///
-/// If only `output_width_px` is set, returns:
-///   - `PlotRenderSettings` at that width with a 4:3 aspect ratio
-///   - No intrinsic size
-///
-/// Sizes are in CSS/logical pixels. The R rendering layer handles physical
-/// pixel scaling via the separate `pixel_ratio` parameter.
 pub(crate) fn compute_plot_overrides(
-    fig_width: Option<f64>,
-    fig_height: Option<f64>,
-    output_width_px: Option<f64>,
-    output_pixel_ratio: Option<f64>,
+    req: &ExecuteRequestPositron,
 ) -> (Option<PlotRenderSettings>, Option<IntrinsicSize>) {
-    let pixel_ratio = output_pixel_ratio.unwrap_or(1.0);
-
-    if let (Some(w), Some(h)) = (fig_width, fig_height) {
-        if w > 0.0 && h > 0.0 {
-            let settings = PlotRenderSettings {
-                size: PlotSize {
-                    width: (w * DEFAULT_DPI).round() as i64,
-                    height: (h * DEFAULT_DPI).round() as i64,
-                },
-                pixel_ratio,
-                format: PlotRenderFormat::Png,
-            };
-            let intrinsic = IntrinsicSize {
-                width: w,
-                height: h,
-                unit: PlotUnit::Inches,
-                source: String::from("Quarto"),
-            };
-            return (Some(settings), Some(intrinsic));
-        }
-    }
-
-    if let Some(width_px) = output_width_px {
-        if width_px > 0.0 {
-            let settings = PlotRenderSettings {
-                size: PlotSize {
-                    width: width_px.round() as i64,
-                    height: (width_px / DEFAULT_ASPECT_RATIO).round() as i64,
-                },
-                pixel_ratio,
-                format: PlotRenderFormat::Png,
-            };
-            return (Some(settings), None);
-        }
-    }
-
-    (None, None)
+    (
+        PlotRenderSettings::from_execute_request(req),
+        IntrinsicSize::from_execute_request(req),
+    )
 }
 
 /// Hook applied when an execute request starts
