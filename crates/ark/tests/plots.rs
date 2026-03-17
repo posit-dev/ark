@@ -8,6 +8,15 @@ use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
 use base64::Engine;
 
+/// Default DPI for the current OS, matching the constant in graphics_device.rs.
+fn default_dpi() -> f64 {
+    if cfg!(target_os = "macos") {
+        96.0
+    } else {
+        72.0
+    }
+}
+
 /// Extract pixel dimensions (width, height) from base64-encoded PNG data.
 fn png_dimensions(base64_data: &str) -> (u32, u32) {
     // The base64 data may contain newlines or use non-padded encoding
@@ -628,9 +637,10 @@ fn test_plot_with_fig_size_metadata() {
         .expect("display_data should contain image/png");
     let (width, height) = png_dimensions(png_data);
 
-    // 5 inches * 96 DPI = 480px, 4 inches * 96 DPI = 384px
-    assert_eq!(width, 480);
-    assert_eq!(height, 384);
+    let dpi = default_dpi();
+    // 5 inches * DPI, 4 inches * DPI
+    assert_eq!(width, (5.0 * dpi).round() as u32);
+    assert_eq!(height, (4.0 * dpi).round() as u32);
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
