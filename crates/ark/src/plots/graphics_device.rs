@@ -130,28 +130,17 @@ struct WrappedDeviceCallbacks {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct PlotId(String);
 
-/// Plot sizing metadata from the execute request's `positron` field.
-/// When `fig_width`/`fig_height` are set, they take priority (Quarto-specified size in inches).
-/// Otherwise, `output_width_px` is used as the render width.
-#[derive(Debug, Clone)]
-pub(crate) struct PlotSizingMetadata {
-    /// Figure width in inches (from Quarto's `fig-width`)
-    pub fig_width: Option<f64>,
-    /// Figure height in inches (from Quarto's `fig-height`)
-    pub fig_height: Option<f64>,
-    /// Output area width in pixels
-    pub output_width_px: Option<f64>,
-    /// Device pixel ratio of the output area
-    pub output_pixel_ratio: Option<f64>,
-}
-
 /// Execution context captured when an execute request starts.
 /// Stored on the graphics device so it can be associated with plots created during execution.
 struct ExecutionContext {
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
-    plot_sizing: Option<PlotSizingMetadata>,
+    /// Render settings override from the execute request (e.g. Quarto sizing metadata).
+    /// When `Some`, used instead of `DeviceContext::prerender_settings` for pre-rendering.
+    render_settings: Option<PlotRenderSettings>,
+    /// Intrinsic size from the execute request (e.g. Quarto's fig-width/fig-height in inches).
+    intrinsic_size: Option<IntrinsicSize>,
 }
 
 struct DeviceContext {
@@ -271,13 +260,15 @@ impl DeviceContext {
         execution_id: String,
         code: String,
         code_location: Option<CodeLocation>,
-        plot_sizing: Option<PlotSizingMetadata>,
+        render_settings: Option<PlotRenderSettings>,
+        intrinsic_size: Option<IntrinsicSize>,
     ) {
         *self.execution_context.borrow_mut() = Some(ExecutionContext {
             execution_id,
             code,
             code_location,
-            plot_sizing,
+            render_settings,
+            intrinsic_size,
         });
     }
 
@@ -417,13 +408,14 @@ impl DeviceContext {
                 execution_id: ctx.execution_id.clone(),
                 code: ctx.code.clone(),
                 code_location: ctx.code_location.clone(),
-                plot_sizing: ctx.plot_sizing.clone(),
+                render_settings: ctx.render_settings,
+                intrinsic_size: ctx.intrinsic_size.clone(),
             };
         }
         drop(stored);
 
         // Fall back to getting context from Console (for edge cases).
-        // This path does not provide code_location or plot_sizing.
+        // This path does not provide code_location or plot overrides.
         let (execution_id, code) = Console::get().get_execution_context().unwrap_or_else(|| {
             // No active request - might be during startup or from R code
             (String::new(), String::new())
@@ -433,7 +425,8 @@ impl DeviceContext {
             execution_id,
             code,
             code_location: None,
-            plot_sizing: None,
+            render_settings: None,
+            intrinsic_size: None,
         }
     }
 
@@ -717,12 +710,6 @@ impl DeviceContext {
         }
     }
 
-    /// Default DPI for converting inches to pixels (matches R's default on macOS).
-    const DEFAULT_DPI: f64 = 96.0;
-
-    /// Default aspect ratio (width:height) used when only output_width_px is provided.
-    const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
-
     /// Convert an intrinsic size (in inches) to a logical-pixel-based `PlotSize`.
     ///
     /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
@@ -730,71 +717,14 @@ impl DeviceContext {
     fn intrinsic_size_to_plot_size(intrinsic: &IntrinsicSize) -> PlotSize {
         match intrinsic.unit {
             PlotUnit::Inches => PlotSize {
-                width: (intrinsic.width * Self::DEFAULT_DPI).round() as i64,
-                height: (intrinsic.height * Self::DEFAULT_DPI).round() as i64,
+                width: (intrinsic.width * DEFAULT_DPI).round() as i64,
+                height: (intrinsic.height * DEFAULT_DPI).round() as i64,
             },
             PlotUnit::Pixels => PlotSize {
                 width: intrinsic.width.round() as i64,
                 height: intrinsic.height.round() as i64,
             },
         }
-    }
-
-    /// Build an `IntrinsicSize` from plot sizing metadata, if applicable.
-    ///
-    /// If `fig_width`/`fig_height` are both set, returns an intrinsic size in inches
-    /// with source "Quarto". Otherwise returns `None` (output_width_px affects render
-    /// size but is not an intrinsic size).
-    fn intrinsic_size_from_metadata(sizing: &PlotSizingMetadata) -> Option<IntrinsicSize> {
-        match (sizing.fig_width, sizing.fig_height) {
-            (Some(w), Some(h)) if w > 0.0 && h > 0.0 => Some(IntrinsicSize {
-                width: w,
-                height: h,
-                unit: PlotUnit::Inches,
-                source: String::from("Quarto"),
-            }),
-            _ => None,
-        }
-    }
-
-    /// Compute prerender `PlotRenderSettings` overrides from sizing metadata.
-    ///
-    /// Returns the plot size (in logical/CSS pixels) and pixel ratio to use for
-    /// pre-rendering. The R rendering layer handles physical pixel scaling
-    /// internally by multiplying dimensions and DPI by `pixel_ratio`, so the
-    /// sizes here must be in logical pixels to avoid double-scaling.
-    ///
-    /// If `fig_width`/`fig_height` are set, converts inches to logical pixels.
-    /// If only `output_width_px` is set, uses it as width with a default aspect ratio.
-    /// Otherwise returns `None` (use the default prerender settings).
-    fn prerender_overrides_from_metadata(sizing: &PlotSizingMetadata) -> Option<(PlotSize, f64)> {
-        let pixel_ratio = sizing.output_pixel_ratio.unwrap_or(1.0);
-
-        if let (Some(w), Some(h)) = (sizing.fig_width, sizing.fig_height) {
-            if w > 0.0 && h > 0.0 {
-                return Some((
-                    PlotSize {
-                        width: (w * Self::DEFAULT_DPI).round() as i64,
-                        height: (h * Self::DEFAULT_DPI).round() as i64,
-                    },
-                    pixel_ratio,
-                ));
-            }
-        }
-
-        if let Some(width_px) = sizing.output_width_px {
-            if width_px > 0.0 {
-                return Some((
-                    PlotSize {
-                        width: width_px.round() as i64,
-                        height: (width_px / Self::DEFAULT_ASPECT_RATIO).round() as i64,
-                    },
-                    pixel_ratio,
-                ));
-            }
-        }
-
-        None
     }
 
     /// Process outstanding plot changes
@@ -867,14 +797,11 @@ impl DeviceContext {
             self.iopub_tx.clone(),
         );
 
-        // Use sizing metadata for prerender if available, otherwise fall back to default
-        let mut settings = self.prerender_settings.get();
-        if let Some(sizing) = &ctx.plot_sizing {
-            if let Some((size, pixel_ratio)) = Self::prerender_overrides_from_metadata(sizing) {
-                settings.size = size;
-                settings.pixel_ratio = pixel_ratio;
-            }
-        }
+        // Use render settings from the execute request if available, otherwise fall back
+        // to the default prerender settings.
+        let settings = ctx
+            .render_settings
+            .unwrap_or_else(|| self.prerender_settings.get());
 
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
         let data = match self.render_plot(id, &settings) {
@@ -946,12 +873,10 @@ impl DeviceContext {
         let name = self.generate_plot_name(&kind);
         let origin = self.take_pending_origin(ctx);
 
-        if let Some(sizing) = &ctx.plot_sizing {
-            if let Some(intrinsic) = Self::intrinsic_size_from_metadata(sizing) {
-                self.intrinsic_sizes
-                    .borrow_mut()
-                    .insert(id.clone(), intrinsic);
-            }
+        if let Some(intrinsic) = &ctx.intrinsic_size {
+            self.intrinsic_sizes
+                .borrow_mut()
+                .insert(id.clone(), intrinsic.clone());
         }
 
         self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
@@ -1050,23 +975,14 @@ impl DeviceContext {
         id: &PlotId,
         ctx: &ExecutionContext,
     ) -> Result<serde_json::Value, anyhow::Error> {
-        let (size, pixel_ratio) = ctx
-            .plot_sizing
-            .as_ref()
-            .and_then(Self::prerender_overrides_from_metadata)
-            .unwrap_or((
-                PlotSize {
-                    width: 800,
-                    height: 600,
-                },
-                1.0,
-            ));
-
-        let settings = PlotRenderSettings {
-            size,
-            pixel_ratio,
+        let settings = ctx.render_settings.unwrap_or(PlotRenderSettings {
+            size: PlotSize {
+                width: 800,
+                height: 600,
+            },
+            pixel_ratio: 1.0,
             format: PlotRenderFormat::Png,
-        };
+        });
 
         let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
@@ -1199,6 +1115,69 @@ pub(crate) fn on_process_idle_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
+/// Default DPI for converting inches to pixels (matches R's default on macOS).
+const DEFAULT_DPI: f64 = 96.0;
+
+/// Default aspect ratio (width:height) used when only output_width_px is provided.
+const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
+
+/// Compute render settings and intrinsic size from execute request metadata.
+///
+/// If `fig_width`/`fig_height` are both set (Quarto), returns:
+///   - `PlotRenderSettings` with size in logical pixels (inches * 96 DPI)
+///   - `IntrinsicSize` in inches for the GetIntrinsicSize RPC
+///
+/// If only `output_width_px` is set, returns:
+///   - `PlotRenderSettings` at that width with a 4:3 aspect ratio
+///   - No intrinsic size
+///
+/// Sizes are in CSS/logical pixels. The R rendering layer handles physical
+/// pixel scaling via the separate `pixel_ratio` parameter.
+pub(crate) fn compute_plot_overrides(
+    fig_width: Option<f64>,
+    fig_height: Option<f64>,
+    output_width_px: Option<f64>,
+    output_pixel_ratio: Option<f64>,
+) -> (Option<PlotRenderSettings>, Option<IntrinsicSize>) {
+    let pixel_ratio = output_pixel_ratio.unwrap_or(1.0);
+
+    if let (Some(w), Some(h)) = (fig_width, fig_height) {
+        if w > 0.0 && h > 0.0 {
+            let settings = PlotRenderSettings {
+                size: PlotSize {
+                    width: (w * DEFAULT_DPI).round() as i64,
+                    height: (h * DEFAULT_DPI).round() as i64,
+                },
+                pixel_ratio,
+                format: PlotRenderFormat::Png,
+            };
+            let intrinsic = IntrinsicSize {
+                width: w,
+                height: h,
+                unit: PlotUnit::Inches,
+                source: String::from("Quarto"),
+            };
+            return (Some(settings), Some(intrinsic));
+        }
+    }
+
+    if let Some(width_px) = output_width_px {
+        if width_px > 0.0 {
+            let settings = PlotRenderSettings {
+                size: PlotSize {
+                    width: width_px.round() as i64,
+                    height: (width_px / DEFAULT_ASPECT_RATIO).round() as i64,
+                },
+                pixel_ratio,
+                format: PlotRenderFormat::Png,
+            };
+            return (Some(settings), None);
+        }
+    }
+
+    (None, None)
+}
+
 /// Hook applied when an execute request starts
 ///
 /// Pushes the execution context (execution_id, code, code_location) to the graphics device
@@ -1211,11 +1190,18 @@ pub(crate) fn on_execute_request(
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
-    plot_sizing: Option<PlotSizingMetadata>,
+    render_settings: Option<PlotRenderSettings>,
+    intrinsic_size: Option<IntrinsicSize>,
 ) {
     log::trace!("Entering on_execute_request");
     DEVICE_CONTEXT.with_borrow(|cell| {
-        cell.set_execution_context(execution_id, code, code_location, plot_sizing)
+        cell.set_execution_context(
+            execution_id,
+            code,
+            code_location,
+            render_settings,
+            intrinsic_size,
+        )
     });
 }
 

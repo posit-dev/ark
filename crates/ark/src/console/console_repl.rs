@@ -1289,24 +1289,26 @@ impl Console {
                 });
 
                 // Push execution context to graphics device for plot attribution
-                // and optional sizing metadata from Quarto.
+                // and optional sizing overrides from Quarto.
                 let code_location = exec_req.code_location().log_err().flatten();
-                let plot_sizing = exec_req.positron.as_ref().and_then(|p| {
-                    let has_sizing = p.fig_width.is_some() ||
-                        p.fig_height.is_some() ||
-                        p.output_width_px.is_some();
-                    has_sizing.then_some(graphics_device::PlotSizingMetadata {
-                        fig_width: p.fig_width,
-                        fig_height: p.fig_height,
-                        output_width_px: p.output_width_px,
-                        output_pixel_ratio: p.output_pixel_ratio,
+                let (render_settings, intrinsic_size) = exec_req
+                    .positron
+                    .as_ref()
+                    .map(|p| {
+                        graphics_device::compute_plot_overrides(
+                            p.fig_width,
+                            p.fig_height,
+                            p.output_width_px,
+                            p.output_pixel_ratio,
+                        )
                     })
-                });
+                    .unwrap_or((None, None));
                 graphics_device::on_execute_request(
                     originator.header.msg_id.clone(),
                     exec_req.code.clone(),
                     code_location,
-                    plot_sizing,
+                    render_settings,
+                    intrinsic_size,
                 );
 
                 input
