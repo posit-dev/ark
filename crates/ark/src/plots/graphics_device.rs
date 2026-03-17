@@ -652,7 +652,7 @@ impl DeviceContext {
                             .get(id)
                             .and_then(|ctx| ctx.intrinsic_size.clone());
                         match intrinsic {
-                            Some(intrinsic) => Self::intrinsic_size_to_plot_size(&intrinsic),
+                            Some(intrinsic) => intrinsic.to_plot_size(),
                             None => {
                                 return Err(anyhow!(
                                     "Intrinsically sized plots are not yet supported."
@@ -713,23 +713,6 @@ impl DeviceContext {
             PlotRenderFormat::Pdf => "application/pdf".to_string(),
             PlotRenderFormat::Jpeg => "image/jpeg".to_string(),
             PlotRenderFormat::Tiff => "image/tiff".to_string(),
-        }
-    }
-
-    /// Convert an intrinsic size (in inches) to a logical-pixel-based `PlotSize`.
-    ///
-    /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
-    /// physical pixel scaling via the separate `pixel_ratio` parameter.
-    fn intrinsic_size_to_plot_size(intrinsic: &IntrinsicSize) -> PlotSize {
-        match intrinsic.unit {
-            PlotUnit::Inches => PlotSize {
-                width: (intrinsic.width * DEFAULT_DPI).round() as i64,
-                height: (intrinsic.height * DEFAULT_DPI).round() as i64,
-            },
-            PlotUnit::Pixels => PlotSize {
-                width: intrinsic.width.round() as i64,
-                height: intrinsic.height.round() as i64,
-            },
         }
     }
 
@@ -1138,6 +1121,29 @@ const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
 
 /// Default aspect ratio (width:height) used when only output_width_px is provided.
 const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
+
+trait IntrinsicSizeExt {
+    /// Convert an intrinsic size to a logical-pixel-based `PlotSize`.
+    ///
+    /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
+    /// physical pixel scaling via the separate `pixel_ratio` parameter.
+    fn to_plot_size(&self) -> PlotSize;
+}
+
+impl IntrinsicSizeExt for IntrinsicSize {
+    fn to_plot_size(&self) -> PlotSize {
+        match self.unit {
+            PlotUnit::Inches => PlotSize {
+                width: (self.width * DEFAULT_DPI).round() as i64,
+                height: (self.height * DEFAULT_DPI).round() as i64,
+            },
+            PlotUnit::Pixels => PlotSize {
+                width: self.width.round() as i64,
+                height: self.height.round() as i64,
+            },
+        }
+    }
+}
 
 trait FromExecuteRequest: Sized {
     fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self>;
