@@ -655,7 +655,7 @@ impl DeviceContext {
                             Some(intrinsic) => intrinsic.to_plot_size(),
                             None => {
                                 return Err(anyhow!(
-                                    "Intrinsically sized plots are not yet supported."
+                                    "No size provided for plot {id} and no intrinsic size available"
                                 ));
                             },
                         }
