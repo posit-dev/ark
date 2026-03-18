@@ -7,7 +7,6 @@
 
 use stdext::debug_panic;
 
-use crate::console::Console;
 use crate::r_task;
 use crate::r_task::RTask;
 
@@ -107,7 +106,7 @@ impl<T> Drop for RThreadSafe<T> {
 }
 
 fn check_on_console_thread(f: &str) {
-    if !Console::on_main_thread() && !stdext::IS_TESTING {
+    if !crate::r_task::on_r_main_thread() && !stdext::IS_TESTING {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
         debug_panic!("Must call `RThreadSafe::{f}()` on the main R thread, not thread '{name}'.");

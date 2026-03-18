@@ -346,8 +346,9 @@ impl Console {
         console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
-        // Must happen before doing anything that checks `Console::on_main_thread()`,
+        // Must happen before doing anything that checks `r_task::on_r_main_thread()`,
         // like running an `r_task()` (posit-dev/positron#4973).
+        r_task::set_r_main_thread();
         unsafe {
             CONSOLE_THREAD_ID = match CONSOLE_THREAD_ID {
                 None => Some(std::thread::current().id()),
@@ -597,6 +598,7 @@ impl Console {
 
         log::info!("Sending kernel info: {version}");
         kernel_init_tx.broadcast(kernel_info);
+        r_task::set_r_initialized();
     }
 
     fn new(
@@ -694,11 +696,6 @@ impl Console {
             // This allows us to return a `&mut` from the unsafe cell to the caller.
             unsafe { std::mem::transmute::<&mut Console, &'static mut Console>(console_ref) }
         })
-    }
-
-    pub(crate) fn on_main_thread() -> bool {
-        let thread = std::thread::current();
-        thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
     }
 
     pub(crate) fn iopub_tx(&self) -> &Sender<IOPubMessage> {
@@ -1836,7 +1833,11 @@ impl Console {
                     status_tx.send(RTaskStatus::Started).unwrap();
                 }
 
-                let result = task.start_info.span.in_scope(|| r_sandbox(task.fun));
+                let result = task
+                    .start_info
+                    .span
+                    .in_scope(|| r_sandbox(task.fun))
+                    .anyhow();
 
                 // Unblock caller via the notification channel
                 if let Some(ref status_tx) = task.status_tx {
@@ -2734,7 +2735,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn(RTask::idle(async move |_| {
+        r_task::spawn(RTask::idle(async move || {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }

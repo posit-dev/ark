@@ -382,6 +382,7 @@ dependencies = [
  "nix",
  "notify",
  "once_cell",
+ "r_task",
  "regex",
  "reqwest",
  "reqwest-middleware",
@@ -2546,6 +2547,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a338cc41d27e6cc6dce6cefc13a0729dfbb81c262b1f519331575dd80ef3067f"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "r_task"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crossbeam",
+ "futures",
+ "harp",
+ "stdext",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

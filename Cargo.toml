@@ -14,6 +14,7 @@ members = [
     "crates/ark",
     "crates/echo",
     "crates/harp",
+    "crates/r_task",
     "crates/libr",
     "crates/stdext",
 ]
@@ -61,6 +62,7 @@ futures = "0.3.30"
 generic-array = "0.14.6"
 harp = { path = "crates/harp" }
 harp-macros = { path = "crates/harp/harp-macros" }
+r_task = { path = "crates/r_task" }
 hex = "0.4.3"
 hmac = "0.12.1"
 home = "0.5.5"

@@ -93,6 +93,18 @@ fn r_test_setup() {
     }
 }
 
+/// Check whether an R package is installed.
+///
+/// Uses base R `requireNamespace()` so it works without ark modules.
+/// Intended for use as a test guard to skip tests when optional packages
+/// are not available.
+pub fn package_is_installed(package: &str) -> bool {
+    crate::parse_eval_base(&format!("requireNamespace('{package}', quietly = TRUE)"))
+        .unwrap()
+        .try_into()
+        .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use crate::r_task;

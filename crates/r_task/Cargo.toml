@@ -1,0 +1,28 @@
+[package]
+name = "r_task"
+version = "0.1.0"
+description = """
+R-thread task scheduling infrastructure.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crossbeam.workspace = true
+stdext.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+# Optional dependencies, only needed for the `testing` feature
+futures = { workspace = true, optional = true }
+harp = { workspace = true, optional = true }
+
+[features]
+testing = ["dep:futures", "dep:harp", "stdext/testing"]

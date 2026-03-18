@@ -5,22 +5,17 @@
 //
 //
 
-use std::sync::Once;
-
+pub use harp::fixtures::package_is_installed;
 use tree_sitter::Point;
 
-use crate::modules;
-use crate::modules::ARK_ENVS;
-
-static INIT: Once = Once::new();
-
-pub fn r_test_init() {
-    harp::fixtures::r_test_init();
-    INIT.call_once(|| {
-        // Initialize the positron module so tests can use them.
-        let ns = modules::initialize().unwrap();
-        modules::initialize_options(ns.sexp).unwrap();
-    });
+#[ctor::ctor]
+fn register_test_init_hook() {
+    if stdext::IS_TESTING {
+        crate::r_task::set_test_init_hook(|| {
+            let ns = crate::modules::initialize().unwrap();
+            crate::modules::initialize_options(ns.sexp).unwrap();
+        });
+    }
 }
 
 pub fn point_from_cursor(x: &str) -> (String, Point) {
@@ -56,16 +51,6 @@ pub fn point_and_offset_from_cursor(x: &str, cursor: u8) -> (String, Point, usiz
     }
 
     panic!("`x` must include a `@` character!");
-}
-
-pub fn package_is_installed(package: &str) -> bool {
-    harp::parse_eval0(
-        format!(".ps.is_installed('{package}')").as_str(),
-        ARK_ENVS.positron_ns,
-    )
-    .unwrap()
-    .try_into()
-    .unwrap()
 }
 
 #[cfg(test)]
