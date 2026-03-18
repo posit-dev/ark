@@ -54,6 +54,7 @@ impl Console {
             comm_id.clone(),
             String::from(comm_name),
             self.iopub_tx().clone(),
+            serde_json::Value::Null,
         );
 
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
