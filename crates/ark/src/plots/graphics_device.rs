@@ -784,6 +784,7 @@ impl DeviceContext {
             id.to_string(),
             POSITRON_PLOT_CHANNEL_ID.to_string(),
             self.iopub_tx.clone(),
+            serde_json::Value::Null,
         );
 
         // Use render settings from the execute request if available, otherwise fall back

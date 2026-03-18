@@ -40,16 +40,46 @@ pub const UI_COMM_NAME: &str = "positron.ui";
 pub struct UiComm {
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     working_directory: PathBuf,
+    comm_open_data: Value,
 }
 
 impl CommHandler for UiComm {
     fn handle_open(&mut self, ctx: &CommHandlerContext) {
+        // Set initial console width from the comm_open data, if provided.
+        if let Some(width) = self
+            .comm_open_data
+            .get("console_width")
+            .and_then(|v| v.as_i64())
+        {
+            if let Err(err) = RFunction::from(".ps.rpc.setConsoleWidth")
+                .param("width", RObject::from(width as i32))
+                .call()
+            {
+                log::warn!("Failed to set initial console width: {err:?}");
+            }
+        }
+
         // At open time there's no EnvironmentChanged event carrying prompts,
         // so read the R options directly. This is fine for the initial state —
         // browser/debug prompts will arrive via `handle_environment()` later.
         let input_prompt = harp::get_input_prompt();
         let continuation_prompt = harp::get_continuation_prompt();
         self.refresh(&input_prompt, &continuation_prompt, ctx);
+
+        // Run session init hooks. Extract the start type from
+        // comm_open data and pass it to the hook function.
+        let start_type = self
+            .comm_open_data
+            .get("start_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("new");
+
+        if let Err(err) = RFunction::from(".ps.run_session_init_hooks")
+            .param("start_type", RObject::from(start_type))
+            .call()
+        {
+            log::warn!("Failed to execute session init hooks: {err:?}");
+        }
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
@@ -73,10 +103,12 @@ impl CommHandler for UiComm {
 impl UiComm {
     pub(crate) fn new(
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+        comm_open_data: Value,
     ) -> Self {
         Self {
             graphics_device_tx,
             working_directory: PathBuf::new(),
+            comm_open_data,
         }
     }
 
@@ -244,7 +276,7 @@ mod tests {
         let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
         let (graphics_device_tx, _) = tokio::sync::mpsc::unbounded_channel();
-        let handler = UiComm::new(graphics_device_tx);
+        let handler = UiComm::new(graphics_device_tx, serde_json::Value::Null);
 
         (handler, ctx)
     }
