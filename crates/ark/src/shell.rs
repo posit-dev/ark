@@ -317,7 +317,7 @@ fn handle_comm_open_ui(
     kernel_request_tx: Sender<KernelRequest>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
 ) -> amalthea::Result<bool> {
-    let handler = UiComm::new(graphics_device_tx);
+    let handler = UiComm::new(graphics_device_tx, comm.comm_open_data.clone());
 
     let (done_tx, done_rx) = bounded(0);
     kernel_request_tx

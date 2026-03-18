@@ -82,6 +82,11 @@ pub struct CommSocket {
 
     /// The other side of the channel receiving messages from the frontend
     pub incoming_rx: Receiver<CommMsg>,
+
+    /// The `data` payload from the `comm_open` message. In the Jupyter
+    /// protocol, every `comm_open` carries an arbitrary JSON `data` field
+    /// that can be used to pass initial state to the handler.
+    pub comm_open_data: serde_json::Value,
 }
 
 /**
@@ -119,6 +124,7 @@ impl CommSocket {
         comm_id: String,
         comm_name: String,
         iopub_tx: Sender<IOPubMessage>,
+        comm_open_data: serde_json::Value,
     ) -> Self {
         let (incoming_tx, incoming_rx) = crossbeam::channel::unbounded();
         let outgoing_tx = CommOutgoingTx::new(comm_id.clone(), iopub_tx);
@@ -130,6 +136,7 @@ impl CommSocket {
             outgoing_tx,
             incoming_tx,
             incoming_rx,
+            comm_open_data,
         }
     }
 

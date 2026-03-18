@@ -41,6 +41,7 @@ impl TestRHelp {
             comm_id,
             String::from("positron.help"),
             iopub_tx,
+            serde_json::Value::Null,
         );
         // Start the help comm. It's important to save the help event sender so
         // that the help comm doesn't exit before we're done with it; allowing the

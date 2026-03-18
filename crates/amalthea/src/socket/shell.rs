@@ -556,6 +556,7 @@ impl Shell {
             comm_id.clone(),
             comm_name.clone(),
             iopub_tx.clone(),
+            msg.data.clone(),
         );
 
         // Optional notification channel used by server comms to indicate
