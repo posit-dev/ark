@@ -28,14 +28,30 @@ use libr::SEXP;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 
-// Ark-local RTask enum — idle variants enforce ConsoleOutputCapture
-
+/// An async task to be run on the R thread.
+///
+/// Construct via `RTask::interrupt`, `RTask::idle`, or `RTask::idle_any_prompt`
+/// when spawning from the R thread. Use the `Send` variants
+/// (`RTask::send_interrupt`, etc.) when spawning from other threads.
+///
+/// For idle modes, console output is automatically captured during the task's
+/// execution via a `ConsoleOutputCapture` passed to the closure.
 pub(crate) enum RTask {
+    /// Run at the next interrupt check. Must be spawned from the R thread.
     Interrupt(BoxFuture<'static, ()>),
+    /// Run when R is at a top-level idle prompt. Must be spawned from the R thread.
     Idle(BoxFuture<'static, ()>),
+    /// Run when R is at any idle prompt (top-level or browser). Must be spawned
+    /// from the R thread.
     IdleAnyPrompt(BoxFuture<'static, ()>),
+    /// Like `Interrupt`, but can be spawned from any thread. The constructor
+    /// enforces `Send` on the closure.
     SendInterrupt(BoxFuture<'static, ()>),
+    /// Like `Idle`, but can be spawned from any thread. The constructor
+    /// enforces `Send` on the closure.
     SendIdle(BoxFuture<'static, ()>),
+    /// Like `IdleAnyPrompt`, but can be spawned from any thread. The constructor
+    /// enforces `Send` on the closure.
     SendIdleAnyPrompt(BoxFuture<'static, ()>),
 }
 
@@ -121,12 +137,12 @@ fn start_capture() -> ConsoleOutputCapture {
     if Console::is_initialized() {
         Console::get_mut().start_capture()
     } else {
+        // Unit tests run without a Console. The dummy capture is
+        // inert and doesn't interact with Console state.
         debug_assert!(stdext::IS_TESTING);
         ConsoleOutputCapture::dummy()
     }
 }
-
-// Test helpers
 
 // Test-only R-callable functions for spawning a pending idle task.
 //
