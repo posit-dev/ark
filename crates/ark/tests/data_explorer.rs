@@ -189,7 +189,13 @@ impl TestSetup {
         let inner = &self.inner;
         let closed = r_task(|| {
             let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
-            handler.handle_environment(EnvironmentChanged::Execution, ctx);
+            handler.handle_environment(
+                &EnvironmentChanged::Execution {
+                    input_prompt: String::from("> "),
+                    continuation_prompt: String::from("+ "),
+                },
+                ctx,
+            );
             ctx.is_closed()
         });
         if closed {

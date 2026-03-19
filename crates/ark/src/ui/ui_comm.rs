@@ -45,7 +45,12 @@ pub struct UiComm {
 
 impl CommHandler for UiComm {
     fn handle_open(&mut self, ctx: &CommHandlerContext) {
-        self.refresh(ctx);
+        // At open time there's no EnvironmentChanged event carrying prompts,
+        // so read the R options directly. This is fine for the initial state —
+        // browser/debug prompts will arrive via `handle_environment()` later.
+        let input_prompt = harp::get_input_prompt();
+        let continuation_prompt = harp::get_continuation_prompt();
+        self.refresh(&input_prompt, &continuation_prompt, ctx);
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
@@ -54,11 +59,15 @@ impl CommHandler for UiComm {
         });
     }
 
-    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
-        let EnvironmentChanged::Execution = event else {
+    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution {
+            input_prompt,
+            continuation_prompt,
+        } = event
+        else {
             return;
         };
-        self.refresh(ctx);
+        self.refresh(input_prompt, continuation_prompt, ctx);
     }
 }
 
@@ -186,23 +195,12 @@ impl UiComm {
         }
     }
 
-    fn refresh(&mut self, ctx: &CommHandlerContext) {
-        self.refresh_prompt_info(ctx);
-        self.refresh_working_directory(ctx).log_err();
-    }
-
-    fn refresh_prompt_info(&self, ctx: &CommHandlerContext) {
-        let input_prompt: String = harp::get_option("prompt")
-            .try_into()
-            .unwrap_or_else(|_| String::from("> "));
-        let continuation_prompt: String = harp::get_option("continue")
-            .try_into()
-            .unwrap_or_else(|_| String::from("+ "));
-
+    fn refresh(&mut self, input_prompt: &str, continuation_prompt: &str, ctx: &CommHandlerContext) {
         ctx.send_event(&UiFrontendEvent::PromptState(PromptStateParams {
-            input_prompt,
-            continuation_prompt,
+            input_prompt: input_prompt.to_string(),
+            continuation_prompt: continuation_prompt.to_string(),
         }));
+        self.refresh_working_directory(ctx).log_err();
     }
 
     /// Checks for changes to the working directory, and sends an event to the

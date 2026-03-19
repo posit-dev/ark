@@ -82,14 +82,19 @@ pub trait CommHandler: Debug {
     /// Called when the environment changes. The `event` indicates what
     /// triggered the change so handlers can decide whether to react.
     /// Default is no-op.
-    fn handle_environment(&mut self, _event: EnvironmentChanged, _ctx: &CommHandlerContext) {}
+    fn handle_environment(&mut self, _event: &EnvironmentChanged, _ctx: &CommHandlerContext) {}
 }
 
 /// Why the environment changed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum EnvironmentChanged {
     /// A top-level execution completed (user code, debug eval, etc.).
-    Execution,
+    /// Carries the current prompt state so the UI comm can forward it
+    /// to the frontend.
+    Execution {
+        input_prompt: String,
+        continuation_prompt: String,
+    },
     /// The user selected a different frame in the call stack during debugging.
     FrameSelected,
 }

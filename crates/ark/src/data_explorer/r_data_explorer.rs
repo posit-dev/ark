@@ -431,8 +431,8 @@ impl CommHandler for RDataExplorer {
         });
     }
 
-    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
-        let EnvironmentChanged::Execution = event else {
+    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution { .. } = event else {
             return;
         };
         match self.update(ctx) {

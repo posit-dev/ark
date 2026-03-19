@@ -97,7 +97,7 @@ impl Console {
         self.comms.insert(comm_id, ConsoleComm { handler, ctx });
     }
 
-    pub(super) fn comm_notify_environment_changed(&mut self, event: EnvironmentChanged) {
+    pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
         for (_, comm) in self.comms.iter_mut() {
             comm.handler.handle_environment(event, &comm.ctx);
         }

@@ -561,8 +561,8 @@ impl Console {
         };
 
         // Initial input and continuation prompts
-        let input_prompt: String = harp::get_option("prompt").try_into().unwrap();
-        let continuation_prompt: String = harp::get_option("continue").try_into().unwrap();
+        let input_prompt = harp::get_input_prompt();
+        let continuation_prompt = harp::get_continuation_prompt();
 
         let kernel_info = KernelInfo {
             version: version.clone(),
@@ -803,6 +803,11 @@ impl Console {
         let info = self.prompt_info(prompt);
         log::trace!("R prompt: {}", info.input_prompt);
 
+        // Continuation prompt for the frontend (i.e. `getOption("continue")`).
+        // Passed along with the input prompt to `handle_active_request` and
+        // forwarded to comm handlers via `EnvironmentChanged::Execution`.
+        let continuation_prompt = harp::get_continuation_prompt();
+
         let is_browser = matches!(info.kind, PromptKind::Browser);
 
         let suppress = filter_debug_output();
@@ -879,7 +884,11 @@ impl Console {
             self.pending_inputs = None;
 
             // Reply to active request with error, then fall through to event loop
-            self.handle_active_request(ConsoleValue::Error(exception));
+            self.handle_active_request(
+                &info.input_prompt,
+                &continuation_prompt,
+                ConsoleValue::Error(exception),
+            );
         } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input from the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
@@ -890,7 +899,11 @@ impl Console {
             // Otherwise reply to active request with accumulated result, then
             // fall through to event loop
             let result = self.take_result();
-            self.handle_active_request(ConsoleValue::Success(result));
+            self.handle_active_request(
+                &info.input_prompt,
+                &continuation_prompt,
+                ConsoleValue::Success(result),
+            );
         }
 
         // In the future we'll also send browser information, see
@@ -1199,7 +1212,12 @@ impl Console {
         Some(exception)
     }
 
-    fn handle_active_request(&mut self, value: ConsoleValue) {
+    fn handle_active_request(
+        &mut self,
+        input_prompt: &str,
+        continuation_prompt: &str,
+        value: ConsoleValue,
+    ) {
         self.reset_global_env_rdebug();
 
         // If we get here we finished evaluating all pending inputs. Check if we
@@ -1229,7 +1247,10 @@ impl Console {
         // data explorer updates and closes arrive within the Busy/Idle
         // window of the execute request that caused them.
         EVENTS.environment_changed.emit(());
-        self.comm_notify_environment_changed(EnvironmentChanged::Execution);
+        self.comm_notify_environment_changed(&EnvironmentChanged::Execution {
+            input_prompt: input_prompt.to_string(),
+            continuation_prompt: continuation_prompt.to_string(),
+        });
 
         // Now unblock Shell, which sends Idle
         log::trace!("Sending `execute_reply`: {reply:?}");
@@ -1346,7 +1367,11 @@ impl Console {
                 } else {
                     // Otherwise we got an empty input, e.g. `""` and there's
                     // nothing to do. Close active request.
-                    self.handle_active_request(ConsoleValue::Success(Default::default()));
+                    self.handle_active_request(
+                        &info.input_prompt,
+                        &harp::get_continuation_prompt(),
+                        ConsoleValue::Success(Default::default()),
+                    );
 
                     // And return to event loop
                     None
@@ -2324,7 +2349,7 @@ impl Console {
         // Signal listeners (e.g. the Variables pane) that they can update state
         if frame_id.is_some() {
             EVENTS.environment_changed.emit(());
-            self.comm_notify_environment_changed(EnvironmentChanged::FrameSelected);
+            self.comm_notify_environment_changed(&EnvironmentChanged::FrameSelected);
         }
     }
 
