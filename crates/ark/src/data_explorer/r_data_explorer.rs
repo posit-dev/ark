@@ -598,7 +598,7 @@ impl RDataExplorer {
             request: params,
         };
         let outgoing_tx = outgoing_tx.clone();
-        r_task::spawn(RTask::idle(async move || {
+        r_task::spawn(RTask::idle(async move |_| {
             log::trace!("Processing GetColumnProfile request: {id}");
             handle_columns_profiles_requests(params, outgoing_tx)
                 .instrument(tracing::info_span!("get_columns_profile", ns = id))

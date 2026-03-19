@@ -824,8 +824,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let responses_tx = self.responses_tx.clone();
 
         log::trace!("DAP: Spawning idle task for evaluate");
-        r_task::spawn(RTask::send_idle_any_prompt(async move || {
-            let mut capture = r_task::start_capture();
+        r_task::spawn(RTask::send_idle_any_prompt(async move |mut capture| {
             log::trace!("DAP: Idle task started for evaluate");
 
             // If expression starts with "/print ", evaluate and print result

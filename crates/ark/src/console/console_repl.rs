@@ -2729,7 +2729,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn(RTask::idle(async move || {
+        r_task::spawn(RTask::idle(async move |_| {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }

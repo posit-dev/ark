@@ -5,6 +5,7 @@
 //
 //
 
+use std::future::Future;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -16,11 +17,9 @@ pub use ::r_task::r_task;
 pub use ::r_task::set_initialized;
 pub use ::r_task::set_main_thread;
 pub use ::r_task::set_test_init_hook;
-pub use ::r_task::spawn;
 pub use ::r_task::take_receivers;
 pub use ::r_task::BoxFuture;
 pub use ::r_task::QueuedTask as QueuedRTask;
-pub use ::r_task::RTask;
 pub use ::r_task::TaskStartInfo as RTaskStartInfo;
 pub use ::r_task::TaskStatus as RTaskStatus;
 pub use ::r_task::TaskWaker as RTaskWaker;
@@ -29,9 +28,96 @@ use libr::SEXP;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 
-/// Start a `ConsoleOutputCapture` if a Console is available, otherwise
-/// return a dummy capture (unit tests without a Console).
-pub(crate) fn start_capture() -> ConsoleOutputCapture {
+// Ark-local RTask enum — idle variants enforce ConsoleOutputCapture
+
+pub(crate) enum RTask {
+    Interrupt(BoxFuture<'static, ()>),
+    Idle(BoxFuture<'static, ()>),
+    IdleAnyPrompt(BoxFuture<'static, ()>),
+    SendInterrupt(BoxFuture<'static, ()>),
+    SendIdle(BoxFuture<'static, ()>),
+    SendIdleAnyPrompt(BoxFuture<'static, ()>),
+}
+
+impl RTask {
+    pub(crate) fn interrupt<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce() -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::Interrupt(Box::pin(fun()))
+    }
+
+    pub(crate) fn idle<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::Idle(pin_with_capture(fun))
+    }
+
+    #[allow(unused)]
+    pub(crate) fn idle_any_prompt<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::IdleAnyPrompt(pin_with_capture(fun))
+    }
+
+    pub(crate) fn send_interrupt<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce() -> Fut + 'static + Send,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::SendInterrupt(Box::pin(fun()))
+    }
+
+    pub(crate) fn send_idle<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::SendIdle(pin_with_capture(fun))
+    }
+
+    pub(crate) fn send_idle_any_prompt<F, Fut>(fun: F) -> Self
+    where
+        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+        Fut: Future<Output = ()> + 'static,
+    {
+        RTask::SendIdleAnyPrompt(pin_with_capture(fun))
+    }
+}
+
+fn pin_with_capture<F, Fut>(fun: F) -> BoxFuture<'static, ()>
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    Box::pin(async move {
+        let capture = start_capture();
+        fun(capture).await
+    })
+}
+
+/// Spawn an async task on the R thread.
+///
+/// Converts the ark-local `RTask` to `::r_task::RTask` and delegates to
+/// the crate-level `spawn()`.
+pub(crate) fn spawn(task: RTask) {
+    let task = match task {
+        RTask::Interrupt(fut) => ::r_task::RTask::Interrupt(fut),
+        RTask::Idle(fut) => ::r_task::RTask::Idle(fut),
+        RTask::IdleAnyPrompt(fut) => ::r_task::RTask::IdleAnyPrompt(fut),
+        RTask::SendInterrupt(fut) => ::r_task::RTask::SendInterrupt(fut),
+        RTask::SendIdle(fut) => ::r_task::RTask::SendIdle(fut),
+        RTask::SendIdleAnyPrompt(fut) => ::r_task::RTask::SendIdleAnyPrompt(fut),
+    };
+    ::r_task::spawn(task);
+}
+
+fn start_capture() -> ConsoleOutputCapture {
     if Console::is_initialized() {
         Console::get_mut().start_capture()
     } else {
@@ -39,6 +125,8 @@ pub(crate) fn start_capture() -> ConsoleOutputCapture {
         ConsoleOutputCapture::dummy()
     }
 }
+
+// Test helpers
 
 // Test-only R-callable functions for spawning a pending idle task.
 //
@@ -77,9 +165,7 @@ unsafe extern "C-unwind" fn ps_test_spawn_pending_task() -> anyhow::Result<SEXP>
     let (tx, rx) = futures::channel::oneshot::channel::<()>();
     *TEST_PENDING_TASK_TX.lock().unwrap() = Some(tx);
 
-    spawn(RTask::idle(async move || {
-        let _capture = start_capture();
-
+    spawn(RTask::idle(async move |_| {
         // Signal that we've been polled (capture is now active)
         harp::parse_eval_base("options(ark.test.task_polled = TRUE)").ok();
 
@@ -126,8 +212,7 @@ unsafe extern "C-unwind" fn ps_test_spawn_sleeping_idle_tasks(
     let sleep_duration = Duration::from_millis(sleep_ms as u64);
 
     for _ in 0..n {
-        spawn(RTask::idle(async move || {
-            let _capture = start_capture();
+        spawn(RTask::idle(async move |_capture| {
             std::thread::sleep(sleep_duration);
         }));
     }
