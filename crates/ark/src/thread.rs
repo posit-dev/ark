@@ -8,7 +8,6 @@
 use stdext::debug_panic;
 
 use crate::r_task;
-use crate::r_task::RTask;
 
 /// Private "shelter" around a Rust object (typically wrapping a `SEXP`, like
 /// an `RObject`) that makes it `Send`able
@@ -95,7 +94,7 @@ impl<T> Drop for RThreadSafe<T> {
 
         let _span = tracing::trace_span!("async drop").entered();
 
-        r_task::spawn(RTask::send_interrupt(async move || {
+        r_task::spawn(r_task::send_interrupt(async move || {
             // Run the `drop()` method of the `RShelter`, which in turn
             // runs the `drop()` method of the wrapped Rust object, which likely
             // uses the R API (i.e. if it is an `RObject`) so it must be called

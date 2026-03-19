@@ -45,7 +45,6 @@ use crate::dap::dap_state::DapExceptionEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
-use crate::r_task::RTask;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
@@ -824,7 +823,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
         let responses_tx = self.responses_tx.clone();
 
         log::trace!("DAP: Spawning idle task for evaluate");
-        r_task::spawn(RTask::send_idle_any_prompt(async move |mut capture| {
+        r_task::spawn(r_task::send_idle_any_prompt(async move |mut capture| {
             log::trace!("DAP: Idle task started for evaluate");
 
             // If expression starts with "/print ", evaluate and print result

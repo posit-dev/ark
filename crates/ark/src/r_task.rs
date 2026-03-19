@@ -17,6 +17,7 @@ pub use ::r_task::r_task;
 pub use ::r_task::set_initialized;
 pub use ::r_task::set_main_thread;
 pub use ::r_task::set_test_init_hook;
+pub use ::r_task::spawn;
 pub use ::r_task::take_receivers;
 pub use ::r_task::BoxFuture;
 pub use ::r_task::QueuedTask as QueuedRTask;
@@ -28,82 +29,51 @@ use libr::SEXP;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
 
-/// An async task to be run on the R thread.
-///
-/// Construct via `RTask::interrupt`, `RTask::idle`, or `RTask::idle_any_prompt`
-/// when spawning from the R thread. Use the `Send` variants
-/// (`RTask::send_interrupt`, etc.) when spawning from other threads.
-///
-/// For idle modes, console output is automatically captured during the task's
-/// execution via a `ConsoleOutputCapture` passed to the closure.
-pub(crate) enum RTask {
-    /// Run at the next interrupt check. Must be spawned from the R thread.
-    Interrupt(BoxFuture<'static, ()>),
-    /// Run when R is at a top-level idle prompt. Must be spawned from the R thread.
-    Idle(BoxFuture<'static, ()>),
-    /// Run when R is at any idle prompt (top-level or browser). Must be spawned
-    /// from the R thread.
-    IdleAnyPrompt(BoxFuture<'static, ()>),
-    /// Like `Interrupt`, but can be spawned from any thread. The constructor
-    /// enforces `Send` on the closure.
-    SendInterrupt(BoxFuture<'static, ()>),
-    /// Like `Idle`, but can be spawned from any thread. The constructor
-    /// enforces `Send` on the closure.
-    SendIdle(BoxFuture<'static, ()>),
-    /// Like `IdleAnyPrompt`, but can be spawned from any thread. The constructor
-    /// enforces `Send` on the closure.
-    SendIdleAnyPrompt(BoxFuture<'static, ()>),
+// Idle task constructors with automatic `ConsoleOutputCapture`
+//
+// For idle modes, console output is automatically captured during the task's
+// execution via a `ConsoleOutputCapture` passed to the closure. This prevents
+// output from leaking to the user console and ensures the capture is only
+// accessible in the right context.
+
+/// Run when R is at a top-level idle prompt. Must be spawned from the R thread.
+pub(crate) fn idle<F, Fut>(fun: F) -> ::r_task::RTask
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    ::r_task::RTask::Idle(pin_with_capture(fun))
 }
 
-impl RTask {
-    pub(crate) fn interrupt<F, Fut>(fun: F) -> Self
-    where
-        F: FnOnce() -> Fut + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
-        RTask::Interrupt(Box::pin(fun()))
-    }
+/// Run when R is at any idle prompt (top-level or browser). Must be spawned
+/// from the R thread.
+#[allow(unused)]
+pub(crate) fn idle_any_prompt<F, Fut>(fun: F) -> ::r_task::RTask
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    ::r_task::RTask::IdleAnyPrompt(pin_with_capture(fun))
+}
 
-    pub(crate) fn idle<F, Fut>(fun: F) -> Self
-    where
-        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
-        RTask::Idle(pin_with_capture(fun))
-    }
+/// Like `idle`, but can be spawned from any thread. The constructor
+/// enforces `Send` on the closure.
+pub(crate) fn send_idle<F, Fut>(fun: F) -> ::r_task::RTask
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    ::r_task::RTask::SendIdle(pin_with_capture(fun))
+}
 
-    #[allow(unused)]
-    pub(crate) fn idle_any_prompt<F, Fut>(fun: F) -> Self
-    where
-        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static,
-        Fut: Future<Output = ()> + 'static,
-    {
-        RTask::IdleAnyPrompt(pin_with_capture(fun))
-    }
-
-    pub(crate) fn send_interrupt<F, Fut>(fun: F) -> Self
-    where
-        F: FnOnce() -> Fut + 'static + Send,
-        Fut: Future<Output = ()> + 'static,
-    {
-        RTask::SendInterrupt(Box::pin(fun()))
-    }
-
-    pub(crate) fn send_idle<F, Fut>(fun: F) -> Self
-    where
-        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
-        Fut: Future<Output = ()> + 'static,
-    {
-        RTask::SendIdle(pin_with_capture(fun))
-    }
-
-    pub(crate) fn send_idle_any_prompt<F, Fut>(fun: F) -> Self
-    where
-        F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
-        Fut: Future<Output = ()> + 'static,
-    {
-        RTask::SendIdleAnyPrompt(pin_with_capture(fun))
-    }
+/// Like `idle_any_prompt`, but can be spawned from any thread. The constructor
+/// enforces `Send` on the closure.
+pub(crate) fn send_idle_any_prompt<F, Fut>(fun: F) -> ::r_task::RTask
+where
+    F: FnOnce(ConsoleOutputCapture) -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    ::r_task::RTask::SendIdleAnyPrompt(pin_with_capture(fun))
 }
 
 fn pin_with_capture<F, Fut>(fun: F) -> BoxFuture<'static, ()>
@@ -117,20 +87,25 @@ where
     })
 }
 
-/// Spawn an async task on the R thread.
-///
-/// Converts the ark-local `RTask` to `::r_task::RTask` and delegates to
-/// the crate-level `spawn()`.
-pub(crate) fn spawn(task: RTask) {
-    let task = match task {
-        RTask::Interrupt(fut) => ::r_task::RTask::Interrupt(fut),
-        RTask::Idle(fut) => ::r_task::RTask::Idle(fut),
-        RTask::IdleAnyPrompt(fut) => ::r_task::RTask::IdleAnyPrompt(fut),
-        RTask::SendInterrupt(fut) => ::r_task::RTask::SendInterrupt(fut),
-        RTask::SendIdle(fut) => ::r_task::RTask::SendIdle(fut),
-        RTask::SendIdleAnyPrompt(fut) => ::r_task::RTask::SendIdleAnyPrompt(fut),
-    };
-    ::r_task::spawn(task);
+// Interrupt task constructors
+
+/// Run at the next interrupt check. Must be spawned from the R thread.
+pub(crate) fn interrupt<F, Fut>(fun: F) -> ::r_task::RTask
+where
+    F: FnOnce() -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
+{
+    ::r_task::RTask::interrupt(fun)
+}
+
+/// Like `interrupt`, but can be spawned from any thread. The constructor
+/// enforces `Send` on the closure.
+pub(crate) fn send_interrupt<F, Fut>(fun: F) -> ::r_task::RTask
+where
+    F: FnOnce() -> Fut + 'static + Send,
+    Fut: Future<Output = ()> + 'static,
+{
+    ::r_task::RTask::send_interrupt(fun)
 }
 
 fn start_capture() -> ConsoleOutputCapture {
@@ -181,7 +156,7 @@ unsafe extern "C-unwind" fn ps_test_spawn_pending_task() -> anyhow::Result<SEXP>
     let (tx, rx) = futures::channel::oneshot::channel::<()>();
     *TEST_PENDING_TASK_TX.lock().unwrap() = Some(tx);
 
-    spawn(RTask::idle(async move |_| {
+    spawn(idle(async move |_capture| {
         // Signal that we've been polled (capture is now active)
         harp::parse_eval_base("options(ark.test.task_polled = TRUE)").ok();
 
@@ -228,7 +203,7 @@ unsafe extern "C-unwind" fn ps_test_spawn_sleeping_idle_tasks(
     let sleep_duration = Duration::from_millis(sleep_ms as u64);
 
     for _ in 0..n {
-        spawn(RTask::idle(async move |_capture| {
+        spawn(idle(async move |_capture| {
             std::thread::sleep(sleep_duration);
         }));
     }

@@ -12,14 +12,13 @@ use libr::*;
 use crate::console::Console;
 use crate::modules::ARK_ENVS;
 use crate::r_task;
-use crate::r_task::RTask;
 use crate::variables::variable::is_binding_fancy;
 use crate::variables::variable::plain_binding_force_with_rollback;
 
 #[tracing::instrument(level = "trace", skip_all)]
 pub(crate) fn resource_namespaces(pkgs: Vec<String>) -> anyhow::Result<()> {
     // Generate only one task and loop inside it to preserve the order of `pkgs`
-    r_task::spawn(RTask::idle(async move |_| {
+    r_task::spawn(r_task::idle(async move |_| {
         for pkg in pkgs.into_iter() {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcrefs for `{pkg}`: {err:?}");

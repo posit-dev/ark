@@ -13,7 +13,6 @@
 use super::*;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
-use crate::r_task::RTask;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -485,7 +484,7 @@ impl Console {
         // integration tests by spawning an async task. The deadlock is caused
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
-        r_task::spawn(RTask::interrupt({
+        r_task::spawn(r_task::interrupt({
             let dap_clone = console.debug_dap.clone();
             async move || {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
@@ -2729,7 +2728,7 @@ unsafe extern "C-unwind" fn ps_onload_hook(pkg: SEXP, _path: SEXP) -> anyhow::Re
 
     // Populate fake source refs if needed
     if do_resource_namespaces() {
-        r_task::spawn(RTask::idle(async move |_| {
+        r_task::spawn(r_task::idle(async move |_| {
             if let Err(err) = ns_populate_srcref(pkg.clone()).await {
                 log::error!("Can't populate srcref for `{pkg}`: {err:?}");
             }
