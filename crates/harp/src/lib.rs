@@ -94,17 +94,6 @@ pub fn initialize() {
 pub use error::Error;
 pub type Result<T> = std::result::Result<T, error::Error>;
 
-// ID of Console thread. This is used to detect whether the current thread is
-// the thread running R, see `Console::on_main_thread()`. R should normally
-// live on the main thread but detecting the main thread in a
-// cross-platform way is tricky, see https://docs.rs/is_main_thread.
-//
-// This global lives here so we can set it from harp unit tests without
-// creating a circular dependency on Ark. It's a constant initialised when
-// R starts up. Don't change its value. Since it's effectively read-only it
-// doesn't need synchronisation.
-pub static mut CONSOLE_THREAD_ID: Option<std::thread::ThreadId> = None;
-
 pub fn r_null() -> libr::SEXP {
     unsafe { libr::R_NilValue }
 }

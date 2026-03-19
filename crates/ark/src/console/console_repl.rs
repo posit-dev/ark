@@ -349,12 +349,6 @@ impl Console {
         // Must happen before doing anything that checks `r_task::on_r_main_thread()`,
         // like running an `r_task()` (posit-dev/positron#4973).
         r_task::set_r_main_thread();
-        unsafe {
-            CONSOLE_THREAD_ID = match CONSOLE_THREAD_ID {
-                None => Some(std::thread::current().id()),
-                Some(id) => panic!("`start()` must be called exactly 1 time. It has already been called from thread {id:?}."),
-            };
-        }
 
         let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 

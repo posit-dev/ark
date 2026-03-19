@@ -18,7 +18,6 @@ use libr::Rf_initialize_R;
 
 use crate::command::r_command_from_path;
 use crate::library::RLibraries;
-use crate::CONSOLE_THREAD_ID;
 
 // FIXME: Needs to be a reentrant lock for idle tasks. We can probably do better
 // though.
@@ -44,10 +43,6 @@ pub(crate) fn r_task<F: FnOnce()>(f: F) {
 
 pub fn r_test_init() {
     INIT.call_once(|| {
-        unsafe {
-            CONSOLE_THREAD_ID = Some(std::thread::current().id());
-        }
-
         // Set up R_HOME if necessary.
         let r_home = match std::env::var("R_HOME") {
             Ok(r_home) => PathBuf::from(r_home),
