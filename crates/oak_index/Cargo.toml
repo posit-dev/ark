@@ -1,0 +1,22 @@
+[package]
+name = "oak_index"
+version = "0.1.0"
+description = """
+Per-file semantic index for R: scopes, symbols, bindings, and uses.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aether_syntax.workspace = true
+biome_rowan.workspace = true
+rustc-hash.workspace = true
+
+[dev-dependencies]
+aether_parser.workspace = true

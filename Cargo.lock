@@ -2242,6 +2242,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_index"
+version = "0.1.0"
+dependencies = [
+ "air_r_parser",
+ "air_r_syntax",
+ "biome_rowan",
+ "rustc-hash",
+]
+
+[[package]]
 name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
