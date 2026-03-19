@@ -10,7 +10,7 @@
 
 # Return a list of installed packages
 #' @export
-.ps.rpc.pkg_list <- function(method = c("pak", "base")) {
+.ps.rpc.pkg_list <- function(method = c("pak", "base", "renv")) {
     method <- match.arg(method)
     switch(
         method,
@@ -29,6 +29,17 @@
         },
         base = {
             ip <- utils::installed.packages()
+            lapply(seq_len(nrow(ip)), function(i) {
+                list(
+                    id = paste0(ip[i, "Package"], "-", ip[i, "Version"]),
+                    name = ip[i, "Package"],
+                    displayName = ip[i, "Package"],
+                    version = ip[i, "Version"]
+                )
+            })
+        },
+        renv = {
+            ip <- utils::installed.packages(lib.loc = renv::paths$library())
             lapply(seq_len(nrow(ip)), function(i) {
                 list(
                     id = paste0(ip[i, "Package"], "-", ip[i, "Version"]),
