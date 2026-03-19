@@ -8,28 +8,19 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-// Re-export thread identity and spawn functions so the rest of ark can use
-// `crate::r_task::` without needing to reference `::r_task::` directly.
-pub use ::r_task::is_r_initialized;
+// Re-export infrastructure from the `r_task` crate so the rest of ark can
+// use `crate::r_task::` without needing to reference `::r_task::` directly.
+// We use `::r_task::` (absolute path) because this module shares the name.
 pub use ::r_task::on_r_main_thread;
-// Re-export infrastructure from the `r_task` crate.
-//
-// Since this module is also called `r_task`, we use `::r_task::` (absolute
-// path) to refer to the external crate unambiguously.
-pub use ::r_task::r_task::r_task;
+pub use ::r_task::r_task;
 pub use ::r_task::set_r_initialized;
 pub use ::r_task::set_r_main_thread;
 pub use ::r_task::set_test_init_hook;
 pub use ::r_task::spawn;
-pub use ::r_task::spawn_idle;
-pub use ::r_task::spawn_idle_any;
-pub use ::r_task::spawn_interrupt;
 pub use ::r_task::take_receivers;
-pub use ::r_task::AsyncTaskData as RTaskAsync;
 pub use ::r_task::BoxFuture;
 pub use ::r_task::QueuedTask as QueuedRTask;
 pub use ::r_task::RTask;
-pub use ::r_task::SyncTaskData as RTaskSync;
 pub use ::r_task::TaskStartInfo as RTaskStartInfo;
 pub use ::r_task::TaskStatus as RTaskStatus;
 pub use ::r_task::TaskWaker as RTaskWaker;
