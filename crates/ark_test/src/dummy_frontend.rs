@@ -625,6 +625,17 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive from IOPub and assert DisplayData message, returning the content.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_display_data_content(&self) -> amalthea::wire::display_data::DisplayData {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::DisplayData(data) => data.content,
+            other => panic!("Expected DisplayData, got {:?}", other),
+        }
+    }
+
     /// Receive from IOPub and assert CommMsg message.
     /// Automatically skips any Stream messages.
     #[track_caller]
@@ -987,6 +998,7 @@ impl DummyArkFrontend {
         self.execute_request_with_options(code, result_check, ExecuteRequestOptions {
             positron: Some(ExecuteRequestPositron {
                 code_location: Some(code_location),
+                ..Default::default()
             }),
             ..Default::default()
         })
@@ -1172,6 +1184,7 @@ impl DummyArkFrontend {
         self.send_execute_request(&code, ExecuteRequestOptions {
             positron: Some(ExecuteRequestPositron {
                 code_location: Some(file.location()),
+                ..Default::default()
             }),
             ..Default::default()
         });

@@ -1288,12 +1288,20 @@ impl Console {
                     reply_tx,
                 });
 
-                // Push execution context to graphics device for plot attribution.
+                // Push execution context to graphics device for plot attribution
+                // and optional sizing overrides from Quarto.
                 let code_location = exec_req.code_location().log_err().flatten();
+                let (render_settings, intrinsic_size) = exec_req
+                    .positron
+                    .as_ref()
+                    .map(graphics_device::compute_plot_overrides)
+                    .unwrap_or((None, None));
                 graphics_device::on_execute_request(
                     originator.header.msg_id.clone(),
                     exec_req.code.clone(),
                     code_location,
+                    render_settings,
+                    intrinsic_size,
                 );
 
                 input

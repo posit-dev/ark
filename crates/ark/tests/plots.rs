@@ -6,6 +6,34 @@ use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
+use base64::Engine;
+
+/// Default DPI for the current OS, matching the constant in graphics_device.rs.
+fn default_dpi() -> f64 {
+    if cfg!(target_os = "macos") {
+        96.0
+    } else {
+        72.0
+    }
+}
+
+/// Extract pixel dimensions (width, height) from base64-encoded PNG data.
+fn png_dimensions(base64_data: &str) -> (u32, u32) {
+    // The base64 data may contain newlines or use non-padded encoding
+    let cleaned: String = base64_data.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&cleaned)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned))
+        .expect("Failed to decode base64 PNG data");
+    // Validate PNG signature and minimum size for IHDR
+    let png_signature: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    assert!(bytes.len() >= 24);
+    assert_eq!(bytes[..8], png_signature);
+    // PNG IHDR: 8-byte signature, 4-byte chunk length, 4-byte "IHDR", then width (4) and height (4)
+    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
+    (width, height)
+}
 
 #[test]
 fn test_basic_plot() {
@@ -389,6 +417,7 @@ fn test_plot_get_metadata_with_origin() {
                     },
                 },
             }),
+            ..Default::default()
         }),
         ..ExecuteRequestOptions::default()
     });
@@ -582,4 +611,91 @@ fn test_plot_source_context_stacking() {
         "Plot from file A should have origin_uri pointing to file A '{}', got:\n{result_a}",
         file_a.uri_id,
     );
+}
+
+/// Test that plots rendered with fig-width/fig-height metadata produce
+/// a PNG at the expected pixel dimensions (inches * 96 DPI).
+#[test]
+fn test_plot_with_fig_size_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            fig_width: Some(5.0),
+            fig_height: Some(4.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    let dpi = default_dpi();
+    // 5 inches * DPI, 4 inches * DPI
+    assert_eq!(width, (5.0 * dpi).round() as u32);
+    assert_eq!(height, (4.0 * dpi).round() as u32);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that plots rendered with output_width_px (but no fig dimensions)
+/// produce a PNG at the expected width with a 4:3 aspect ratio.
+#[test]
+fn test_plot_with_output_width_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions {
+        positron: Some(ExecuteRequestPositron {
+            output_width_px: Some(600.0),
+            ..Default::default()
+        }),
+        ..ExecuteRequestOptions::default()
+    });
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    // 600px wide, 600 / (4/3) = 450px tall
+    assert_eq!(width, 600);
+    assert_eq!(height, 450);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that plots without sizing metadata render at the default 800x600.
+#[test]
+fn test_plot_default_size_without_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    let code = "plot(1:10)";
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let display = frontend.recv_iopub_display_data_content();
+    let png_data = display.data["image/png"]
+        .as_str()
+        .expect("display_data should contain image/png");
+    let (width, height) = png_dimensions(png_data);
+
+    assert_eq!(width, 800);
+    assert_eq!(height, 600);
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
 }

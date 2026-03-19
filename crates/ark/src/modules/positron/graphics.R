@@ -421,11 +421,7 @@ finalize_device_arguments <- function(format, width, height, pixel_ratio) {
 #' "on screen" be as close to the size in which they are actually printed at,
 #' which has always been tricky.
 default_resolution_in_pixels_per_inch <- function() {
-    if (Sys.info()[["sysname"]] == "Darwin") {
-        96L
-    } else {
-        72L
-    }
+    .ps.Call("ps_graphics_default_dpi")
 }
 
 #' Determines the default device `type` for png, jpeg, and tiff

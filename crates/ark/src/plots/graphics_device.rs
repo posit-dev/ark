@@ -16,6 +16,7 @@ use std::io::Read;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
+use amalthea::comm::plot_comm::IntrinsicSize;
 use amalthea::comm::plot_comm::PlotBackendReply;
 use amalthea::comm::plot_comm::PlotBackendRequest;
 use amalthea::comm::plot_comm::PlotFrontendEvent;
@@ -26,12 +27,14 @@ use amalthea::comm::plot_comm::PlotRenderFormat;
 use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::comm::plot_comm::PlotResult;
 use amalthea::comm::plot_comm::PlotSize;
+use amalthea::comm::plot_comm::PlotUnit;
 use amalthea::comm::plot_comm::UpdateParams;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommSocket;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::display_data::DisplayData;
 use amalthea::wire::execute_request::CodeLocation;
+use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
@@ -134,6 +137,17 @@ struct ExecutionContext {
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
+    /// Render settings override from the execute request (e.g. Quarto sizing metadata).
+    /// When `Some`, used instead of `DeviceContext::prerender_settings` for pre-rendering.
+    render_settings: Option<PlotRenderSettings>,
+    /// Intrinsic size from the execute request (e.g. Quarto's fig-width/fig-height in inches).
+    intrinsic_size: Option<IntrinsicSize>,
+}
+
+/// Per-plot context captured at creation time.
+struct PlotContext {
+    metadata: PlotMetadata,
+    intrinsic_size: Option<IntrinsicSize>,
 }
 
 struct DeviceContext {
@@ -186,8 +200,8 @@ struct DeviceContext {
     /// rendered results to the frontend.
     sockets: RefCell<HashMap<PlotId, CommSocket>>,
 
-    /// Mapping of plot ID to its metadata (captured at creation time)
-    metadata: RefCell<HashMap<PlotId, PlotMetadata>>,
+    /// Per-plot context captured at creation time (metadata and optional intrinsic size).
+    plot_contexts: RefCell<HashMap<PlotId, PlotContext>>,
 
     /// Counters for generating unique plot names by kind
     kind_counters: RefCell<HashMap<String, u32>>,
@@ -226,7 +240,7 @@ impl DeviceContext {
             should_render: Cell::new(true),
             id: RefCell::new(Self::new_id()),
             sockets: RefCell::new(HashMap::new()),
-            metadata: RefCell::new(HashMap::new()),
+            plot_contexts: RefCell::new(HashMap::new()),
             kind_counters: RefCell::new(HashMap::new()),
             wrapped_callbacks: WrappedDeviceCallbacks::default(),
             prerender_settings: Cell::new(PlotRenderSettings {
@@ -249,11 +263,15 @@ impl DeviceContext {
         execution_id: String,
         code: String,
         code_location: Option<CodeLocation>,
+        render_settings: Option<PlotRenderSettings>,
+        intrinsic_size: Option<IntrinsicSize>,
     ) {
         *self.execution_context.borrow_mut() = Some(ExecutionContext {
             execution_id,
             code,
             code_location,
+            render_settings,
+            intrinsic_size,
         });
     }
 
@@ -393,12 +411,14 @@ impl DeviceContext {
                 execution_id: ctx.execution_id.clone(),
                 code: ctx.code.clone(),
                 code_location: ctx.code_location.clone(),
+                render_settings: ctx.render_settings,
+                intrinsic_size: ctx.intrinsic_size.clone(),
             };
         }
         drop(stored);
 
         // Fall back to getting context from Console (for edge cases).
-        // This path does not provide code_location.
+        // This path does not provide code_location or plot overrides.
         let (execution_id, code) = Console::get().get_execution_context().unwrap_or_else(|| {
             // No active request - might be during startup or from R code
             (String::new(), String::new())
@@ -408,6 +428,8 @@ impl DeviceContext {
             execution_id,
             code,
             code_location: None,
+            render_settings: None,
+            intrinsic_size: None,
         }
     }
 
@@ -588,17 +610,20 @@ impl DeviceContext {
         match message {
             PlotBackendRequest::GetIntrinsicSize => {
                 log::trace!("PlotBackendRequest::GetIntrinsicSize");
-                Ok(PlotBackendReply::GetIntrinsicSizeReply(None))
+                let intrinsic_size = self
+                    .plot_contexts
+                    .borrow()
+                    .get(id)
+                    .and_then(|ctx| ctx.intrinsic_size.clone());
+                Ok(PlotBackendReply::GetIntrinsicSizeReply(intrinsic_size))
             },
             PlotBackendRequest::GetMetadata => {
                 log::trace!("PlotBackendRequest::GetMetadata");
 
                 // Metadata was captured at plot creation time, just retrieve it
-                let stored_metadata = self.metadata.borrow();
-                let info = stored_metadata.get(id);
-
-                let plot_metadata = match info {
-                    Some(info) => info.clone(),
+                let contexts = self.plot_contexts.borrow();
+                let plot_metadata = match contexts.get(id) {
+                    Some(ctx) => ctx.metadata.clone(),
                     None => {
                         // Fallback if metadata wasn't captured (shouldn't happen)
                         log::warn!("No metadata found for plot id {id}");
@@ -617,9 +642,25 @@ impl DeviceContext {
             PlotBackendRequest::Render(plot_meta) => {
                 log::trace!("PlotBackendRequest::Render");
 
-                let size = unwrap!(plot_meta.size, None => {
-                    return Err(anyhow!("Intrinsically sized plots are not yet supported."));
-                });
+                let size = match plot_meta.size {
+                    Some(size) => size,
+                    None => {
+                        // No explicit size requested — use intrinsic size if available
+                        let intrinsic = self
+                            .plot_contexts
+                            .borrow()
+                            .get(id)
+                            .and_then(|ctx| ctx.intrinsic_size.clone());
+                        match intrinsic {
+                            Some(intrinsic) => intrinsic.to_plot_size(),
+                            None => {
+                                return Err(anyhow!(
+                                    "No size provided for plot {id} and no intrinsic size available"
+                                ));
+                            },
+                        }
+                    },
+                };
 
                 let settings = PlotRenderSettings {
                     size: PlotSize {
@@ -646,9 +687,7 @@ impl DeviceContext {
     fn close_plot(&self, id: &PlotId) {
         // RefCell safety: Short borrows in the file
         self.sockets.borrow_mut().remove(id);
-
-        // Remove metadata for this plot
-        self.metadata.borrow_mut().remove(id);
+        self.plot_contexts.borrow_mut().remove(id);
 
         // The plot data is stored at R level. Assumes we're called on the R
         // thread at idle time so there's no race issues (see
@@ -737,17 +776,7 @@ impl DeviceContext {
         log::trace!("Notifying Positron of new plot");
 
         let ctx = self.capture_execution_context();
-        let kind = self.detect_plot_kind(id);
-        let name = self.generate_plot_name(&kind);
-        let origin = self.take_pending_origin(&ctx);
-
-        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
-            name,
-            kind,
-            execution_id: ctx.execution_id,
-            code: ctx.code,
-            origin,
-        });
+        self.store_plot_context(id, &ctx);
 
         // Let Positron know that we just created a new plot.
         let socket = CommSocket::new(
@@ -757,7 +786,11 @@ impl DeviceContext {
             self.iopub_tx.clone(),
         );
 
-        let settings = self.prerender_settings.get();
+        // Use render settings from the execute request if available, otherwise fall back
+        // to the default prerender settings.
+        let settings = ctx
+            .render_settings
+            .unwrap_or_else(|| self.prerender_settings.get());
 
         // Prepare a pre-rendering of the plot so Positron has something to display immediately
         let data = match self.render_plot(id, &settings) {
@@ -793,19 +826,9 @@ impl DeviceContext {
         log::trace!("Notifying Jupyter frontend of new plot");
 
         let ctx = self.capture_execution_context();
-        let kind = self.detect_plot_kind(id);
-        let name = self.generate_plot_name(&kind);
-        let origin = self.take_pending_origin(&ctx);
+        self.store_plot_context(id, &ctx);
 
-        self.metadata.borrow_mut().insert(id.clone(), PlotMetadata {
-            name,
-            kind,
-            execution_id: ctx.execution_id,
-            code: ctx.code,
-            origin,
-        });
-
-        let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
+        let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
         });
@@ -831,6 +854,26 @@ impl DeviceContext {
                 transient,
             }))
             .log_err();
+    }
+
+    /// Store intrinsic size and metadata for a new plot from the execution context.
+    fn store_plot_context(&self, id: &PlotId, ctx: &ExecutionContext) {
+        let kind = self.detect_plot_kind(id);
+        let name = self.generate_plot_name(&kind);
+        let origin = self.take_pending_origin(ctx);
+
+        self.plot_contexts
+            .borrow_mut()
+            .insert(id.clone(), PlotContext {
+                metadata: PlotMetadata {
+                    name,
+                    kind,
+                    execution_id: ctx.execution_id.clone(),
+                    code: ctx.code.clone(),
+                    origin,
+                },
+                intrinsic_size: ctx.intrinsic_size.clone(),
+            });
     }
 
     fn process_update_plot(&self, id: &PlotId) {
@@ -891,7 +934,8 @@ impl DeviceContext {
     fn process_update_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Notifying Jupyter frontend of plot update");
 
-        let data = unwrap!(self.create_display_data_plot(id), Err(error) => {
+        let ctx = self.capture_execution_context();
+        let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
         });
@@ -914,16 +958,26 @@ impl DeviceContext {
             .log_err();
     }
 
-    fn create_display_data_plot(&self, id: &PlotId) -> Result<serde_json::Value, anyhow::Error> {
-        // TODO: Take these from R global options? Like `ark.plot.width`?
-        let settings = PlotRenderSettings {
-            size: PlotSize {
-                width: 800,
-                height: 600,
-            },
-            pixel_ratio: 1.0,
-            format: PlotRenderFormat::Png,
-        };
+    fn create_display_data_plot(
+        &self,
+        id: &PlotId,
+        ctx: &ExecutionContext,
+    ) -> Result<serde_json::Value, anyhow::Error> {
+        let settings = ctx.render_settings.unwrap_or_else(|| {
+            let width = r_option_positive_f64("ark.plot.width")
+                .map(|w| (w * DEFAULT_DPI).round() as i64)
+                .unwrap_or(800);
+            let height = r_option_positive_f64("ark.plot.height")
+                .map(|h| (h * DEFAULT_DPI).round() as i64)
+                .unwrap_or(600);
+            let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio").unwrap_or(1.0);
+
+            PlotRenderSettings {
+                size: PlotSize { width, height },
+                pixel_ratio,
+                format: PlotRenderFormat::Png,
+            }
+        });
 
         let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
@@ -1056,6 +1110,120 @@ pub(crate) fn on_process_idle_events() {
     DEVICE_CONTEXT.with_borrow(|cell| cell.process_rpc_requests());
 }
 
+/// Default DPI for converting inches to pixels.
+/// Matches R's default: 96 on macOS, 72 on Linux/Windows.
+/// See `default_resolution_in_pixels_per_inch()` in graphics.R.
+const DEFAULT_DPI: f64 = if cfg!(target_os = "macos") {
+    96.0
+} else {
+    72.0
+};
+
+/// Default aspect ratio (width:height) used when only output_width_px is provided.
+const DEFAULT_ASPECT_RATIO: f64 = 4.0 / 3.0;
+
+trait IntrinsicSizeExt {
+    /// Convert an intrinsic size to a logical-pixel-based `PlotSize`.
+    ///
+    /// Returns dimensions in CSS/logical pixels. The R rendering layer handles
+    /// physical pixel scaling via the separate `pixel_ratio` parameter.
+    fn to_plot_size(&self) -> PlotSize;
+}
+
+impl IntrinsicSizeExt for IntrinsicSize {
+    fn to_plot_size(&self) -> PlotSize {
+        match self.unit {
+            PlotUnit::Inches => PlotSize {
+                width: (self.width * DEFAULT_DPI).round() as i64,
+                height: (self.height * DEFAULT_DPI).round() as i64,
+            },
+            PlotUnit::Pixels => PlotSize {
+                width: self.width.round() as i64,
+                height: self.height.round() as i64,
+            },
+        }
+    }
+}
+
+trait FromExecuteRequest: Sized {
+    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self>;
+}
+
+impl FromExecuteRequest for PlotRenderSettings {
+    /// Create render settings from an execute request's Positron metadata.
+    ///
+    /// If `fig_width`/`fig_height` are both set (Quarto), returns settings with
+    /// size in logical pixels (inches * 96 DPI).
+    ///
+    /// Otherwise if `output_width_px` is set, returns settings at that width
+    /// with a 4:3 aspect ratio.
+    ///
+    /// Sizes are in CSS/logical pixels. The R rendering layer handles physical
+    /// pixel scaling via the separate `pixel_ratio` parameter.
+    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
+        let pixel_ratio = req.output_pixel_ratio.unwrap_or(1.0);
+
+        if let (Some(w), Some(h)) = (req.fig_width, req.fig_height) {
+            if w > 0.0 && h > 0.0 {
+                return Some(Self {
+                    size: PlotSize {
+                        width: (w * DEFAULT_DPI).round() as i64,
+                        height: (h * DEFAULT_DPI).round() as i64,
+                    },
+                    pixel_ratio,
+                    format: PlotRenderFormat::Png,
+                });
+            }
+        }
+
+        if let Some(width_px) = req.output_width_px {
+            if width_px > 0.0 {
+                return Some(Self {
+                    size: PlotSize {
+                        width: width_px.round() as i64,
+                        height: (width_px / DEFAULT_ASPECT_RATIO).round() as i64,
+                    },
+                    pixel_ratio,
+                    format: PlotRenderFormat::Png,
+                });
+            }
+        }
+
+        None
+    }
+}
+
+impl FromExecuteRequest for IntrinsicSize {
+    /// Create an intrinsic size from an execute request's Positron metadata.
+    ///
+    /// Only returns `Some` when both `fig_width` and `fig_height` are set
+    /// (i.e. Quarto sizing), providing the intrinsic size in inches.
+    fn from_execute_request(req: &ExecuteRequestPositron) -> Option<Self> {
+        if let (Some(w), Some(h)) = (req.fig_width, req.fig_height) {
+            if w > 0.0 && h > 0.0 {
+                return Some(Self {
+                    width: w,
+                    height: h,
+                    unit: PlotUnit::Inches,
+                    source: String::from("Quarto"),
+                });
+            }
+        }
+
+        None
+    }
+}
+
+/// Compute render settings and intrinsic size from execute request metadata.
+pub(crate) fn compute_plot_overrides(
+    req: &ExecuteRequestPositron,
+) -> (Option<PlotRenderSettings>, Option<IntrinsicSize>) {
+    (
+        PlotRenderSettings::from_execute_request(req),
+        IntrinsicSize::from_execute_request(req),
+    )
+}
+
 /// Hook applied when an execute request starts
 ///
 /// Pushes the execution context (execution_id, code, code_location) to the graphics device
@@ -1068,10 +1236,19 @@ pub(crate) fn on_execute_request(
     execution_id: String,
     code: String,
     code_location: Option<CodeLocation>,
+    render_settings: Option<PlotRenderSettings>,
+    intrinsic_size: Option<IntrinsicSize>,
 ) {
     log::trace!("Entering on_execute_request");
-    DEVICE_CONTEXT
-        .with_borrow(|cell| cell.set_execution_context(execution_id, code, code_location));
+    DEVICE_CONTEXT.with_borrow(|cell| {
+        cell.set_execution_context(
+            execution_id,
+            code,
+            code_location,
+            render_settings,
+            intrinsic_size,
+        )
+    });
 }
 
 /// Hook applied after a code chunk has finished executing
@@ -1293,9 +1470,10 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
     let plot_id = PlotId(id_str);
 
     DEVICE_CONTEXT.with_borrow(|cell| {
-        let metadata = cell.metadata.borrow();
-        match metadata.get(&plot_id) {
-            Some(info) => {
+        let contexts = cell.plot_contexts.borrow();
+        match contexts.get(&plot_id) {
+            Some(ctx) => {
+                let info = &ctx.metadata;
                 let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
 
                 // Create a list with the metadata values
@@ -1341,4 +1519,26 @@ unsafe extern "C-unwind" fn ps_graphics_push_source_context(uri: SEXP) -> anyhow
 unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<SEXP> {
     DEVICE_CONTEXT.with_borrow(|cell| cell.pop_source_context());
     Ok(harp::r_null())
+}
+
+/// Returns the default DPI for the current OS.
+/// Called from R to avoid duplicating OS-detection logic.
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_default_dpi() -> anyhow::Result<SEXP> {
+    Ok(RObject::from(DEFAULT_DPI as i32).sexp)
+}
+
+/// Read a positive `f64` from an R option. Returns `None` if the option is
+/// unset, not numeric, or not positive.
+fn r_option_positive_f64(name: &str) -> Option<f64> {
+    let value = r_task(|| {
+        RFunction::from("getOption")
+            .param("x", name)
+            .call()?
+            .to::<f64>()
+    });
+    match value {
+        Ok(v) if v > 0.0 => Some(v),
+        _ => None,
+    }
 }

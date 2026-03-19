@@ -41,9 +41,23 @@ pub struct ExecuteRequest {
 }
 
 #[serde_with::skip_serializing_none]
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ExecuteRequestPositron {
     pub code_location: Option<JupyterPositronLocation>,
+
+    /// Figure width in inches, set by Quarto
+    #[serde(rename = "fig-width")]
+    pub fig_width: Option<f64>,
+
+    /// Figure height in inches, set by Quarto
+    #[serde(rename = "fig-height")]
+    pub fig_height: Option<f64>,
+
+    /// Output area width in pixels
+    pub output_width_px: Option<f64>,
+
+    /// Device pixel ratio of the output area
+    pub output_pixel_ratio: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
