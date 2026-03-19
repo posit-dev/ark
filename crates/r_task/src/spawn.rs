@@ -96,7 +96,7 @@ pub fn spawn(task: RTask) {
         task,
         RTask::Interrupt(_) | RTask::Idle(_) | RTask::IdleAnyPrompt(_)
     );
-    if needs_r_thread && !crate::thread::on_r_main_thread() {
+    if needs_r_thread && !crate::thread::on_main_thread() {
         let thread = std::thread::current();
         let name = thread.name().unwrap_or("<unnamed>");
         panic!("`spawn()` must be called from the R thread, not thread '{name}'");
@@ -115,7 +115,7 @@ pub fn spawn(task: RTask) {
 /// Can be called from any thread.
 pub fn spawn_interrupt(fut: BoxFuture<'static, ()>) {
     #[cfg(feature = "testing")]
-    if stdext::IS_TESTING && !crate::thread::is_r_initialized() {
+    if stdext::IS_TESTING && !crate::thread::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fut);
         return;
@@ -136,7 +136,7 @@ pub fn spawn_interrupt(fut: BoxFuture<'static, ()>) {
 /// Can be called from any thread.
 pub fn spawn_idle(fut: BoxFuture<'static, ()>) {
     #[cfg(feature = "testing")]
-    if stdext::IS_TESTING && !crate::thread::is_r_initialized() {
+    if stdext::IS_TESTING && !crate::thread::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fut);
         return;
@@ -157,7 +157,7 @@ pub fn spawn_idle(fut: BoxFuture<'static, ()>) {
 /// Can be called from any thread.
 pub fn spawn_idle_any(fut: BoxFuture<'static, ()>) {
     #[cfg(feature = "testing")]
-    if stdext::IS_TESTING && !crate::thread::is_r_initialized() {
+    if stdext::IS_TESTING && !crate::thread::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         futures::executor::block_on(fut);
         return;

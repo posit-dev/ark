@@ -15,7 +15,7 @@ use crate::queue::QueuedTask;
 use crate::queue::SyncTaskData;
 use crate::queue::TaskStartInfo;
 use crate::queue::TaskStatus;
-use crate::thread::on_r_main_thread;
+use crate::thread::on_main_thread;
 
 type SharedOption<T> = Arc<Mutex<Option<T>>>;
 
@@ -40,7 +40,7 @@ where
     // In integration tests with dummy frontends, we have a "real" event loop
     // consumer and want to go through the standard r-task path.
     #[cfg(feature = "testing")]
-    if stdext::IS_TESTING && !crate::thread::is_r_initialized() {
+    if stdext::IS_TESTING && !crate::thread::is_initialized() {
         let _lock = harp::fixtures::R_TEST_LOCK.lock();
         crate::thread::test_init();
         return f();
@@ -49,7 +49,7 @@ where
     // Recursive case: If we're on the R thread already, just run the
     // task and return. This allows `r_task(|| { r_task(|| {}) })`
     // to run without deadlocking.
-    if on_r_main_thread() {
+    if on_main_thread() {
         return f();
     }
 

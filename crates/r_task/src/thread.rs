@@ -16,16 +16,16 @@ static TEST_INIT_HOOK: OnceLock<fn()> = OnceLock::new();
 
 /// Called once by whoever owns the R thread (Console in Ark, the headless R
 /// thread in Oak, or `test_init()` in unit tests).
-pub fn set_r_main_thread() {
+pub fn set_main_thread() {
     if R_MAIN_THREAD_ID.set(std::thread::current().id()).is_err() {
-        panic!("`set_r_main_thread()` can only be called once");
+        panic!("`set_main_thread()` can only be called once");
     }
 }
 
 /// Returns `true` if the calling thread is the R main thread.
 ///
-/// Returns `false` if `set_r_main_thread()` has not been called yet.
-pub fn on_r_main_thread() -> bool {
+/// Returns `false` if `set_main_thread()` has not been called yet.
+pub fn on_main_thread() -> bool {
     R_MAIN_THREAD_ID
         .get()
         .is_some_and(|id| *id == std::thread::current().id())
@@ -36,13 +36,13 @@ pub fn on_r_main_thread() -> bool {
 ///
 /// This is NOT set during test init — unit tests always use the test escape
 /// path in `r_task()`.
-pub fn is_r_initialized() -> bool {
+pub fn is_initialized() -> bool {
     R_INITIALIZED.load(Ordering::Acquire)
 }
 
 /// Mark R as fully initialized. Called by `Console::complete_initialization()`
 /// in Ark and by Oak's headless R thread after setup.
-pub fn set_r_initialized() {
+pub fn set_initialized() {
     R_INITIALIZED.store(true, Ordering::Release);
 }
 
@@ -57,7 +57,7 @@ pub fn set_test_init_hook(hook: fn()) {
 /// Perform test-time R initialization.
 ///
 /// Calls `harp::fixtures::r_test_init()` for base R setup, then
-/// `set_r_main_thread()`, then the downstream hook (if registered).
+/// `set_main_thread()`, then the downstream hook (if registered).
 ///
 /// Guarded by `Once` so it is safe to call repeatedly.
 #[cfg(feature = "testing")]
@@ -67,7 +67,7 @@ pub(crate) fn test_init() {
 
     INIT.call_once(|| {
         harp::fixtures::r_test_init();
-        set_r_main_thread();
+        set_main_thread();
         if let Some(hook) = TEST_INIT_HOOK.get() {
             hook();
         }

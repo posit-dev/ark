@@ -11,10 +11,10 @@ use std::time::Duration;
 // Re-export infrastructure from the `r_task` crate so the rest of ark can
 // use `crate::r_task::` without needing to reference `::r_task::` directly.
 // We use `::r_task::` (absolute path) because this module shares the name.
-pub use ::r_task::on_r_main_thread;
+pub use ::r_task::on_main_thread;
 pub use ::r_task::r_task;
-pub use ::r_task::set_r_initialized;
-pub use ::r_task::set_r_main_thread;
+pub use ::r_task::set_initialized;
+pub use ::r_task::set_main_thread;
 pub use ::r_task::set_test_init_hook;
 pub use ::r_task::spawn;
 pub use ::r_task::take_receivers;

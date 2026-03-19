@@ -346,9 +346,9 @@ impl Console {
         console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
-        // Must happen before doing anything that checks `r_task::on_r_main_thread()`,
+        // Must happen before doing anything that checks `r_task::on_main_thread()`,
         // like running an `r_task()` (posit-dev/positron#4973).
-        r_task::set_r_main_thread();
+        r_task::set_main_thread();
 
         let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
@@ -592,7 +592,7 @@ impl Console {
 
         log::info!("Sending kernel info: {version}");
         kernel_init_tx.broadcast(kernel_info);
-        r_task::set_r_initialized();
+        r_task::set_initialized();
     }
 
     fn new(
