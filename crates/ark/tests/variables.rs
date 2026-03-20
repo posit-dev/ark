@@ -67,7 +67,6 @@ fn test_variables_list() {
         String::from("test-environment-comm-id"),
         String::from("positron.environment"),
         iopub_tx.clone(),
-        serde_json::Value::Null,
     );
 
     // Create a new environment handler and give it the test
@@ -336,7 +335,6 @@ fn test_query_table_summary() {
         String::from("test-table-summary-comm-id"),
         String::from("positron.environment"),
         iopub_tx.clone(),
-        serde_json::Value::Null,
     );
     let incoming_tx = comm.incoming_tx.clone();
 
