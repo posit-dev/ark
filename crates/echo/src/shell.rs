@@ -215,7 +215,12 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(&self, _target: Comm, _comm: CommSocket) -> amalthea::Result<bool> {
+    async fn handle_comm_open(
+        &self,
+        _target: Comm,
+        _comm: CommSocket,
+        _data: serde_json::Value,
+    ) -> amalthea::Result<bool> {
         // No comms in this toy implementation.
         Ok(false)
     }

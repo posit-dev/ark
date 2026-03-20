@@ -68,7 +68,6 @@ impl RConnection {
             comm_id.clone(),
             String::from("positron.connection"),
             iopub_tx,
-            serde_json::Value::Null,
         );
 
         let connection = Self {

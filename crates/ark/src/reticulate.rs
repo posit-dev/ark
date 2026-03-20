@@ -48,7 +48,6 @@ impl ReticulateService {
             comm_id.clone(),
             String::from("positron.reticulate"),
             iopub_tx,
-            serde_json::Value::Null,
         );
 
         {

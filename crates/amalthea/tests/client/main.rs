@@ -274,7 +274,6 @@ fn test_amalthea_comm_open_from_kernel() {
         test_comm_id.clone(),
         test_comm_name.clone(),
         frontend.iopub_tx.clone(),
-        serde_json::Value::Null,
     );
 
     frontend
