@@ -257,7 +257,12 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(&self, req: Comm, comm: CommSocket) -> amalthea::Result<bool> {
+    async fn handle_comm_open(
+        &self,
+        req: Comm,
+        comm: CommSocket,
+        _data: serde_json::Value,
+    ) -> amalthea::Result<bool> {
         // Used to test error replies
         match req {
             Comm::Other(name) if name == "unknown" => {
