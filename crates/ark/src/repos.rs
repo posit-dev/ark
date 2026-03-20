@@ -381,6 +381,25 @@ pub extern "C-unwind" fn ps_get_ppm_binary_url(url: SEXP) -> anyhow::Result<SEXP
     Ok(RObject::from(final_url).sexp)
 }
 
+/// Base64 encode a string (Rust-only helper, no R dependency).
+pub fn ps_base64_encode_string(input: &str) -> anyhow::Result<String> {
+    use base64::engine::general_purpose;
+    use base64::Engine;
+    Ok(general_purpose::STANDARD.encode(input.as_bytes()))
+}
+
+#[harp::register]
+pub extern "C-unwind" fn ps_base64_encode(input: SEXP) -> anyhow::Result<SEXP> {
+    let input_str = RObject::view(input)
+        .to::<String>()
+        .context("`input` must be a string")?;
+
+    use base64::engine::general_purpose;
+    use base64::Engine;
+    let encoded = general_purpose::STANDARD.encode(input_str.as_bytes());
+    Ok(RObject::from(encoded).sexp)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

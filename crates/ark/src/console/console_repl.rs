@@ -468,6 +468,37 @@ impl Console {
                 log::error!("Error setting default repositories: {err:?}");
             }
 
+            // If PPM_AUTH_TOKEN is set, configure download credentials for authenticated access.
+            // This works in conjunction with the Package Manager extension setting the env var.
+            if let Ok(ppm_token) = std::env::var("PPM_AUTH_TOKEN") {
+                if !ppm_token.is_empty() {
+                    log::info!("PPM_AUTH_TOKEN found, configuring download credentials");
+                    let auth_input = format!("__token__:{}", ppm_token);
+                    match crate::repos::ps_base64_encode_string(&auth_input) {
+                        Ok(auth_b64) => {
+                            let header = format!("-L --header \"Authorization: Basic {}\"", auth_b64);
+                            let opts = harp::RObject::from(
+                                vec![
+                                    ("download.file.method".to_string(), "curl".to_string()),
+                                    ("download.file.extra".to_string(), header),
+                                ]
+                                .into_iter()
+                                .collect::<std::collections::HashMap<String, String>>(),
+                            );
+                            if let Err(err) = harp::exec::RFunction::new("base", "options")
+                                .add(opts)
+                                .call()
+                            {
+                                log::warn!("Failed to set PPM download options: {err:?}");
+                            }
+                        },
+                        Err(err) => {
+                            log::warn!("Failed to encode PPM auth token: {err:?}");
+                        },
+                    }
+                }
+            }
+
             // Initialise Ark's last value
             libr::SETCDR(r_symbol!(".ark_last_value"), harp::r_null());
         }
