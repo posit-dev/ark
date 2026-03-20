@@ -595,14 +595,22 @@ impl Shell {
                     true
                 } else {
                     // No server handler found, pass through to shell handler
-                    block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
+                    block_on(shell_handler.handle_comm_open(
+                        comm,
+                        comm_socket.clone(),
+                        msg.data.clone(),
+                    ))?
                 }
             },
 
             // All comms tied to known Positron clients are passed through to the shell handler
             _ => {
                 // Call the shell handler to open the comm
-                block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
+                block_on(shell_handler.handle_comm_open(
+                    comm,
+                    comm_socket.clone(),
+                    msg.data.clone(),
+                ))?
             },
         };
 
