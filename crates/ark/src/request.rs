@@ -6,12 +6,13 @@
 //
 
 use amalthea::comm::comm_channel::CommMsg;
+use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::wire::execute_reply::ExecuteReply;
 use amalthea::wire::execute_request::ExecuteRequest;
 use amalthea::wire::originator::Originator;
 use crossbeam::channel::Sender;
 
-use crate::ui::UiCommMessage;
+use crate::comm_handler::CommHandler;
 
 /// Represents requests to the primary R execution thread.
 #[derive(Debug, Clone)]
@@ -53,10 +54,16 @@ pub fn debug_request_command(req: DebugRequest) -> String {
 
 /// Represents requests to the kernel.
 #[derive(Debug)]
-#[expect(clippy::large_enum_variant)]
 pub enum KernelRequest {
-    /// Establish a channel to the UI comm which forwards messages to the frontend
-    EstablishUiCommChannel(Sender<UiCommMessage>),
+    /// Register a frontend-initiated comm handler on the R thread.
+    /// The handler is constructed on the Shell thread and sent here for registration.
+    CommOpen {
+        comm_id: String,
+        comm_name: String,
+        outgoing_tx: CommOutgoingTx,
+        handler: Box<dyn CommHandler + Send>,
+        done_tx: Sender<()>,
+    },
 
     /// Deliver an incoming comm message to the R thread
     CommMsg {

@@ -21,14 +21,11 @@ fn evaluate_code(frontend: &DummyArkFrontend, comm_id: &str, code: &str) -> UiBa
     });
 
     frontend.send_shell_comm_msg(String::from(comm_id), data);
-
-    // The shell routes the message to the UI comm thread and goes busy/idle.
-    // The RPC reply is sent from the UI comm thread and can arrive on IOPub
-    // either before or after the shell's Idle status.
     frontend.recv_iopub_busy();
 
-    let reply = frontend.recv_iopub_comm_msg_and_idle();
+    let reply = frontend.recv_iopub_comm_msg();
     assert_eq!(reply.comm_id, comm_id);
+    frontend.recv_iopub_idle();
 
     serde_json::from_value::<UiBackendReply>(reply.data).unwrap()
 }

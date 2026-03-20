@@ -10,7 +10,6 @@ use amalthea::comm::comm_channel::CommMsg;
 use amalthea::language::shell_handler::CommHandled;
 use amalthea::language::shell_handler::ShellHandler;
 use amalthea::socket::comm::CommSocket;
-use amalthea::socket::stdin::StdInRequest;
 use amalthea::wire::complete_reply::CompleteReply;
 use amalthea::wire::complete_request::CompleteRequest;
 use amalthea::wire::execute_reply::ExecuteReply;
@@ -45,7 +44,6 @@ use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
 use crate::ark_comm::ArkComm;
 use crate::console::Console;
-use crate::console::ConsoleNotification;
 use crate::console::KernelInfo;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
@@ -55,16 +53,15 @@ use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
 use crate::ui::UiComm;
+use crate::ui::UI_COMM_NAME;
 use crate::variables::r_variables::RVariables;
 
 pub struct Shell {
     r_request_tx: Sender<RRequest>,
-    stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     kernel_init_rx: BusReader<KernelInfo>,
     kernel_info: Option<KernelInfo>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-    console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 }
 
 #[derive(Debug)]
@@ -76,20 +73,16 @@ impl Shell {
     /// Creates a new instance of the shell message handler.
     pub(crate) fn new(
         r_request_tx: Sender<RRequest>,
-        stdin_request_tx: Sender<StdInRequest>,
         kernel_init_rx: BusReader<KernelInfo>,
         kernel_request_tx: Sender<KernelRequest>,
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-        console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
     ) -> Self {
         Self {
             r_request_tx,
-            stdin_request_tx,
             kernel_request_tx,
             kernel_init_rx,
             kernel_info: None,
             graphics_device_tx,
-            console_notification_tx,
         }
     }
 
@@ -248,10 +241,8 @@ impl ShellHandler for Shell {
             Comm::Variables => handle_comm_open_variables(comm),
             Comm::Ui => handle_comm_open_ui(
                 comm,
-                self.stdin_request_tx.clone(),
                 self.kernel_request_tx.clone(),
                 self.graphics_device_tx.clone(),
-                self.console_notification_tx.clone(),
             ),
             Comm::Help => handle_comm_open_help(comm),
             Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
@@ -266,7 +257,7 @@ impl ShellHandler for Shell {
         msg: CommMsg,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
@@ -284,7 +275,7 @@ impl ShellHandler for Shell {
         comm_name: &str,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
@@ -323,20 +314,24 @@ fn handle_comm_open_variables(comm: CommSocket) -> amalthea::Result<bool> {
 
 fn handle_comm_open_ui(
     comm: CommSocket,
-    stdin_request_tx: Sender<StdInRequest>,
     kernel_request_tx: Sender<KernelRequest>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
-    _console_notification_tx: AsyncUnboundedSender<ConsoleNotification>,
 ) -> amalthea::Result<bool> {
-    // Create a frontend to wrap the comm channel we were just given. This starts
-    // a thread that proxies messages to the frontend.
-    let ui_comm_tx = UiComm::start(comm, stdin_request_tx, graphics_device_tx);
+    let handler = UiComm::new(graphics_device_tx);
 
-    // Send the frontend event channel to the execution thread so it can emit
-    // events to the frontend.
-    if let Err(err) = kernel_request_tx.send(KernelRequest::EstablishUiCommChannel(ui_comm_tx)) {
-        log::error!("Could not deliver UI comm channel to execution thread: {err:?}");
-    };
+    let (done_tx, done_rx) = bounded(0);
+    kernel_request_tx
+        .send(KernelRequest::CommOpen {
+            comm_id: comm.comm_id.clone(),
+            comm_name: comm.comm_name.clone(),
+            outgoing_tx: comm.outgoing_tx.clone(),
+            handler: Box::new(handler),
+            done_tx,
+        })
+        .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
+    done_rx
+        .recv()
+        .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
 
     Ok(true)
 }

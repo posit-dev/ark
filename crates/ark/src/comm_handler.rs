@@ -47,6 +47,15 @@ impl CommHandlerContext {
     pub fn is_closed(&self) -> bool {
         self.closed.get()
     }
+
+    /// Send a serializable event as `CommMsg::Data` on the outgoing channel.
+    /// Serialization or send errors are logged and ignored.
+    pub fn send_event<T: Serialize>(&self, event: &T) {
+        let Some(json) = serde_json::to_value(event).log_err() else {
+            return;
+        };
+        self.outgoing_tx.send(CommMsg::Data(json)).log_err();
+    }
 }
 
 /// Trait for comm handlers that run synchronously on the R thread.
@@ -73,14 +82,19 @@ pub trait CommHandler: Debug {
     /// Called when the environment changes. The `event` indicates what
     /// triggered the change so handlers can decide whether to react.
     /// Default is no-op.
-    fn handle_environment(&mut self, _event: EnvironmentChanged, _ctx: &CommHandlerContext) {}
+    fn handle_environment(&mut self, _event: &EnvironmentChanged, _ctx: &CommHandlerContext) {}
 }
 
 /// Why the environment changed.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum EnvironmentChanged {
     /// A top-level execution completed (user code, debug eval, etc.).
-    Execution,
+    /// Carries the current prompt state so the UI comm can forward it
+    /// to the frontend.
+    Execution {
+        input_prompt: String,
+        continuation_prompt: String,
+    },
     /// The user selected a different frame in the call stack during debugging.
     FrameSelected,
 }

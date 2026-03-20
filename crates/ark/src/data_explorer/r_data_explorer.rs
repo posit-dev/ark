@@ -431,8 +431,8 @@ impl CommHandler for RDataExplorer {
         });
     }
 
-    fn handle_environment(&mut self, event: EnvironmentChanged, ctx: &CommHandlerContext) {
-        let EnvironmentChanged::Execution = event else {
+    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+        let EnvironmentChanged::Execution { .. } = event else {
             return;
         };
         match self.update(ctx) {
@@ -1211,7 +1211,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
     };
 
     let explorer = RDataExplorer::new(title, x, env_info)?;
-    Console::get_mut().comm_register(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+    Console::get_mut().comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
     Ok(R_NilValue)
 }
