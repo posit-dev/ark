@@ -2395,19 +2395,9 @@ impl Console {
         }
     }
 
-    /// Check if this is a browser prompt for which we need to capture the
-    /// evaluation environment
-    fn needs_browser_capture(&self, prompt: *const c_char) -> bool {
+    fn is_browser_prompt(&self, prompt: *const c_char) -> bool {
         let prompt_str = unsafe { std::ffi::CStr::from_ptr(prompt) }.to_string_lossy();
-        let is_browser = RE_DEBUG_PROMPT.is_match(&prompt_str);
-
-        // Skip capture when there's a pending error that still needs the
-        // error recovery round-trip (the `base::invisible(base::.Last.value)`
-        // eval that resets `R_EvalDepth` etc.). Once that round-trip has
-        // completed (`read_console_threw_error` is false), allow capture so
-        // the browser environment is properly restored before `read_console()`
-        // processes the error via `take_exception()`.
-        is_browser && !(self.last_error.is_some() && self.read_console_threw_error.get())
+        RE_DEBUG_PROMPT.is_match(&prompt_str)
     }
 }
 
@@ -2511,23 +2501,48 @@ pub extern "C-unwind" fn r_read_console(
     // These are multi-step operations that required returning control to R.
     let env: RObject = match console.read_console_pending_action.take() {
         ReadConsolePendingAction::None => {
-            // Check if this is a browser prompt that needs environment capture.
-            // If so, return capture call WITHOUT doing any entry bookkeeping.
-            if console.needs_browser_capture(prompt) {
+            // After an error longjump, R needs one REPL iteration to restore
+            // internal state (`R_EvalDepth`, `R_PPStackTop`, etc.). We give it
+            // that iteration before doing anything else, including the browser
+            // environment capture below.
+            //
+            // Technically this also resets time limits (see
+            // `base::setTimeLimit()`) but these aren't supported in Ark
+            // because they cause errors when we poll R events.
+            //
+            // References:
+            // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
+            // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+            if console.last_error.is_some() && console.read_console_threw_error.get() {
+                console.read_console_threw_error.set(false);
+
+                // Evaluate last value so that `base::.Last.value` remains the same
+                Console::on_console_input(
+                    buf,
+                    buflen,
+                    String::from("base::invisible(base::.Last.value)"),
+                )
+                .unwrap();
+                return 1;
+            }
+
+            // For browser prompts, capture the evaluation environment.
+            // There is no way to reliably get this environment via regular
+            // evaluation:
+            //
+            // - Evaluating requires supplying an environment, which
+            //   interferes with approaches based on `parent.frame()`.
+            // - Looking at the call stack via `sys.frames()` does not work
+            //   when the browser is evaluating a promise or some other
+            //   C-level `Rf_eval()`.
+            //
+            // Instead we return an expression to R that basically does
+            // `parent.frame()` and stores it in a base symbol.
+            if console.is_browser_prompt(prompt) {
                 console
                     .read_console_pending_action
                     .set(ReadConsolePendingAction::CaptureEnv);
 
-                // For browser REPLs, we capture the top-level environment by
-                // returning an expression to R that basically does
-                // `parent.frame()` and store it in a base symbol. There is no
-                // way to reliably get this environment via regular evaluation:
-                //
-                // - Evaluating requires supplying an environment, which
-                //   interferes with approaches based on `parent.frame()`.
-                // - Looking at the call stack via `sys.frames()` does not work
-                //   when the browser is evaluating a promise or some other
-                //   C-level `Rf_eval()`.
                 let input = String::from("base::.ark_capture_current_environment()");
                 Console::on_console_input(buf, buflen, input).unwrap();
                 return 1;
@@ -2564,28 +2579,6 @@ pub extern "C-unwind" fn r_read_console(
             }
         },
     };
-
-    // In case of error, we haven't had a chance to evaluate ".ark_last_value".
-    // So we return to the R REPL to give R a chance to run the state
-    // restoration that occurs between `R_ReadConsole()` and `eval()`:
-    // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
-    // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
-    //
-    // Technically this also resets time limits (see `base::setTimeLimit()`) but
-    // these aren't supported in Ark because they cause errors when we poll R
-    // events.
-    if console.last_error.is_some() && console.read_console_threw_error.get() {
-        console.read_console_threw_error.set(false);
-
-        // Evaluate last value so that `base::.Last.value` remains the same
-        Console::on_console_input(
-            buf,
-            buflen,
-            String::from("base::invisible(base::.Last.value)"),
-        )
-        .unwrap();
-        return 1;
-    }
 
     // Entry bookkeeping: increment depth, set flags, push frame.
     // Cleanup happens in the exit branch of `exec_with_cleanup()`.
