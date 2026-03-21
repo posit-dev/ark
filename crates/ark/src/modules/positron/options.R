@@ -5,47 +5,55 @@
 #
 #
 
-# Avoid overwhelming the console
-options(max.print = 1000)
+# Called from Rust after sourcing the user's Rprofile so that user-defined
+# options take precedence over our defaults.
+initialize_options <- function() {
+    # Core Positron integration, always set
+    options(editor = function(file, title, ..., name = NULL) {
+        handler_editor(file = file, title = title, ..., name = name)
+    })
 
-# Enable HTML help
-options(help_type = "html")
+    options(browser = function(url) {
+        .ps.Call("ps_browse_url", as.character(url))
+    })
 
-# Use internal editor
-options(editor = function(file, title, ..., name = NULL) {
-    handler_editor(file = file, title = title, ..., name = name)
-})
+    options(askpass = function(prompt) {
+        .ps.ui.askForPassword(prompt)
+    })
 
-# Use custom browser implementation
-options(browser = function(url) {
-    .ps.Call("ps_browse_url", as.character(url))
-})
+    # Only override when the user hasn't set them in their Rprofile.
+    # `max.print` defaults to 99999L in R.
+    if (identical(getOption("max.print"), 99999L)) {
+        options(max.print = 1000)
+    }
 
-# Register our password handler as the generic `askpass` option.
-# Same as RStudio, see `?rstudioapi::askForPassword` for rationale.
-options(askpass = function(prompt) {
-    .ps.ui.askForPassword(prompt)
-})
+    if (is.null(getOption("help_type"))) {
+        options(help_type = "html")
+    }
 
-# Show Plumber apps in the viewer
-options(plumber.docs.callback = function(url) {
-    .ps.ui.showUrl(url)
-})
+    if (is.null(getOption("shiny.launch.browser"))) {
+        options(shiny.launch.browser = function(url) {
+            .ps.ui.showUrl(url)
+        })
+    }
 
-# Show Shiny applications in the viewer
-options(shiny.launch.browser = function(url) {
-    .ps.ui.showUrl(url)
-})
+    if (is.null(getOption("plumber.docs.callback"))) {
+        options(plumber.docs.callback = function(url) {
+            .ps.ui.showUrl(url)
+        })
+    }
 
-# Show Profvis output in the viewer
-options(profvis.print = function(x) {
-    # Render the widget to a tag list to create standalone HTML output.
-    # (htmltools is a Profvis dependency so it's guaranteed to be available)
-    rendered <- htmltools::as.tags(x, standalone = TRUE)
+    if (is.null(getOption("profvis.print"))) {
+        options(profvis.print = function(x) {
+            # Render the widget to a tag list to create standalone HTML output.
+            # (htmltools is a Profvis dependency so it's guaranteed to be available)
+            rendered <- htmltools::as.tags(x, standalone = TRUE)
 
-    # Render the HTML content to a temporary file
-    tmp_file <- htmltools::html_print(rendered, viewer = NULL)
+            # Render the HTML content to a temporary file
+            tmp_file <- htmltools::html_print(rendered, viewer = NULL)
 
-    # Pass the file to the viewer
-    .ps.Call("ps_html_viewer", tmp_file, "R Profile", -1L, "editor")
-})
+            # Pass the file to the viewer
+            .ps.Call("ps_html_viewer", tmp_file, "R Profile", -1L, "editor")
+        })
+    }
+}
