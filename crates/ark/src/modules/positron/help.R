@@ -5,8 +5,6 @@
 #
 #
 
-options(help_type = "html")
-
 # A wrapper around `help()` that works for our specific use cases:
 # - Picks up devtools `help()` if the shim is on the search path.
 # - Expects that `topic` and `package` don't require NSE and are just strings or `NULL`.

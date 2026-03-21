@@ -107,8 +107,6 @@ connection_focus <- function(id) {
     )
 }
 
-options("connectionObserver" = .ps.connection_observer())
-
 connection_flatten_object_types <- function(object_tree) {
     # RStudio actually flattens the objectTree to make it easier to find metadata for an object type.
     # See link below for the original implementation

@@ -21,6 +21,13 @@ initialize_options <- function() {
         .ps.ui.askForPassword(prompt)
     })
 
+    # Declare the function name that `dev.new()` and `GECurrentDevice()`
+    # go looking for to create a new graphics device when the current one
+    # is `"null device"` and a new plot is requested
+    options(device = ARK_GRAPHICS_DEVICE_NAME)
+
+    options(connectionObserver = .ps.connection_observer())
+
     # Only override when the user hasn't set them in their Rprofile.
     # `max.print` defaults to 99999L in R.
     if (identical(getOption("max.print"), 99999L)) {
@@ -29,6 +36,10 @@ initialize_options <- function() {
 
     if (is.null(getOption("help_type"))) {
         options(help_type = "html")
+    }
+
+    if (is.null(getOption("viewer"))) {
+        options(viewer = viewer_option_handler)
     }
 
     if (is.null(getOption("shiny.launch.browser"))) {
