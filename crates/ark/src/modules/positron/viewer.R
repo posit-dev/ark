@@ -5,7 +5,7 @@
 #
 #
 
-options("viewer" = function(url, height = NULL, ...) {
+viewer_option_handler <- function(url, height = NULL, ...) {
     # Validate the URL argument.
     if (!is_string(url)) {
         stop("`url` must be a string.")
@@ -37,4 +37,4 @@ options("viewer" = function(url, height = NULL, ...) {
         # If not, fall back to opening it in the system browser.
         utils::browseURL(normalizedPath, ...)
     }
-})
+}
