@@ -2401,9 +2401,13 @@ impl Console {
         let prompt_str = unsafe { std::ffi::CStr::from_ptr(prompt) }.to_string_lossy();
         let is_browser = RE_DEBUG_PROMPT.is_match(&prompt_str);
 
-        // Skip capture if there's a pending error, we need `read_console()` to
-        // process it via `take_exception()` first.
-        is_browser && self.last_error.is_none()
+        // Skip capture when there's a pending error that still needs the
+        // error recovery round-trip (the `base::invisible(base::.Last.value)`
+        // eval that resets `R_EvalDepth` etc.). Once that round-trip has
+        // completed (`read_console_threw_error` is false), allow capture so
+        // the browser environment is properly restored before `read_console()`
+        // processes the error via `take_exception()`.
+        is_browser && !(self.last_error.is_some() && self.read_console_threw_error.get())
     }
 }
 
