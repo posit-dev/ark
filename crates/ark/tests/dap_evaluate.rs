@@ -330,6 +330,66 @@ outer()
     dap.recv_continued();
 }
 
+/// After an error in a browser session, a selected frame should remain active.
+/// https://github.com/posit-dev/positron/issues/12642
+#[test]
+fn test_dap_selected_frame_preserved_after_error() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let _file = frontend.send_source(
+        "
+outer <- function() {
+  outer_var <- 'from_outer'
+  inner()
+}
+inner <- function() {
+  inner_var <- 'from_inner'
+  browser()
+}
+outer()
+",
+    );
+    dap.recv_stopped();
+
+    let stack = dap.stack_trace();
+    let outer_frame_id = stack[1].id;
+
+    // Select the outer frame
+    dap.evaluate(".positron_selected_frame", Some(outer_frame_id));
+
+    // Confirm we can see outer_var
+    frontend.send_execute_request("outer_var", Default::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("from_outer");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_invalidated();
+
+    // Cause an error
+    frontend.send_execute_request("stop('oops')", Default::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_execute_error();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+    dap.recv_invalidated();
+
+    // The selected frame must still be the outer frame: outer_var is accessible
+    frontend.send_execute_request("outer_var", Default::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("from_outer");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+    dap.recv_invalidated();
+
+    // Clean exit
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
 #[test]
 fn test_dap_evaluate_unknown_frame_id() {
     let frontend = DummyArkFrontend::lock();
