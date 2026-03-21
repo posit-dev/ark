@@ -162,6 +162,11 @@ pub fn initialize() -> anyhow::Result<RObject> {
     Ok(namespace)
 }
 
+pub fn initialize_options(ns: libr::SEXP) -> anyhow::Result<()> {
+    RFunction::from("initialize_options").call_in(ns)?;
+    Ok(())
+}
+
 #[cfg(debug_assertions)]
 mod debug {
     use std::collections::HashMap;

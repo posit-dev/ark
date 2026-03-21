@@ -8,11 +8,6 @@
 # The Ark graphics device name
 ARK_GRAPHICS_DEVICE_NAME <- ".ark.graphics.device"
 
-# Declare the function name that `dev.new()` and `GECurrentDevice()`
-# go looking for to create a new graphics device when the current one
-# is `"null device"` and a new plot is requested
-options(device = ARK_GRAPHICS_DEVICE_NAME)
-
 # Set up "before plot new" hooks. This is our cue for
 # saving up the state of a plot before it gets wiped out.
 setHook("before.plot.new", action = "replace", function(...) {

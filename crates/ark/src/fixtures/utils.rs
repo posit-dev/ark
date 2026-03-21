@@ -18,7 +18,8 @@ pub fn r_test_init() {
     harp::fixtures::r_test_init();
     INIT.call_once(|| {
         // Initialize the positron module so tests can use them.
-        modules::initialize().unwrap();
+        let ns = modules::initialize().unwrap();
+        modules::initialize_options(ns.sexp).unwrap();
     });
 }
 
