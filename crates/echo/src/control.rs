@@ -1,4 +1,6 @@
 use amalthea::language::control_handler::ControlHandler;
+use amalthea::wire::debug_reply::DebugReply;
+use amalthea::wire::debug_request::DebugRequest;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::jupyter_message::Status;
@@ -24,5 +26,12 @@ impl ControlHandler for Control {
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         // NYI
         Ok(InterruptReply { status: Status::Ok })
+    }
+
+    fn handle_debug_request(&self, _msg: &DebugRequest) -> Result<DebugReply, Exception> {
+        // NYI
+        Ok(DebugReply {
+            content: serde_json::json!({}),
+        })
     }
 }

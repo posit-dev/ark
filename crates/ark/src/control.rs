@@ -1,11 +1,13 @@
 /*
  * control.rs
  *
- * Copyright (C) 2022 Posit Software, PBC. All rights reserved.
+ * Copyright (C) 2022-2026 Posit Software, PBC. All rights reserved.
  *
  */
 
 use amalthea::language::control_handler::ControlHandler;
+use amalthea::wire::debug_reply::DebugReply;
+use amalthea::wire::debug_request::DebugRequest;
 use amalthea::wire::exception::Exception;
 use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::jupyter_message::Status;
@@ -64,5 +66,31 @@ impl ControlHandler for Control {
         log::info!("Received interrupt request");
         crate::sys::control::handle_interrupt_request();
         Ok(InterruptReply { status: Status::Ok })
+    }
+
+    fn handle_debug_request(&self, msg: &DebugRequest) -> Result<DebugReply, Exception> {
+        log::info!("Received debug request: {msg:?}");
+
+        // TODO: Route to the DAP command handling logic.
+        // For now, return a DAP error response indicating debugging
+        // is not yet supported via the Jupyter debug channel.
+        let seq = msg.content.get("seq").and_then(|v| v.as_i64()).unwrap_or(0);
+        let command = msg
+            .content
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let response = serde_json::json!({
+            "seq": 0,
+            "type": "response",
+            "request_seq": seq,
+            "success": false,
+            "command": command,
+            "message": "Notebook debugging is not yet supported",
+        });
+
+        Ok(DebugReply { content: response })
     }
 }

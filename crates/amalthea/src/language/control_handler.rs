@@ -7,6 +7,8 @@
 
 use async_trait::async_trait;
 
+use crate::wire::debug_reply::DebugReply;
+use crate::wire::debug_request::DebugRequest;
 use crate::wire::exception::Exception;
 use crate::wire::interrupt_reply::InterruptReply;
 use crate::wire::shutdown_reply::ShutdownReply;
@@ -28,4 +30,10 @@ pub trait ControlHandler: Send {
     ///
     /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#kernel-interrupt
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception>;
+
+    /// Handles a debug request forwarded from the Control socket.
+    /// The request and reply contents are opaque DAP messages.
+    ///
+    /// https://jupyter-client.readthedocs.io/en/latest/messaging.html#debug-request
+    fn handle_debug_request(&self, msg: &DebugRequest) -> Result<DebugReply, Exception>;
 }

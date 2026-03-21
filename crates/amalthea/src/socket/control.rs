@@ -15,6 +15,7 @@ use log::error;
 use log::info;
 use log::trace;
 use log::warn;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 
 use crate::error::Error;
@@ -22,6 +23,7 @@ use crate::language::control_handler::ControlHandler;
 use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::Socket;
+use crate::wire::debug_request::DebugRequest;
 use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
@@ -73,6 +75,9 @@ impl Control {
 
     fn process_message(&self, message: Message) -> Result<(), Error> {
         match message {
+            Message::DebugRequest(req) => {
+                self.handle_request(req, |r| self.handle_debug_request(r))
+            },
             Message::ShutdownRequest(req) => {
                 self.handle_request(req, |r| self.handle_shutdown_request(r))
             },
@@ -152,6 +157,20 @@ impl Control {
                 log::error!("Failed to reply to interrupt request: {err:?}");
             }
         );
+
+        Ok(())
+    }
+
+    fn handle_debug_request(&self, req: JupyterMessage<DebugRequest>) -> Result<(), Error> {
+        log::trace!("Received debug request: {:?}", req);
+
+        let control_handler = self.handler.lock().unwrap();
+
+        let Some(reply) = control_handler.handle_debug_request(&req.content).log_err() else {
+            return Ok(());
+        };
+
+        req.send_reply(reply, &self.socket).log_err();
 
         Ok(())
     }

@@ -27,6 +27,9 @@ use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::complete_reply::CompleteReply;
 use crate::wire::complete_request::CompleteRequest;
+use crate::wire::debug_event::DebugEvent;
+use crate::wire::debug_reply::DebugReply;
+use crate::wire::debug_request::DebugRequest;
 use crate::wire::error_reply::ErrorReply;
 use crate::wire::exception::Exception;
 use crate::wire::execute_error::ExecuteError;
@@ -104,6 +107,8 @@ pub enum Message {
     InputReply(JupyterMessage<InputReply>),
     InputRequest(JupyterMessage<InputRequest>),
     // Control
+    DebugReply(JupyterMessage<DebugReply>),
+    DebugRequest(JupyterMessage<DebugRequest>),
     InterruptReply(JupyterMessage<InterruptReply>),
     InterruptRequest(JupyterMessage<InterruptRequest>),
     ShutdownReply(JupyterMessage<ShutdownReply>),
@@ -112,6 +117,7 @@ pub enum Message {
     HandshakeRequest(JupyterMessage<HandshakeRequest>),
     HandshakeReply(JupyterMessage<HandshakeReply>),
     // IOPub
+    DebugEvent(JupyterMessage<DebugEvent>),
     Status(JupyterMessage<KernelStatus>),
     ExecuteResult(JupyterMessage<ExecuteResult>),
     ExecuteError(JupyterMessage<ExecuteError>),
@@ -153,6 +159,9 @@ impl TryFrom<&Message> for WireMessage {
         match msg {
             Message::CompleteReply(msg) => WireMessage::try_from(msg),
             Message::CompleteRequest(msg) => WireMessage::try_from(msg),
+            Message::DebugEvent(msg) => WireMessage::try_from(msg),
+            Message::DebugReply(msg) => WireMessage::try_from(msg),
+            Message::DebugRequest(msg) => WireMessage::try_from(msg),
             Message::ExecuteReply(msg) => WireMessage::try_from(msg),
             Message::ExecuteReplyException(msg) => WireMessage::try_from(msg),
             Message::ExecuteRequest(msg) => WireMessage::try_from(msg),
@@ -253,6 +262,15 @@ impl TryFrom<&WireMessage> for Message {
         }
         if kind == CompleteReply::message_type() {
             return Ok(Message::CompleteReply(JupyterMessage::try_from(msg)?));
+        }
+        if kind == DebugEvent::message_type() {
+            return Ok(Message::DebugEvent(JupyterMessage::try_from(msg)?));
+        }
+        if kind == DebugReply::message_type() {
+            return Ok(Message::DebugReply(JupyterMessage::try_from(msg)?));
+        }
+        if kind == DebugRequest::message_type() {
+            return Ok(Message::DebugRequest(JupyterMessage::try_from(msg)?));
         }
         if kind == DisplayData::message_type() {
             return Ok(Message::DisplayData(JupyterMessage::try_from(msg)?));
