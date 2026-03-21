@@ -171,7 +171,7 @@ paste_line <- function(x) {
 }
 
 set_names <- function(x, names = x) {
-    names(x) <- x
+    names(x) <- names
     x
 }
 
