@@ -507,9 +507,7 @@ impl Console {
         // Apply Positron's default options after profiles so that user-defined
         // options take precedence over our defaults
         if let Some(ref ns) = console.positron_ns {
-            RFunction::from("initialize_options")
-                .call_in(ns.sexp)
-                .log_err();
+            modules::initialize_options(ns.sexp).log_err();
         }
 
         // Start the REPL. Does not return!
