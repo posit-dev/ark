@@ -10,7 +10,14 @@
 //! This module contains `impl Console` with methods and functions related to
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
+use harp::vector::Vector;
+
 use super::*;
+use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
+use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
+use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
+use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
 
@@ -1131,22 +1138,82 @@ impl Console {
             data.insert("text/plain".to_string(), json!(autoprint));
         }
 
-        // Include HTML representation of data.frame
-        unsafe {
-            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
-            if r_is_data_frame(value) {
-                match to_html(value) {
-                    Ok(html) => {
-                        data.insert("text/html".to_string(), json!(html));
+        // Include HTML representation of data.frame and optionally open an
+        // inline data explorer in Positron notebook mode. Only do this when
+        // there is visible output (autoprint produced text/plain).
+        let Ok(value) = harp::environment::last_value() else {
+            return data;
+        };
+        if !data.is_empty() && r_is_data_frame(value.sexp) {
+            let value = value.sexp;
+            match to_html(value) {
+                Ok(html) => {
+                    data.insert("text/html".to_string(), json!(html));
+                },
+                Err(err) => {
+                    log::error!("{err:?}");
+                },
+            };
+
+            // The inline data explorer is a Positron-specific feature that
+            // requires comm support. Other Jupyter frontends don't understand
+            // this MIME type, so we gate on the POSITRON env var to avoid
+            // sending it to vanilla Jupyter notebooks.
+            if self.session_mode == SessionMode::Notebook &&
+                std::env::var("POSITRON").as_deref() == Ok("1")
+            {
+                match self.open_inline_data_explorer(value) {
+                    Ok(mime_data) => {
+                        data.insert(POSITRON_DATA_EXPLORER_MIME.to_string(), mime_data);
                     },
                     Err(err) => {
-                        log::error!("{:?}", err);
+                        log::error!("Failed to open inline data explorer: {err:?}");
                     },
-                };
+                }
             }
         }
 
         data
+    }
+
+    /// Open an inline data explorer for a data frame value and return the MIME
+    /// type payload to include in the execute result.
+    fn open_inline_data_explorer(&mut self, value: SEXP) -> anyhow::Result<serde_json::Value> {
+        let data = RObject::new(value);
+
+        // `source` is the R class family (e.g. "tibble", "data.table",
+        // "data.frame"), following the Python kernel convention where `source`
+        // is the library name ("pandas", "polars").
+        let source = harp::utils::r_classes(value)
+            .and_then(|classes| classes.get_unchecked(0).map(|s| s.to_string()))
+            .unwrap_or_else(|| String::from("data.frame"));
+
+        // `title` is the variable name when available, falling back to
+        // `source`. For inline explorers we don't have a variable binding, so
+        // we always use `source` as the title.
+        let title = source.clone();
+
+        let explorer = RDataExplorer::new(title.clone(), data, None, true)?;
+        let shape = &explorer.shape();
+        let inline_data = InlineDataExplorerData {
+            version: 1,
+            comm_id: String::new(), // placeholder, filled after comm_open
+            shape: InlineDataExplorerShape {
+                rows: shape.num_rows,
+                columns: shape.columns.len(),
+            },
+            title,
+            source,
+        };
+
+        let comm_id = self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+
+        let inline_data = InlineDataExplorerData {
+            comm_id,
+            ..inline_data
+        };
+
+        Ok(serde_json::to_value(inline_data)?)
     }
 
     /// Reset debug flag on the global environment.

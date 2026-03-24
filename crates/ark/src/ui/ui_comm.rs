@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
-use amalthea::comm::ui_comm::EditorContextChangedParams;
 use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
 use amalthea::comm::ui_comm::PromptStateParams;
@@ -87,9 +86,6 @@ impl UiComm {
             UiBackendRequest::DidChangePlotsRenderSettings(params) => {
                 self.handle_did_change_plot_render_settings(params)
             },
-            UiBackendRequest::EditorContextChanged(params) => {
-                self.handle_editor_context_changed(params)
-            },
             UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
         }
     }
@@ -147,18 +143,6 @@ impl UiComm {
             .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
 
         Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
-    }
-
-    fn handle_editor_context_changed(
-        &self,
-        params: EditorContextChangedParams,
-    ) -> anyhow::Result<UiBackendReply> {
-        log::trace!(
-            "Editor context changed: document_uri={}, is_execution_source={}",
-            params.document_uri,
-            params.is_execution_source
-        );
-        Ok(UiBackendReply::EditorContextChangedReply())
     }
 
     fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {

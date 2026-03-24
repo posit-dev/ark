@@ -101,6 +101,28 @@ use crate::r_task::RTask;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
 pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
+pub const POSITRON_DATA_EXPLORER_MIME: &str = "application/vnd.positron.dataExplorer+json";
+
+/// Payload for the `application/vnd.positron.dataExplorer+json` MIME type
+/// included in notebook execute results for data frames. This tells Positron's
+/// notebook renderer to display an inline data explorer widget.
+///
+/// Must stay in sync with `ParsedDataExplorerOutput` in Positron's
+/// `IPositronNotebookCell.ts`.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct InlineDataExplorerData {
+    pub version: u32,
+    pub comm_id: String,
+    pub shape: InlineDataExplorerShape,
+    pub title: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct InlineDataExplorerShape {
+    pub rows: i32,
+    pub columns: usize,
+}
 
 /// A name/value binding pair in an environment.
 ///
@@ -157,6 +179,11 @@ pub struct RDataExplorer {
     /// row indices. This is the set of row indices that are displayed in the
     /// data viewer.
     view_indices: Option<Vec<i32>>,
+
+    /// Whether this explorer is for inline display only (e.g. in a notebook
+    /// cell output). When true, the frontend renders a compact inline grid
+    /// instead of opening the full Data Explorer panel.
+    inline_only: bool,
 }
 
 impl std::fmt::Debug for RDataExplorer {
@@ -173,6 +200,7 @@ impl RDataExplorer {
         title: String,
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
+        inline_only: bool,
     ) -> anyhow::Result<Self> {
         let table = Table::new(data);
         let shape = Self::get_shape(table.get().clone())?;
@@ -187,7 +215,12 @@ impl RDataExplorer {
             sort_keys: vec![],
             row_filters: vec![],
             col_filters: vec![],
+            inline_only,
         })
+    }
+
+    pub(crate) fn shape(&self) -> &DataObjectShape {
+        &self.shape
     }
 
     /// Check the environment bindings for updates to the underlying value
@@ -416,13 +449,25 @@ impl RDataExplorer {
             DataExplorerBackendRequest::SuggestCodeSyntax => Ok(
                 DataExplorerBackendReply::SuggestCodeSyntaxReply(self.suggest_code_syntax()),
             ),
+
+            DataExplorerBackendRequest::SetDatasetImportOptions(_) => {
+                Err(anyhow!("Data Explorer: Not yet supported"))
+            },
+
+            DataExplorerBackendRequest::OpenDataExplorer => {
+                let explorer =
+                    RDataExplorer::new(self.title.clone(), self.table.get().clone(), None, false)?;
+                Console::get_mut()
+                    .comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+                Ok(DataExplorerBackendReply::OpenDataExplorerReply())
+            },
         }
     }
 }
 
 impl CommHandler for RDataExplorer {
     fn open_metadata(&self) -> serde_json::Value {
-        serde_json::json!({ "title": self.title })
+        serde_json::json!({ "title": self.title, "inline_only": self.inline_only })
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
@@ -1210,7 +1255,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         None
     };
 
-    let explorer = RDataExplorer::new(title, x, env_info)?;
+    let explorer = RDataExplorer::new(title, x, env_info, false)?;
     Console::get_mut().comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
     Ok(R_NilValue)

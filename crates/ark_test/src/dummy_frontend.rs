@@ -602,6 +602,21 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive from IOPub and assert ExecuteResult message.
+    /// Returns the full data map.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_execute_result_data(&self) -> serde_json::Map<String, serde_json::Value> {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::ExecuteResult(data) => match data.content.data {
+                serde_json::Value::Object(map) => map,
+                other => panic!("Expected ExecuteResult data to be Object, got {:?}", other),
+            },
+            other => panic!("Expected ExecuteResult, got {:?}", other),
+        }
+    }
+
     /// Receive from IOPub and assert ExecuteError message.
     /// Automatically skips any Stream messages.
     /// Returns the `evalue` field.
