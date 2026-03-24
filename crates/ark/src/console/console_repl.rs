@@ -1149,7 +1149,9 @@ impl Console {
                     },
                 };
 
-                if self.session_mode == SessionMode::Notebook && self.ui_comm_id.is_some() {
+                if self.session_mode == SessionMode::Notebook
+                    && std::env::var("POSITRON").as_deref() == Ok("1")
+                {
                     match self.open_inline_data_explorer(value) {
                         Ok(mime_data) => {
                             data.insert(
@@ -1193,8 +1195,8 @@ impl Console {
             "version": 1,
             "comm_id": comm_id,
             "shape": {
-                "num_rows": shape.num_rows,
-                "num_columns": shape.columns.len(),
+                "rows": shape.num_rows,
+                "columns": shape.columns.len(),
             },
             "title": title,
             "source": title,

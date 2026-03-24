@@ -44,6 +44,7 @@ fn drain_ui_comm_prompt_state(frontend: &DummyArkFrontendNotebook, ui_comm_id: &
 
 #[test]
 fn test_notebook_inline_data_explorer() {
+    unsafe { std::env::set_var("POSITRON", "1") };
     let frontend = DummyArkFrontendNotebook::lock();
     let ui_comm_id = ensure_ui_comm(&frontend);
 
@@ -68,8 +69,8 @@ fn test_notebook_inline_data_explorer() {
 
     let de_data = result_data.get(mime_key).unwrap();
     assert_eq!(de_data["version"], 1);
-    assert_eq!(de_data["shape"]["num_rows"], 3);
-    assert_eq!(de_data["shape"]["num_columns"], 2);
+    assert_eq!(de_data["shape"]["rows"], 3);
+    assert_eq!(de_data["shape"]["columns"], 2);
     assert!(de_data["comm_id"].as_str().is_some());
     assert!(de_data["title"].as_str().is_some());
 
