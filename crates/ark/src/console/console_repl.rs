@@ -15,6 +15,7 @@ use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
+use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
 use harp::vector::Vector;
@@ -1140,6 +1141,9 @@ impl Console {
         // inline data explorer in Positron notebook mode. Only do this when
         // there is visible output (autoprint produced text/plain).
         unsafe {
+            // Use `Rf_findVar` (not `Rf_findVarInFrame`) so that `.Last.value`
+            // resolves correctly through the environment chain. R stores
+            // `.Last.value` in the base environment, not the global environment.
             let value = libr::Rf_findVar(r_symbol!(".Last.value"), R_GlobalEnv);
             if !data.is_empty() && r_is_data_frame(value) {
                 match to_html(value) {
@@ -1161,7 +1165,7 @@ impl Console {
                     match self.open_inline_data_explorer(value) {
                         Ok(mime_data) => {
                             data.insert(
-                                "application/vnd.positron.dataExplorer+json".to_string(),
+                                POSITRON_DATA_EXPLORER_MIME.to_string(),
                                 mime_data,
                             );
                         },
@@ -1184,31 +1188,40 @@ impl Console {
     ) -> anyhow::Result<serde_json::Value> {
         let data = RObject::new(value);
 
-        // Derive title from the first R class (e.g. "tbl_df", "data.table", "data.frame")
-        let title = harp::utils::r_classes(value)
-            .and_then(|classes| {
-                classes.get_unchecked(0).map(|s| s.to_string())
-            })
+        // `source` is the R class family (e.g. "tibble", "data.table",
+        // "data.frame"), following the Python kernel convention where `source`
+        // is the library name ("pandas", "polars").
+        let source = harp::utils::r_classes(value)
+            .and_then(|classes| classes.get_unchecked(0).map(|s| s.to_string()))
             .unwrap_or_else(|| String::from("data.frame"));
 
-        let shape = RDataExplorer::get_shape(data.clone())?;
+        // `title` is the variable name when available, falling back to
+        // `source`. For inline explorers we don't have a variable binding, so
+        // we always use `source` as the title.
+        let title = source.clone();
 
         let explorer = RDataExplorer::new(title.clone(), data, None, true)?;
-        let comm_id =
-            self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
-
-        let data = InlineDataExplorerData {
+        let shape = &explorer.shape();
+        let inline_data = InlineDataExplorerData {
             version: 1,
-            comm_id,
+            comm_id: String::new(), // placeholder, filled after comm_open
             shape: InlineDataExplorerShape {
                 rows: shape.num_rows,
                 columns: shape.columns.len(),
             },
-            title: title.clone(),
-            source: title,
+            title,
+            source,
         };
 
-        Ok(serde_json::to_value(data)?)
+        let comm_id =
+            self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+
+        let inline_data = InlineDataExplorerData {
+            comm_id,
+            ..inline_data
+        };
+
+        Ok(serde_json::to_value(inline_data)?)
     }
 
     /// Reset debug flag on the global environment.

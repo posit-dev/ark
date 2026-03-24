@@ -101,6 +101,7 @@ use crate::r_task::RTask;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
 pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
+pub const POSITRON_DATA_EXPLORER_MIME: &str = "application/vnd.positron.dataExplorer+json";
 
 /// Payload for the `application/vnd.positron.dataExplorer+json` MIME type
 /// included in notebook execute results for data frames. This tells Positron's
@@ -216,6 +217,10 @@ impl RDataExplorer {
             col_filters: vec![],
             inline_only,
         })
+    }
+
+    pub(crate) fn shape(&self) -> &DataObjectShape {
+        &self.shape
     }
 
     /// Check the environment bindings for updates to the underlying value
