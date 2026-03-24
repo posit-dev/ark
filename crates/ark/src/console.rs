@@ -82,7 +82,6 @@ use harp::utils::r_poke_option;
 use harp::utils::r_typeof;
 use harp::CONSOLE_THREAD_ID;
 use libr::R_BaseNamespace;
-use libr::R_GlobalEnv;
 use libr::R_ProcessEvents;
 use libr::R_RunPendingFinalizers;
 use libr::Rf_ScalarInteger;

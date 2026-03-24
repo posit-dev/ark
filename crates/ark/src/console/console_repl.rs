@@ -10,6 +10,8 @@
 //! This module contains `impl Console` with methods and functions related to
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
+use harp::vector::Vector;
+
 use super::*;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
@@ -18,7 +20,6 @@ use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
-use harp::vector::Vector;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -1140,39 +1141,34 @@ impl Console {
         // Include HTML representation of data.frame and optionally open an
         // inline data explorer in Positron notebook mode. Only do this when
         // there is visible output (autoprint produced text/plain).
-        unsafe {
-            // Use `Rf_findVar` (not `Rf_findVarInFrame`) so that `.Last.value`
-            // resolves correctly through the environment chain. R stores
-            // `.Last.value` in the base environment, not the global environment.
-            let value = libr::Rf_findVar(r_symbol!(".Last.value"), R_GlobalEnv);
-            if !data.is_empty() && r_is_data_frame(value) {
-                match to_html(value) {
-                    Ok(html) => {
-                        data.insert("text/html".to_string(), json!(html));
+        let Ok(value) = harp::environment::last_value() else {
+            return data;
+        };
+        if !data.is_empty() && r_is_data_frame(value.sexp) {
+            let value = value.sexp;
+            match to_html(value) {
+                Ok(html) => {
+                    data.insert("text/html".to_string(), json!(html));
+                },
+                Err(err) => {
+                    log::error!("{err:?}");
+                },
+            };
+
+            // The inline data explorer is a Positron-specific feature that
+            // requires comm support. Other Jupyter frontends don't understand
+            // this MIME type, so we gate on the POSITRON env var to avoid
+            // sending it to vanilla Jupyter notebooks.
+            if self.session_mode == SessionMode::Notebook &&
+                std::env::var("POSITRON").as_deref() == Ok("1")
+            {
+                match self.open_inline_data_explorer(value) {
+                    Ok(mime_data) => {
+                        data.insert(POSITRON_DATA_EXPLORER_MIME.to_string(), mime_data);
                     },
                     Err(err) => {
-                        log::error!("{err:?}");
+                        log::error!("Failed to open inline data explorer: {err:?}");
                     },
-                };
-
-                // The inline data explorer is a Positron-specific feature that
-                // requires comm support. Other Jupyter frontends don't understand
-                // this MIME type, so we gate on the POSITRON env var to avoid
-                // sending it to vanilla Jupyter notebooks.
-                if self.session_mode == SessionMode::Notebook
-                    && std::env::var("POSITRON").as_deref() == Ok("1")
-                {
-                    match self.open_inline_data_explorer(value) {
-                        Ok(mime_data) => {
-                            data.insert(
-                                POSITRON_DATA_EXPLORER_MIME.to_string(),
-                                mime_data,
-                            );
-                        },
-                        Err(err) => {
-                            log::error!("Failed to open inline data explorer: {err:?}");
-                        },
-                    }
                 }
             }
         }
@@ -1182,10 +1178,7 @@ impl Console {
 
     /// Open an inline data explorer for a data frame value and return the MIME
     /// type payload to include in the execute result.
-    fn open_inline_data_explorer(
-        &mut self,
-        value: SEXP,
-    ) -> anyhow::Result<serde_json::Value> {
+    fn open_inline_data_explorer(&mut self, value: SEXP) -> anyhow::Result<serde_json::Value> {
         let data = RObject::new(value);
 
         // `source` is the R class family (e.g. "tibble", "data.table",
@@ -1213,8 +1206,7 @@ impl Console {
             source,
         };
 
-        let comm_id =
-            self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+        let comm_id = self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
         let inline_data = InlineDataExplorerData {
             comm_id,

@@ -14,9 +14,7 @@ use ark_test::DummyArkFrontendNotebook;
 fn ensure_ui_comm(frontend: &DummyArkFrontendNotebook) -> String {
     use std::sync::OnceLock;
     static UI_COMM_ID: OnceLock<String> = OnceLock::new();
-    UI_COMM_ID
-        .get_or_init(|| frontend.open_ui_comm())
-        .clone()
+    UI_COMM_ID.get_or_init(|| frontend.open_ui_comm()).clone()
 }
 
 /// Drain the UI comm messages that arrive during execution (busy=true,

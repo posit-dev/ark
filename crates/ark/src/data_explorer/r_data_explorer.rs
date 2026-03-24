@@ -455,12 +455,8 @@ impl RDataExplorer {
             },
 
             DataExplorerBackendRequest::OpenDataExplorer => {
-                let explorer = RDataExplorer::new(
-                    self.title.clone(),
-                    self.table.get().clone(),
-                    None,
-                    false,
-                )?;
+                let explorer =
+                    RDataExplorer::new(self.title.clone(), self.table.get().clone(), None, false)?;
                 Console::get_mut()
                     .comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
                 Ok(DataExplorerBackendReply::OpenDataExplorerReply())
