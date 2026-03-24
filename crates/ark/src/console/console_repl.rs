@@ -11,6 +11,8 @@
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
 use super::*;
+use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
+use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::r_task::QueuedRTask;
@@ -1149,6 +1151,10 @@ impl Console {
                     },
                 };
 
+                // The inline data explorer is a Positron-specific feature that
+                // requires comm support. Other Jupyter frontends don't understand
+                // this MIME type, so we gate on the POSITRON env var to avoid
+                // sending it to vanilla Jupyter notebooks.
                 if self.session_mode == SessionMode::Notebook
                     && std::env::var("POSITRON").as_deref() == Ok("1")
                 {
@@ -1191,16 +1197,18 @@ impl Console {
         let comm_id =
             self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
-        Ok(json!({
-            "version": 1,
-            "comm_id": comm_id,
-            "shape": {
-                "rows": shape.num_rows,
-                "columns": shape.columns.len(),
+        let data = InlineDataExplorerData {
+            version: 1,
+            comm_id,
+            shape: InlineDataExplorerShape {
+                rows: shape.num_rows,
+                columns: shape.columns.len(),
             },
-            "title": title,
-            "source": title,
-        }))
+            title: title.clone(),
+            source: title,
+        };
+
+        Ok(serde_json::to_value(data)?)
     }
 
     /// Reset debug flag on the global environment.

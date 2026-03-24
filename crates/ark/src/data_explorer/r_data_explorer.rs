@@ -102,6 +102,27 @@ use crate::variables::variable::WorkspaceVariableDisplayType;
 
 pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
 
+/// Payload for the `application/vnd.positron.dataExplorer+json` MIME type
+/// included in notebook execute results for data frames. This tells Positron's
+/// notebook renderer to display an inline data explorer widget.
+///
+/// Must stay in sync with `ParsedDataExplorerOutput` in Positron's
+/// `IPositronNotebookCell.ts`.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct InlineDataExplorerData {
+    pub version: u32,
+    pub comm_id: String,
+    pub shape: InlineDataExplorerShape,
+    pub title: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct InlineDataExplorerShape {
+    pub rows: i32,
+    pub columns: usize,
+}
+
 /// A name/value binding pair in an environment.
 ///
 /// We use this to keep track of the data object that the data viewer is
