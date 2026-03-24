@@ -1,7 +1,7 @@
 // @generated
 
 /*---------------------------------------------------------------------------------------------
- *  Copyright (C) 2024-2025 Posit Software, PBC. All rights reserved.
+ *  Copyright (C) 2024-2026 Posit Software, PBC. All rights reserved.
  *--------------------------------------------------------------------------------------------*/
 
 //
@@ -58,6 +58,13 @@ pub struct FilterResult {
 
 	/// Flag indicating if there were errors in evaluation
 	pub had_errors: Option<bool>
+}
+
+/// Result of setting import options
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetDatasetImportOptionsResult {
+	/// An error message if setting the options failed
+	pub error_message: Option<String>
 }
 
 /// The current backend state for the data explorer
@@ -703,6 +710,15 @@ pub struct ColumnSelection {
 	pub spec: ArraySelection
 }
 
+/// Import options for file-based data sources. Currently supports options
+/// for delimited text files (CSV, TSV).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct DatasetImportOptions {
+	/// Whether the first row contains column headers (for delimited text
+	/// files)
+	pub has_header_row: Option<bool>
+}
+
 /// Possible values for SortOrder in SearchSchema
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, strum_macros::Display, strum_macros::EnumString)]
 pub enum SearchSchemaSortOrder {
@@ -1193,6 +1209,13 @@ pub struct GetColumnProfilesParams {
 	pub format_options: FormatOptions,
 }
 
+/// Parameters for the SetDatasetImportOptions method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SetDatasetImportOptionsParams {
+	/// Import options to apply
+	pub options: DatasetImportOptions,
+}
+
 /// Parameters for the ReturnColumnProfiles method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ReturnColumnProfilesParams {
@@ -1289,6 +1312,23 @@ pub enum DataExplorerBackendRequest {
 	#[serde(rename = "get_column_profiles")]
 	GetColumnProfiles(GetColumnProfilesParams),
 
+	/// Set import options for file-based data sources
+	///
+	/// Set import options for file-based data sources (like CSV files) and
+	/// reimport the data. This method is primarily used by file-based
+	/// backends like DuckDB.
+	#[serde(rename = "set_dataset_import_options")]
+	SetDatasetImportOptions(SetDatasetImportOptionsParams),
+
+	/// Open a full data explorer for the same data
+	///
+	/// Creates a new, independent data explorer comm for the same underlying
+	/// data. The new comm has its own state (filters, sorts). Used when
+	/// promoting an inline notebook data explorer to a full data explorer
+	/// panel.
+	#[serde(rename = "open_data_explorer")]
+	OpenDataExplorer,
+
 	/// Get the state
 	///
 	/// Request the current backend state (table metadata, explorer state, and
@@ -1336,6 +1376,12 @@ pub enum DataExplorerBackendReply {
 
 	/// Reply for the get_column_profiles method (no result)
 	GetColumnProfilesReply(),
+
+	/// Result of setting import options
+	SetDatasetImportOptionsReply(SetDatasetImportOptionsResult),
+
+	/// Reply for the open_data_explorer method (no result)
+	OpenDataExplorerReply(),
 
 	/// The current backend state for the data explorer
 	GetStateReply(BackendState),
