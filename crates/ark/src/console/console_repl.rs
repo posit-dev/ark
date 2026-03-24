@@ -11,8 +11,11 @@
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
 use super::*;
+use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
+use harp::vector::Vector;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -1131,22 +1134,71 @@ impl Console {
             data.insert("text/plain".to_string(), json!(autoprint));
         }
 
-        // Include HTML representation of data.frame
+        // Include HTML representation of data.frame and optionally open an
+        // inline data explorer in Positron notebook mode. Only do this when
+        // there is visible output (autoprint produced text/plain).
         unsafe {
-            let value = Rf_findVarInFrame(R_GlobalEnv, r_symbol!(".Last.value"));
-            if r_is_data_frame(value) {
+            let value = libr::Rf_findVar(r_symbol!(".Last.value"), R_GlobalEnv);
+            if !data.is_empty() && r_is_data_frame(value) {
                 match to_html(value) {
                     Ok(html) => {
                         data.insert("text/html".to_string(), json!(html));
                     },
                     Err(err) => {
-                        log::error!("{:?}", err);
+                        log::error!("{err:?}");
                     },
                 };
+
+                if self.session_mode == SessionMode::Notebook && self.ui_comm_id.is_some() {
+                    match self.open_inline_data_explorer(value) {
+                        Ok(mime_data) => {
+                            data.insert(
+                                "application/vnd.positron.dataExplorer+json".to_string(),
+                                mime_data,
+                            );
+                        },
+                        Err(err) => {
+                            log::error!("Failed to open inline data explorer: {err:?}");
+                        },
+                    }
+                }
             }
         }
 
         data
+    }
+
+    /// Open an inline data explorer for a data frame value and return the MIME
+    /// type payload to include in the execute result.
+    fn open_inline_data_explorer(
+        &mut self,
+        value: SEXP,
+    ) -> anyhow::Result<serde_json::Value> {
+        let data = RObject::new(value);
+
+        // Derive title from the first R class (e.g. "tbl_df", "data.table", "data.frame")
+        let title = harp::utils::r_classes(value)
+            .and_then(|classes| {
+                classes.get_unchecked(0).map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| String::from("data.frame"));
+
+        let shape = RDataExplorer::get_shape(data.clone())?;
+
+        let explorer = RDataExplorer::new(title.clone(), data, None, true)?;
+        let comm_id =
+            self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+
+        Ok(json!({
+            "version": 1,
+            "comm_id": comm_id,
+            "shape": {
+                "num_rows": shape.num_rows,
+                "num_columns": shape.columns.len(),
+            },
+            "title": title,
+            "source": title,
+        }))
     }
 
     /// Reset debug flag on the global environment.

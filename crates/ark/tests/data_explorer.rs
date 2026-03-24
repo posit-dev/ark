@@ -106,7 +106,7 @@ fn open_data_explorer(dataset: String) -> TestSetup {
 
     let inner = r_task(|| unsafe {
         let data = RObject::new(Rf_eval(r_symbol!(&dataset), R_GlobalEnv));
-        let handler = RDataExplorer::new(dataset, data, None).unwrap();
+        let handler = RDataExplorer::new(dataset, data, None, false).unwrap();
         TestInner(handler, ctx)
     });
 
@@ -131,7 +131,7 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
             name: name.to_string(),
             env: RObject::view(R_ENVS.global),
         });
-        let handler = RDataExplorer::new(String::from("obj"), object, binding)?;
+        let handler = RDataExplorer::new(String::from("obj"), object, binding, false)?;
         Ok(TestInner(handler, ctx))
     })?;
 
