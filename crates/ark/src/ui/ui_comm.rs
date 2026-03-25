@@ -66,19 +66,24 @@ impl CommHandler for UiComm {
         let continuation_prompt = harp::get_continuation_prompt();
         self.refresh(&input_prompt, &continuation_prompt, ctx);
 
-        // Run session init hooks. Extract the start type from
-        // comm_open data and pass it to the hook function.
+        // Run session hooks based on start type.
         let start_type = self
             .comm_open_data
             .get("start_type")
             .and_then(|v| v.as_str())
             .unwrap_or("new");
 
-        if let Err(err) = RFunction::from(".ps.run_session_init_hooks")
-            .param("start_type", RObject::from(start_type))
-            .call()
-        {
-            log::warn!("Failed to execute session init hooks: {err:?}");
+        if start_type == "reconnect" {
+            if let Err(err) = RFunction::from(".ps.run_session_reconnect_hooks").call() {
+                log::warn!("Failed to execute session reconnect hooks: {err:?}");
+            }
+        } else {
+            if let Err(err) = RFunction::from(".ps.run_session_init_hooks")
+                .param("start_type", RObject::from(start_type))
+                .call()
+            {
+                log::warn!("Failed to execute session init hooks: {err:?}");
+            }
         }
     }
 

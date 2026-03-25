@@ -161,7 +161,8 @@ check_version <- function(pkg) {
 }
 
 #' @export
-.ps.run_session_init_hooks <- function(start_type) {
+.ps.run_session_init_hooks <- function(start_type = c("new", "restart")) {
+    start_type <- match.arg(start_type)
     hooks <- getHook("positron.session_init")
 
     for (hook_fn in hooks) {
@@ -170,6 +171,25 @@ check_version <- function(pkg) {
             error = function(err) {
                 log_warning(sprintf(
                     "Error in positron.session_init hook: %s",
+                    conditionMessage(err)
+                ))
+            }
+        )
+    }
+
+    invisible(NULL)
+}
+
+#' @export
+.ps.run_session_reconnect_hooks <- function() {
+    hooks <- getHook("positron.session_reconnect")
+
+    for (hook_fn in hooks) {
+        tryCatch(
+            hook_fn(),
+            error = function(err) {
+                log_warning(sprintf(
+                    "Error in positron.session_reconnect hook: %s",
                     conditionMessage(err)
                 ))
             }
