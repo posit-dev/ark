@@ -88,7 +88,13 @@ pub trait ShellHandler: Send {
     ///
     /// * `target` - The target name of the comm, such as `positron.variables`
     /// * `comm` - The comm channel to use to communicate with the frontend
-    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> crate::Result<bool>;
+    /// * `data` - The `data` payload from the `comm_open` message
+    async fn handle_comm_open(
+        &self,
+        target: Comm,
+        comm: CommSocket,
+        data: serde_json::Value,
+    ) -> crate::Result<bool>;
 
     /// Handle an incoming comm message (RPC or data). Return
     /// `CommHandled::Handled` if the message was processed, or
