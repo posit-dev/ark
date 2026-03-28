@@ -498,15 +498,8 @@ impl Console {
             }
         }));
 
-        // Perform R-side graphics device initialization (register as
-        // interactive, spawn notification listener). The `DeviceContext`
+        // R-side graphics device initialization. The `DeviceContext`
         // itself is already created as part of `Console::new()`.
-        //
-        // Note that we do it after init is complete to avoid deadlocking
-        // integration tests by spawning an async task. The deadlock is caused
-        // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
-        // We should be able to remove this escape hatch in `r_task()` by
-        // instantiating an `Console` in unit tests as well.
         graphics_device::init_graphics_device();
 
         // Now that R has started and libr and ark have fully initialized, run site and user
