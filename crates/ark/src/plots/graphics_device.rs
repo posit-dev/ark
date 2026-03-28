@@ -309,13 +309,13 @@ impl DeviceContext {
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
     fn hook_holdflush(&self, level: i32) {
-        let was_held = !self.should_render.get();
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
-        self.should_render.replace(level <= 0);
+        let is_released = level <= 0;
+        let was_rendering = self.should_render.replace(is_released);
 
         // Flush deferred changes on hold→release transition
-        if was_held && self.should_render.get() {
+        if !was_rendering && is_released {
             self.process_changes();
         }
     }
