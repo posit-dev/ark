@@ -49,6 +49,7 @@ use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
+use crate::plots::graphics_device::PLOT_COMM_NAME;
 use crate::r_task;
 use crate::request::KernelRequest;
 use crate::request::RRequest;
@@ -264,7 +265,7 @@ impl ShellHandler for Shell {
         originator: Originator,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
@@ -283,7 +284,7 @@ impl ShellHandler for Shell {
         comm_name: &str,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
-            DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
+            DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
