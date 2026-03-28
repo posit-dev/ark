@@ -503,11 +503,7 @@ impl Console {
         // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
         // We should be able to remove this escape hatch in `r_task()` by
         // instantiating an `Console` in unit tests as well.
-        graphics_device::init_graphics_device(
-            console.comm_event_tx.clone(),
-            console.iopub_tx().clone(),
-            graphics_device_rx,
-        );
+        graphics_device::init_graphics_device(console.iopub_tx().clone(), graphics_device_rx);
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -2330,13 +2326,6 @@ impl Console {
         // might end up being executed on the LSP thread.
         // https://github.com/rstudio/positron/issues/431
         unsafe { R_RunPendingFinalizers() };
-
-        // Check for Positron render requests.
-        //
-        // TODO: This should move to a spawned task that'd be woken up by
-        // incoming messages on plot comms. This way we'll prevent the delays
-        // introduced by timeout-based event polling.
-        graphics_device::on_process_idle_events();
     }
 
     pub(super) fn eval_env(&self) -> RObject {
