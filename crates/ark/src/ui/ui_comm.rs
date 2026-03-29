@@ -50,7 +50,7 @@ pub struct UiComm {
 }
 
 impl CommHandler for UiComm {
-    fn handle_open(&mut self, ctx: &CommHandlerContext) {
+    fn handle_open(&mut self, ctx: &CommHandlerContext, _console: &Console) {
         // Set initial console width from the comm_open data, if provided.
         if let Some(width) = self.comm_open_data.console_width {
             if let Err(err) = RFunction::from(".ps.rpc.setConsoleWidth")
@@ -69,13 +69,18 @@ impl CommHandler for UiComm {
         self.refresh(&input_prompt, &continuation_prompt, ctx);
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, _console: &Console) {
         handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
             self.handle_rpc(req)
         });
     }
 
-    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+    fn handle_environment(
+        &mut self,
+        event: &EnvironmentChanged,
+        ctx: &CommHandlerContext,
+        _console: &Console,
+    ) {
         let EnvironmentChanged::Execution {
             input_prompt,
             continuation_prompt,
@@ -307,7 +312,7 @@ mod tests {
                 }))
                 .unwrap(),
             };
-            handler.handle_msg(msg, &ctx);
+            handler.handle_msg(msg, &ctx, Console::get());
 
             // Assert that the console width changed
             let new_width: i32 = harp::get_option("width").try_into().unwrap();
@@ -323,7 +328,7 @@ mod tests {
                 }))
                 .unwrap(),
             };
-            handler.handle_msg(msg, &ctx);
+            handler.handle_msg(msg, &ctx, Console::get());
 
             old_width
         });
@@ -369,7 +374,7 @@ mod tests {
                 }))
                 .unwrap(),
             };
-            handler.handle_msg(msg, &ctx);
+            handler.handle_msg(msg, &ctx, Console::get());
         });
 
         let response = iopub_rx.recv_comm_msg();

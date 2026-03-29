@@ -25,7 +25,7 @@ impl Console {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
         };
-        comm.handler.handle_msg(msg, &comm.ctx);
+        comm.handler.handle_msg(msg, &comm.ctx, Console::get());
         self.drain_closed();
     }
 
@@ -34,7 +34,7 @@ impl Console {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
         };
-        comm.handler.handle_close(&comm.ctx);
+        comm.handler.handle_close(&comm.ctx, Console::get());
     }
 
     /// Register a backend-initiated comm on the R thread.
@@ -57,7 +57,7 @@ impl Console {
         );
 
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
-        handler.handle_open(&ctx);
+        handler.handle_open(&ctx, Console::get());
 
         self.comms
             .insert(comm_id.clone(), ConsoleComm { handler, ctx });
@@ -82,13 +82,13 @@ impl Console {
         mut handler: Box<dyn CommHandler>,
     ) {
         let ctx = CommHandlerContext::new(outgoing_tx, self.comm_event_tx.clone());
-        handler.handle_open(&ctx);
+        handler.handle_open(&ctx, Console::get());
 
         if comm_name == UI_COMM_NAME {
             if let Some(old_id) = self.ui_comm_id.take() {
                 log::info!("Replacing an existing UI comm.");
                 if let Some(mut old) = self.comm_remove(&old_id) {
-                    old.handler.handle_close(&old.ctx);
+                    old.handler.handle_close(&old.ctx, Console::get());
                 }
             }
             self.ui_comm_id = Some(comm_id.clone());
@@ -99,7 +99,8 @@ impl Console {
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
         for (_, comm) in self.comms.iter_mut() {
-            comm.handler.handle_environment(event, &comm.ctx);
+            comm.handler
+                .handle_environment(event, &comm.ctx, Console::get());
         }
         self.drain_closed();
     }

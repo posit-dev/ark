@@ -9,6 +9,8 @@ use std::sync::Once;
 
 use tree_sitter::Point;
 
+#[cfg(feature = "testing")]
+use crate::console::Console;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 
@@ -20,6 +22,10 @@ pub fn r_test_init() {
         // Initialize the positron module so tests can use them.
         modules::initialize().unwrap();
     });
+    // Per-thread: install a minimal Console singleton so that unit tests
+    // can pass `&Console` to comm handlers via `Console::get()`.
+    #[cfg(feature = "testing")]
+    Console::test_init();
 }
 
 pub fn point_from_cursor(x: &str) -> (String, Point) {

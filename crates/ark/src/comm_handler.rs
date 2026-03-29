@@ -21,9 +21,7 @@ use stdext::result::ResultExt;
 use crate::console::Console;
 
 /// Context provided to `CommHandler` methods, giving access to the outgoing
-/// channel, close-request mechanism, and the Console singleton (via
-/// `console()`). Through the Console, handlers can reach runtime state such
-/// as the graphics device context.
+/// channel and close-request mechanism.
 #[derive(Debug)]
 pub struct CommHandlerContext {
     pub outgoing_tx: CommOutgoingTx,
@@ -59,11 +57,6 @@ impl CommHandlerContext {
         };
         self.outgoing_tx.send(CommMsg::Data(json)).log_err();
     }
-
-    /// Access the Console singleton (the R runtime).
-    pub(crate) fn console(&self) -> &Console {
-        Console::get()
-    }
 }
 
 /// Trait for comm handlers that run synchronously on the R thread.
@@ -79,18 +72,24 @@ pub trait CommHandler: Debug {
 
     /// Initialise handler state on the R thread (initial scan, first event,
     /// etc.). Default is no-op.
-    fn handle_open(&mut self, _ctx: &CommHandlerContext) {}
+    fn handle_open(&mut self, _ctx: &CommHandlerContext, _console: &Console) {}
 
     /// Handle an incoming message (RPC or data).
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext);
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, console: &Console);
 
     /// Handle comm close. Default is no-op.
-    fn handle_close(&mut self, _ctx: &CommHandlerContext) {}
+    fn handle_close(&mut self, _ctx: &CommHandlerContext, _console: &Console) {}
 
     /// Called when the environment changes. The `event` indicates what
     /// triggered the change so handlers can decide whether to react.
     /// Default is no-op.
-    fn handle_environment(&mut self, _event: &EnvironmentChanged, _ctx: &CommHandlerContext) {}
+    fn handle_environment(
+        &mut self,
+        _event: &EnvironmentChanged,
+        _ctx: &CommHandlerContext,
+        _console: &Console,
+    ) {
+    }
 }
 
 /// Why the environment changed.

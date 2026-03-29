@@ -481,13 +481,18 @@ impl CommHandler for RDataExplorer {
         serde_json::json!({ "title": self.title, "inline_only": inline_only })
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, _console: &Console) {
         handle_rpc_request(&ctx.outgoing_tx, DATA_EXPLORER_COMM_NAME, msg, |req| {
             self.handle_rpc(req, ctx)
         });
     }
 
-    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+    fn handle_environment(
+        &mut self,
+        event: &EnvironmentChanged,
+        ctx: &CommHandlerContext,
+        _console: &Console,
+    ) {
         let EnvironmentChanged::Execution { .. } = event else {
             return;
         };

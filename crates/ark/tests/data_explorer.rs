@@ -70,6 +70,7 @@ use amalthea::socket::iopub::IOPubMessage;
 use ark::comm_handler::CommHandler;
 use ark::comm_handler::CommHandlerContext;
 use ark::comm_handler::EnvironmentChanged;
+use ark::console::Console;
 use ark::data_explorer::format::format_column;
 use ark::data_explorer::format::format_string;
 use ark::data_explorer::r_data_explorer::DataExplorerMode;
@@ -175,7 +176,7 @@ impl TestSetup {
         let inner = &self.inner;
         r_task(|| {
             let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
-            handler.handle_msg(msg, ctx);
+            handler.handle_msg(msg, ctx, Console::get());
         });
 
         let iopub_msg = self.iopub_rx.recv_timeout(RECV_TIMEOUT).unwrap();
@@ -197,6 +198,7 @@ impl TestSetup {
                     continuation_prompt: String::from("+ "),
                 },
                 ctx,
+                Console::get(),
             );
             ctx.is_closed()
         });
@@ -783,7 +785,7 @@ fn expect_column_profile_results(
     let inner = &setup.inner;
     r_task(|| {
         let TestInner(handler, ctx) = &mut *inner.lock().unwrap();
-        handler.handle_msg(msg, ctx);
+        handler.handle_msg(msg, ctx, Console::get());
     });
 
     let msg = setup.iopub_rx.recv_comm_msg();
