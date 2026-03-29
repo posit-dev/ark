@@ -709,14 +709,6 @@ fn test_plot_default_size_without_metadata() {
 fn test_dev_hold_suppresses_intermediate_plots() {
     let frontend = DummyArkFrontend::lock();
 
-    // Activate the graphics device
-    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_idle();
-    frontend.recv_shell_execute_reply();
-
     // Hold, draw two intermediate plots, then flush.
     // Only the final plot should produce output.
     let code = r#"
@@ -740,14 +732,6 @@ invisible(dev.flush())
 #[test]
 fn test_dev_hold_across_execute_requests() {
     let frontend = DummyArkFrontend::lock();
-
-    // Activate the graphics device
-    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-    frontend.recv_iopub_execute_input();
-    frontend.recv_iopub_display_data();
-    frontend.recv_iopub_idle();
-    frontend.recv_shell_execute_reply();
 
     // Hold and plot without flushing. No display_data should appear.
     frontend.send_execute_request(
