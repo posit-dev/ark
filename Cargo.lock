@@ -352,6 +352,7 @@ dependencies = [
  "air_r_syntax",
  "amalthea",
  "anyhow",
+ "ark",
  "ark_test",
  "assert_matches",
  "async-trait",
