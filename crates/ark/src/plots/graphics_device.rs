@@ -104,6 +104,14 @@ struct PlotContext {
     intrinsic_size: Option<IntrinsicSize>,
 }
 
+/// Graphics device state: plot recording, rendering, and comm management.
+///
+/// Fields use `Cell`/`RefCell` for interior mutability because the R graphics
+/// device callbacks are C function pointers that receive `&DeviceContext` (via
+/// `Console::get().device_context()`). There is no way to thread `&mut` through
+/// R's callback registration layer. A future refactor could wrap the C-to-Rust
+/// bridge so that the Rust-facing hook methods receive `&mut self` explicitly,
+/// containing the `Console::get()` unsoundness in one place.
 pub(crate) struct DeviceContext {
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
