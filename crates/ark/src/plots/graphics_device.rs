@@ -906,15 +906,15 @@ impl CommHandler for PlotComm {
         self.open_data.clone()
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        let dc = ctx.console().device_context();
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, console: &Console) {
+        let dc = console.device_context();
         handle_rpc_request(&ctx.outgoing_tx, PLOT_COMM_NAME, msg, |req| {
             dc.handle_rpc(req, &self.id)
         });
     }
 
-    fn handle_close(&mut self, ctx: &CommHandlerContext) {
-        ctx.console().device_context().on_plot_closed(&self.id);
+    fn handle_close(&mut self, _ctx: &CommHandlerContext, console: &Console) {
+        console.device_context().on_plot_closed(&self.id);
     }
 }
 

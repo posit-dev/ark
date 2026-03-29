@@ -177,7 +177,7 @@ thread_local! {
     pub static CONSOLE: RefCell<UnsafeCell<Console>> = panic!("Must access `CONSOLE` from the R thread");
 }
 
-pub(crate) struct Console {
+pub struct Console {
     r_home: PathBuf,
 
     pub(crate) positron_ns: Option<RObject>,

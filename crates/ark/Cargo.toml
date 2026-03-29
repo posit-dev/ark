@@ -10,6 +10,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+testing = []
+
 [lints]
 workspace = true
 
@@ -77,6 +80,7 @@ winsafe.workspace = true
 yaml-rust2.workspace = true
 
 [dev-dependencies]
+ark = { path = ".", features = ["testing"] }
 ark_test.workspace = true
 assert_matches.workspace = true
 insta.workspace = true

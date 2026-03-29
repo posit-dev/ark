@@ -678,8 +678,64 @@ impl Console {
     /// Access a reference to the singleton instance of this struct
     ///
     /// SAFETY: Accesses must occur after `Console::start()` initializes it.
-    pub(crate) fn get() -> &'static Self {
+    pub fn get() -> &'static Self {
         Console::get_mut()
+    }
+
+    /// Install a minimal stopgap `Console` in the thread-local for unit tests
+    /// that need a `&Console` (e.g. to pass to `CommHandler` methods) but
+    /// don't go through the full `Console::start()` path.
+    ///
+    /// All internal channels are created with their counterpart immediately
+    /// dropped, so the Console is inert: it never processes requests, tasks,
+    /// or kernel messages. Any attempt to send to IOPub or other channels
+    /// will return a disconnected error, which surfaces problems early
+    /// rather than silently hanging.
+    ///
+    /// For tests that exercise real Console behaviour (execution, comms
+    /// lifecycle, IOPub output), prefer full integration tests with
+    /// `DummyArkFrontend` which spins up a real Console.
+    ///
+    /// Idempotent per thread. Does not set `R_INIT`, so the `r_task()` escape
+    /// hatch for unit tests continues to work.
+    #[cfg(feature = "testing")]
+    pub fn test_init() {
+        use std::cell::Cell;
+        thread_local! {
+            static INITIALIZED: Cell<bool> = const { Cell::new(false) };
+        }
+
+        INITIALIZED.with(|init| {
+            if init.get() {
+                return;
+            }
+            init.set(true);
+
+            let (_, tasks_interrupt_rx) = crossbeam::channel::unbounded();
+            let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
+            let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
+            let (comm_event_tx, _) = crossbeam::channel::unbounded();
+            let (r_request_tx, r_request_rx) = crossbeam::channel::unbounded();
+            let (stdin_request_tx, _) = crossbeam::channel::unbounded();
+            let (_, stdin_reply_rx) = crossbeam::channel::unbounded();
+            let (iopub_tx, _) = crossbeam::channel::unbounded();
+            let (_, kernel_request_rx) = crossbeam::channel::unbounded();
+            let dap = Dap::new_shared(r_request_tx);
+
+            CONSOLE.set(UnsafeCell::new(Console::new(
+                tasks_interrupt_rx,
+                tasks_idle_rx,
+                tasks_idle_any_rx,
+                comm_event_tx,
+                r_request_rx,
+                stdin_request_tx,
+                stdin_reply_rx,
+                iopub_tx,
+                kernel_request_rx,
+                dap,
+                SessionMode::Console,
+            )));
+        });
     }
 
     /// Access a mutable reference to the singleton instance of this struct
