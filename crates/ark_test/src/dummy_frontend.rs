@@ -71,6 +71,13 @@ pub struct DummyArkFrontend {
     streams_handled: Cell<bool>,
     /// Whether we're currently in a debug context (between start_debug and stop_debug)
     in_debug: Cell<bool>,
+    /// Comm ID of the open UI comm, if any.
+    ui_comm_id: RefCell<Option<String>>,
+    /// When true, UI comm event messages (prompt_state, working_directory,
+    /// busy) are auto-buffered by `recv_iopub_next()` so they don't
+    /// interfere with plot and other assertions. Off by default so that
+    /// tests like `ui-prompt-state` can assert on these events explicitly.
+    buffer_ui_events: Cell<bool>,
     /// Comm ID of the open variables comm, if any.
     variables_comm_id: RefCell<Option<String>>,
     /// Buffered variables comm events, auto-collected by `recv_iopub_next()`.
@@ -155,6 +162,8 @@ impl DummyArkFrontend {
             pending_iopub_messages: RefCell::new(VecDeque::new()),
             streams_handled: Cell::new(false),
             in_debug: Cell::new(false),
+            ui_comm_id: RefCell::new(None),
+            buffer_ui_events: Cell::new(false),
             variables_comm_id: RefCell::new(None),
             variables_events: RefCell::new(VecDeque::new()),
         }
@@ -235,7 +244,7 @@ impl DummyArkFrontend {
         }
     }
 
-    /// Try to buffer a known message (stream or variables comm).
+    /// Try to buffer a known message (stream, UI comm refresh, or variables comm).
     /// Traces the message if it was buffered. Returns `true` if the message was consumed.
     ///
     /// Variables comm events still race with Idle (not yet migrated to
@@ -247,6 +256,18 @@ impl DummyArkFrontend {
                 self.buffer_stream(&data.content);
                 true
             },
+            // When `buffer_ui_events` is enabled, silently consume UI comm
+            // event messages (prompt_state, working_directory, busy) so they
+            // don't interfere with plot and other assertions. RPC replies
+            // (no "method" field) always pass through.
+            Message::CommMsg(ref data)
+                if self.buffer_ui_events.get() &&
+                    self.is_ui_comm(&data.content.comm_id) &&
+                    data.content.data.get("method").is_some() =>
+            {
+                trace_iopub_msg(msg);
+                true
+            },
             Message::CommMsg(ref data) if self.is_variables_comm(&data.content.comm_id) => {
                 trace_iopub_msg(msg);
                 self.buffer_variables_event(&data.content.data);
@@ -254,6 +275,24 @@ impl DummyArkFrontend {
             },
             _ => false,
         }
+    }
+
+    fn is_ui_comm(&self, comm_id: &str) -> bool {
+        self.ui_comm_id
+            .borrow()
+            .as_deref()
+            .is_some_and(|id| id == comm_id)
+    }
+
+    /// Enable or disable automatic buffering of UI comm event messages.
+    ///
+    /// When enabled, prompt_state, working_directory, and busy events from
+    /// the UI comm are silently consumed by `recv_iopub_next()`. This is
+    /// useful for plot tests that don't care about these events. Tests that
+    /// need to assert on UI comm events (e.g. `ui-prompt-state`) should
+    /// leave this disabled (the default).
+    pub fn set_buffer_ui_events(&self, enabled: bool) {
+        self.buffer_ui_events.set(enabled);
     }
 
     fn is_variables_comm(&self, comm_id: &str) -> bool {
@@ -1094,10 +1133,12 @@ impl DummyArkFrontend {
         // The UI comm runs on the R thread via CommHandler. The comm_open
         // blocks Shell while the handler's `handle_open()` runs, so events
         // arrive deterministically within the Busy/Idle window.
+        //
+        // `handle_open()` calls `refresh()` which sends prompt_state then
+        // working_directory. Receive them explicitly here, before enabling
+        // auto-buffering for subsequent UI comm events.
         self.recv_iopub_busy();
 
-        // `handle_open()` calls `refresh()` which sends prompt_state then
-        // working_directory.
         let prompt_state = self.recv_iopub_comm_msg();
         assert_eq!(prompt_state.comm_id, comm_id);
         assert_eq!(
@@ -1113,6 +1154,10 @@ impl DummyArkFrontend {
         );
 
         self.recv_iopub_idle();
+
+        // Enable auto-buffering for subsequent UI comm events (prompt_state
+        // and working_directory refreshes sent after every execute request).
+        *self.ui_comm_id.borrow_mut() = Some(comm_id.clone());
 
         comm_id
     }
