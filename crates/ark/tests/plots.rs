@@ -770,11 +770,11 @@ fn test_dev_hold_across_execute_requests() {
 fn test_positron_simple_plot() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -787,11 +787,11 @@ fn test_positron_simple_plot() {
 fn test_positron_multiple_plots() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     frontend.send_execute_request("plot(1:10)\nplot(2:20)", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -810,16 +810,16 @@ fn test_positron_multiple_plots() {
 fn test_positron_par_multi_panel() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     let code = "par(mfrow = c(2, 1))\nplot(1:10)\nplot(2:20)";
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Panel update arrives directly on IOPub (before idle)
+    // Panel update arrives on IOPub (from on_did_execute_request)
     let update = frontend.recv_iopub_comm_msg();
 
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -837,7 +837,6 @@ fn test_positron_par_multi_panel() {
 fn test_positron_layout_multi_plot() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     let code = r#"
 plt2 = function() {
@@ -851,9 +850,10 @@ plt2()
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Second panel update (direct IOPub)
+    // Second panel update (from on_did_execute_request)
     let update = frontend.recv_iopub_comm_msg();
 
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -870,7 +870,6 @@ plt2()
 fn test_positron_dev_hold_suppresses() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     let code = r#"
 invisible(dev.hold())
@@ -881,6 +880,7 @@ invisible(dev.flush())
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -897,7 +897,6 @@ invisible(dev.flush())
 fn test_positron_dev_hold_across_requests() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     // Hold and plot without flushing. No plot comm should open.
     frontend.send_execute_request(
@@ -906,6 +905,7 @@ fn test_positron_dev_hold_across_requests() {
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -913,6 +913,7 @@ fn test_positron_dev_hold_across_requests() {
     frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -930,13 +931,13 @@ fn test_positron_dev_hold_across_requests() {
 fn test_positron_sequential_plots() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     for i in 1..=3 {
         let code = format!("plot({i}:10)");
         frontend.send_execute_request(&code, ExecuteRequestOptions::default());
         frontend.recv_iopub_busy();
         frontend.recv_iopub_execute_input();
+        frontend.recv_iopub_ui_prompt_state();
         frontend.recv_iopub_idle();
         frontend.recv_shell_execute_reply();
 
@@ -953,7 +954,6 @@ fn test_positron_sequential_plots() {
 fn test_positron_graphics_device_swap() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     let code = r#"
 plot(1:10)
@@ -964,6 +964,7 @@ invisible(dev.off())
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -977,7 +978,6 @@ invisible(dev.off())
 fn test_positron_loop_plots() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     let code = r#"
 for (i in 1:3) {
@@ -987,6 +987,7 @@ for (i in 1:3) {
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -1006,7 +1007,6 @@ for (i in 1:3) {
 fn test_positron_par_overflow_to_new_page() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     let code = r#"
 par(mfrow = c(3, 1))
@@ -1020,10 +1020,11 @@ par(mfrow = c(1, 1))
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
 
-    // Panels 2 and 3 update the first page (direct IOPub, before idle)
+    // Panels 3 and 4 update the first page (from before.plot.new during R eval)
     let update1 = frontend.recv_iopub_comm_msg();
     let update2 = frontend.recv_iopub_comm_msg();
 
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -1048,12 +1049,12 @@ par(mfrow = c(1, 1))
 fn test_positron_dev_hold_flush_interactive() {
     let frontend = DummyArkFrontend::lock();
     frontend.open_ui_comm();
-    frontend.set_buffer_ui_events(true);
 
     // Hold
     frontend.send_execute_request("invisible(dev.hold())", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -1061,6 +1062,7 @@ fn test_positron_dev_hold_flush_interactive() {
     frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -1068,6 +1070,7 @@ fn test_positron_dev_hold_flush_interactive() {
     frontend.send_execute_request("abline(1, 2)", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
@@ -1075,6 +1078,7 @@ fn test_positron_dev_hold_flush_interactive() {
     frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
