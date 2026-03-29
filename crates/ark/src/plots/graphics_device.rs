@@ -588,19 +588,16 @@ impl DeviceContext {
             return;
         }
 
-        if !self.should_render.get() {
-            log::trace!("Deferring changes for plot `id` {id} (rendering held)");
-            return;
-        }
-
-        self.has_changes.replace(false);
-
         log::trace!("Processing changes for plot `id` {id}");
 
-        // Record the changes so we can replay them when Positron asks us for them.
-        // Recording here overrides an existing recording for `id` if something has
-        // changed between then and now, which is what we want, for example, we want
-        // it when running this line by line:
+        // Always record the current display list, even when rendering is held.
+        // `ps_graphics_before_plot_new` calls us to snapshot the display list
+        // before a new page clears it. Skipping the recording here would
+        // permanently lose the previous plot's state.
+        //
+        // Recording here overrides an existing recording for `id` if something
+        // has changed between then and now, which is what we want, for example,
+        // we want it when running this line by line:
         //
         // ```r
         // par(mfrow = c(2, 1))
@@ -608,6 +605,15 @@ impl DeviceContext {
         // plot(2) # Should record and overwrite `id1` because no new_page has been requested
         // ```
         Self::record_plot(&id);
+
+        if !self.should_render.get() {
+            // Keep `has_changes` set so we re-enter this branch after the hold
+            // is released (via `hook_holdflush`) and send the notification then.
+            log::trace!("Deferring notification for plot `id` {id} (rendering held)");
+            return;
+        }
+
+        self.has_changes.replace(false);
 
         if self.is_new_page.replace(false) {
             self.process_new_plot(&id);
