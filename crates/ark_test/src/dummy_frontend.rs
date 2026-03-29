@@ -71,13 +71,15 @@ pub struct DummyArkFrontend {
     streams_handled: Cell<bool>,
     /// Whether we're currently in a debug context (between start_debug and stop_debug)
     in_debug: Cell<bool>,
-    /// Comm ID of the open UI comm, if any.
+    /// Comm ID of the open UI comm, if any. Set by `open_ui_comm()` so
+    /// that `recv_iopub_ui_busy()` and `recv_iopub_prompt_state()` can
+    /// identify UI comm messages.
     ui_comm_id: RefCell<Option<String>>,
-    /// When true, UI comm event messages (prompt_state, working_directory,
-    /// busy) are auto-buffered by `recv_iopub_next()` so they don't
-    /// interfere with plot and other assertions. Off by default so that
-    /// tests like `ui-prompt-state` can assert on these events explicitly.
-    buffer_ui_events: Cell<bool>,
+    /// When true (the default), UI comm `busy` events are silently
+    /// skipped by `recv_iopub_next()`. R fires busy(true)/busy(false)
+    /// per expression in multi-line requests, producing a variable
+    /// number of events that most tests don't care about.
+    ignore_ui_busy: Cell<bool>,
     /// Comm ID of the open variables comm, if any.
     variables_comm_id: RefCell<Option<String>>,
     /// Buffered variables comm events, auto-collected by `recv_iopub_next()`.
@@ -163,7 +165,7 @@ impl DummyArkFrontend {
             streams_handled: Cell::new(false),
             in_debug: Cell::new(false),
             ui_comm_id: RefCell::new(None),
-            buffer_ui_events: Cell::new(false),
+            ignore_ui_busy: Cell::new(true),
             variables_comm_id: RefCell::new(None),
             variables_events: RefCell::new(VecDeque::new()),
         }
@@ -256,14 +258,10 @@ impl DummyArkFrontend {
                 self.buffer_stream(&data.content);
                 true
             },
-            // When `buffer_ui_events` is enabled, silently consume UI comm
-            // event messages (prompt_state, working_directory, busy) so they
-            // don't interfere with plot and other assertions. RPC replies
-            // (no "method" field) always pass through.
             Message::CommMsg(ref data)
-                if self.buffer_ui_events.get() &&
+                if self.ignore_ui_busy.get() &&
                     self.is_ui_comm(&data.content.comm_id) &&
-                    data.content.data.get("method").is_some() =>
+                    data.content.data.get("method").and_then(|v| v.as_str()) == Some("busy") =>
             {
                 trace_iopub_msg(msg);
                 true
@@ -284,15 +282,47 @@ impl DummyArkFrontend {
             .is_some_and(|id| id == comm_id)
     }
 
-    /// Enable or disable automatic buffering of UI comm event messages.
+    /// Ignore UI comm `busy` events in `recv_iopub_next()`.
     ///
-    /// When enabled, prompt_state, working_directory, and busy events from
-    /// the UI comm are silently consumed by `recv_iopub_next()`. This is
-    /// useful for plot tests that don't care about these events. Tests that
-    /// need to assert on UI comm events (e.g. `ui-prompt-state`) should
-    /// leave this disabled (the default).
-    pub fn set_buffer_ui_events(&self, enabled: bool) {
-        self.buffer_ui_events.set(enabled);
+    /// R fires `busy(true)`/`busy(false)` for each top-level expression
+    /// in a multi-line request, so the number of events depends on how
+    /// many expressions the code contains. Enable this in tests that
+    /// don't care about busy transitions (e.g. plot tests).
+    pub fn set_ignore_ui_busy(&self, ignore: bool) {
+        self.ignore_ui_busy.set(ignore);
+    }
+
+    /// Receive from IOPub and assert a UI comm `busy` event.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_ui_busy(&self, expected: bool) {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::CommMsg(data) if self.is_ui_comm(&data.content.comm_id) => {
+                assert_eq!(
+                    data.content.data.get("method").and_then(|v| v.as_str()),
+                    Some("busy")
+                );
+                assert_eq!(data.content.data["params"]["busy"], expected);
+            },
+            other => panic!("Expected UI busy={expected} CommMsg, got {other:?}"),
+        }
+    }
+
+    /// Receive from IOPub and assert a UI comm `prompt_state` event.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_ui_prompt_state(&self) {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::CommMsg(data) if self.is_ui_comm(&data.content.comm_id) => {
+                assert_eq!(
+                    data.content.data.get("method").and_then(|v| v.as_str()),
+                    Some("prompt_state")
+                );
+            },
+            other => panic!("Expected prompt_state CommMsg on UI comm, got {other:?}"),
+        }
     }
 
     fn is_variables_comm(&self, comm_id: &str) -> bool {
@@ -1155,8 +1185,11 @@ impl DummyArkFrontend {
 
         self.recv_iopub_idle();
 
-        // Enable auto-buffering for subsequent UI comm events (prompt_state
-        // and working_directory refreshes sent after every execute request).
+        // Store the UI comm ID so `recv_iopub_ui_busy()` and
+        // `recv_iopub_prompt_state()` can identify UI comm messages.
+        // `ignore_ui_busy` is on by default, so UI busy events are
+        // auto-skipped. Tests that care (e.g. `ui-prompt-state`) can
+        // call `set_ignore_ui_busy(false)` to receive them inline.
         *self.ui_comm_id.borrow_mut() = Some(comm_id.clone());
 
         comm_id
