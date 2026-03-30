@@ -283,6 +283,63 @@ fn test_execute_request_browser_error_preserves_env() {
 }
 
 #[test]
+fn test_execute_request_browser_consecutive_errors_preserve_env() {
+    // Consecutive errors in a browser() session must not corrupt the
+    // state machine: the evaluation environment must remain the
+    // function's local environment after each error.
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request(
+        "fn <- function(x) { browser() }; fn(42)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // First error
+    frontend.send_execute_request("stop('first')", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("first"));
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+
+    // Env must still be the function's local env
+    frontend.send_execute_request("x", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Second error
+    frontend.send_execute_request("stop('second')", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let evalue = frontend.recv_iopub_execute_error();
+    assert!(evalue.contains("second"));
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply_exception();
+
+    // Env must still be the function's local env
+    frontend.send_execute_request("x", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.assert_stream_stdout_contains("[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    frontend.send_execute_request("Q", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
 fn test_execute_request_browser_incomplete() {
     // Set RUST_BACKTRACE to ensure backtraces are captured. We used to leak
     // backtraces in syntax error messages, and this shouldn't happen even when
