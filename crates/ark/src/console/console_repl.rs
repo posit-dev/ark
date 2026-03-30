@@ -256,6 +256,19 @@ pub(super) enum ReadConsolePendingAction {
     #[default]
     None,
 
+    /// An error longjumped out of our eval. Give R one REPL iteration to
+    /// restore internal state (`R_EvalDepth`, `R_PPStackTop`, etc.) before
+    /// we do anything else.
+    ///
+    /// Technically this also resets time limits (see
+    /// `base::setTimeLimit()`) but these aren't supported in Ark
+    /// because they cause errors when we poll R events.
+    ///
+    /// References:
+    /// - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
+    /// - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
+    RecoverFromError,
+
     /// We just evaluated `.ark_capture_current_environment()` to capture the
     /// top-level environment into `.ark_current_env`. Now retrieve it and
     /// push onto the frame stack.
@@ -2361,6 +2374,14 @@ impl Console {
     }
 
     fn read_console_exit(&mut self) {
+        // If an error longjumped out of our eval, schedule a recovery
+        // iteration so R can restore its internal state
+        if self.last_error.is_some() && self.read_console_threw_error.get() {
+            self.read_console_threw_error.set(false);
+            self.read_console_pending_action
+                .set(ReadConsolePendingAction::RecoverFromError);
+        }
+
         // We're exiting, decrease depth of nested consoles
         self.read_console_depth
             .set(self.read_console_depth.get() - 1);
@@ -2501,31 +2522,6 @@ pub extern "C-unwind" fn r_read_console(
     // These are multi-step operations that required returning control to R.
     let env: RObject = match console.read_console_pending_action.take() {
         ReadConsolePendingAction::None => {
-            // After an error longjump, R needs one REPL iteration to restore
-            // internal state (`R_EvalDepth`, `R_PPStackTop`, etc.). We give it
-            // that iteration before doing anything else, including the browser
-            // environment capture below.
-            //
-            // Technically this also resets time limits (see
-            // `base::setTimeLimit()`) but these aren't supported in Ark
-            // because they cause errors when we poll R events.
-            //
-            // References:
-            // - R_PPStackTop: https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L227
-            // - R_EvalDepth:  https://github.com/r-devel/r-svn/blob/74cd0af4/src/main/main.c#L260
-            if console.last_error.is_some() && console.read_console_threw_error.get() {
-                console.read_console_threw_error.set(false);
-
-                // Evaluate last value so that `base::.Last.value` remains the same
-                Console::on_console_input(
-                    buf,
-                    buflen,
-                    String::from("base::invisible(base::.Last.value)"),
-                )
-                .unwrap();
-                return 1;
-            }
-
             // For browser prompts, capture the evaluation environment.
             // There is no way to reliably get this environment via regular
             // evaluation:
@@ -2550,6 +2546,18 @@ pub extern "C-unwind" fn r_read_console(
 
             // At top-level: Use global env
             R_ENVS.global.into()
+        },
+
+        ReadConsolePendingAction::RecoverFromError => {
+            // Evaluate last value so that `base::.Last.value` remains the same
+            // after the recovery process
+            Console::on_console_input(
+                buf,
+                buflen,
+                String::from("base::invisible(base::.Last.value)"),
+            )
+            .unwrap();
+            return 1;
         },
 
         ReadConsolePendingAction::ExecuteInput(next_input) => {
