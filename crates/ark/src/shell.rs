@@ -175,11 +175,11 @@ impl ShellHandler for Shell {
 
     /// Handles an ExecuteRequest by sending the code to the R execution thread
     /// for processing.
-    async fn handle_execute_request(
+    fn start_execute_request(
         &mut self,
         originator: Originator,
         req: &ExecuteRequest,
-    ) -> amalthea::Result<ExecuteReply> {
+    ) -> crossbeam::channel::Receiver<amalthea::Result<ExecuteReply>> {
         let (response_tx, response_rx) = unbounded::<amalthea::Result<ExecuteReply>>();
         let mut req_clone = req.clone();
         req_clone.code = convert_line_endings(&req_clone.code, LineEnding::Posix);
@@ -196,7 +196,7 @@ impl ShellHandler for Shell {
 
         trace!("Code sent to R: {}", req_clone.code);
 
-        response_rx.recv().unwrap()
+        response_rx
     }
 
     /// Handles an introspection request

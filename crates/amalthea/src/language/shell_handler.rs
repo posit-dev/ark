@@ -6,6 +6,7 @@
  */
 
 use async_trait::async_trait;
+use crossbeam::channel::Receiver;
 
 use crate::comm::comm_channel::Comm;
 use crate::comm::comm_channel::CommMsg;
@@ -53,17 +54,17 @@ pub trait ShellHandler: Send {
         req: &IsCompleteRequest,
     ) -> crate::Result<IsCompleteReply>;
 
-    /// Handles a request to execute code.
-    ///
-    /// The `originator` is an opaque byte array identifying the peer that sent
-    /// the request; it is needed to perform an input request during execution.
+    /// Kicks off execution of the given request and returns a channel that
+    /// will receive the reply once execution completes. Shell select-loops
+    /// on this receiver together with `comm_event_rx` so it can process
+    /// comm events (e.g. barrier handshakes) while execution is in progress.
     ///
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
-    async fn handle_execute_request(
+    fn start_execute_request(
         &mut self,
         originator: Originator,
         req: &ExecuteRequest,
-    ) -> crate::Result<ExecuteReply>;
+    ) -> Receiver<crate::Result<ExecuteReply>>;
 
     /// Handles a request to provide completions for the given code fragment.
     ///
