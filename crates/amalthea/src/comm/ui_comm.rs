@@ -411,15 +411,6 @@ pub struct OpenWithSystemParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiBackendRequest {
-	/// Notification that the settings to render a plot (i.e. the plot size)
-	/// have changed.
-	///
-	/// Typically fired when the plot component has been resized by the user.
-	/// This notification is useful to produce accurate pre-renderings of
-	/// plots.
-	#[serde(rename = "did_change_plots_render_settings")]
-	DidChangePlotsRenderSettings(DidChangePlotsRenderSettingsParams),
-
 	/// Notification that the frontend is ready
 	///
 	/// This notification is sent by the frontend after the UI comm has been
@@ -451,9 +442,6 @@ pub enum UiBackendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiBackendReply {
-	/// Unused response to notification
-	DidChangePlotsRenderSettingsReply(),
-
 	/// Unused response to notification
 	FrontendReadyReply(),
 
@@ -590,6 +578,20 @@ pub enum UiFrontendReply {
 
 	/// Editor metadata
 	LastActiveEditorContextReply(Option<EditorContext>),
+
+}
+
+/**
+ * Backend events for the ui comm
+ */
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "method", content = "params")]
+pub enum UiBackendEvent {
+	/// Typically fired when the plot component has been resized by the user.
+	/// This notification is useful to produce accurate pre-renderings of
+	/// plots.
+	#[serde(rename = "did_change_plots_render_settings")]
+	DidChangePlotsRenderSettings(DidChangePlotsRenderSettingsParams),
 
 }
 
