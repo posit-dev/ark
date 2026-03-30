@@ -1364,6 +1364,14 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
     }
 }
 
+/// Return the current plot ID. Used by tests to verify that layout panels
+/// share the same page (same ID) and that overflow creates a new page.
+#[harp::register]
+unsafe extern "C-unwind" fn ps_graphics_current_plot_id() -> anyhow::Result<SEXP> {
+    let id = Console::get().device_context().id();
+    Ok(RObject::from(&id).sexp)
+}
+
 /// Push a source file URI onto the source context stack.
 /// Called from the `source()` hook when entering a sourced file.
 #[harp::register]

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use crossbeam::channel::Receiver;
+use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use futures::executor::block_on;
 use stdext::result::ResultExt;
@@ -37,6 +38,8 @@ use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::exception::Exception;
+use crate::wire::execute_reply::ExecuteReply;
+use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -209,6 +212,10 @@ impl Shell {
                 );
             },
 
+            CommEvent::Barrier(done_tx) => {
+                done_tx.send(()).log_err();
+            },
+
             CommEvent::Message(comm_id, msg) => {
                 let Some(comm) = self.open_comms.iter().find(|c| c.comm_id == comm_id) else {
                     log::warn!("Received message for unknown comm channel {comm_id}: {msg:?}");
@@ -244,6 +251,15 @@ impl Shell {
     /// Process a message received from the front-end, optionally dispatching
     /// messages to the IOPub or execution threads
     fn process_message(&mut self, msg: Message) -> crate::Result<()> {
+        // Execute requests get special handling: Shell select-loops on both
+        // the execute response and comm events so it can process
+        // backend-initiated comm opens (with barrier handshakes) while R is
+        // still executing, preventing a deadlock where R waits for Shell to
+        // drain the barrier while Shell waits for the execute response.
+        if let Message::ExecuteRequest(req) = msg {
+            return self.handle_execute_request(req);
+        }
+
         // Extract references to the components we need to pass to handlers.
         // This allows us to borrow different fields of self independently.
         let iopub_tx = &self.iopub_tx;
@@ -260,13 +276,6 @@ impl Shell {
             Message::IsCompleteRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
                 block_on(shell_handler.handle_is_complete_request(msg))
             }),
-            Message::ExecuteRequest(req) => {
-                // FIXME: We should ideally not pass the originator to the language kernel
-                let originator = Originator::from(&req);
-                Self::handle_request(iopub_tx, socket, req, |msg| {
-                    block_on(shell_handler.handle_execute_request(originator, msg))
-                })
-            },
             Message::CompleteRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
                 block_on(shell_handler.handle_complete_request(msg))
             }),
@@ -361,6 +370,63 @@ impl Shell {
         // error, since many frontends won't submit additional messages until
         // the kernel is marked idle.
         iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
+
+        result.and(Ok(()))
+    }
+
+    /// Handle an execute request. Unlike other requests that use the generic
+    /// `handle_request`, this method select-loops on both the execute response
+    /// and `comm_event_rx`. This allows Shell to process comm events (e.g.
+    /// `CommEvent::Barrier` from `comm_open_backend`) while the R thread is
+    /// still executing, preventing a deadlock where the R thread waits for
+    /// Shell to drain comm events while Shell waits for the execute response.
+    fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> crate::Result<()> {
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
+
+        log::info!("Received shell request: {req:?}");
+
+        // FIXME: We should ideally not pass the originator to the language kernel
+        let originator = Originator::from(&req);
+        let response_rx = self
+            .shell_handler
+            .start_execute_request(originator, &req.content);
+
+        // Select-loop: drain comm events while waiting for the execute reply.
+        let result = loop {
+            let mut sel = Select::new();
+            let resp_idx = sel.recv(&response_rx);
+            sel.recv(&self.comm_event_rx);
+
+            let ready = sel.ready();
+
+            while let Ok(event) = self.comm_event_rx.try_recv() {
+                self.process_comm_event(event);
+            }
+
+            if ready == resp_idx {
+                break response_rx.recv().unwrap();
+            }
+        };
+
+        let result = match result {
+            Ok(reply) => req.send_reply(reply, &self.socket),
+            Err(crate::Error::ShellErrorReply(error)) => {
+                req.send_error::<ExecuteReply>(error, &self.socket)
+            },
+            Err(crate::Error::ShellErrorExecuteReply(error, exec_count)) => {
+                req.send_execute_error(error, exec_count, &self.socket)
+            },
+            Err(err) => {
+                let error = Exception::internal_error(format!("{err:?}"));
+                req.send_error::<ExecuteReply>(error, &self.socket)
+            },
+        };
+
+        self.iopub_tx
             .send(status(req.clone(), ExecutionState::Idle))
             .unwrap();
 
