@@ -183,17 +183,6 @@ pub struct EvaluateCodeParams {
 	pub code: String,
 }
 
-/// Parameters for the EditorContextChanged method.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub struct EditorContextChangedParams {
-	/// The URI of the active document, or empty string if no editor is active
-	pub document_uri: String,
-
-	/// Whether this editor is the source of code being executed. When true,
-	/// the backend may temporarily add the file's directory to sys.path.
-	pub is_execution_source: bool,
-}
-
 /// Parameters for the Busy method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct BusyParams {
@@ -437,15 +426,6 @@ pub enum UiBackendRequest {
 	#[serde(rename = "evaluate_code")]
 	EvaluateCode(EvaluateCodeParams),
 
-	/// Active editor context changed
-	///
-	/// This notification is sent from the frontend to the backend when the
-	/// active text editor changes or when code is about to be executed from a
-	/// file. It provides the document URI and indicates whether this is the
-	/// source file for code execution.
-	#[serde(rename = "editor_context_changed")]
-	EditorContextChanged(EditorContextChangedParams),
-
 }
 
 /**
@@ -462,9 +442,6 @@ pub enum UiBackendReply {
 
 	/// The results of evaluating the statement
 	EvaluateCodeReply(EvalResult),
-
-	/// Unused response to notification
-	EditorContextChangedReply(),
 
 }
 
