@@ -959,17 +959,18 @@ impl DummyArkFrontend {
         );
         self.recv_iopub_busy();
         self.recv_iopub_execute_input();
-        self.recv_iopub_idle();
-        self.recv_shell_execute_reply();
 
-        // CommOpen goes through Shell's comm event channel, so it arrives
-        // after Idle.
+        // Shell drains comm events during execution, so CommOpen arrives
+        // within the Busy/Idle window.
         let comm_open = self.recv_iopub_comm_open();
         assert_eq!(
             comm_open.target_name, "positron.dataExplorer",
             "Expected data explorer comm, got {:?}",
             comm_open.target_name
         );
+
+        self.recv_iopub_idle();
+        self.recv_shell_execute_reply();
 
         comm_open.comm_id
     }

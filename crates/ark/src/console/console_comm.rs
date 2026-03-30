@@ -40,7 +40,13 @@ impl Console {
     /// Register a backend-initiated comm on the R thread.
     ///
     /// Creates the `CommSocket` and `CommHandlerContext`, calls `handle_open`,
-    /// sends `CommEvent::Opened` to amalthea, and returns the comm ID.
+    /// sends `CommEvent::Opened` to Amalthea's Shell thread, and returns the
+    /// comm ID.
+    ///
+    /// Blocks until Shell has fully processed the open (sent `comm_open` on
+    /// IOPub and registered the comm for routing). This guarantees that any
+    /// `comm_msg` sent by the caller afterwards are ordered after the
+    /// `comm_open` on IOPub.
     pub(crate) fn comm_open_backend(
         &mut self,
         comm_name: &str,
@@ -64,6 +70,13 @@ impl Console {
 
         self.comm_event_tx
             .send(CommEvent::Opened(comm, open_metadata))?;
+
+        // Block until Shell has processed the Opened event, ensuring the
+        // `comm_open` message is on IOPub before we return. Any updates
+        // the caller sends after this point are guaranteed to follow it.
+        let (done_tx, done_rx) = crossbeam::channel::bounded(0);
+        self.comm_event_tx.send(CommEvent::Barrier(done_tx))?;
+        done_rx.recv()?;
 
         Ok(comm_id)
     }
