@@ -24,7 +24,11 @@ impl Console {
         let comm = self.comms.get(self.ui_comm_id.as_deref()?)?;
         Some(UiCommRef {
             comm,
-            originator: self.active_request.as_ref().map(|r| &r.originator),
+            originator: self
+                .active_request
+                .as_ref()
+                .map(|r| &r.originator)
+                .or(self.comm_msg_originator.as_ref()),
             stdin_request_tx: &self.stdin_request_tx,
         })
     }

@@ -600,6 +600,7 @@ impl Console {
             iopub_tx,
             kernel_request_rx,
             active_request: None,
+            comm_msg_originator: None,
             execution_count: 0,
             autoprint_output: String::new(),
             ui_comm_id: None,
@@ -1899,9 +1900,12 @@ impl Console {
             KernelRequest::CommMsg {
                 comm_id,
                 msg,
+                originator,
                 done_tx,
             } => {
+                self.comm_msg_originator = Some(originator);
                 self.comm_handle_msg(&comm_id, msg);
+                self.comm_msg_originator = None;
                 done_tx.send(()).log_err();
             },
             KernelRequest::CommClose { comm_id, done_tx } => {

@@ -12,6 +12,7 @@ use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
 use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
+use amalthea::comm::ui_comm::FrontendReadyParams;
 use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
@@ -65,26 +66,6 @@ impl CommHandler for UiComm {
         let input_prompt = harp::get_input_prompt();
         let continuation_prompt = harp::get_continuation_prompt();
         self.refresh(&input_prompt, &continuation_prompt, ctx);
-
-        // Run session hooks based on start type.
-        let start_type = self
-            .comm_open_data
-            .get("start_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("new");
-
-        if start_type == "reconnect" {
-            if let Err(err) = RFunction::from(".ps.run_session_reconnect_hooks").call() {
-                log::warn!("Failed to execute session reconnect hooks: {err:?}");
-            }
-        } else {
-            if let Err(err) = RFunction::from(".ps.run_session_init_hooks")
-                .param("start_type", RObject::from(start_type))
-                .call()
-            {
-                log::warn!("Failed to execute session init hooks: {err:?}");
-            }
-        }
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
@@ -123,6 +104,7 @@ impl UiComm {
             UiBackendRequest::DidChangePlotsRenderSettings(params) => {
                 self.handle_did_change_plot_render_settings(params)
             },
+            UiBackendRequest::FrontendReady(params) => self.handle_frontend_ready(params),
             UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
         }
     }
@@ -180,6 +162,28 @@ impl UiComm {
             .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
 
         Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
+    }
+
+    fn handle_frontend_ready(
+        &self,
+        params: FrontendReadyParams,
+    ) -> anyhow::Result<UiBackendReply> {
+        log::info!("Frontend ready (start_type = {})", params.start_type);
+
+        if params.start_type == "reconnect" {
+            if let Err(err) = RFunction::from(".ps.run_session_reconnect_hooks").call() {
+                log::warn!("Failed to execute session reconnect hooks: {err:?}");
+            }
+        } else {
+            if let Err(err) = RFunction::from(".ps.run_session_init_hooks")
+                .param("start_type", RObject::from(params.start_type.as_str()))
+                .call()
+            {
+                log::warn!("Failed to execute session init hooks: {err:?}");
+            }
+        }
+
+        Ok(UiBackendReply::FrontendReadyReply())
     }
 
     fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {

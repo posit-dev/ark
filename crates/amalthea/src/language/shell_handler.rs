@@ -104,11 +104,14 @@ pub trait ShellHandler: Send {
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name (e.g. `"positron.dataExplorer"`)
     /// * `msg` - The parsed `CommMsg`
+    /// * `originator` - The originator of the Jupyter message, threaded through
+    ///   so that comm handlers can make RPCs back to the frontend
     fn handle_comm_msg(
         &mut self,
         _comm_id: &str,
         _comm_name: &str,
         _msg: CommMsg,
+        _originator: Originator,
     ) -> crate::Result<CommHandled> {
         Ok(CommHandled::NotHandled)
     }

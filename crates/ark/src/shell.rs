@@ -261,12 +261,14 @@ impl ShellHandler for Shell {
         comm_id: &str,
         comm_name: &str,
         msg: CommMsg,
+        originator: Originator,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
             DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
+                    originator,
                     done_tx,
                 })?;
                 Ok(CommHandled::Handled)
