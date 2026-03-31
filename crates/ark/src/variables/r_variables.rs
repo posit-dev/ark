@@ -42,6 +42,7 @@ use stdext::spawn;
 
 use crate::console;
 use crate::console::Console;
+use crate::data_explorer::r_data_explorer::DataExplorerMode;
 use crate::data_explorer::r_data_explorer::DataObjectEnvInfo;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
@@ -357,8 +358,9 @@ impl RVariables {
                 env,
             };
 
-            let explorer = RDataExplorer::new(name.clone(), obj, Some(binding))
-                .map_err(harp::Error::Anyhow)?;
+            let explorer =
+                RDataExplorer::new(name.clone(), obj, Some(binding), DataExplorerMode::Full)
+                    .map_err(harp::Error::Anyhow)?;
             let viewer_id = Console::get_mut()
                 .comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))
                 .map_err(harp::Error::Anyhow)?;
