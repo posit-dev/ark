@@ -7,7 +7,13 @@
 
 //! Help, LSP, UI comm, and frontend method integration for the R console.
 
+use harp::vector::Vector;
+
 use super::*;
+use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
+use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
+use crate::data_explorer::r_data_explorer::RDataExplorer;
+use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 
 /// UI comm integration.
 impl Console {
@@ -161,6 +167,52 @@ impl Console {
     pub(crate) fn get_virtual_document(&self, uri: &str) -> Option<String> {
         let uri = uri.strip_prefix("ark:").unwrap_or(uri);
         self.lsp_virtual_documents.get(uri).cloned()
+    }
+}
+
+/// Inline data explorer integration.
+impl Console {
+    /// Open an inline data explorer for a data frame value and return the MIME
+    /// type payload to include in the execute result.
+    pub(super) fn open_inline_data_explorer(
+        &mut self,
+        value: SEXP,
+    ) -> anyhow::Result<serde_json::Value> {
+        let data = RObject::new(value);
+
+        // `source` is the R class family (e.g. "tibble", "data.table",
+        // "data.frame"), following the Python kernel convention where `source`
+        // is the library name ("pandas", "polars").
+        let source = harp::utils::r_classes(value)
+            .and_then(|classes| classes.get_unchecked(0).map(|s| s.to_string()))
+            .unwrap_or_else(|| String::from("data.frame"));
+
+        // `title` is the variable name when available, falling back to
+        // `source`. For inline explorers we don't have a variable binding, so
+        // we always use `source` as the title.
+        let title = source.clone();
+
+        let explorer = RDataExplorer::new(title.clone(), data, None, true)?;
+        let shape = &explorer.shape();
+        let inline_data = InlineDataExplorerData {
+            version: 1,
+            comm_id: String::new(), // placeholder, filled after comm_open
+            shape: InlineDataExplorerShape {
+                rows: shape.num_rows,
+                columns: shape.columns.len(),
+            },
+            title,
+            source,
+        };
+
+        let comm_id = self.comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
+
+        let inline_data = InlineDataExplorerData {
+            comm_id,
+            ..inline_data
+        };
+
+        Ok(serde_json::to_value(inline_data)?)
     }
 }
 
