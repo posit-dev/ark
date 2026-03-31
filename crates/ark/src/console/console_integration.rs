@@ -7,7 +7,6 @@
 
 //! Help, LSP, UI comm, and frontend method integration for the R console.
 
-use harp::vector::Vector;
 
 use super::*;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
@@ -183,8 +182,11 @@ impl Console {
         // `source` is the R class family (e.g. "tibble", "data.table",
         // "data.frame"), following the Python kernel convention where `source`
         // is the library name ("pandas", "polars").
-        let source = harp::utils::r_classes(value)
-            .and_then(|classes| classes.get_unchecked(0).map(|s| s.to_string()))
+        let source = data
+            .class()
+            .ok()
+            .flatten()
+            .and_then(|classes| classes.into_iter().next())
             .unwrap_or_else(|| String::from("data.frame"));
 
         // `title` is the variable name when available, falling back to
