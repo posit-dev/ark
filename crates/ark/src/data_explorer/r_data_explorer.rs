@@ -100,6 +100,12 @@ use crate::r_task;
 use crate::r_task::RTask;
 use crate::variables::variable::WorkspaceVariableDisplayType;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DataExplorerMode {
+    Inline,
+    Full,
+}
+
 pub const DATA_EXPLORER_COMM_NAME: &str = "positron.dataExplorer";
 pub const POSITRON_DATA_EXPLORER_MIME: &str = "application/vnd.positron.dataExplorer+json";
 
@@ -180,10 +186,9 @@ pub struct RDataExplorer {
     /// data viewer.
     view_indices: Option<Vec<i32>>,
 
-    /// Whether this explorer is for inline display only (e.g. in a notebook
-    /// cell output). When true, the frontend renders a compact inline grid
-    /// instead of opening the full Data Explorer panel.
-    inline_only: bool,
+    /// The display mode for this explorer. `Inline` renders a compact grid
+    /// in a notebook cell output; `Full` opens the full Data Explorer panel.
+    explorer_mode: DataExplorerMode,
 }
 
 impl std::fmt::Debug for RDataExplorer {
@@ -200,7 +205,7 @@ impl RDataExplorer {
         title: String,
         data: RObject,
         binding: Option<DataObjectEnvInfo>,
-        inline_only: bool,
+        explorer_mode: DataExplorerMode,
     ) -> anyhow::Result<Self> {
         let table = Table::new(data);
         let shape = Self::get_shape(table.get().clone())?;
@@ -215,7 +220,7 @@ impl RDataExplorer {
             sort_keys: vec![],
             row_filters: vec![],
             col_filters: vec![],
-            inline_only,
+            explorer_mode,
         })
     }
 
@@ -456,7 +461,7 @@ impl RDataExplorer {
 
             DataExplorerBackendRequest::OpenDataExplorer => {
                 let explorer =
-                    RDataExplorer::new(self.title.clone(), self.table.get().clone(), None, false)?;
+                    RDataExplorer::new(self.title.clone(), self.table.get().clone(), None, DataExplorerMode::Full)?;
                 Console::get_mut()
                     .comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
                 Ok(DataExplorerBackendReply::OpenDataExplorerReply())
@@ -467,7 +472,8 @@ impl RDataExplorer {
 
 impl CommHandler for RDataExplorer {
     fn open_metadata(&self) -> serde_json::Value {
-        serde_json::json!({ "title": self.title, "inline_only": self.inline_only })
+        let inline_only = self.explorer_mode == DataExplorerMode::Inline;
+        serde_json::json!({ "title": self.title, "inline_only": inline_only })
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
@@ -1255,7 +1261,7 @@ pub unsafe extern "C-unwind" fn ps_view_data_frame(
         None
     };
 
-    let explorer = RDataExplorer::new(title, x, env_info, false)?;
+    let explorer = RDataExplorer::new(title, x, env_info, DataExplorerMode::Full)?;
     Console::get_mut().comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
 
     Ok(R_NilValue)

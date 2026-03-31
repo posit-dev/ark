@@ -9,6 +9,7 @@
 
 
 use super::*;
+use crate::data_explorer::r_data_explorer::DataExplorerMode;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerShape;
 use crate::data_explorer::r_data_explorer::RDataExplorer;
@@ -194,7 +195,7 @@ impl Console {
         // we always use `source` as the title.
         let title = source.clone();
 
-        let explorer = RDataExplorer::new(title.clone(), data, None, true)?;
+        let explorer = RDataExplorer::new(title.clone(), data, None, DataExplorerMode::Inline)?;
         let shape = &explorer.shape();
         let inline_data = InlineDataExplorerData {
             version: 1,
