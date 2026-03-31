@@ -1816,6 +1816,52 @@ impl DerefMut for DummyArkFrontendNotebook {
     }
 }
 
+/// Wrapper around `DummyArkFrontend` that uses `SessionMode::Notebook` and
+/// sets the `POSITRON` env var to simulate running inside Positron.
+pub struct DummyArkPositronNotebook {
+    inner: DummyArkFrontend,
+}
+
+impl DummyArkPositronNotebook {
+    /// Lock a Positron notebook frontend.
+    ///
+    /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
+    /// a given process.
+    pub fn lock() -> Self {
+        Self::init();
+
+        Self {
+            inner: DummyArkFrontend::lock(),
+        }
+    }
+
+    /// Initialize with Notebook session mode and `POSITRON=1`
+    fn init() {
+        unsafe { std::env::set_var("POSITRON", "1") };
+
+        let options = DummyArkFrontendOptions {
+            session_mode: SessionMode::Notebook,
+            ..Default::default()
+        };
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
+    }
+}
+
+// Allow method calls to be forwarded to inner type
+impl Deref for DummyArkPositronNotebook {
+    type Target = DummyArkFrontend;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for DummyArkPositronNotebook {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 impl DummyArkFrontendDefaultRepos {
     /// Lock a frontend with a default repos setting.
     ///

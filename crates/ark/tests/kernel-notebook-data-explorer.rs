@@ -6,12 +6,12 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
-use ark_test::DummyArkFrontendNotebook;
+use ark_test::DummyArkPositronNotebook;
 
 /// Drain the UI comm messages that arrive during execution (busy=true,
 /// busy=false, prompt_state). These are CommMsg messages on the UI comm's
 /// channel that interleave with the execute result on IOPub.
-fn drain_ui_comm_msgs(frontend: &DummyArkFrontendNotebook, ui_comm_id: &str) {
+fn drain_ui_comm_msgs(frontend: &DummyArkPositronNotebook, ui_comm_id: &str) {
     // busy=true
     let msg = frontend.recv_iopub_comm_msg();
     assert_eq!(msg.comm_id, ui_comm_id);
@@ -25,7 +25,7 @@ fn drain_ui_comm_msgs(frontend: &DummyArkFrontendNotebook, ui_comm_id: &str) {
     assert_eq!(msg.data["params"]["busy"], false);
 }
 
-fn drain_ui_comm_prompt_state(frontend: &DummyArkFrontendNotebook, ui_comm_id: &str) {
+fn drain_ui_comm_prompt_state(frontend: &DummyArkPositronNotebook, ui_comm_id: &str) {
     let msg = frontend.recv_iopub_comm_msg();
     assert_eq!(msg.comm_id, ui_comm_id);
     assert_eq!(msg.data["method"], "prompt_state");
@@ -33,8 +33,7 @@ fn drain_ui_comm_prompt_state(frontend: &DummyArkFrontendNotebook, ui_comm_id: &
 
 #[test]
 fn test_notebook_inline_data_explorer() {
-    unsafe { std::env::set_var("POSITRON", "1") };
-    let frontend = DummyArkFrontendNotebook::lock();
+    let frontend = DummyArkPositronNotebook::lock();
     let ui_comm_id = frontend.open_ui_comm();
 
     frontend.send_execute_request(
@@ -79,7 +78,7 @@ fn test_notebook_inline_data_explorer() {
 
 #[test]
 fn test_notebook_no_inline_data_explorer_for_non_data_frame() {
-    let frontend = DummyArkFrontendNotebook::lock();
+    let frontend = DummyArkPositronNotebook::lock();
     let ui_comm_id = frontend.open_ui_comm();
 
     frontend.send_execute_request("1:10", ExecuteRequestOptions::default());
