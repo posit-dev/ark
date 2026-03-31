@@ -132,7 +132,8 @@ fn open_data_explorer_from_expression(expr: &str, bind: Option<&str>) -> anyhow:
             name: name.to_string(),
             env: RObject::view(R_ENVS.global),
         });
-        let handler = RDataExplorer::new(String::from("obj"), object, binding, DataExplorerMode::Full)?;
+        let handler =
+            RDataExplorer::new(String::from("obj"), object, binding, DataExplorerMode::Full)?;
         Ok(TestInner(handler, ctx))
     })?;
 

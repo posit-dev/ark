@@ -7,7 +7,6 @@
 
 //! Help, LSP, UI comm, and frontend method integration for the R console.
 
-
 use super::*;
 use crate::data_explorer::r_data_explorer::DataExplorerMode;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
