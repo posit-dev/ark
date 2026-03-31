@@ -8,15 +8,6 @@
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::DummyArkFrontendNotebook;
 
-/// Open the UI comm if it hasn't been opened yet. Since tests in this file
-/// share a single kernel process and run serially (via `lock()`), the UI comm
-/// only needs to be opened once. Returns the UI comm ID.
-fn ensure_ui_comm(frontend: &DummyArkFrontendNotebook) -> String {
-    use std::sync::OnceLock;
-    static UI_COMM_ID: OnceLock<String> = OnceLock::new();
-    UI_COMM_ID.get_or_init(|| frontend.open_ui_comm()).clone()
-}
-
 /// Drain the UI comm messages that arrive during execution (busy=true,
 /// busy=false, prompt_state). These are CommMsg messages on the UI comm's
 /// channel that interleave with the execute result on IOPub.
@@ -44,7 +35,7 @@ fn drain_ui_comm_prompt_state(frontend: &DummyArkFrontendNotebook, ui_comm_id: &
 fn test_notebook_inline_data_explorer() {
     unsafe { std::env::set_var("POSITRON", "1") };
     let frontend = DummyArkFrontendNotebook::lock();
-    let ui_comm_id = ensure_ui_comm(&frontend);
+    let ui_comm_id = frontend.open_ui_comm();
 
     frontend.send_execute_request(
         "data.frame(x = 1:3, y = 4:6)",
@@ -89,7 +80,7 @@ fn test_notebook_inline_data_explorer() {
 #[test]
 fn test_notebook_no_inline_data_explorer_for_non_data_frame() {
     let frontend = DummyArkFrontendNotebook::lock();
-    let ui_comm_id = ensure_ui_comm(&frontend);
+    let ui_comm_id = frontend.open_ui_comm();
 
     frontend.send_execute_request("1:10", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
