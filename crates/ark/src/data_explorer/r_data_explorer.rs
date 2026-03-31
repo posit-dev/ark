@@ -459,9 +459,14 @@ impl RDataExplorer {
                 Err(anyhow!("Data Explorer: Not yet supported"))
             },
 
+            // Promotes an inline data explorer to a full data explorer.
             DataExplorerBackendRequest::OpenDataExplorer => {
-                let explorer =
-                    RDataExplorer::new(self.title.clone(), self.table.get().clone(), None, DataExplorerMode::Full)?;
+                let explorer = RDataExplorer::new(
+                    self.title.clone(),
+                    self.table.get().clone(),
+                    None,
+                    DataExplorerMode::Full,
+                )?;
                 Console::get_mut()
                     .comm_open_backend(DATA_EXPLORER_COMM_NAME, Box::new(explorer))?;
                 Ok(DataExplorerBackendReply::OpenDataExplorerReply())
