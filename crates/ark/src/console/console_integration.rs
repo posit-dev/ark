@@ -179,7 +179,7 @@ impl Console {
     ) -> anyhow::Result<serde_json::Value> {
         let data = RObject::new(value);
 
-        // `source` is the R class family (e.g. "tibble", "data.table",
+        // `source` is the R class family (e.g. "tbl_df", "data.table",
         // "data.frame"), following the Python kernel convention where `source`
         // is the library name ("pandas", "polars").
         let source = data
