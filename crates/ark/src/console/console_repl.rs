@@ -1144,7 +1144,15 @@ impl Console {
         let Ok(value) = harp::environment::last_value() else {
             return data;
         };
-        if !data.is_empty() && r_is_data_frame(value.sexp) {
+
+        // If there is no data, return early
+        if data.is_empty() {
+            return data;
+        }
+
+        // If this is a data frame, add HTML representation and open inline explorer
+        // (only in Positron notebook mode)
+        if r_is_data_frame(value.sexp) {
             let value = value.sexp;
             match to_html(value) {
                 Ok(html) => {
