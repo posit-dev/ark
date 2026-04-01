@@ -70,26 +70,9 @@ if (exists("x")) {
 }
 
 #[test]
-fn test_missing_user_profile() {
-    std::env::set_var("R_PROFILE_USER", "~/does/not/exist");
-
-    let frontend = DummyArkFrontendRprofile::lock();
-
-    frontend.send_execute_request("1", ExecuteRequestOptions::default());
-    frontend.recv_iopub_busy();
-
-    let input = frontend.recv_iopub_execute_input();
-    assert_eq!(input.code, "1");
-    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 1");
-
-    frontend.recv_iopub_idle();
-
-    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
-}
-
-#[test]
-fn test_missing_site_profile() {
+fn test_missing_profiles() {
     std::env::set_var("R_PROFILE", "~/does/not/exist");
+    std::env::set_var("R_PROFILE_USER", "~/does/not/exist");
 
     let frontend = DummyArkFrontendRprofile::lock();
 
