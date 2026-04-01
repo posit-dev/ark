@@ -37,24 +37,27 @@ use crate::plots::graphics_device::GraphicsDeviceNotification;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
 
+/// Data sent by the frontend in the `comm_open` message for the UI comm.
+#[derive(Debug, serde::Deserialize)]
+struct UiCommOpenData {
+    #[serde(default)]
+    console_width: Option<i32>,
+}
+
 /// Comm handler for the Positron UI comm.
 #[derive(Debug)]
 pub struct UiComm {
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     working_directory: PathBuf,
-    comm_open_data: Value,
+    comm_open_data: UiCommOpenData,
 }
 
 impl CommHandler for UiComm {
     fn handle_open(&mut self, ctx: &CommHandlerContext) {
         // Set initial console width from the comm_open data, if provided.
-        if let Some(width) = self
-            .comm_open_data
-            .get("console_width")
-            .and_then(|v| v.as_i64())
-        {
+        if let Some(width) = self.comm_open_data.console_width {
             if let Err(err) = RFunction::from(".ps.rpc.setConsoleWidth")
-                .param("width", RObject::from(width as i32))
+                .param("width", RObject::from(width))
                 .call()
             {
                 log::warn!("Failed to set initial console width: {err:?}");
@@ -92,6 +95,14 @@ impl UiComm {
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
         comm_open_data: Value,
     ) -> Self {
+        let comm_open_data: UiCommOpenData =
+            serde_json::from_value(comm_open_data).unwrap_or_else(|err| {
+                log::warn!("Failed to deserialize UI comm_open data: {err:?}");
+                UiCommOpenData {
+                    console_width: None,
+                }
+            });
+
         Self {
             graphics_device_tx,
             working_directory: PathBuf::new(),
