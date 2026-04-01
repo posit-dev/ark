@@ -496,7 +496,12 @@ impl Shell {
         };
 
         // Try to dispatch the message to the new handler API
-        match shell_handler.handle_comm_msg(&msg.comm_id, &comm.comm_name, comm_msg.clone(), originator)? {
+        match shell_handler.handle_comm_msg(
+            &msg.comm_id,
+            &comm.comm_name,
+            comm_msg.clone(),
+            originator,
+        )? {
             CommHandled::Handled => Ok(()),
             CommHandled::NotHandled => {
                 // Fall back to old approach for compatibility while we migrate comms

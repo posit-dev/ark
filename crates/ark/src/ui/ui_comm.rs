@@ -164,10 +164,7 @@ impl UiComm {
         Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
     }
 
-    fn handle_frontend_ready(
-        &self,
-        params: FrontendReadyParams,
-    ) -> anyhow::Result<UiBackendReply> {
+    fn handle_frontend_ready(&self, params: FrontendReadyParams) -> anyhow::Result<UiBackendReply> {
         log::info!("Frontend ready (start_type = {})", params.start_type);
 
         if params.start_type == "reconnect" {
