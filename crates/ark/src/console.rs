@@ -206,6 +206,11 @@ pub(crate) struct Console {
     /// the reply should be send to once computation has finished.
     active_request: Option<ActiveReadConsoleRequest>,
 
+    /// Originator from the current `comm_msg` being handled, if any.
+    /// This is temporarily set during `comm_handle_msg` so that comm
+    /// handlers (e.g. `frontend_ready`) can make RPCs back to the frontend.
+    comm_msg_originator: Option<Originator>,
+
     /// Execution request counter used to populate `In[n]` and `Out[n]` prompts
     execution_count: u32,
 

@@ -160,6 +160,43 @@ check_version <- function(pkg) {
     )
 }
 
+.ps.run_session_init_hooks <- function(start_type = c("new", "restart")) {
+    start_type <- match.arg(start_type)
+    hooks <- getHook("positron.session_init")
+
+    for (hook_fn in hooks) {
+        tryCatch(
+            hook_fn(start_type),
+            error = function(err) {
+                log_warning(sprintf(
+                    "Error in positron.session_init hook: %s",
+                    conditionMessage(err)
+                ))
+            }
+        )
+    }
+
+    invisible(NULL)
+}
+
+.ps.run_session_reconnect_hooks <- function() {
+    hooks <- getHook("positron.session_reconnect")
+
+    for (hook_fn in hooks) {
+        tryCatch(
+            hook_fn(),
+            error = function(err) {
+                log_warning(sprintf(
+                    "Error in positron.session_reconnect hook: %s",
+                    conditionMessage(err)
+                ))
+            }
+        )
+    }
+
+    invisible(NULL)
+}
+
 # We don't support `utils::recover()` in Ark, but the same functionality is
 # provided via the call stack pane of IDEs. So replace it by `browser()` so that
 # people can enter the debugger on error using the familiar `options(error =

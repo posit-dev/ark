@@ -69,6 +69,7 @@ pub enum KernelRequest {
     CommMsg {
         comm_id: String,
         msg: CommMsg,
+        originator: Box<Originator>,
         done_tx: Sender<()>,
     },
 

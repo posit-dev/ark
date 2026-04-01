@@ -37,7 +37,6 @@ use crate::wire::comm_info_request::CommInfoRequest;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
 use crate::wire::exception::Exception;
-use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -288,9 +287,9 @@ impl Shell {
             },
             Message::CommMsg(req) => {
                 let open_comms = &self.open_comms;
-                let header = req.header.clone();
+                let originator = Originator::from(&req);
                 Self::handle_notification(iopub_tx, req, |msg| {
-                    Self::handle_comm_msg(shell_handler, open_comms, header, msg)
+                    Self::handle_comm_msg(shell_handler, open_comms, originator, msg)
                 })
             },
             Message::CommClose(req) => {
@@ -467,7 +466,7 @@ impl Shell {
     fn handle_comm_msg(
         shell_handler: &mut Box<dyn ShellHandler>,
         open_comms: &[CommSocket],
-        header: JupyterHeader,
+        originator: Originator,
         msg: &CommWireMsg,
     ) -> crate::Result<()> {
         // The presence of an `id` field means this is a request, not a notification
@@ -475,13 +474,13 @@ impl Shell {
         let comm_msg = if msg.data.get("id").is_some() {
             // Note that the JSON-RPC `id` field must exactly match the one in
             // the Jupyter header
-            let request_id = header.msg_id.clone();
+            let request_id = originator.header.msg_id.clone();
 
             // Include the header so it can be echoed back in the reply for
             // proper message parenting
             CommMsg::Rpc {
                 id: request_id,
-                parent_header: header,
+                parent_header: originator.header.clone(),
                 data: msg.data.clone(),
             }
         } else {
@@ -497,7 +496,12 @@ impl Shell {
         };
 
         // Try to dispatch the message to the new handler API
-        match shell_handler.handle_comm_msg(&msg.comm_id, &comm.comm_name, comm_msg.clone())? {
+        match shell_handler.handle_comm_msg(
+            &msg.comm_id,
+            &comm.comm_name,
+            comm_msg.clone(),
+            originator,
+        )? {
             CommHandled::Handled => Ok(()),
             CommHandled::NotHandled => {
                 // Fall back to old approach for compatibility while we migrate comms
@@ -595,14 +599,22 @@ impl Shell {
                     true
                 } else {
                     // No server handler found, pass through to shell handler
-                    block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
+                    block_on(shell_handler.handle_comm_open(
+                        comm,
+                        comm_socket.clone(),
+                        msg.data.clone(),
+                    ))?
                 }
             },
 
             // All comms tied to known Positron clients are passed through to the shell handler
             _ => {
                 // Call the shell handler to open the comm
-                block_on(shell_handler.handle_comm_open(comm, comm_socket.clone()))?
+                block_on(shell_handler.handle_comm_open(
+                    comm,
+                    comm_socket.clone(),
+                    msg.data.clone(),
+                ))?
             },
         };
 

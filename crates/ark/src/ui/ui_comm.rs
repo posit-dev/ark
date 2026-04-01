@@ -12,6 +12,7 @@ use amalthea::comm::ui_comm::CallMethodParams;
 use amalthea::comm::ui_comm::DidChangePlotsRenderSettingsParams;
 use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
+use amalthea::comm::ui_comm::FrontendReadyParams;
 use amalthea::comm::ui_comm::PromptStateParams;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
@@ -31,19 +32,38 @@ use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
+use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
+
+/// Data sent by the frontend in the `comm_open` message for the UI comm.
+#[derive(Debug, serde::Deserialize)]
+struct UiCommOpenData {
+    #[serde(default)]
+    console_width: Option<i32>,
+}
 
 /// Comm handler for the Positron UI comm.
 #[derive(Debug)]
 pub struct UiComm {
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
     working_directory: PathBuf,
+    comm_open_data: UiCommOpenData,
 }
 
 impl CommHandler for UiComm {
     fn handle_open(&mut self, ctx: &CommHandlerContext) {
+        // Set initial console width from the comm_open data, if provided.
+        if let Some(width) = self.comm_open_data.console_width {
+            if let Err(err) = RFunction::from(".ps.rpc.setConsoleWidth")
+                .param("width", RObject::from(width))
+                .call()
+            {
+                log::warn!("Failed to set initial console width: {err:?}");
+            }
+        }
+
         // At open time there's no EnvironmentChanged event carrying prompts,
         // so read the R options directly. This is fine for the initial state —
         // browser/debug prompts will arrive via `handle_environment()` later.
@@ -73,10 +93,20 @@ impl CommHandler for UiComm {
 impl UiComm {
     pub(crate) fn new(
         graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+        comm_open_data: Value,
     ) -> Self {
+        let comm_open_data: UiCommOpenData =
+            serde_json::from_value(comm_open_data).unwrap_or_else(|err| {
+                log::warn!("Failed to deserialize UI comm_open data: {err:?}");
+                UiCommOpenData {
+                    console_width: None,
+                }
+            });
+
         Self {
             graphics_device_tx,
             working_directory: PathBuf::new(),
+            comm_open_data,
         }
     }
 
@@ -86,6 +116,7 @@ impl UiComm {
             UiBackendRequest::DidChangePlotsRenderSettings(params) => {
                 self.handle_did_change_plot_render_settings(params)
             },
+            UiBackendRequest::FrontendReady(params) => self.handle_frontend_ready(params),
             UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
         }
     }
@@ -143,6 +174,23 @@ impl UiComm {
             .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
 
         Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
+    }
+
+    fn handle_frontend_ready(&self, params: FrontendReadyParams) -> anyhow::Result<UiBackendReply> {
+        log::info!("Frontend ready (start_type = {})", params.start_type);
+
+        if params.start_type == "reconnect" {
+            RFunction::from(".ps.run_session_reconnect_hooks")
+                .call_in(ARK_ENVS.positron_ns)
+                .warn_on_err();
+        } else {
+            RFunction::from(".ps.run_session_init_hooks")
+                .param("start_type", RObject::from(params.start_type.as_str()))
+                .call_in(ARK_ENVS.positron_ns)
+                .warn_on_err();
+        }
+
+        Ok(UiBackendReply::FrontendReadyReply())
     }
 
     fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {
@@ -244,7 +292,7 @@ mod tests {
         let ctx = CommHandlerContext::new(outgoing_tx, comm_event_tx);
 
         let (graphics_device_tx, _) = tokio::sync::mpsc::unbounded_channel();
-        let handler = UiComm::new(graphics_device_tx);
+        let handler = UiComm::new(graphics_device_tx, serde_json::Value::Null);
 
         (handler, ctx)
     }

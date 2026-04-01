@@ -88,7 +88,13 @@ pub trait ShellHandler: Send {
     ///
     /// * `target` - The target name of the comm, such as `positron.variables`
     /// * `comm` - The comm channel to use to communicate with the frontend
-    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> crate::Result<bool>;
+    /// * `data` - The `data` payload from the `comm_open` message
+    async fn handle_comm_open(
+        &self,
+        target: Comm,
+        comm: CommSocket,
+        data: serde_json::Value,
+    ) -> crate::Result<bool>;
 
     /// Handle an incoming comm message (RPC or data). Return
     /// `CommHandled::Handled` if the message was processed, or
@@ -98,11 +104,14 @@ pub trait ShellHandler: Send {
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name (e.g. `"positron.dataExplorer"`)
     /// * `msg` - The parsed `CommMsg`
+    /// * `originator` - The originator of the Jupyter message, threaded through
+    ///   so that comm handlers can make RPCs back to the frontend
     fn handle_comm_msg(
         &mut self,
         _comm_id: &str,
         _comm_name: &str,
         _msg: CommMsg,
+        _originator: Originator,
     ) -> crate::Result<CommHandled> {
         Ok(CommHandled::NotHandled)
     }

@@ -236,13 +236,19 @@ impl ShellHandler for Shell {
     ///
     /// Note that there might be multiple requests during a single session if
     /// the UI has been disconnected and reconnected.
-    async fn handle_comm_open(&self, target: Comm, comm: CommSocket) -> amalthea::Result<bool> {
+    async fn handle_comm_open(
+        &self,
+        target: Comm,
+        comm: CommSocket,
+        data: serde_json::Value,
+    ) -> amalthea::Result<bool> {
         match target {
             Comm::Variables => handle_comm_open_variables(comm),
             Comm::Ui => handle_comm_open_ui(
                 comm,
                 self.kernel_request_tx.clone(),
                 self.graphics_device_tx.clone(),
+                data,
             ),
             Comm::Help => handle_comm_open_help(comm),
             Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
@@ -255,12 +261,14 @@ impl ShellHandler for Shell {
         comm_id: &str,
         comm_name: &str,
         msg: CommMsg,
+        originator: Originator,
     ) -> amalthea::Result<CommHandled> {
         match comm_name {
             DATA_EXPLORER_COMM_NAME | UI_COMM_NAME => {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
+                    originator: Box::new(originator),
                     done_tx,
                 })?;
                 Ok(CommHandled::Handled)
@@ -316,8 +324,9 @@ fn handle_comm_open_ui(
     comm: CommSocket,
     kernel_request_tx: Sender<KernelRequest>,
     graphics_device_tx: AsyncUnboundedSender<GraphicsDeviceNotification>,
+    data: serde_json::Value,
 ) -> amalthea::Result<bool> {
-    let handler = UiComm::new(graphics_device_tx);
+    let handler = UiComm::new(graphics_device_tx, data);
 
     let (done_tx, done_rx) = bounded(0);
     kernel_request_tx

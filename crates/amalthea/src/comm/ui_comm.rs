@@ -166,6 +166,14 @@ pub struct DidChangePlotsRenderSettingsParams {
 	pub settings: PlotRenderSettings,
 }
 
+/// Parameters for the FrontendReady method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct FrontendReadyParams {
+	/// The type of session start: 'new' for new sessions, 'restart' for
+	/// restarted sessions, 'reconnect' for reconnected sessions
+	pub start_type: String,
+}
+
 /// Parameters for the CallMethod method.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CallMethodParams {
@@ -412,6 +420,15 @@ pub enum UiBackendRequest {
 	#[serde(rename = "did_change_plots_render_settings")]
 	DidChangePlotsRenderSettings(DidChangePlotsRenderSettingsParams),
 
+	/// Notification that the frontend is ready
+	///
+	/// This notification is sent by the frontend after the UI comm has been
+	/// established. The backend uses this signal to run session
+	/// initialization hooks that may need to communicate with the frontend
+	/// via RPCs (e.g. rstudioapi calls).
+	#[serde(rename = "frontend_ready")]
+	FrontendReady(FrontendReadyParams),
+
 	/// Run a method in the interpreter and return the result to the frontend
 	///
 	/// Unlike other RPC methods, `call_method` calls into methods implemented
@@ -436,6 +453,9 @@ pub enum UiBackendRequest {
 pub enum UiBackendReply {
 	/// Unused response to notification
 	DidChangePlotsRenderSettingsReply(),
+
+	/// Unused response to notification
+	FrontendReadyReply(),
 
 	/// The method result
 	CallMethodReply(CallMethodResult),
