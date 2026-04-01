@@ -154,3 +154,40 @@ fn test_stdin_from_menu() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+#[test]
+fn test_stdin_readline_during_autoprint() {
+    let frontend = DummyArkFrontend::lock();
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+
+    // The print method writes output with `cat()` then calls `readline()`.
+    // Since the object is the last expression, R auto-prints it via an
+    // inlined `print()` call. `is_auto_printing()` returns true so `cat()`
+    // output gets buffered in `autoprint_output`. That buffer must be
+    // flushed as stream stdout before the input request is sent to the
+    // frontend, otherwise the user sees only the bare prompt without the
+    // preceding question text (https://github.com/posit-dev/positron/issues/12688).
+    let code =
+        "print.test_input <- function(x, ...) { cat('question?\\n'); readline('prompt>') }\nstructure(1, class = 'test_input')";
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    // The `cat()` output from the print method must appear as stream stdout
+    frontend.assert_stream_stdout_contains("question?");
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, String::from("prompt>"));
+
+    frontend.send_stdin_input_reply(String::from("hi"));
+
+    frontend.recv_iopub_idle();
+
+    assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
+}

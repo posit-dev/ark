@@ -1419,18 +1419,31 @@ impl Console {
         buf: *mut c_uchar,
         buflen: c_int,
     ) -> ConsoleResult {
-        if let Some(req) = &self.active_request {
-            // Send request to frontend. We'll wait for an `input_reply`
-            // from the frontend in the event loop in `read_console()`.
-            // The active request remains active.
-            self.request_input(req.originator.clone(), String::from(&info.input_prompt));
-
-            // Run the event loop, waiting for stdin replies but not execute requests
-            self.run_event_loop(info, buf, buflen, WaitFor::InputReply)
-        } else {
+        let Some(originator) = self
+            .active_request
+            .as_ref()
+            .map(|req| req.originator.clone())
+        else {
             // Invalid input request, propagate error to R
-            self.handle_invalid_input_request(buf, buflen)
+            return self.handle_invalid_input_request(buf, buflen);
+        };
+
+        // Flush any buffered autoprint output as stream stdout so it
+        // appears in the console before the input prompt. This happens
+        // when `readline()` or `menu()` is called during auto-print of
+        // an object (e.g. a print method that asks a question).
+        let autoprint = std::mem::take(&mut self.autoprint_output);
+        if !autoprint.is_empty() {
+            self.emit_stdout(autoprint);
         }
+
+        // Send request to frontend. We'll wait for an `input_reply`
+        // from the frontend in the event loop in `read_console()`.
+        // The active request remains active.
+        self.request_input(originator, String::from(&info.input_prompt));
+
+        // Run the event loop, waiting for stdin replies but not execute requests
+        self.run_event_loop(info, buf, buflen, WaitFor::InputReply)
     }
 
     fn handle_pending_input(
