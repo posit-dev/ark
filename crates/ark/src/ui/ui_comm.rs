@@ -32,6 +32,7 @@ use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::console::ConsoleOutputCapture;
+use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device::GraphicsDeviceNotification;
 
 pub const UI_COMM_NAME: &str = "positron.ui";
@@ -168,16 +169,14 @@ impl UiComm {
         log::info!("Frontend ready (start_type = {})", params.start_type);
 
         if params.start_type == "reconnect" {
-            if let Err(err) = RFunction::from(".ps.run_session_reconnect_hooks").call() {
-                log::warn!("Failed to execute session reconnect hooks: {err:?}");
-            }
+            RFunction::from(".ps.run_session_reconnect_hooks")
+                .call_in(ARK_ENVS.positron_ns)
+                .warn_on_err();
         } else {
-            if let Err(err) = RFunction::from(".ps.run_session_init_hooks")
+            RFunction::from(".ps.run_session_init_hooks")
                 .param("start_type", RObject::from(params.start_type.as_str()))
-                .call()
-            {
-                log::warn!("Failed to execute session init hooks: {err:?}");
-            }
+                .call_in(ARK_ENVS.positron_ns)
+                .warn_on_err();
         }
 
         Ok(UiBackendReply::FrontendReadyReply())

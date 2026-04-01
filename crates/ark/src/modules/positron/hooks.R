@@ -160,7 +160,6 @@ check_version <- function(pkg) {
     )
 }
 
-#' @export
 .ps.run_session_init_hooks <- function(start_type = c("new", "restart")) {
     start_type <- match.arg(start_type)
     hooks <- getHook("positron.session_init")
@@ -180,7 +179,6 @@ check_version <- function(pkg) {
     invisible(NULL)
 }
 
-#' @export
 .ps.run_session_reconnect_hooks <- function() {
     hooks <- getHook("positron.session_reconnect")
 
