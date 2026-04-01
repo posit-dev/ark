@@ -268,7 +268,7 @@ impl ShellHandler for Shell {
                 self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
-                    originator,
+                    originator: Box::new(originator),
                     done_tx,
                 })?;
                 Ok(CommHandled::Handled)

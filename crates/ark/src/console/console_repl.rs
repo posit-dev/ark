@@ -1903,7 +1903,7 @@ impl Console {
                 originator,
                 done_tx,
             } => {
-                self.comm_msg_originator = Some(originator);
+                self.comm_msg_originator = Some(*originator);
                 self.comm_handle_msg(&comm_id, msg);
                 self.comm_msg_originator = None;
                 done_tx.send(()).log_err();
