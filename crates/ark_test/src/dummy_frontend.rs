@@ -1117,6 +1117,36 @@ impl DummyArkFrontend {
         comm_id
     }
 
+    /// Receive a UI comm event from IOPub and assert it is a `busy` event
+    /// with the expected value.
+    #[track_caller]
+    pub fn recv_ui_busy(&self, comm_id: &str, expected: bool) {
+        let msg = self.recv_iopub_comm_msg();
+        assert_eq!(msg.comm_id, comm_id);
+        assert_eq!(
+            msg.data.get("method").and_then(|v| v.as_str()),
+            Some("busy")
+        );
+        assert_eq!(msg.data["params"]["busy"], expected);
+    }
+
+    /// Receive a UI comm event from IOPub and assert it is a `prompt_state`
+    /// event. Returns the parsed parameters for further assertions.
+    #[track_caller]
+    pub fn recv_ui_prompt_state(
+        &self,
+        comm_id: &str,
+    ) -> amalthea::comm::ui_comm::PromptStateParams {
+        let msg = self.recv_iopub_comm_msg();
+        assert_eq!(msg.comm_id, comm_id);
+        assert_eq!(
+            msg.data.get("method").and_then(|v| v.as_str()),
+            Some("prompt_state")
+        );
+        serde_json::from_value(msg.data["params"].clone())
+            .expect("Failed to parse PromptStateParams")
+    }
+
     /// Source a file that was created with `SourceFile::new()`.
     #[track_caller]
     pub fn source_file(&self, file: &SourceFile) {
