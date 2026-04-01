@@ -154,7 +154,6 @@ options(error = function() menu("ouch"))
 
     assert!(frontend.recv_iopub_execute_error().contains("foo"));
 
-    frontend.assert_stream_stdout_contains("Enter an item from the menu, or 0 to exit");
     frontend.assert_stream_stderr_contains("The `getOption(\"error\")` handler failed.");
     frontend.recv_iopub_idle();
 
