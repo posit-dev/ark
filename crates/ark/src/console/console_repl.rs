@@ -585,11 +585,8 @@ impl Console {
             continuation_prompt: Some(continuation_prompt),
         };
 
-        // Mark R as initialized before broadcasting kernel info. The broadcast
-        // unblocks the LSP, which may immediately call `r_task()`. If `R_INIT`
-        // isn't set yet, `r_task()` takes the unit-test escape hatch and calls
-        // `r_test_init()`, which overwrites `CONSOLE_THREAD_ID` from the wrong
-        // thread — corrupting the R-thread identity for the rest of the session.
+// Set `R_INIT` before broadcasting so that threads unblocked by the
+// broadcast (the LSP in particular) see R as initialized.
         R_INIT.set(()).expect("`R_INIT` can only be set once");
 
         log::info!("Sending kernel info: {version}");
