@@ -585,11 +585,12 @@ impl Console {
             continuation_prompt: Some(continuation_prompt),
         };
 
+        // Set `R_INIT` before broadcasting so that threads unblocked by the
+        // broadcast (the LSP in particular) see R as initialized.
+        R_INIT.set(()).expect("`R_INIT` can only be set once");
+
         log::info!("Sending kernel info: {version}");
         kernel_init_tx.broadcast(kernel_info);
-
-        // Thread-safe initialisation flag for R
-        R_INIT.set(()).expect("`R_INIT` can only be set once");
     }
 
     fn new(
