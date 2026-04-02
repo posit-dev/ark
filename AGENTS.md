@@ -63,6 +63,14 @@ just test -p ark
 just clippy
 ```
 
+### Formatting
+
+```sh
+cargo +nightly fmt --all
+```
+
+This requires the nightly toolchain because `.rustfmt.toml` uses nightly-only options.
+
 ### Kernel and DAP Test Infrastructure
 
 Integration tests for the kernel and DAP server live in `crates/ark/tests/` and use the test utilities from `crates/ark_test/`.
