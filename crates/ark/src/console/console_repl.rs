@@ -585,8 +585,8 @@ impl Console {
             continuation_prompt: Some(continuation_prompt),
         };
 
-// Set `R_INIT` before broadcasting so that threads unblocked by the
-// broadcast (the LSP in particular) see R as initialized.
+        // Set `R_INIT` before broadcasting so that threads unblocked by the
+        // broadcast (the LSP in particular) see R as initialized.
         R_INIT.set(()).expect("`R_INIT` can only be set once");
 
         log::info!("Sending kernel info: {version}");
