@@ -50,6 +50,7 @@ fn test_notebook_inline_data_explorer() {
 
     // Should have text/plain (autoprint output)
     assert!(result_data.contains_key("text/plain"));
+    assert!(!result_data.contains_key("text/html"));
 
     // Should have the inline data explorer MIME type
     let mime_key = "application/vnd.positron.dataExplorer+json";

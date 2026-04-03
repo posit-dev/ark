@@ -162,6 +162,31 @@ fn test_notebook_stdin_followed_by_an_expression_on_the_same_line() {
 }
 
 #[test]
+fn test_notebook_execute_request_data_frame() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_execute_request(
+        "data.frame(x = 1:3, y = 4:6)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let result_data = frontend.recv_iopub_execute_result_data();
+
+    let plain = result_data["text/plain"].as_str().unwrap();
+    assert_eq!(plain, "  x y\n1 1 4\n2 2 5\n3 3 6");
+
+    assert!(!result_data.contains_key("text/html"));
+
+    // Vanilla notebook mode: no inline data explorer MIME
+    assert!(!result_data.contains_key("application/vnd.positron.dataExplorer+json"));
+
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
 fn test_notebook_stdin_followed_by_an_expression_on_the_next_line() {
     let frontend = DummyArkFrontendNotebook::lock();
 
