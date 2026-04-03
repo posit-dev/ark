@@ -518,6 +518,12 @@ impl Console {
             startup::source_user_r_profile();
         }
 
+        // Apply Positron's default options after profiles so that user-defined
+        // options take precedence over our defaults
+        if let Some(ref ns) = console.positron_ns {
+            modules::initialize_options(ns.sexp).log_err();
+        }
+
         // Start the REPL. Does not return!
         crate::sys::console::run_r();
     }
