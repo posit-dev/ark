@@ -80,7 +80,7 @@ winsafe.workspace = true
 yaml-rust2.workspace = true
 
 [dev-dependencies]
-ark = { path = ".", features = ["testing"] }
+ark = { workspace = true, features = ["testing"] }
 ark_test.workspace = true
 assert_matches.workspace = true
 insta.workspace = true
