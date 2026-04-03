@@ -8,11 +8,12 @@
 # Called from Rust after sourcing the user's Rprofile so that user-defined
 # options take precedence over our defaults.
 initialize_options <- function() {
-    # Core Positron integration, always set unless the user has protected
-    # the option with `I()` in their Rprofile
+    # These options have non-NULL defaults in R, so we can't detect user
+    # overrides by checking for NULL. They are always set unless the user
+    # has listed the option name in `positron.protected_options`.
 
     # Use Positron editor
-    set_unless_asis(
+    set_unless_protected(
         "editor",
         function(file, title, ..., name = NULL) {
             handler_editor(file = file, title = title, ..., name = name)
@@ -20,7 +21,7 @@ initialize_options <- function() {
     )
 
     # Use Positron viewer to browse URLs
-    set_unless_asis(
+    set_unless_protected(
         "browser",
         function(url) {
             .ps.Call("ps_browse_url", as.character(url))
@@ -29,24 +30,27 @@ initialize_options <- function() {
 
     # Register our password handler as the generic `askpass` option.
     # Same as RStudio, see `?rstudioapi::askForPassword` for rationale.
-    set_unless_asis(
+    set_unless_protected(
         "askpass",
         function(prompt) {
             .ps.ui.askForPassword(prompt)
         }
     )
 
-    set_unless_asis("connectionObserver", .ps.connection_observer())
+    set_unless_protected("connectionObserver", .ps.connection_observer())
 
     # Declare the function name that `dev.new()` and `GECurrentDevice()`
     # go looking for to create a new graphics device when the current one
     # is `"null device"` and a new plot is requested
-    set_unless_asis("device", ARK_GRAPHICS_DEVICE_NAME)
+    set_unless_protected("device", ARK_GRAPHICS_DEVICE_NAME)
 
     # Avoid overwhelming the console
-    set_unless_asis("max.print", 1000)
+    set_unless_protected("max.print", 1000)
 
-    # Only override the following options if they are set to NULL
+    # These options default to NULL in R, so a non-NULL value means the
+    # user has set them. They are only set when the current value is NULL,
+    # unless the user has also listed them in `positron.protected_options`,
+    # which allows the user to preserve the default `NULL` value.
 
     # Enable HTML help
     set_when_null("help_type", "html")
@@ -86,19 +90,24 @@ initialize_options <- function() {
     )
 }
 
-# Set an option unless the user has protected it with `I()` in their Rprofile
-set_unless_asis <- function(name, value) {
-    current <- getOption(name)
-    if (inherits(current, "AsIs")) {
-        # Strip the `AsIs` class so it doesn't interfere with normal usage
-        do.call(options, set_names(list(unclass(current)), name))
+is_protected <- function(name) {
+    name %in% getOption("positron.protected_options", default = character())
+}
+
+# Always set unless the user listed this option in `positron.protected_options`
+set_unless_protected <- function(name, value) {
+    if (is_protected(name)) {
         return(invisible())
     }
     do.call(options, set_names(list(value), name))
 }
 
-# Set an option only when it is currently NULL (i.e. the user hasn't set it)
+# Set an option only when it is currently NULL (i.e. the user hasn't set it),
+# also respects `positron.protected_options`
 set_when_null <- function(name, value) {
+    if (is_protected(name)) {
+        return(invisible())
+    }
     if (!is.null(getOption(name))) {
         return(invisible())
     }
