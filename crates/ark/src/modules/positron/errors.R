@@ -44,7 +44,7 @@
         return(handle_error_base(cnd))
     }
 
-    if (!inherits(cnd, "rlang_error") && !positron_option_error_entrace()) {
+    if (!inherits(cnd, "rlang_error") && !option_ark_error_entrace()) {
         # We have a non-rlang error, but the user requested we dont entrace it
         return(handle_error_base(cnd))
     }
@@ -192,9 +192,9 @@ handle_error_rlang <- function(cnd) {
     .ps.Call("ps_record_error", evalue, traceback)
 }
 
-positron_option_error_entrace <- function() {
-    # TODO: Wire this up to a Positron option for easy toggling?
-    isTRUE(getOption("positron.error_entrace", default = TRUE))
+option_ark_error_entrace <- function() {
+    # TODO: Wire this up to a Positron setting for easy toggling?
+    isTRUE(getOption("ark.error_entrace", default = TRUE))
 }
 
 rust_backtrace <- function() {

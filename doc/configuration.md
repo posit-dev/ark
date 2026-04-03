@@ -42,7 +42,7 @@ A boolean, with a default value of `FALSE`.
 
 If `TRUE`, the special `.Last.value` will be shown in Positron's Variables pane.
 
-## `positron.error_entrace`
+## `ark.error_entrace`
 
 A boolean, with a default value of `TRUE`.
 
