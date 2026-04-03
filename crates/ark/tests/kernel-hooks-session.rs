@@ -14,8 +14,6 @@ fn execute(frontend: &DummyArkFrontend, comm_id: &str, code: &str) {
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_ui_busy(comm_id, true);
-    frontend.recv_ui_busy(comm_id, false);
     frontend.recv_ui_prompt_state(comm_id);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
