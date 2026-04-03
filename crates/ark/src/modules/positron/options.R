@@ -13,7 +13,7 @@ initialize_options <- function() {
     # has listed the option name in `positron.protected_options`.
 
     # Use Positron editor
-    set_unless_protected(
+    set_override(
         "editor",
         function(file, title, ..., name = NULL) {
             handler_editor(file = file, title = title, ..., name = name)
@@ -21,7 +21,7 @@ initialize_options <- function() {
     )
 
     # Use Positron viewer to browse URLs
-    set_unless_protected(
+    set_override(
         "browser",
         function(url) {
             .ps.Call("ps_browse_url", as.character(url))
@@ -30,22 +30,22 @@ initialize_options <- function() {
 
     # Register our password handler as the generic `askpass` option.
     # Same as RStudio, see `?rstudioapi::askForPassword` for rationale.
-    set_unless_protected(
+    set_override(
         "askpass",
         function(prompt) {
             .ps.ui.askForPassword(prompt)
         }
     )
 
-    set_unless_protected("connectionObserver", .ps.connection_observer())
+    set_override("connectionObserver", .ps.connection_observer())
 
     # Declare the function name that `dev.new()` and `GECurrentDevice()`
     # go looking for to create a new graphics device when the current one
     # is `"null device"` and a new plot is requested
-    set_unless_protected("device", ARK_GRAPHICS_DEVICE_NAME)
+    set_override("device", ARK_GRAPHICS_DEVICE_NAME)
 
     # Avoid overwhelming the console
-    set_unless_protected("max.print", 1000)
+    set_override("max.print", 1000)
 
     # These options default to NULL in R, so a non-NULL value means the
     # user has set them. They are only set when the current value is NULL,
@@ -53,12 +53,12 @@ initialize_options <- function() {
     # which allows the user to preserve the default `NULL` value.
 
     # Enable HTML help
-    set_when_null("help_type", "html")
+    set_default("help_type", "html")
 
-    set_when_null("viewer", viewer_option_handler)
+    set_default("viewer", viewer_option_handler)
 
     # Show Shiny applications in the viewer
-    set_when_null(
+    set_default(
         "shiny.launch.browser",
         function(url) {
             .ps.ui.showUrl(url)
@@ -66,7 +66,7 @@ initialize_options <- function() {
     )
 
     # Show Plumber apps in the viewer
-    set_when_null(
+    set_default(
         "plumber.docs.callback",
         function(url) {
             .ps.ui.showUrl(url)
@@ -74,7 +74,7 @@ initialize_options <- function() {
     )
 
     # Show Profvis output in the viewer
-    set_when_null(
+    set_default(
         "profvis.print",
         function(x) {
             # Render the widget to a tag list to create standalone HTML output.
@@ -94,17 +94,16 @@ is_protected <- function(name) {
     name %in% getOption("positron.protected_options", default = character())
 }
 
-# Always set unless the user listed this option in `positron.protected_options`
-set_unless_protected <- function(name, value) {
+# Set an option unconditionally, unless listed in `positron.protected_options`
+set_override <- function(name, value) {
     if (is_protected(name)) {
         return(invisible())
     }
     do.call(options, set_names(list(value), name))
 }
 
-# Set an option only when it is currently NULL (i.e. the user hasn't set it),
-# also respects `positron.protected_options`
-set_when_null <- function(name, value) {
+# Set an option only when currently `NULL`, unless listed in `positron.protected_options`
+set_default <- function(name, value) {
     if (is_protected(name)) {
         return(invisible())
     }
