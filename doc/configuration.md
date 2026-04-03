@@ -54,7 +54,7 @@ Ark overrides a number of R options during startup, *after* sourcing the user's 
 
 ## `positron.protected_options`
 
-A character vector of option names that Positron should leave alone. Set this in your `.Rprofile` to prevent Positron from overriding specific options. Accepted values are the option names listed under *Set unless protected* below. It can also be used for any of the options listed under *Set if not `NULL`* and *Package options* to preserve their `NULL` default. For example:
+A character vector of option names that Positron should leave alone. Set this in your `.Rprofile` to prevent Positron from overriding specific options. Accepted values are the option names listed under *Overrides* below. It can also be used for any of the options listed under *Defaults* to preserve their `NULL` default. For example:
 
 ```r
 options(
@@ -62,7 +62,7 @@ options(
 )
 ```
 
-## Set unless protected
+## Overrides
 
 These base R options have non-`NULL` defaults, so we can't detect user overrides by checking for `NULL`. They are always set unless listed in `positron.protected_options`.
 
@@ -73,7 +73,7 @@ These base R options have non-`NULL` defaults, so we can't detect user overrides
 - **`device`** — Set to `".ark.graphics.device"`, the function name that `dev.new()` and `GECurrentDevice()` look for when creating a new graphics device.
 - **`max.print`** — Set to `1000` (R's own default is `99999`). Limits console output to avoid overwhelming the display.
 
-## Set if not `NULL`
+## Defaults
 
 These options are only set when the user has *not* already defined them (e.g. in `.Rprofile`). This allows users to simply set the option to any value to override Positron's default. They can also be listed in `positron.protected_options` to keep the option as `NULL`.
 
