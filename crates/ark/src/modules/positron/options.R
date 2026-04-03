@@ -10,7 +10,7 @@
 initialize_options <- function() {
     # These options have non-NULL defaults in R, so we can't detect user
     # overrides by checking for NULL. They are always set unless the user
-    # has listed the option name in `positron.protected_options`.
+    # has listed the option name in `ark.protected_options`.
 
     # Use Positron editor
     set_override(
@@ -49,7 +49,7 @@ initialize_options <- function() {
 
     # These options default to NULL in R, so a non-NULL value means the
     # user has set them. They are only set when the current value is NULL,
-    # unless the user has also listed them in `positron.protected_options`,
+    # unless the user has also listed them in `ark.protected_options`,
     # which allows the user to preserve the default `NULL` value.
 
     # Enable HTML help
@@ -91,10 +91,10 @@ initialize_options <- function() {
 }
 
 is_protected <- function(name) {
-    name %in% getOption("positron.protected_options", default = character())
+    name %in% getOption("ark.protected_options", default = character())
 }
 
-# Set an option unconditionally, unless listed in `positron.protected_options`
+# Set an option unconditionally, unless listed in `ark.protected_options`
 set_override <- function(name, value) {
     if (is_protected(name)) {
         return(invisible())
@@ -102,7 +102,7 @@ set_override <- function(name, value) {
     do.call(options, set_names(list(value), name))
 }
 
-# Set an option only when currently `NULL`, unless listed in `positron.protected_options`
+# Set an option only when currently `NULL`, unless listed in `ark.protected_options`
 set_default <- function(name, value) {
     if (is_protected(name)) {
         return(invisible())

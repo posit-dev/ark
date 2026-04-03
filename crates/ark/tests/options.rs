@@ -25,7 +25,7 @@ fn test_protected_override_option_keeps_user_value() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     writeln!(
         file,
-        "options(max.print = 500, positron.protected_options = 'max.print')"
+        "options(max.print = 500, ark.protected_options = 'max.print')"
     )
     .unwrap();
     unsafe { std::env::set_var("R_PROFILE_USER", file.path()) };
@@ -66,7 +66,7 @@ fn test_default_option_sets_when_null() {
 #[test]
 fn test_protected_default_option_stays_null() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
-    writeln!(file, "options(positron.protected_options = 'help_type')").unwrap();
+    writeln!(file, "options(ark.protected_options = 'help_type')").unwrap();
     unsafe { std::env::set_var("R_PROFILE_USER", file.path()) };
 
     let frontend = DummyArkFrontendRprofile::lock();

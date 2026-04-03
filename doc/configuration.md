@@ -50,21 +50,21 @@ If `TRUE`, errors will be entraced by `rlang::entrace()` if rlang is installed. 
 
 # R options
 
-Ark overrides a number of R options during startup, *after* sourcing the user's `.Rprofile`. When an option is `NULL`, we know the user hasn't set it and we apply our default. However, a subset of base R options have non-`NULL` defaults, which makes it impossible to reliably detect user overrides. For those options, you can list them in `positron.protected_options` to tell Positron to preserve the existing value (either R's default or the value set in Rprofile).
+Ark overrides a number of R options during startup, *after* sourcing the user's `.Rprofile`. When an option is `NULL`, we know the user hasn't set it and we apply our default. However, a subset of base R options have non-`NULL` defaults, which makes it impossible to reliably detect user overrides. For those options, you can list them in `ark.protected_options` to tell Positron to preserve the existing value (either R's default or the value set in Rprofile).
 
-## `positron.protected_options`
+## `ark.protected_options`
 
 A character vector of option names that Positron should leave alone. Set this in your `.Rprofile` to prevent Positron from overriding specific options. Accepted values are the option names listed under *Overrides* below. It can also be used for any of the options listed under *Defaults* to preserve their `NULL` default. For example:
 
 ```r
 options(
-  positron.protected_options = c("browser", "editor", "max.print")
+  ark.protected_options = c("browser", "editor", "max.print")
 )
 ```
 
 ## Overrides
 
-These base R options have non-`NULL` defaults, so we can't detect user overrides by checking for `NULL`. They are always set unless listed in `positron.protected_options`.
+These base R options have non-`NULL` defaults, so we can't detect user overrides by checking for `NULL`. They are always set unless listed in `ark.protected_options`.
 
 - **`editor`** — Opens files in the Positron editor. Used by `edit()`, `file.edit()`, etc.
 - **`browser`** — Routes URLs through Positron's URL handler (`ps_browse_url`). Handles help pages, web URLs, and file paths.
@@ -75,7 +75,7 @@ These base R options have non-`NULL` defaults, so we can't detect user overrides
 
 ## Defaults
 
-These options are only set when the user has *not* already defined them (e.g. in `.Rprofile`). This allows users to simply set the option to any value to override Positron's default. They can also be listed in `positron.protected_options` to keep the option as `NULL`.
+These options are only set when the user has *not* already defined them (e.g. in `.Rprofile`). This allows users to simply set the option to any value to override Positron's default. They can also be listed in `ark.protected_options` to keep the option as `NULL`.
 
 - **`help_type`** — Set to `"html"`. Displays help pages as HTML rather than plain text.
 - **`viewer`** — Displays HTML content in Positron's Viewer pane. Used by htmlwidgets, Shiny gadgets, etc.
