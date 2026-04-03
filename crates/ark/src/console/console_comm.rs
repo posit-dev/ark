@@ -25,7 +25,7 @@ impl Console {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
         };
-        comm.handler.handle_msg(msg, &comm.ctx);
+        comm.handler.handle_msg(msg, &comm.ctx, Console::get());
         self.drain_closed();
     }
 
@@ -34,13 +34,19 @@ impl Console {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
         };
-        comm.handler.handle_close(&comm.ctx);
+        comm.handler.handle_close(&comm.ctx, Console::get());
     }
 
     /// Register a backend-initiated comm on the R thread.
     ///
     /// Creates the `CommSocket` and `CommHandlerContext`, calls `handle_open`,
-    /// sends `CommEvent::Opened` to amalthea, and returns the comm ID.
+    /// sends `CommEvent::Opened` to Amalthea's Shell thread, and returns the
+    /// comm ID.
+    ///
+    /// Blocks until Shell has fully processed the open (sent `comm_open` on
+    /// IOPub and registered the comm for routing). This guarantees that any
+    /// `comm_msg` sent by the caller afterwards are ordered after the
+    /// `comm_open` on IOPub.
     pub(crate) fn comm_open_backend(
         &mut self,
         comm_name: &str,
@@ -57,13 +63,20 @@ impl Console {
         );
 
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
-        handler.handle_open(&ctx);
+        handler.handle_open(&ctx, Console::get());
 
         self.comms
             .insert(comm_id.clone(), ConsoleComm { handler, ctx });
 
         self.comm_event_tx
             .send(CommEvent::Opened(comm, open_metadata))?;
+
+        // Block until Shell has processed the Opened event, ensuring the
+        // `comm_open` message is on IOPub before we return. Any updates
+        // the caller sends after this point are guaranteed to follow it.
+        let (done_tx, done_rx) = crossbeam::channel::bounded(0);
+        self.comm_event_tx.send(CommEvent::Barrier(done_tx))?;
+        done_rx.recv()?;
 
         Ok(comm_id)
     }
@@ -82,13 +95,13 @@ impl Console {
         mut handler: Box<dyn CommHandler>,
     ) {
         let ctx = CommHandlerContext::new(outgoing_tx, self.comm_event_tx.clone());
-        handler.handle_open(&ctx);
+        handler.handle_open(&ctx, Console::get());
 
         if comm_name == UI_COMM_NAME {
             if let Some(old_id) = self.ui_comm_id.take() {
                 log::info!("Replacing an existing UI comm.");
                 if let Some(mut old) = self.comm_remove(&old_id) {
-                    old.handler.handle_close(&old.ctx);
+                    old.handler.handle_close(&old.ctx, Console::get());
                 }
             }
             self.ui_comm_id = Some(comm_id.clone());
@@ -99,7 +112,8 @@ impl Console {
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
         for (_, comm) in self.comms.iter_mut() {
-            comm.handler.handle_environment(event, &comm.ctx);
+            comm.handler
+                .handle_environment(event, &comm.ctx, Console::get());
         }
         self.drain_closed();
     }

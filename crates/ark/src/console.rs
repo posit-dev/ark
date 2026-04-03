@@ -146,7 +146,7 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
+use crate::plots::graphics_device::DeviceContext;
 use crate::r_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::QueuedRTask;
@@ -177,7 +177,7 @@ thread_local! {
     pub static CONSOLE: RefCell<UnsafeCell<Console>> = panic!("Must access `CONSOLE` from the R thread");
 }
 
-pub(crate) struct Console {
+pub struct Console {
     pub(crate) positron_ns: Option<RObject>,
 
     kernel_request_rx: Receiver<KernelRequest>,
@@ -338,4 +338,7 @@ pub(crate) struct Console {
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
     comms: HashMap<String, ConsoleComm>,
+
+    /// Graphics device state (plot recording, rendering, comm management).
+    device_context: DeviceContext,
 }
