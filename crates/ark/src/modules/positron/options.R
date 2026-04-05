@@ -57,7 +57,9 @@ initialize_options <- function() {
 
     set_default("viewer", viewer_option_handler)
 
-    # Show Shiny applications in the viewer
+    # Show Shiny applications in the viewer. This is technically redundant with
+    # the `browser` override since Shiny calls `browseURL()` by default in
+    # interactive sessions.
     set_default(
         "shiny.launch.browser",
         function(url) {
