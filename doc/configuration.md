@@ -62,6 +62,8 @@ options(
 )
 ```
 
+This is an advanced option. Some Positron functionality might no longer work as expected when protected options are changed.
+
 ## Overrides
 
 These base R options have non-`NULL` defaults, so we can't detect user overrides by checking for `NULL`. They are always set unless listed in `ark.protected_options`.
