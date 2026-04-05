@@ -5,6 +5,7 @@
  *
  */
 
+use crossbeam::channel::Sender;
 use serde_json::Value;
 
 use crate::comm::comm_channel::CommMsg;
@@ -21,4 +22,10 @@ pub enum CommEvent {
 
     /// A Comm was closed
     Closed(String),
+
+    /// Synchronisation barrier. Shell signals the sender after processing all
+    /// preceding events. The caller blocks on the paired receiver to guarantee
+    /// that earlier events (e.g. `Opened`) have been fully handled before
+    /// continuing.
+    Barrier(Sender<()>),
 }

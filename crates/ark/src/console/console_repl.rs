@@ -342,7 +342,6 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
         default_repos: DefaultRepos,
-        graphics_device_rx: AsyncUnboundedReceiver<GraphicsDeviceNotification>,
         console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
     ) {
         // Set the main thread ID.
@@ -497,17 +496,9 @@ impl Console {
             }
         }));
 
-        // Initialize the GD context on this thread.
-        // Note that we do it after init is complete to avoid deadlocking
-        // integration tests by spawning an async task. The deadlock is caused
-        // by https://github.com/posit-dev/ark/blob/bd827e735970ca17102aeddfbe2c3ccf26950a36/crates/ark/src/r_task.rs#L261.
-        // We should be able to remove this escape hatch in `r_task()` by
-        // instantiating an `Console` in unit tests as well.
-        graphics_device::init_graphics_device(
-            console.comm_event_tx.clone(),
-            console.iopub_tx().clone(),
-            graphics_device_rx,
-        );
+        // R-side graphics device initialization. The `DeviceContext`
+        // itself is already created as part of `Console::new()`.
+        graphics_device::init_graphics_device();
 
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
@@ -612,6 +603,8 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
+        let device_context = DeviceContext::new(iopub_tx.clone());
+
         Self {
             r_request_rx,
             comm_event_tx,
@@ -658,6 +651,7 @@ impl Console {
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
             comms: HashMap::new(),
+            device_context,
         }
     }
 
@@ -675,8 +669,64 @@ impl Console {
     /// Access a reference to the singleton instance of this struct
     ///
     /// SAFETY: Accesses must occur after `Console::start()` initializes it.
-    pub(crate) fn get() -> &'static Self {
+    pub fn get() -> &'static Self {
         Console::get_mut()
+    }
+
+    /// Install a minimal stopgap `Console` in the thread-local for unit tests
+    /// that need a `&Console` (e.g. to pass to `CommHandler` methods) but
+    /// don't go through the full `Console::start()` path.
+    ///
+    /// All internal channels are created with their counterpart immediately
+    /// dropped, so the Console is inert: it never processes requests, tasks,
+    /// or kernel messages. Any attempt to send to IOPub or other channels
+    /// will return a disconnected error, which surfaces problems early
+    /// rather than silently hanging.
+    ///
+    /// For tests that exercise real Console behaviour (execution, comms
+    /// lifecycle, IOPub output), prefer full integration tests with
+    /// `DummyArkFrontend` which spins up a real Console.
+    ///
+    /// Idempotent per thread. Does not set `R_INIT`, so the `r_task()` escape
+    /// hatch for unit tests continues to work.
+    #[cfg(feature = "testing")]
+    pub fn test_init() {
+        use std::cell::Cell;
+        thread_local! {
+            static INITIALIZED: Cell<bool> = const { Cell::new(false) };
+        }
+
+        INITIALIZED.with(|init| {
+            if init.get() {
+                return;
+            }
+            init.set(true);
+
+            let (_, tasks_interrupt_rx) = crossbeam::channel::unbounded();
+            let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
+            let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
+            let (comm_event_tx, _) = crossbeam::channel::unbounded();
+            let (r_request_tx, r_request_rx) = crossbeam::channel::unbounded();
+            let (stdin_request_tx, _) = crossbeam::channel::unbounded();
+            let (_, stdin_reply_rx) = crossbeam::channel::unbounded();
+            let (iopub_tx, _) = crossbeam::channel::unbounded();
+            let (_, kernel_request_rx) = crossbeam::channel::unbounded();
+            let dap = Dap::new_shared(r_request_tx);
+
+            CONSOLE.set(UnsafeCell::new(Console::new(
+                tasks_interrupt_rx,
+                tasks_idle_rx,
+                tasks_idle_any_rx,
+                comm_event_tx,
+                r_request_rx,
+                stdin_request_tx,
+                stdin_reply_rx,
+                iopub_tx,
+                kernel_request_rx,
+                dap,
+                SessionMode::Console,
+            )));
+        });
     }
 
     /// Access a mutable reference to the singleton instance of this struct
@@ -707,6 +757,10 @@ impl Console {
 
     pub(crate) fn comm_event_tx(&self) -> &Sender<CommEvent> {
         &self.comm_event_tx
+    }
+
+    pub(crate) fn device_context(&self) -> &DeviceContext {
+        &self.device_context
     }
 
     /// Run a closure while capturing console output.
@@ -2336,13 +2390,6 @@ impl Console {
         // might end up being executed on the LSP thread.
         // https://github.com/rstudio/positron/issues/431
         unsafe { R_RunPendingFinalizers() };
-
-        // Check for Positron render requests.
-        //
-        // TODO: This should move to a spawned task that'd be woken up by
-        // incoming messages on plot comms. This way we'll prevent the delays
-        // introduced by timeout-based event polling.
-        graphics_device::on_process_idle_events();
     }
 
     pub(super) fn eval_env(&self) -> RObject {
