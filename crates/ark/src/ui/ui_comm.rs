@@ -124,7 +124,6 @@ impl UiComm {
     fn handle_rpc(&mut self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
         match request {
             UiBackendRequest::CallMethod(params) => self.handle_call_method(params),
-            UiBackendRequest::FrontendReady(params) => self.handle_frontend_ready(params),
             UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
         }
     }
@@ -135,6 +134,9 @@ impl UiComm {
                 UiBackendEvent::DidChangePlotsRenderSettings(params) => {
                     self.handle_did_change_plot_render_settings(params)
                         .log_err();
+                },
+                UiBackendEvent::FrontendReady(params) => {
+                    self.handle_frontend_ready(params).log_err();
                 },
             },
             Err(err) => {
@@ -198,7 +200,7 @@ impl UiComm {
         Ok(())
     }
 
-    fn handle_frontend_ready(&self, params: FrontendReadyParams) -> anyhow::Result<UiBackendReply> {
+    fn handle_frontend_ready(&self, params: FrontendReadyParams) -> anyhow::Result<()> {
         log::info!("Frontend ready (start_type = {})", params.start_type);
 
         if params.start_type == "reconnect" {
@@ -212,7 +214,7 @@ impl UiComm {
                 .warn_on_err();
         }
 
-        Ok(UiBackendReply::FrontendReadyReply())
+        Ok(())
     }
 
     fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {

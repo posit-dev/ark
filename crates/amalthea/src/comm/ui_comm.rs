@@ -411,15 +411,6 @@ pub struct OpenWithSystemParams {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params")]
 pub enum UiBackendRequest {
-	/// Notification that the frontend is ready
-	///
-	/// This notification is sent by the frontend after the UI comm has been
-	/// established. The backend uses this signal to run session
-	/// initialization hooks that may need to communicate with the frontend
-	/// via RPCs (e.g. rstudioapi calls).
-	#[serde(rename = "frontend_ready")]
-	FrontendReady(FrontendReadyParams),
-
 	/// Run a method in the interpreter and return the result to the frontend
 	///
 	/// Unlike other RPC methods, `call_method` calls into methods implemented
@@ -442,9 +433,6 @@ pub enum UiBackendRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "result")]
 pub enum UiBackendReply {
-	/// Unused response to notification
-	FrontendReadyReply(),
-
 	/// The method result
 	CallMethodReply(CallMethodResult),
 
@@ -592,6 +580,13 @@ pub enum UiBackendEvent {
 	/// plots.
 	#[serde(rename = "did_change_plots_render_settings")]
 	DidChangePlotsRenderSettings(DidChangePlotsRenderSettingsParams),
+
+	/// This notification is sent by the frontend after the UI comm has been
+	/// established. The backend uses this signal to run session
+	/// initialization hooks that may need to communicate with the frontend
+	/// via RPCs (e.g. rstudioapi calls).
+	#[serde(rename = "frontend_ready")]
+	FrontendReady(FrontendReadyParams),
 
 }
 
