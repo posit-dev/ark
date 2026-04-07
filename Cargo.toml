@@ -10,13 +10,7 @@
 resolver = "2"
 
 members = [
-    "crates/amalthea",
-    "crates/ark",
-    "crates/echo",
-    "crates/harp",
-    "crates/libr",
-    "crates/oak_index",
-    "crates/stdext",
+    "crates/*"
 ]
 
 [workspace.package]
