@@ -38,8 +38,15 @@ pub struct Description {
     /// `Depends` field. Currently doesn't contain versions.
     pub depends: Vec<String>,
 
+    pub repository: Option<Repository>,
+
     /// Raw DCF fields
     pub fields: Dcf,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Repository {
+    CRAN,
 }
 
 impl Description {
@@ -70,10 +77,18 @@ impl Description {
             })
             .unwrap_or_default();
 
+        let repository = fields.get("Repository").and_then(|repository| {
+            if repository == "CRAN" {
+                return Some(Repository::CRAN);
+            }
+            None
+        });
+
         Ok(Description {
             name,
             version,
             depends,
+            repository,
             fields,
         })
     }
@@ -180,6 +195,26 @@ Description: This is a long description
         let parsed = Description::parse(desc).unwrap();
         assert_eq!(parsed.name, "mypackage");
         assert_eq!(parsed.version, "1.0.0");
+    }
+
+    #[test]
+    fn parses_description_with_known_repository() {
+        let desc = r#"Package: mypackage
+Version: 1.0.0
+Title: My Package
+Repository: CRAN"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.repository, Some(Repository::CRAN));
+    }
+
+    #[test]
+    fn parses_description_with_unknown_repository() {
+        let desc = r#"Package: mypackage
+Version: 1.0.0
+Title: My Package
+Repository: notCRAN"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.repository, None);
     }
 
     #[test]
