@@ -28,6 +28,7 @@ actix-web = "4.4.0"
 aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
 aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
 aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
+aether_r_process = { path = "crates/aether_r_process" }
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.100"
@@ -52,6 +53,7 @@ dirs = "4.0.0"
 ego-tree = "0.6.2"
 embed-resource = "2.5.0"
 env_logger = "0.10.0"
+flate2 = "1.1.1"
 futures = "0.3.30"
 generic-array = "0.14.6"
 harp = { path = "crates/harp" }
@@ -76,7 +78,7 @@ paste = "1.0.14"
 quote = "1.0.42"
 rand = "0.8.5"
 regex = "1.10.0"
-reqwest = { version = "0.12.5", default-features = false, features = ["json"] }
+reqwest = { version = "0.12.5", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 reqwest-middleware = "0.3.3"
 reqwest-retry = "0.6.1"
 rust-embed = "8.2.0"
@@ -93,6 +95,7 @@ streaming-iterator = "0.1.9"
 strum = "0.26.2"
 strum_macros = "0.26.2"
 syn = { version = "2.0.111", features = ["full"] }
+tar = "0.4.44"
 tempfile = "3.13.0"
 tokio = { version = "1.26.0", features = ["full"] }
 # For https://github.com/ebkalderon/tower-lsp/pull/428

@@ -769,7 +769,8 @@ replace_non_parseable <- function(x) {
             pattern = pattern,
             replacement = replacement,
             x = x,
-            fixed = fixed
+            fixed = fixed,
+            perl = !fixed
         )
     }
 
@@ -793,11 +794,16 @@ replace_non_parseable <- function(x) {
 #   !!unclass(xml2::read_xml("<foo><bar /></foo>"))$node
 # })
 # ```
+#
+# Use `perl = TRUE` to have non-greedy quantifiers for `?` support in
+# `<promise: .*?>`, otherwise with just `<promise: .*>` it will match from
+# a first `<promise:` all the way to the LAST `>`, which is a problem if there
+# are multiple of them in a single deparsed object.
 non_parseable_pattern_infos <- function() {
     list(
-        non_parseable_pattern_info("<S4 object of class .*>", "...S4..."),
-        non_parseable_pattern_info("<promise: .*>", "...PROMISE..."),
-        non_parseable_pattern_info("<pointer: .*>", "...POINTER..."),
+        non_parseable_pattern_info("<S4 object of class .*?>", "...S4..."),
+        non_parseable_pattern_info("<promise: .*?>", "...PROMISE..."),
+        non_parseable_pattern_info("<pointer: .*?>", "...POINTER..."),
         non_parseable_fixed_info("<environment>", "...ENVIRONMENT..."),
         non_parseable_fixed_info("<bytecode>", "...BYTECODE..."),
         non_parseable_fixed_info("<weak reference>", "...WEAK_REFERENCE..."),
@@ -805,7 +811,7 @@ non_parseable_pattern_infos <- function() {
         # We see this one in `call_text` captured from `debug: <call>`,
         # not in `deparse()` directly. In the `fn_text` this shows up as `<environment>` and
         # we want to match that, so that's what we replace with.
-        non_parseable_pattern_info("<environment: .*>", "...ENVIRONMENT...")
+        non_parseable_pattern_info("<environment: .*?>", "...ENVIRONMENT...")
     )
 }
 non_parseable_pattern_info <- function(pattern, replacement) {

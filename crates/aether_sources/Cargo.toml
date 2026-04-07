@@ -1,0 +1,20 @@
+[package]
+name = "aether_sources"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+aether_r_process.workspace = true
+anyhow.workspace = true
+flate2.workspace = true
+log.workspace = true
+reqwest.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+xdg.workspace = true
+
+[lints]
+workspace = true
