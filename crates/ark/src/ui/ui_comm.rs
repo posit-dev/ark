@@ -27,7 +27,7 @@ use serde_json::Value;
 use stdext::result::ResultExt;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
-use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::handle_comm_message;
 use crate::comm_handler::CommHandler;
 use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::EnvironmentChanged;
@@ -74,19 +74,14 @@ impl CommHandler for UiComm {
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        match msg {
-            CommMsg::Rpc { .. } => {
-                handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
-                    self.handle_rpc(req)
-                });
-            },
-            CommMsg::Data(data) => {
-                self.handle_event(data);
-            },
-            other => {
-                log::warn!("Unexpected message for {UI_COMM_NAME}: {other:?}");
-            },
-        }
+        let this = &*self;
+        handle_comm_message(
+            &ctx.outgoing_tx,
+            UI_COMM_NAME,
+            msg,
+            |req| this.handle_rpc(req),
+            |evt| this.handle_event(evt),
+        );
     }
 
     fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
@@ -121,27 +116,19 @@ impl UiComm {
         }
     }
 
-    fn handle_rpc(&mut self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
+    fn handle_rpc(&self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
         match request {
             UiBackendRequest::CallMethod(params) => self.handle_call_method(params),
             UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
         }
     }
 
-    fn handle_event(&mut self, data: Value) {
-        match serde_json::from_value::<UiBackendEvent>(data) {
-            Ok(event) => match event {
-                UiBackendEvent::DidChangePlotsRenderSettings(params) => {
-                    self.handle_did_change_plot_render_settings(params)
-                        .log_err();
-                },
-                UiBackendEvent::FrontendReady(params) => {
-                    self.handle_frontend_ready(params).log_err();
-                },
+    fn handle_event(&self, event: UiBackendEvent) -> anyhow::Result<()> {
+        match event {
+            UiBackendEvent::DidChangePlotsRenderSettings(params) => {
+                self.handle_did_change_plot_render_settings(params)
             },
-            Err(err) => {
-                log::warn!("Failed to parse {UI_COMM_NAME} event: {err}");
-            },
+            UiBackendEvent::FrontendReady(params) => self.handle_frontend_ready(params),
         }
     }
 

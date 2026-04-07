@@ -105,6 +105,51 @@ pub(crate) struct ConsoleComm {
     pub(crate) ctx: CommHandlerContext,
 }
 
+/// Handle an incoming comm message, dispatching RPCs and events to their
+/// respective handlers. Serialization and error handling are managed here
+/// so individual comms only deal with typed values.
+pub fn handle_comm_message<Reqs, Reps, Evts>(
+    outgoing_tx: &CommOutgoingTx,
+    comm_name: &str,
+    message: CommMsg,
+    rpc_handler: impl FnOnce(Reqs) -> anyhow::Result<Reps>,
+    event_handler: impl FnOnce(Evts) -> anyhow::Result<()>,
+) where
+    Reqs: DeserializeOwned + Debug,
+    Reps: Serialize,
+    Evts: DeserializeOwned + Debug,
+{
+    match message {
+        CommMsg::Rpc {
+            id,
+            parent_header,
+            data,
+        } => {
+            let json = dispatch_rpc(comm_name, &data, |req| {
+                let _span = tracing::trace_span!("comm handler", name = comm_name, request = ?req)
+                    .entered();
+                rpc_handler(req)
+            });
+            let response = CommMsg::Rpc {
+                id,
+                parent_header,
+                data: json,
+            };
+            outgoing_tx.send(response).log_err();
+        },
+        CommMsg::Data(data) => {
+            dispatch_event(comm_name, &data, |evt| {
+                let _span =
+                    tracing::trace_span!("comm handler", name = comm_name, event = ?evt).entered();
+                event_handler(evt)
+            });
+        },
+        other => {
+            log::warn!("Unexpected message for {comm_name}: {other:?}");
+        },
+    }
+}
+
 /// Handle an RPC request from a `CommMsg`.
 ///
 /// Non-RPC messages are logged and ignored. Requests that could not be
@@ -130,28 +175,47 @@ pub fn handle_rpc_request<Reqs, Reps>(
         },
     };
 
-    let json = match serde_json::from_value::<Reqs>(data.clone()) {
-        Ok(m) => {
-            let _span =
-                tracing::trace_span!("comm handler", name = comm_name, request = ?m).entered();
-            match request_handler(m) {
-                Ok(reply) => match serde_json::to_value(reply) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        let message = format!(
+    let json = dispatch_rpc(comm_name, &data, |req| {
+        let _span =
+            tracing::trace_span!("comm handler", name = comm_name, request = ?req).entered();
+        request_handler(req)
+    });
+
+    let response = CommMsg::Rpc {
+        id,
+        parent_header,
+        data: json,
+    };
+    outgoing_tx.send(response).log_err();
+}
+
+fn dispatch_rpc<Reqs, Reps>(
+    comm_name: &str,
+    data: &serde_json::Value,
+    handler: impl FnOnce(Reqs) -> anyhow::Result<Reps>,
+) -> serde_json::Value
+where
+    Reqs: DeserializeOwned + Debug,
+    Reps: Serialize,
+{
+    match serde_json::from_value::<Reqs>(data.clone()) {
+        Ok(m) => match handler(m) {
+            Ok(reply) => match serde_json::to_value(reply) {
+                Ok(value) => value,
+                Err(err) => {
+                    let message = format!(
                             "Failed to serialise reply for {comm_name} request: {err} (request: {data})"
                         );
-                        log::warn!("{message}");
-                        json_rpc_error(JsonRpcErrorCode::InternalError, message)
-                    },
-                },
-                Err(err) => {
-                    let message =
-                        format!("Failed to process {comm_name} request: {err} (request: {data})");
                     log::warn!("{message}");
                     json_rpc_error(JsonRpcErrorCode::InternalError, message)
                 },
-            }
+            },
+            Err(err) => {
+                let message =
+                    format!("Failed to process {comm_name} request: {err} (request: {data})");
+                log::warn!("{message}");
+                json_rpc_error(JsonRpcErrorCode::InternalError, message)
+            },
         },
         Err(err) => {
             let message = format!(
@@ -160,12 +224,22 @@ pub fn handle_rpc_request<Reqs, Reps>(
             log::warn!("{message}");
             json_rpc_error(JsonRpcErrorCode::MethodNotFound, message)
         },
-    };
+    }
+}
 
-    let response = CommMsg::Rpc {
-        id,
-        parent_header,
-        data: json,
-    };
-    outgoing_tx.send(response).log_err();
+fn dispatch_event<Evts>(
+    comm_name: &str,
+    data: &serde_json::Value,
+    handler: impl FnOnce(Evts) -> anyhow::Result<()>,
+) where
+    Evts: DeserializeOwned + Debug,
+{
+    match serde_json::from_value::<Evts>(data.clone()) {
+        Ok(event) => {
+            handler(event).log_err();
+        },
+        Err(err) => {
+            log::warn!("Failed to parse {comm_name} event: {err} (data: {data})");
+        },
+    }
 }
