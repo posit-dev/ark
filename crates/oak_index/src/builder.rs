@@ -112,8 +112,35 @@ impl SemanticIndexBuilder {
     }
 
     fn add_binding(&mut self, name: &str, flags: SymbolFlags, range: TextRange) {
-        let symbol = self.symbol_tables[self.current_scope].intern(name, flags);
-        self.bindings[self.current_scope].push(Binding { symbol, range });
+        self.add_binding_in_scope(self.current_scope, name, flags, range);
+    }
+
+    fn add_binding_in_scope(
+        &mut self,
+        scope: ScopeId,
+        name: &str,
+        flags: SymbolFlags,
+        range: TextRange,
+    ) {
+        let symbol = self.symbol_tables[scope].intern(name, flags);
+        self.bindings[scope].push(Binding { symbol, range });
+    }
+
+    /// Walk from `current_scope` up through ancestors looking for a scope
+    /// that already has a binding for `name`. Returns the file scope if
+    /// no existing binding is found (matching R's runtime `<<-` semantics).
+    fn resolve_super_target(&self, name: &str) -> ScopeId {
+        let file = ScopeId::from(0);
+        let mut scope = self.scopes[self.current_scope].parent;
+        while let Some(id) = scope {
+            if let Some(sym) = self.symbol_tables[id].get(name) {
+                if sym.flags().contains(SymbolFlags::IS_BOUND) {
+                    return id;
+                }
+            }
+            scope = self.scopes[id].parent;
+        }
+        file
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
@@ -155,7 +182,7 @@ impl SemanticIndexBuilder {
             },
 
             AnyRExpression::RBinaryExpression(bin) => {
-                // `<-`, `=`, and `->` are assignments when they appear as
+                // `<-`, `=`, `->`, `<<-`, and `->>` are assignments when they appear as
                 // `RBinaryExpression`. In call arguments, `=` is consumed by
                 // the parser into `RArgumentNameClause` instead, so it never
                 // reaches here.
@@ -316,6 +343,12 @@ impl SemanticIndexBuilder {
 
     fn collect_assignment(&mut self, op: &RBinaryExpression) {
         let right = is_right_assignment(op);
+        let super_assign = is_super_assignment(op);
+        let flags = if super_assign {
+            SymbolFlags::IS_SUPER_BOUND
+        } else {
+            SymbolFlags::IS_BOUND
+        };
 
         // Value side first to record uses before the binding. The uses
         // might refer to the same symbol as the new binding, but refer
@@ -329,11 +362,15 @@ impl SemanticIndexBuilder {
         let Ok(target) = target else { return };
         match target {
             AnyRExpression::RIdentifier(ident) => {
-                self.add_binding(
-                    &ident.syntax().text_trimmed().to_string(),
-                    SymbolFlags::IS_BOUND,
-                    ident.syntax().text_trimmed_range(),
-                );
+                let name = ident.syntax().text_trimmed().to_string();
+                let range = ident.syntax().text_trimmed_range();
+
+                if super_assign {
+                    let target_scope = self.resolve_super_target(&name);
+                    self.add_binding_in_scope(target_scope, &name, flags, range);
+                } else {
+                    self.add_binding(&name, flags, range);
+                }
             },
 
             // Complex target (`x$foo <- rhs`, `x[1] <- rhs`, etc.) does
@@ -364,7 +401,11 @@ fn is_assignment(bin: &RBinaryExpression) -> bool {
     };
     matches!(
         op.kind(),
-        RSyntaxKind::ASSIGN | RSyntaxKind::EQUAL | RSyntaxKind::ASSIGN_RIGHT
+        RSyntaxKind::ASSIGN |
+            RSyntaxKind::EQUAL |
+            RSyntaxKind::ASSIGN_RIGHT |
+            RSyntaxKind::SUPER_ASSIGN |
+            RSyntaxKind::SUPER_ASSIGN_RIGHT
     )
 }
 
@@ -372,5 +413,18 @@ fn is_right_assignment(bin: &RBinaryExpression) -> bool {
     let Ok(op) = bin.operator() else {
         return false;
     };
-    matches!(op.kind(), RSyntaxKind::ASSIGN_RIGHT)
+    matches!(
+        op.kind(),
+        RSyntaxKind::ASSIGN_RIGHT | RSyntaxKind::SUPER_ASSIGN_RIGHT
+    )
+}
+
+fn is_super_assignment(bin: &RBinaryExpression) -> bool {
+    let Ok(op) = bin.operator() else {
+        return false;
+    };
+    matches!(
+        op.kind(),
+        RSyntaxKind::SUPER_ASSIGN | RSyntaxKind::SUPER_ASSIGN_RIGHT
+    )
 }

@@ -125,7 +125,7 @@ impl SemanticIndex {
                 if self.symbol_tables[ancestor]
                     .symbol(id)
                     .flags
-                    .contains(SymbolFlags::IS_BOUND)
+                    .intersects(SymbolFlags::IS_BOUND.union(SymbolFlags::IS_SUPER_BOUND))
                 {
                     return Some((ancestor, id));
                 }
@@ -179,10 +179,14 @@ pub struct SymbolFlags(u8);
 impl SymbolFlags {
     // Referenced by name in this scope.
     pub const IS_USED: Self = Self(1 << 0);
-    // Given a value: assignment (`<-`, `=`) or parameter definition.
+    // Given a value: assignment (`<-`, `=`, `->`) or parameter definition.
     pub const IS_BOUND: Self = Self(1 << 1);
     // Appears in a function's formal parameter list.
     pub const IS_PARAMETER: Self = Self(1 << 2);
+    // Given a value via superassignment (`<<-`, `->>`). The binding is
+    // recorded in the nearest ancestor scope that already binds the name,
+    // or the file scope if none does (matching R's runtime semantics).
+    pub const IS_SUPER_BOUND: Self = Self(1 << 3);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -190,6 +194,11 @@ impl SymbolFlags {
 
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    /// Returns `true` if `self` and `other` share at least one flag.
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
     }
 
     pub const fn union(self, other: Self) -> Self {
