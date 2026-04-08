@@ -2,7 +2,8 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::ops;
 
-pub trait Idx: Copy + fmt::Debug + Eq + From<u32> {
+pub trait Idx: Copy + fmt::Debug + Eq {
+    fn new(value: usize) -> Self;
     fn index(self) -> usize;
 }
 
@@ -22,7 +23,7 @@ impl<I: Idx, V> IndexVec<I, V> {
     }
 
     pub fn push(&mut self, value: V) -> I {
-        let id = I::from(self.raw.len() as u32);
+        let id = self.next_id();
         self.raw.push(value);
         id
     }
@@ -36,14 +37,11 @@ impl<I: Idx, V> IndexVec<I, V> {
     }
 
     pub fn next_id(&self) -> I {
-        I::from(self.raw.len() as u32)
+        I::new(self.raw.len())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (I, &V)> {
-        self.raw
-            .iter()
-            .enumerate()
-            .map(|(i, v)| (I::from(i as u32), v))
+        self.raw.iter().enumerate().map(|(i, v)| (I::new(i), v))
     }
 }
 
@@ -96,6 +94,10 @@ macro_rules! define_index {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub struct $name(u32);
 
+        impl $name {
+            const MAX: usize = u32::MAX as usize - 1;
+        }
+
         impl From<u32> for $name {
             fn from(raw: u32) -> Self {
                 Self(raw)
@@ -103,6 +105,11 @@ macro_rules! define_index {
         }
 
         impl $crate::arena::Idx for $name {
+            fn new(value: usize) -> Self {
+                assert!(value <= Self::MAX);
+                Self(value as u32)
+            }
+
             fn index(self) -> usize {
                 self.0 as usize
             }
