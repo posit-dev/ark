@@ -129,18 +129,24 @@ impl SemanticIndexBuilder {
     /// Walk from `current_scope` up through ancestors looking for a scope
     /// that already has a binding for `name`. Returns the file scope if
     /// no existing binding is found (matching R's runtime `<<-` semantics).
-    fn resolve_super_target(&self, name: &str) -> ScopeId {
+    ///
+    /// When an existing binding is found, returns `IS_BOUND` (it's a
+    /// regular binding in that scope). `IS_SUPER_BOUND` is only used
+    /// when no ancestor has a binding, meaning the `<<-` creates a new
+    /// name at file scope as a side effect. Typically we'll issue a
+    /// diagnostic in that case.
+    fn resolve_super_target(&self, name: &str) -> (ScopeId, SymbolFlags) {
         let file = ScopeId::from(0);
         let mut scope = self.scopes[self.current_scope].parent;
         while let Some(id) = scope {
             if let Some(sym) = self.symbol_tables[id].get(name) {
                 if sym.flags().contains(SymbolFlags::IS_BOUND) {
-                    return id;
+                    return (id, SymbolFlags::IS_BOUND);
                 }
             }
             scope = self.scopes[id].parent;
         }
-        file
+        (file, SymbolFlags::IS_SUPER_BOUND)
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
@@ -349,11 +355,6 @@ impl SemanticIndexBuilder {
     fn collect_assignment(&mut self, op: &RBinaryExpression) {
         let right = is_right_assignment(op);
         let super_assign = is_super_assignment(op);
-        let flags = if super_assign {
-            SymbolFlags::IS_SUPER_BOUND
-        } else {
-            SymbolFlags::IS_BOUND
-        };
 
         // Value side first to record uses before the binding. The uses
         // might refer to the same symbol as the new binding, but refer
@@ -371,10 +372,10 @@ impl SemanticIndexBuilder {
                 let range = ident.syntax().text_trimmed_range();
 
                 if super_assign {
-                    let target_scope = self.resolve_super_target(&name);
+                    let (target_scope, flags) = self.resolve_super_target(&name);
                     self.add_binding_in_scope(target_scope, &name, flags, range);
                 } else {
-                    self.add_binding(&name, flags, range);
+                    self.add_binding(&name, SymbolFlags::IS_BOUND, range);
                 }
             },
 

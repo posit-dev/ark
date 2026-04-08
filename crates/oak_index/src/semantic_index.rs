@@ -183,9 +183,10 @@ impl SymbolFlags {
     pub const IS_BOUND: Self = Self(1 << 1);
     // Appears in a function's formal parameter list.
     pub const IS_PARAMETER: Self = Self(1 << 2);
-    // Given a value via superassignment (`<<-`, `->>`). The binding is
-    // recorded in the nearest ancestor scope that already binds the name,
-    // or the file scope if none does (matching R's runtime semantics).
+    // A name introduced at file scope purely by `<<-` or `->>`, with no
+    // prior local binding. This only appears at file scope. When `<<-`
+    // targets an ancestor that already has a binding, `IS_SUPER_BOUND`
+    // is not added.
     pub const IS_SUPER_BOUND: Self = Self(1 << 3);
 
     pub const fn empty() -> Self {
