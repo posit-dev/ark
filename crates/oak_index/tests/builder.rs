@@ -182,6 +182,7 @@ fn test_complex_lhs_not_binding() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_USED);
 
+    assert!(index.symbols(file).get("foo").is_none());
     assert_eq!(index.bindings(file).len(), 0);
 }
 
@@ -443,6 +444,83 @@ fn test_right_assignment_complex_target() {
     assert_eq!(x.flags(), SymbolFlags::IS_USED);
 
     assert_eq!(index.bindings(file).len(), 0);
+}
+
+#[test]
+fn test_subset_assignment_complex_lhs() {
+    let index = index("x[1] <- value");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+
+    let value = index.symbols(file).get("value").unwrap();
+    assert_eq!(value.flags(), SymbolFlags::IS_USED);
+
+    assert_eq!(index.bindings(file).len(), 0);
+}
+
+#[test]
+fn test_double_bracket_assignment_complex_lhs() {
+    let index = index("x[[1]] <- value");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+
+    assert_eq!(index.bindings(file).len(), 0);
+}
+
+#[test]
+fn test_at_extraction() {
+    let index = index("x@slot");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+
+    // `slot` is not recorded as a use
+    assert!(index.symbols(file).get("slot").is_none());
+    assert_eq!(index.symbols(file).len(), 1);
+}
+
+#[test]
+fn test_namespace_expression_no_uses() {
+    let index = index("dplyr::filter");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("dplyr").is_none());
+    assert!(index.symbols(file).get("filter").is_none());
+    assert_eq!(index.symbols(file).len(), 0);
+}
+
+#[test]
+fn test_triple_colon_namespace_no_uses() {
+    let index = index("pkg:::internal_fn");
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.symbols(file).len(), 0);
+}
+
+#[test]
+fn test_while_loop() {
+    let index = index("while (cond) x");
+    let file = ScopeId::from(0);
+
+    let cond = index.symbols(file).get("cond").unwrap();
+    assert_eq!(cond.flags(), SymbolFlags::IS_USED);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_repeat_loop() {
+    let index = index("repeat x");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
 }
 
 #[test]
