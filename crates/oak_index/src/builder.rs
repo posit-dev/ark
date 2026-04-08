@@ -155,7 +155,7 @@ impl SemanticIndexBuilder {
             },
 
             AnyRExpression::RBinaryExpression(bin) => {
-                // Both `<-` and `=` are assignments when they appear as
+                // `<-`, `=`, and `->` are assignments when they appear as
                 // `RBinaryExpression`. In call arguments, `=` is consumed by
                 // the parser into `RArgumentNameClause` instead, so it never
                 // reaches here.
@@ -315,15 +315,19 @@ impl SemanticIndexBuilder {
     }
 
     fn collect_assignment(&mut self, op: &RBinaryExpression) {
-        // RHS first to record uses before the binding. The uses might refer to
-        // the same symbol as the new binding, but refer to a different place
-        // (previous binding).
-        if let Ok(rhs) = op.right() {
-            self.collect_expression(&rhs);
+        let right = is_right_assignment(op);
+
+        // Value side first to record uses before the binding. The uses
+        // might refer to the same symbol as the new binding, but refer
+        // to a different place (previous binding).
+        let value = if right { op.left() } else { op.right() };
+        if let Ok(value) = value {
+            self.collect_expression(&value);
         }
 
-        let Ok(lhs) = op.left() else { return };
-        match lhs {
+        let target = if right { op.right() } else { op.left() };
+        let Ok(target) = target else { return };
+        match target {
             AnyRExpression::RIdentifier(ident) => {
                 self.add_binding(
                     &ident.syntax().text_trimmed().to_string(),
@@ -332,8 +336,8 @@ impl SemanticIndexBuilder {
                 );
             },
 
-            // Complex LHS (`x$foo <- rhs`, `x[1] <- rhs`, etc.) do not
-            // represent a binding. We recurse for uses.
+            // Complex target (`x$foo <- rhs`, `x[1] <- rhs`, etc.) does
+            // not represent a binding. We recurse for uses.
             other => self.collect_expression(&other),
         }
     }
@@ -358,5 +362,15 @@ fn is_assignment(bin: &RBinaryExpression) -> bool {
     let Ok(op) = bin.operator() else {
         return false;
     };
-    matches!(op.kind(), RSyntaxKind::ASSIGN | RSyntaxKind::EQUAL)
+    matches!(
+        op.kind(),
+        RSyntaxKind::ASSIGN | RSyntaxKind::EQUAL | RSyntaxKind::ASSIGN_RIGHT
+    )
+}
+
+fn is_right_assignment(bin: &RBinaryExpression) -> bool {
+    let Ok(op) = bin.operator() else {
+        return false;
+    };
+    matches!(op.kind(), RSyntaxKind::ASSIGN_RIGHT)
 }

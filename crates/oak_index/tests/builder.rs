@@ -392,3 +392,55 @@ fn test_parenthesized_equals_is_assignment() {
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
     assert_eq!(index.bindings(file).len(), 1);
 }
+
+#[test]
+fn test_right_assignment() {
+    let index = index("1 -> x");
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.symbols(file).len(), 1);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+
+    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.uses(file).len(), 0);
+}
+
+#[test]
+fn test_right_assignment_with_use() {
+    let index = index("y -> x");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+
+    let y = index.symbols(file).get("y").unwrap();
+    assert_eq!(y.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_right_assignment_rhs_collected_before_lhs() {
+    let index = index("y -> x");
+    let file = ScopeId::from(0);
+
+    let use_site = &index.uses(file)[UseId::from(0)];
+    let use_sym = index.symbols(file).symbol(use_site.symbol());
+    assert_eq!(use_sym.name(), "y");
+
+    let bind_site = &index.bindings(file)[BindingId::from(0)];
+    let bind_sym = index.symbols(file).symbol(bind_site.symbol());
+    assert_eq!(bind_sym.name(), "x");
+}
+
+#[test]
+fn test_right_assignment_complex_target() {
+    // `1 -> x$foo` -- `x` is a use, not a binding
+    let index = index("1 -> x$foo");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+
+    assert_eq!(index.bindings(file).len(), 0);
+}
