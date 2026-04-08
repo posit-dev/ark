@@ -262,6 +262,11 @@ impl SemanticIndexBuilder {
             // `RWhileStatement`, `RRepeatStatement`, `RUnaryExpression`,
             // `RParenthesizedExpression`, `RReturnExpression`, literals, and
             // any future expression types without needing explicit arms.
+            //
+            // NOTE: This also means that identifiers and assignments inside
+            // quoting constructs (`~`, `quote()`, `bquote()`) are recorded as
+            // uses and bindings. Refining this requires special-casing these
+            // forms, which we defer as future work.
             _ => {
                 self.collect_descendants(expr.syntax());
             },

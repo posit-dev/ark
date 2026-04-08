@@ -599,3 +599,82 @@ fn test_super_assignment_with_use_on_value_side() {
     let y = index.symbols(fun).get("y").unwrap();
     assert_eq!(y.flags(), SymbolFlags::IS_USED);
 }
+
+// --- NSE / quoting constructs ---
+//
+// Identifiers inside `~`, `quote()`, and `bquote()` are currently recorded
+// as uses. This is a known simplification; refining it is deferred as
+// future work. These tests document the current behaviour.
+
+#[test]
+fn test_fixme_formula_records_uses() {
+    let index = index("y ~ x + z");
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("z").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+}
+
+#[test]
+fn test_fixme_one_sided_formula_records_uses() {
+    let index = index("~ x + y");
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+}
+
+#[test]
+fn test_fixme_quote_records_uses() {
+    let index = index("quote(x + y)");
+    let file = ScopeId::from(0);
+
+    assert_eq!(
+        index.symbols(file).get("quote").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("x").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+    assert_eq!(
+        index.symbols(file).get("y").unwrap().flags(),
+        SymbolFlags::IS_USED
+    );
+}
+
+#[test]
+fn test_fixme_quote_records_assignment() {
+    let index = index("quote(x <- 1)");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+    assert_eq!(index.bindings(file).len(), 1);
+}
+
+#[test]
+fn test_fixme_formula_records_assignment() {
+    let index = index("~ (x <- 1)");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+    assert_eq!(index.bindings(file).len(), 1);
+}
