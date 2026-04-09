@@ -12,10 +12,10 @@ define_index!(ScopeId);
 // Scope-local symbol identifier
 define_index!(SymbolId);
 
-// Definition site identifier
+// Scope-local definition site identifier
 define_index!(DefinitionId);
 
-// Use site identifier
+// Scope-local use site identifier
 define_index!(UseId);
 
 // One `SemanticIndex` per R source file. This reflects the physical reality of
@@ -42,9 +42,10 @@ pub struct SemanticIndex {
     // and go-to-definition by letting us find all sites for a given symbol
     // without control-flow analysis.
     //
-    // In ty, this role is filled by salsa-tracked `Definition<'db>` structs
-    // and `AstIds`. When we introduce salsa, these lists may be restructured
-    // to match.
+    // In ty, definitions are salsa-tracked `Definition<'db>` structs (stored
+    // in `definitions_by_node`), and use sites are tracked via `AstIds`
+    // (a per-scope map from AST node positions to `ScopedUseId`). When we
+    // introduce salsa, these lists may be restructured to match.
     //
     // Use-def maps will layer on top of these lists, not replace them. A
     // use-def map tracks which definitions reach each use through control flow,
@@ -137,6 +138,14 @@ impl SemanticIndex {
 
 // --- Scope ---
 
+// A lexical scope within a file. Each scope has its own symbol table,
+// definitions, and uses. The scope chain (via `parent`) is always bounded
+// by the file: walking `parent` from any scope eventually reaches the
+// `File` scope which itself has `parent: None`.
+//
+// Currently only `function()` creates a new scope. In the future, constructs
+// like `local()`, `with()`, `within()` may also create scopes (determined
+// by function declarations resolved via salsa queries).
 #[derive(Debug)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
@@ -150,6 +159,9 @@ pub struct Scope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
+    // The file's top-level scope. Every file has exactly one, always at
+    // `ScopeId(0)`. Unresolved names fall through to this scope, where
+    // cross-file resolution (package namespace, session, etc.) takes over.
     File,
     Function,
 }
@@ -244,6 +256,20 @@ impl std::ops::Deref for SymbolTableBuilder {
 
 // --- Symbol ---
 
+// The unique identity of a name within a scope. A symbol is created the first
+// time a name is encountered (as a binding or a use), and subsequent
+// occurrences of the same name in that scope merge their flags into the
+// existing symbol.
+//
+// Definitions and uses reference symbols via `SymbolId`. The symbol itself
+// doesn't track where it's defined or used, that's the job of the `Definition`
+// and `Use` lists. The symbol just records the name and summary flags (bound?
+// used? parameter?).
+//
+// In ty, symbols live in a `PlaceTable` (which generalizes to include member
+// access like `x.y`). `resolve_symbol()` walks the scope chain looking for a
+// symbol with `IS_BOUND`. Future type inference will look up the symbol's
+// definitions and infer a type from them.
 #[derive(Debug)]
 pub struct Symbol {
     pub(crate) name: String,
@@ -298,19 +324,47 @@ impl SymbolFlags {
 
 // --- Definition and Use sites ---
 
+// A site where a symbol is bound (given a value) or declared (given a type
+// constraint). Bridges the scope/symbol layer (which symbol, which scope)
+// and the syntax layer (what construct created it, via `DefinitionKind`).
+//
+// A symbol can have multiple definitions in the same scope (e.g. `x <- 1`
+// then `x <- 2`). In ty, `DefinitionKind` classifies the construct
+// (assignment, parameter, for-variable) and carries a reference to the
+// syntax node. This split matters for salsa: the kind is marked `#[no_eq]`
+// so that editing the RHS of an assignment re-runs type inference for that
+// definition without invalidating the definition's identity (file + scope +
+// place) or the UseDefMap.
+//
+// Our definitions don't carry file or scope because they live inside the
+// `SemanticIndex` at a known position (`definitions[scope_id][def_id]`).
+// In ty, `Definition<'db>` is a self-contained salsa tracked struct that
+// carries file + scope + place, because it gets passed around independently
+// to type inference queries and cross-file lookups. We'll add those fields
+// when salsa is introduced.
+//
+// Type inference will eventually take a definition as input and inspect
+// the syntax node (via the kind) to determine the type.
+//
+// ty also classifies definitions into categories: `Binding` (gives a value),
+// `Declaration` (constrains a type), or `DeclarationAndBinding` (both).
+// For R, most definitions are bindings today, but function definitions are
+// implicitly declarations (they declare a name as a function with a specific
+// signature). Future `declare()` annotations will also produce pure
+// declarations.
+#[derive(Debug)]
+pub struct Definition {
+    pub(crate) symbol: SymbolId,
+    pub(crate) kind: DefinitionKind,
+    pub(crate) range: TextRange,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DefinitionKind {
     Assignment,
     SuperAssignment,
     Parameter,
     ForVariable,
-}
-
-#[derive(Debug)]
-pub struct Definition {
-    pub(crate) symbol: SymbolId,
-    pub(crate) kind: DefinitionKind,
-    pub(crate) range: TextRange,
 }
 
 impl Definition {
@@ -327,6 +381,11 @@ impl Definition {
     }
 }
 
+// A site where a symbol is referenced by name. In ty, use sites are tracked
+// via `ScopedUseId` indices in a per-scope `AstIds` structure (mapping AST
+// node positions to use IDs). Our flat list serves the same purpose: the
+// `UseDefMap` will reference `UseId` indices into this list to connect each
+// use to its reaching definitions.
 #[derive(Debug)]
 pub struct Use {
     pub(crate) symbol: SymbolId,
