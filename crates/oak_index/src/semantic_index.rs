@@ -29,7 +29,7 @@ define_index!(UseId);
 // (all indexed by `ScopeId`) rather than bundled into a single struct, so
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 
@@ -158,7 +158,7 @@ impl SemanticIndex {
 // Currently only `function()` creates a new scope. In the future, constructs
 // like `local()`, `with()`, `within()` may also create scopes (determined
 // by function declarations resolved via salsa queries).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
     pub(crate) kind: ScopeKind,
@@ -195,7 +195,7 @@ impl Scope {
 // --- Symbol table (per scope) ---
 
 // Read-only after construction. The builder uses `SymbolTableBuilder`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct SymbolTable {
     symbols: IndexVec<SymbolId, Symbol>,
 
@@ -282,7 +282,7 @@ impl std::ops::Deref for SymbolTableBuilder {
 // access like `x.y`). `resolve_symbol()` walks the scope chain looking for a
 // symbol with `IS_BOUND`. Future type inference will look up the symbol's
 // definitions and infer a type from them.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Symbol {
     pub(crate) name: String,
     pub(crate) flags: SymbolFlags,
@@ -373,7 +373,7 @@ impl SymbolFlags {
 // implicitly declarations (they declare a name as a function with a specific
 // signature). Future `declare()` annotations will also produce pure
 // declarations.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Definition {
     pub(crate) symbol: SymbolId,
     pub(crate) kind: DefinitionKind,
@@ -407,7 +407,7 @@ impl Definition {
 // node positions to use IDs). Our flat list serves the same purpose: the
 // `UseDefMap` will reference `UseId` indices into this list to connect each
 // use to its reaching definitions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Use {
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,

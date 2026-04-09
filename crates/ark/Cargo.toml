@@ -44,6 +44,7 @@ log.workspace = true
 mime_guess.workspace = true
 nix.workspace = true
 notify.workspace = true
+oak_index.workspace = true
 once_cell.workspace = true
 regex.workspace = true
 reqwest.workspace = true

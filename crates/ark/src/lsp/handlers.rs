@@ -26,13 +26,16 @@ use tower_lsp::lsp_types::HoverContents;
 use tower_lsp::lsp_types::HoverParams;
 use tower_lsp::lsp_types::Location;
 use tower_lsp::lsp_types::MessageType;
+use tower_lsp::lsp_types::PrepareRenameResponse;
 use tower_lsp::lsp_types::ReferenceParams;
 use tower_lsp::lsp_types::Registration;
+use tower_lsp::lsp_types::RenameParams;
 use tower_lsp::lsp_types::SelectionRange;
 use tower_lsp::lsp_types::SelectionRangeParams;
 use tower_lsp::lsp_types::SignatureHelp;
 use tower_lsp::lsp_types::SignatureHelpParams;
 use tower_lsp::lsp_types::SymbolInformation;
+use tower_lsp::lsp_types::TextDocumentPositionParams;
 use tower_lsp::lsp_types::TextEdit;
 use tower_lsp::lsp_types::WorkspaceEdit;
 use tower_lsp::lsp_types::WorkspaceSymbolParams;
@@ -396,4 +399,28 @@ pub(crate) fn handle_input_boundaries(
 ) -> LspResult<InputBoundariesResponse> {
     let boundaries = r_task(|| input_boundaries(&params.text))?;
     Ok(InputBoundariesResponse { boundaries })
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_rename(
+    params: RenameParams,
+    state: &WorldState,
+) -> LspResult<Option<WorkspaceEdit>> {
+    let uri = &params.text_document_position.text_document.uri;
+    let document = state.get_document(uri)?;
+    Ok(crate::lsp::rename::rename(document, params)
+        .log_err()
+        .flatten())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn handle_prepare_rename(
+    params: TextDocumentPositionParams,
+    state: &WorldState,
+) -> LspResult<Option<PrepareRenameResponse>> {
+    let uri = &params.text_document.uri;
+    let document = state.get_document(uri)?;
+    Ok(crate::lsp::rename::prepare_rename(document, params)
+        .log_err()
+        .flatten())
 }

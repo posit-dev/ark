@@ -72,7 +72,6 @@ impl Document {
         // Preferred Rowan AST and accompanying line index
         let parse = aether_parser::parse(&contents, Default::default());
         let line_index = biome_line_index::LineIndex::new(&contents);
-
         Self {
             contents,
             version,

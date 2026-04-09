@@ -164,6 +164,10 @@ pub(crate) fn initialize(
             type_definition_provider: None,
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             references_provider: Some(OneOf::Left(true)),
+            rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: Default::default(),
+            })),
             document_symbol_provider: Some(OneOf::Left(true)),
             folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
             workspace_symbol_provider: Some(OneOf::Left(true)),

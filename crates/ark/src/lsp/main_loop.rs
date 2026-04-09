@@ -387,6 +387,12 @@ impl GlobalState {
                         LspRequest::InputBoundaries(params) => {
                             respond(tx, || handlers::handle_input_boundaries(params), LspResponse::InputBoundaries)?;
                         },
+                        LspRequest::Rename(params) => {
+                            respond(tx, || handlers::handle_rename(params, &self.world), LspResponse::Rename)?;
+                        },
+                        LspRequest::PrepareRename(params) => {
+                            respond(tx, || handlers::handle_prepare_rename(params, &self.world), LspResponse::PrepareRename)?;
+                        },
                     };
                 },
             },

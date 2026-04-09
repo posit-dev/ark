@@ -155,7 +155,7 @@ pub(crate) struct FlowSnapshot {
 /// The immutable use-def map for a single scope, produced by finalizing the
 /// builder. For each use site, stores the set of definitions that can reach
 /// it through control flow.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UseDefMap {
     bindings_by_use: IndexVec<UseId, Bindings>,
 }

@@ -159,6 +159,8 @@ pub(crate) enum LspRequest {
     CodeAction(CodeActionParams),
     VirtualDocument(VirtualDocumentParams),
     InputBoundaries(InputBoundariesParams),
+    Rename(RenameParams),
+    PrepareRename(TextDocumentPositionParams),
 }
 
 #[derive(Debug)]
@@ -183,6 +185,8 @@ pub(crate) enum LspResponse {
     CodeAction(Option<CodeActionResponse>),
     VirtualDocument(VirtualDocumentResponse),
     InputBoundaries(InputBoundariesResponse),
+    Rename(Option<WorkspaceEdit>),
+    PrepareRename(Option<PrepareRenameResponse>),
 }
 
 pub(crate) type LspResult<T> = std::result::Result<T, LspError>;
@@ -447,6 +451,25 @@ impl LanguageServer for Backend {
             self,
             self.request(LspRequest::CodeAction(params)).await,
             LspResponse::CodeAction
+        )
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::Rename(params)).await,
+            LspResponse::Rename
+        )
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        cast_response!(
+            self,
+            self.request(LspRequest::PrepareRename(params)).await,
+            LspResponse::PrepareRename
         )
     }
 }
