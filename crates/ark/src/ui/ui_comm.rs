@@ -14,6 +14,7 @@ use amalthea::comm::ui_comm::EvalResult;
 use amalthea::comm::ui_comm::EvaluateCodeParams;
 use amalthea::comm::ui_comm::FrontendReadyParams;
 use amalthea::comm::ui_comm::PromptStateParams;
+use amalthea::comm::ui_comm::UiBackendEvent;
 use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::comm::ui_comm::UiBackendRequest;
 use amalthea::comm::ui_comm::UiFrontendEvent;
@@ -26,7 +27,7 @@ use serde_json::Value;
 use stdext::result::ResultExt;
 use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 
-use crate::comm_handler::handle_rpc_request;
+use crate::comm_handler::handle_comm_message;
 use crate::comm_handler::CommHandler;
 use crate::comm_handler::CommHandlerContext;
 use crate::comm_handler::EnvironmentChanged;
@@ -73,9 +74,14 @@ impl CommHandler for UiComm {
     }
 
     fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
-        handle_rpc_request(&ctx.outgoing_tx, UI_COMM_NAME, msg, |req| {
-            self.handle_rpc(req)
-        });
+        let this = &*self;
+        handle_comm_message(
+            &ctx.outgoing_tx,
+            UI_COMM_NAME,
+            msg,
+            |req| this.handle_rpc(req),
+            |evt| this.handle_event(evt),
+        );
     }
 
     fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
@@ -110,14 +116,19 @@ impl UiComm {
         }
     }
 
-    fn handle_rpc(&mut self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
+    fn handle_rpc(&self, request: UiBackendRequest) -> anyhow::Result<UiBackendReply> {
         match request {
             UiBackendRequest::CallMethod(params) => self.handle_call_method(params),
-            UiBackendRequest::DidChangePlotsRenderSettings(params) => {
+            UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
+        }
+    }
+
+    fn handle_event(&self, event: UiBackendEvent) -> anyhow::Result<()> {
+        match event {
+            UiBackendEvent::DidChangePlotsRenderSettings(params) => {
                 self.handle_did_change_plot_render_settings(params)
             },
-            UiBackendRequest::FrontendReady(params) => self.handle_frontend_ready(params),
-            UiBackendRequest::EvaluateCode(params) => self.handle_evaluate_code(params),
+            UiBackendEvent::FrontendReady(params) => self.handle_frontend_ready(params),
         }
     }
 
@@ -157,7 +168,7 @@ impl UiComm {
     fn handle_did_change_plot_render_settings(
         &self,
         params: DidChangePlotsRenderSettingsParams,
-    ) -> anyhow::Result<UiBackendReply> {
+    ) -> anyhow::Result<()> {
         // The frontend shouldn't send invalid sizes but be defensive. Sometimes
         // the plot container is in a strange state when it's hidden.
         if params.settings.size.height <= 0 || params.settings.size.width <= 0 {
@@ -173,10 +184,10 @@ impl UiComm {
             ))
             .map_err(|err| anyhow::anyhow!("Failed to send plot render settings: {err}"))?;
 
-        Ok(UiBackendReply::DidChangePlotsRenderSettingsReply())
+        Ok(())
     }
 
-    fn handle_frontend_ready(&self, params: FrontendReadyParams) -> anyhow::Result<UiBackendReply> {
+    fn handle_frontend_ready(&self, params: FrontendReadyParams) -> anyhow::Result<()> {
         log::info!("Frontend ready (start_type = {})", params.start_type);
 
         if params.start_type == "reconnect" {
@@ -190,7 +201,7 @@ impl UiComm {
                 .warn_on_err();
         }
 
-        Ok(UiBackendReply::FrontendReadyReply())
+        Ok(())
     }
 
     fn handle_evaluate_code(&self, params: EvaluateCodeParams) -> anyhow::Result<UiBackendReply> {

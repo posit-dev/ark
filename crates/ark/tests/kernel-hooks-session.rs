@@ -5,7 +5,6 @@
 //
 //
 
-use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use ark_test::DummyArkFrontend;
 
@@ -47,7 +46,6 @@ fn test_session_init_hook_new() {
     let data = serde_json::json!({
         "method": "frontend_ready",
         "params": { "start_type": "new" },
-        "id": "frontend-ready-rpc"
     });
     frontend.send_shell_comm_msg(String::from(&comm_id), data);
     frontend.recv_iopub_busy();
@@ -60,10 +58,6 @@ fn test_session_init_hook_new() {
         Some("open_editor")
     );
 
-    let reply = frontend.recv_iopub_comm_msg();
-    assert_eq!(reply.comm_id, comm_id);
-    let reply = serde_json::from_value::<UiBackendReply>(reply.data).unwrap();
-    assert_eq!(reply, UiBackendReply::FrontendReadyReply());
     frontend.recv_iopub_idle();
 }
 
@@ -82,15 +76,10 @@ fn test_session_init_hook_restart() {
     let data = serde_json::json!({
         "method": "frontend_ready",
         "params": { "start_type": "restart" },
-        "id": "frontend-ready-rpc"
     });
     frontend.send_shell_comm_msg(String::from(&comm_id), data);
     frontend.recv_iopub_busy();
     frontend.assert_stream_stdout_contains("restart");
-    let reply = frontend.recv_iopub_comm_msg();
-    assert_eq!(reply.comm_id, comm_id);
-    let reply = serde_json::from_value::<UiBackendReply>(reply.data).unwrap();
-    assert_eq!(reply, UiBackendReply::FrontendReadyReply());
     frontend.recv_iopub_idle();
 }
 
@@ -114,14 +103,9 @@ fn test_session_reconnect_hook() {
     let data = serde_json::json!({
         "method": "frontend_ready",
         "params": { "start_type": "reconnect" },
-        "id": "frontend-ready-rpc"
     });
     frontend.send_shell_comm_msg(String::from(&comm_id), data);
     frontend.recv_iopub_busy();
     frontend.assert_stream_stdout_contains("reconnect ran");
-    let reply = frontend.recv_iopub_comm_msg();
-    assert_eq!(reply.comm_id, comm_id);
-    let reply = serde_json::from_value::<UiBackendReply>(reply.data).unwrap();
-    assert_eq!(reply, UiBackendReply::FrontendReadyReply());
     frontend.recv_iopub_idle();
 }
