@@ -63,6 +63,15 @@ impl<I: Idx, V> FromIterator<V> for IndexVec<I, V> {
     }
 }
 
+impl<I: Idx, V: Clone> Clone for IndexVec<I, V> {
+    fn clone(&self) -> Self {
+        Self {
+            raw: self.raw.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
 impl<I: Idx, V> Default for IndexVec<I, V> {
     fn default() -> Self {
         Self::new()

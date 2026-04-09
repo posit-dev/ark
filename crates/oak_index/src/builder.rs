@@ -30,6 +30,8 @@ use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolTableBuilder;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
+use crate::use_def_map::UseDefMap;
+use crate::use_def_map::UseDefMapBuilder;
 
 /// Build a [`SemanticIndex`] from a parsed R file.
 pub fn build(root: &RRoot) -> SemanticIndex {
@@ -47,6 +49,9 @@ struct SemanticIndexBuilder {
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
+    use_def_maps: IndexVec<ScopeId, UseDefMap>,
+    current_use_def: UseDefMapBuilder,
+    use_def_stack: Vec<UseDefMapBuilder>,
     current_scope: ScopeId,
 }
 
@@ -56,6 +61,7 @@ impl SemanticIndexBuilder {
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
         let mut uses = IndexVec::new();
+        let mut use_def_maps = IndexVec::new();
 
         // The descendants range starts empty (`n+1..n+1`). `pop_scope` later
         // fills in `descendants.end` with the current arena length. Everything
@@ -70,12 +76,16 @@ impl SemanticIndexBuilder {
         symbol_tables.push(SymbolTableBuilder::new());
         definitions.push(IndexVec::new());
         uses.push(IndexVec::new());
+        use_def_maps.push(UseDefMap::empty());
 
         Self {
             scopes,
             symbol_tables,
             definitions,
             uses,
+            use_def_maps,
+            current_use_def: UseDefMapBuilder::new(),
+            use_def_stack: Vec::new(),
             current_scope: file,
         }
     }
@@ -99,6 +109,10 @@ impl SemanticIndexBuilder {
         self.symbol_tables.push(SymbolTableBuilder::new());
         self.definitions.push(IndexVec::new());
         self.uses.push(IndexVec::new());
+        self.use_def_maps.push(UseDefMap::empty());
+
+        let parent_use_def = std::mem::replace(&mut self.current_use_def, UseDefMapBuilder::new());
+        self.use_def_stack.push(parent_use_def);
 
         id
     }
@@ -111,6 +125,13 @@ impl SemanticIndexBuilder {
             Some(parent) => parent,
             None => panic!("`pop_scope()` called on the file scope"),
         };
+
+        let parent_use_def = match self.use_def_stack.pop() {
+            Some(builder) => builder,
+            None => panic!("`pop_scope()` called with empty use-def stack"),
+        };
+        let finalized = std::mem::replace(&mut self.current_use_def, parent_use_def).finish();
+        self.use_def_maps[id] = finalized;
     }
 
     fn add_definition(
@@ -120,9 +141,19 @@ impl SemanticIndexBuilder {
         kind: DefinitionKind,
         range: TextRange,
     ) {
-        self.add_definition_in_scope(self.current_scope, name, flags, kind, range);
+        let symbol_id = self.symbol_tables[self.current_scope].intern(name, flags);
+        let def_id = self.definitions[self.current_scope].push(Definition {
+            symbol: symbol_id,
+            kind,
+            range,
+        });
+
+        self.current_use_def.ensure_symbol(symbol_id);
+        self.current_use_def.record_binding(symbol_id, def_id);
     }
 
+    // Super-assignment targets a scope whose use-def builder is buried in the
+    // stack (or already finalized), so we skip use-def tracking here.
     fn add_definition_in_scope(
         &mut self,
         scope: ScopeId,
@@ -157,8 +188,14 @@ impl SemanticIndexBuilder {
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
-        let symbol = self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_USED);
-        self.uses[self.current_scope].push(Use { symbol, range });
+        let symbol_id = self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_USED);
+        let use_id = self.uses[self.current_scope].push(Use {
+            symbol: symbol_id,
+            range,
+        });
+
+        self.current_use_def.ensure_symbol(symbol_id);
+        self.current_use_def.record_use(symbol_id, use_id);
     }
 
     // --- Recursive descent ---
@@ -252,6 +289,10 @@ impl SemanticIndexBuilder {
             },
 
             AnyRExpression::RForStatement(stmt) => {
+                // The for variable is always bound (R sets it to NULL for
+                // empty sequences), so its binding is recorded before the
+                // snapshot. Assignments inside the body are conditional
+                // (body may not execute for empty sequences).
                 if let Ok(variable) = stmt.variable() {
                     self.add_definition(
                         &identifier_text(&variable),
@@ -263,6 +304,61 @@ impl SemanticIndexBuilder {
                 if let Ok(sequence) = stmt.sequence() {
                     self.collect_expression(&sequence);
                 }
+
+                let pre_loop = self.current_use_def.snapshot();
+
+                if let Ok(body) = stmt.body() {
+                    self.collect_expression(&body);
+                }
+
+                self.current_use_def.merge(pre_loop);
+            },
+
+            AnyRExpression::RIfStatement(stmt) => {
+                // Condition is always evaluated
+                if let Ok(condition) = stmt.condition() {
+                    self.collect_expression(&condition);
+                }
+
+                let pre_if = self.current_use_def.snapshot();
+
+                // If-body (consequence)
+                if let Ok(consequence) = stmt.consequence() {
+                    self.collect_expression(&consequence);
+                }
+
+                let post_if = self.current_use_def.snapshot();
+                self.current_use_def.restore(pre_if);
+
+                // Else-body (alternative), if present. If absent, the
+                // "else path" is just the pre-if state we restored to.
+                if let Some(else_clause) = stmt.else_clause() {
+                    if let Ok(alternative) = else_clause.alternative() {
+                        self.collect_expression(&alternative);
+                    }
+                }
+
+                // After: definitions from both branches are live
+                self.current_use_def.merge(post_if);
+            },
+
+            AnyRExpression::RWhileStatement(stmt) => {
+                if let Ok(condition) = stmt.condition() {
+                    self.collect_expression(&condition);
+                }
+
+                let pre_loop = self.current_use_def.snapshot();
+
+                if let Ok(body) = stmt.body() {
+                    self.collect_expression(&body);
+                }
+
+                // Body may not execute
+                self.current_use_def.merge(pre_loop);
+            },
+
+            AnyRExpression::RRepeatStatement(stmt) => {
+                // Body always executes at least once, no snapshot needed
                 if let Ok(body) = stmt.body() {
                     self.collect_expression(&body);
                 }
@@ -272,8 +368,7 @@ impl SemanticIndexBuilder {
 
             // Generic fallback: walk over descendant nodes and collect their
             // `AnyRExpression` children, letting `collect_expression`
-            // handle their contents. This covers `RIfStatement`,
-            // `RWhileStatement`, `RRepeatStatement`, `RUnaryExpression`,
+            // handle their contents. This covers `RUnaryExpression`,
             // `RParenthesizedExpression`, `RReturnExpression`, literals, and
             // any future expression types without needing explicit arms.
             //
@@ -436,8 +531,18 @@ impl SemanticIndexBuilder {
 
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
+
+        let file_use_def_map = self.current_use_def.finish();
+        self.use_def_maps[ScopeId::from(0)] = file_use_def_map;
+
         let symbol_tables = self.symbol_tables.into_iter().map(|b| b.build()).collect();
-        SemanticIndex::new(self.scopes, symbol_tables, self.definitions, self.uses)
+        SemanticIndex::new(
+            self.scopes,
+            symbol_tables,
+            self.definitions,
+            self.uses,
+            self.use_def_maps,
+        )
     }
 }
 
