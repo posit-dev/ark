@@ -309,6 +309,10 @@ impl SymbolFlags {
     pub const IS_BOUND: Self = Self(1 << 1);
     // Appears in a function's formal parameter list.
     pub const IS_PARAMETER: Self = Self(1 << 2);
+    // Target of a super-assignment (`<<-`, `->>`). Recorded in the scope
+    // where the expression lexically appears, not in the target ancestor
+    // scope. Not visible to `resolve_symbol` (which checks `IS_BOUND`).
+    pub const IS_SUPER_BOUND: Self = Self(1 << 3);
 
     pub const fn empty() -> Self {
         Self(0)
