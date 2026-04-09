@@ -2248,7 +2248,11 @@ dependencies = [
  "air_r_parser",
  "air_r_syntax",
  "biome_rowan",
+ "itertools 0.10.5",
+ "log",
  "rustc-hash",
+ "smallvec",
+ "stdext",
 ]
 
 [[package]]

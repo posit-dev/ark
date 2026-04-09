@@ -94,6 +94,7 @@ serde_json = { version = "1.0.94", features = ["preserve_order"] }
 serde_repr = "0.1.17"
 serde_with = "3.0.0"
 sha2 = "0.10.6"
+smallvec = "1.13.2"
 stdext = { path = "crates/stdext" }
 streaming-iterator = "0.1.9"
 strum = "0.26.2"
