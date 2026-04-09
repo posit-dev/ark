@@ -31,6 +31,18 @@ macro_rules! soft_assert {
     };
 }
 
+/// Like `assert!` but for negative conditions. `assert_not!(x)` reads
+/// more clearly than `assert!(!x)`.
+#[macro_export]
+macro_rules! assert_not {
+    ( $cond:expr $(,)? ) => {
+        assert!(!$cond);
+    };
+    ( $cond:expr, $($fmt_arg:tt)+ ) => {
+        assert!(!$cond, $($fmt_arg)+);
+    };
+}
+
 // From https://github.com/zed-industries/zed/blob/a910c594/crates/util/src/util.rs#L554
 pub trait ResultExt<E> {
     type Ok;
