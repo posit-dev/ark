@@ -812,3 +812,317 @@ fn test_fixme_formula_records_assignment() {
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
     assert_eq!(index.definitions(file).len(), 1);
 }
+
+// --- Lambda syntax ---
+
+#[test]
+fn test_lambda_creates_scope() {
+    let index = index(r"f <- \(x) x");
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    assert_eq!(
+        index.symbols(file).get("f").unwrap().flags(),
+        SymbolFlags::IS_BOUND
+    );
+
+    assert_eq!(index.scope(fun).kind(), ScopeKind::Function);
+    assert_eq!(index.scope(fun).parent(), Some(file));
+
+    let x = index.symbols(fun).get("x").unwrap();
+    assert_eq!(
+        x.flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_PARAMETER)
+            .union(SymbolFlags::IS_USED)
+    );
+}
+
+#[test]
+fn test_lambda_nested() {
+    let index = index(r"\(x) \(y) x + y");
+    let outer = ScopeId::from(1);
+    let inner = ScopeId::from(2);
+
+    let x = index.symbols(outer).get("x").unwrap();
+    assert_eq!(
+        x.flags(),
+        SymbolFlags::IS_BOUND.union(SymbolFlags::IS_PARAMETER)
+    );
+
+    let x_inner = index.symbols(inner).get("x").unwrap();
+    assert_eq!(x_inner.flags(), SymbolFlags::IS_USED);
+
+    let y = index.symbols(inner).get("y").unwrap();
+    assert_eq!(
+        y.flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_PARAMETER)
+            .union(SymbolFlags::IS_USED)
+    );
+}
+
+// --- Unary expressions ---
+
+#[test]
+fn test_unary_not() {
+    let index = index("!x");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_unary_minus() {
+    let index = index("-x");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+}
+
+// --- Return, break, next ---
+
+#[test]
+fn test_return_expression() {
+    let index = index("function() return(x)");
+    let fun = ScopeId::from(1);
+
+    let x = index.symbols(fun).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_break_no_uses() {
+    let index = index("while (TRUE) break");
+    let file = ScopeId::from(0);
+
+    // Only `TRUE` is in the tree, `break` has no identifier children
+    assert_eq!(index.symbols(file).len(), 0);
+    assert_eq!(index.uses(file).len(), 0);
+}
+
+#[test]
+fn test_next_no_uses() {
+    let index = index("while (TRUE) next");
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.symbols(file).len(), 0);
+    assert_eq!(index.uses(file).len(), 0);
+}
+
+// --- Pipe operator ---
+
+#[test]
+fn test_pipe_operator() {
+    let index = index("x |> f()");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+
+    let f = index.symbols(file).get("f").unwrap();
+    assert_eq!(f.flags(), SymbolFlags::IS_USED);
+}
+
+// --- Chained / nested assignments ---
+
+#[test]
+fn test_chained_assignment() {
+    let index = index("x <- y <- 1");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+
+    let y = index.symbols(file).get("y").unwrap();
+    assert_eq!(y.flags(), SymbolFlags::IS_BOUND);
+
+    assert_eq!(index.definitions(file).len(), 2);
+}
+
+// --- Call arguments ---
+
+#[test]
+fn test_positional_call_arguments_are_uses() {
+    let index = index("f(a, b)");
+    let file = ScopeId::from(0);
+
+    let f = index.symbols(file).get("f").unwrap();
+    assert_eq!(f.flags(), SymbolFlags::IS_USED);
+
+    let a = index.symbols(file).get("a").unwrap();
+    assert_eq!(a.flags(), SymbolFlags::IS_USED);
+
+    let b = index.symbols(file).get("b").unwrap();
+    assert_eq!(b.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_named_call_argument_value_is_use() {
+    // For `f(x = y)`, `y` should be a use but `x` should not.
+    let index = index("f(x = y)");
+    let file = ScopeId::from(0);
+
+    assert!(index.symbols(file).get("x").is_none());
+
+    let y = index.symbols(file).get("y").unwrap();
+    assert_eq!(y.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_function_as_call_argument() {
+    let index = index("lapply(xs, function(x) x + 1)");
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    let lapply = index.symbols(file).get("lapply").unwrap();
+    assert_eq!(lapply.flags(), SymbolFlags::IS_USED);
+
+    let xs = index.symbols(file).get("xs").unwrap();
+    assert_eq!(xs.flags(), SymbolFlags::IS_USED);
+
+    assert_eq!(index.scope(fun).kind(), ScopeKind::Function);
+    assert_eq!(index.scope(fun).parent(), Some(file));
+
+    let x = index.symbols(fun).get("x").unwrap();
+    assert_eq!(
+        x.flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_PARAMETER)
+            .union(SymbolFlags::IS_USED)
+    );
+}
+
+#[test]
+fn test_nested_calls() {
+    let index = index("f(g(x))");
+    let file = ScopeId::from(0);
+
+    let f = index.symbols(file).get("f").unwrap();
+    assert_eq!(f.flags(), SymbolFlags::IS_USED);
+
+    let g = index.symbols(file).get("g").unwrap();
+    assert_eq!(g.flags(), SymbolFlags::IS_USED);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+}
+
+// --- Chained extraction ---
+
+#[test]
+fn test_chained_dollar_extraction() {
+    // `x$a$b` — only `x` should be a use
+    let index = index("x$a$b");
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.symbols(file).len(), 1);
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+}
+
+// --- Subset with named argument ---
+
+#[test]
+fn test_subset_named_argument_not_use() {
+    // `x[drop = FALSE]` — `drop` is an argument name, not a use
+    let index = index("x[drop = FALSE]");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_USED);
+
+    assert!(index.symbols(file).get("drop").is_none());
+    assert_eq!(index.symbols(file).len(), 1);
+}
+
+// --- Backticked identifiers ---
+//
+// Backticks are a quoting mechanism: `my var` and my_var both refer to
+// symbols. Currently the builder stores the raw text including backticks,
+// so lookup requires the backticks. This should be fixed so that the
+// canonical name strips backticks (they are not part of the symbol identity).
+
+#[test]
+fn test_fixme_backticked_identifier_includes_backticks() {
+    let index = index("`my var` <- 1");
+    let file = ScopeId::from(0);
+
+    // Current behaviour: name includes backticks
+    assert!(index.symbols(file).get("`my var`").is_some());
+    assert!(index.symbols(file).get("my var").is_none());
+    assert_eq!(index.definitions(file).len(), 1);
+}
+
+#[test]
+fn test_fixme_backticked_identifier_use_includes_backticks() {
+    let index = index("x <- `my var`");
+    let file = ScopeId::from(0);
+
+    // Current behaviour: name includes backticks
+    assert!(index.symbols(file).get("`my var`").is_some());
+    assert!(index.symbols(file).get("my var").is_none());
+}
+
+// --- String as assignment target ---
+
+#[test]
+fn test_fixme_string_assignment_target_no_binding() {
+    // `"x" <- 1` is equivalent to `x <- 1` in R, but the parser sees a
+    // string literal on the LHS, not an identifier. No binding is created.
+    let index = index("\"x\" <- 1");
+    let file = ScopeId::from(0);
+
+    assert_eq!(index.definitions(file).len(), 0);
+    assert_eq!(index.symbols(file).len(), 0);
+}
+
+// --- Multiple expressions (semicolons) ---
+
+#[test]
+fn test_semicolons_multiple_expressions() {
+    let index = index("x <- 1; y <- 2");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+
+    let y = index.symbols(file).get("y").unwrap();
+    assert_eq!(y.flags(), SymbolFlags::IS_BOUND);
+
+    assert_eq!(index.definitions(file).len(), 2);
+}
+
+// --- Nested for loops ---
+
+#[test]
+fn test_nested_for_loops() {
+    let index = index("for (i in xs) for (j in ys) f(i, j)");
+    let file = ScopeId::from(0);
+
+    let i = index.symbols(file).get("i").unwrap();
+    assert_eq!(i.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
+
+    let j = index.symbols(file).get("j").unwrap();
+    assert_eq!(j.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
+
+    assert_eq!(index.definitions(file).len(), 2);
+}
+
+// --- Assignment in loop body ---
+
+#[test]
+fn test_assignment_in_for_body() {
+    let index = index("for (i in xs) x <- i");
+    let file = ScopeId::from(0);
+
+    let i = index.symbols(file).get("i").unwrap();
+    assert_eq!(i.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+
+    assert_eq!(index.definitions(file).len(), 2);
+}
