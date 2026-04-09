@@ -137,12 +137,6 @@ impl SemanticIndex {
 
 // --- Scope ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScopeKind {
-    File,
-    Function,
-}
-
 #[derive(Debug)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
@@ -152,6 +146,12 @@ pub struct Scope {
     // occupy a contiguous range of IDs. This lets `child_scopes` and
     // `scope_at` work by range arithmetic instead of pointer chasing.
     pub(crate) descendants: Range<ScopeId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeKind {
+    File,
+    Function,
 }
 
 impl Scope {
@@ -165,60 +165,6 @@ impl Scope {
 
     pub fn range(&self) -> TextRange {
         self.range
-    }
-}
-
-// --- Symbol ---
-
-// Summary bits accumulated during the tree walk, so queries like "is this
-// symbol bound in this scope?" are O(1) without scanning binding/use lists.
-// Bitflags rather than a struct of bools for compact storage and composability.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SymbolFlags(u8);
-
-impl SymbolFlags {
-    // Referenced by name in this scope.
-    pub const IS_USED: Self = Self(1 << 0);
-    // Given a value: assignment (`<-`, `=`, `->`) or parameter definition.
-    pub const IS_BOUND: Self = Self(1 << 1);
-    // Appears in a function's formal parameter list.
-    pub const IS_PARAMETER: Self = Self(1 << 2);
-
-    pub const fn empty() -> Self {
-        Self(0)
-    }
-
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    /// Returns `true` if `self` and `other` share at least one flag.
-    pub const fn intersects(self, other: Self) -> bool {
-        self.0 & other.0 != 0
-    }
-
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-
-    pub fn insert(&mut self, other: Self) {
-        self.0 |= other.0;
-    }
-}
-
-#[derive(Debug)]
-pub struct Symbol {
-    pub(crate) name: String,
-    pub(crate) flags: SymbolFlags,
-}
-
-impl Symbol {
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn flags(&self) -> SymbolFlags {
-        self.flags
     }
 }
 
@@ -293,6 +239,60 @@ impl std::ops::Deref for SymbolTableBuilder {
 
     fn deref(&self) -> &SymbolTable {
         &self.table
+    }
+}
+
+// --- Symbol ---
+
+#[derive(Debug)]
+pub struct Symbol {
+    pub(crate) name: String,
+    pub(crate) flags: SymbolFlags,
+}
+
+impl Symbol {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn flags(&self) -> SymbolFlags {
+        self.flags
+    }
+}
+
+// Summary bits accumulated during the tree walk, so queries like "is this
+// symbol bound in this scope?" are O(1) without scanning binding/use lists.
+// Bitflags rather than a struct of bools for compact storage and composability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SymbolFlags(u8);
+
+impl SymbolFlags {
+    // Referenced by name in this scope.
+    pub const IS_USED: Self = Self(1 << 0);
+    // Given a value: assignment (`<-`, `=`, `->`) or parameter definition.
+    pub const IS_BOUND: Self = Self(1 << 1);
+    // Appears in a function's formal parameter list.
+    pub const IS_PARAMETER: Self = Self(1 << 2);
+
+    pub const fn empty() -> Self {
+        Self(0)
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Returns `true` if `self` and `other` share at least one flag.
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub fn insert(&mut self, other: Self) {
+        self.0 |= other.0;
     }
 }
 
