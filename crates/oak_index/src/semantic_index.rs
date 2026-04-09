@@ -290,6 +290,15 @@ impl Symbol {
 // Summary bits accumulated during the tree walk, so queries like "is this
 // symbol bound in this scope?" are O(1) without scanning binding/use lists.
 // Bitflags rather than a struct of bools for compact storage and composability.
+//
+// These flags are scope-level summaries, not fine-grained enough to
+// implement LSP features directly. For example, `IS_BOUND` says "x is
+// bound somewhere in this scope" but can't answer "which definition of x
+// reaches this point?" or "is x defined before this use?". Use-def maps
+// provide that precision. The flags remain useful for scope-level queries
+// like `resolve_symbol` and `resolve_super_target` (which walk the scope
+// chain checking `IS_BOUND`). They can also be useful as filters for
+// short-circuiting unneeded expensive operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SymbolFlags(u8);
 
