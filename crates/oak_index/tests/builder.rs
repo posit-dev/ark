@@ -1039,44 +1039,84 @@ fn test_subset_named_argument_not_use() {
 }
 
 // --- Backticked identifiers ---
-//
-// Backticks are a quoting mechanism: `my var` and my_var both refer to
-// symbols. Currently the builder stores the raw text including backticks,
-// so lookup requires the backticks. This should be fixed so that the
-// canonical name strips backticks (they are not part of the symbol identity).
 
 #[test]
-fn test_fixme_backticked_identifier_includes_backticks() {
+fn test_backticked_identifier_assignment() {
     let index = index("`my var` <- 1");
     let file = ScopeId::from(0);
 
-    // Current behaviour: name includes backticks
-    assert!(index.symbols(file).get("`my var`").is_some());
-    assert!(index.symbols(file).get("my var").is_none());
+    let sym = index.symbols(file).get("my var").unwrap();
+    assert_eq!(sym.flags(), SymbolFlags::IS_BOUND);
     assert_eq!(index.definitions(file).len(), 1);
 }
 
 #[test]
-fn test_fixme_backticked_identifier_use_includes_backticks() {
+fn test_backticked_identifier_use() {
     let index = index("x <- `my var`");
     let file = ScopeId::from(0);
 
-    // Current behaviour: name includes backticks
-    assert!(index.symbols(file).get("`my var`").is_some());
-    assert!(index.symbols(file).get("my var").is_none());
+    let sym = index.symbols(file).get("my var").unwrap();
+    assert_eq!(sym.flags(), SymbolFlags::IS_USED);
+}
+
+#[test]
+fn test_backticked_identifier_parameter() {
+    let index = index("function(`a b`) `a b`");
+    let fun = ScopeId::from(1);
+
+    let sym = index.symbols(fun).get("a b").unwrap();
+    assert_eq!(
+        sym.flags(),
+        SymbolFlags::IS_BOUND
+            .union(SymbolFlags::IS_PARAMETER)
+            .union(SymbolFlags::IS_USED)
+    );
+}
+
+#[test]
+fn test_backticked_for_variable() {
+    let index = index("for (`i j` in xs) `i j`");
+    let file = ScopeId::from(0);
+
+    let sym = index.symbols(file).get("i j").unwrap();
+    assert_eq!(
+        sym.flags(),
+        SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED)
+    );
 }
 
 // --- String as assignment target ---
 
 #[test]
-fn test_fixme_string_assignment_target_no_binding() {
-    // `"x" <- 1` is equivalent to `x <- 1` in R, but the parser sees a
-    // string literal on the LHS, not an identifier. No binding is created.
+fn test_string_assignment_target() {
+    // `"x" <- 1` is equivalent to `x <- 1` in R
     let index = index("\"x\" <- 1");
     let file = ScopeId::from(0);
 
-    assert_eq!(index.definitions(file).len(), 0);
-    assert_eq!(index.symbols(file).len(), 0);
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+    assert_eq!(index.definitions(file).len(), 1);
+}
+
+#[test]
+fn test_string_assignment_right() {
+    let index = index("1 -> \"x\"");
+    let file = ScopeId::from(0);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+    assert_eq!(index.definitions(file).len(), 1);
+}
+
+#[test]
+fn test_string_super_assignment() {
+    let index = index("f <- function() { \"x\" <<- 1 }");
+    let file = ScopeId::from(0);
+    let fun = ScopeId::from(1);
+
+    let x = index.symbols(file).get("x").unwrap();
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+    assert!(index.symbols(fun).get("x").is_none());
 }
 
 // --- Multiple expressions (semicolons) ---

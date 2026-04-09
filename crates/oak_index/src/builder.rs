@@ -1,5 +1,6 @@
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
+use aether_syntax::AnyRValue;
 use aether_syntax::RArgumentList;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RExpressionList;
@@ -171,7 +172,7 @@ impl SemanticIndexBuilder {
     fn collect_expression(&mut self, expr: &AnyRExpression) {
         match expr {
             AnyRExpression::RIdentifier(ident) => {
-                let name = ident.syntax().text_trimmed().to_string();
+                let name = identifier_text(ident);
                 let range = ident.syntax().text_trimmed_range();
                 self.add_use(&name, range);
             },
@@ -253,7 +254,7 @@ impl SemanticIndexBuilder {
             AnyRExpression::RForStatement(stmt) => {
                 if let Ok(variable) = stmt.variable() {
                     self.add_definition(
-                        &variable.syntax().text_trimmed().to_string(),
+                        &identifier_text(&variable),
                         SymbolFlags::IS_BOUND,
                         DefinitionKind::ForVariable(stmt.syntax().clone()),
                         variable.syntax().text_trimmed_range(),
@@ -334,7 +335,7 @@ impl SemanticIndexBuilder {
             match &name {
                 AnyRParameterName::RIdentifier(ident) => {
                     self.add_definition(
-                        &ident.syntax().text_trimmed().to_string(),
+                        &identifier_text(ident),
                         flags,
                         DefinitionKind::Parameter(param.syntax().clone()),
                         ident.syntax().text_trimmed_range(),
@@ -380,33 +381,47 @@ impl SemanticIndexBuilder {
 
         let target = if right { op.right() } else { op.left() };
         let Ok(target) = target else { return };
-        match target {
-            AnyRExpression::RIdentifier(ident) => {
-                let name = ident.syntax().text_trimmed().to_string();
-                let range = ident.syntax().text_trimmed_range();
 
-                if super_assign {
-                    let target_scope = self.resolve_super_target(&name);
-                    self.add_definition_in_scope(
-                        target_scope,
-                        &name,
-                        SymbolFlags::IS_BOUND,
-                        DefinitionKind::SuperAssignment(op.syntax().clone()),
-                        range,
-                    );
-                } else {
-                    self.add_definition(
-                        &name,
-                        SymbolFlags::IS_BOUND,
-                        DefinitionKind::Assignment(op.syntax().clone()),
-                        range,
-                    );
-                }
+        let (name, range) = match &target {
+            AnyRExpression::RIdentifier(ident) => {
+                let name = identifier_text(ident);
+                let range = ident.syntax().text_trimmed_range();
+                (name, range)
+            },
+
+            // `"x" <- 1` is equivalent to `x <- 1` in R
+            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
+                let Some(name) = string_value_text(s) else {
+                    return;
+                };
+                let range = s.syntax().text_trimmed_range();
+                (name, range)
             },
 
             // Complex target (`x$foo <- rhs`, `x[1] <- rhs`, etc.) does
             // not represent a binding. We recurse for uses.
-            other => self.collect_expression(&other),
+            other => {
+                self.collect_expression(other);
+                return;
+            },
+        };
+
+        if super_assign {
+            let target_scope = self.resolve_super_target(&name);
+            self.add_definition_in_scope(
+                target_scope,
+                &name,
+                SymbolFlags::IS_BOUND,
+                DefinitionKind::SuperAssignment(op.syntax().clone()),
+                range,
+            );
+        } else {
+            self.add_definition(
+                &name,
+                SymbolFlags::IS_BOUND,
+                DefinitionKind::Assignment(op.syntax().clone()),
+                range,
+            );
         }
     }
 
@@ -448,6 +463,31 @@ fn is_right_assignment(bin: &RBinaryExpression) -> bool {
         op.kind(),
         RSyntaxKind::ASSIGN_RIGHT | RSyntaxKind::SUPER_ASSIGN_RIGHT
     )
+}
+
+/// Extract the name of an `RIdentifier`, stripping backticks if present.
+///
+/// Backtick-quoted identifiers like `` `my var` `` are parsed as `RIdentifier`
+/// nodes whose `text_trimmed()` includes the backticks. The backticks are a
+/// quoting mechanism, not part of the symbol name.
+fn identifier_text(ident: &aether_syntax::RIdentifier) -> String {
+    let text = ident.syntax().text_trimmed().to_string();
+    match text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        Some(inner) => inner.to_string(),
+        None => text,
+    }
+}
+
+/// Extract the unquoted text of an `RStringValue`.
+///
+/// Note: `RStringValue::inner_string_text()` from aether_syntax would be the
+/// idiomatic API for this, but it delegates to the free `inner_string_text()`
+/// which checks for node kind `R_STRING_VALUE` instead of token kind
+/// `R_STRING_LITERAL`, so it never actually strips the delimiters.
+fn string_value_text(s: &aether_syntax::RStringValue) -> Option<String> {
+    let token = s.value_token().ok()?;
+    let text = token.text_trimmed();
+    Some(text[1..text.len() - 1].to_string())
 }
 
 fn is_super_assignment(bin: &RBinaryExpression) -> bool {
