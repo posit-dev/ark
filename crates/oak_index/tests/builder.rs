@@ -1,7 +1,8 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
 use oak_index::builder::build;
-use oak_index::semantic_index::BindingId;
+use oak_index::semantic_index::DefinitionId;
+use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::ScopeId;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
@@ -31,7 +32,11 @@ fn test_simple_assignment() {
     let sym = index.symbols(file).get("x").unwrap();
     assert_eq!(sym.flags(), SymbolFlags::IS_BOUND);
 
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
+    assert_eq!(
+        index.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::Assignment
+    );
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -57,13 +62,13 @@ fn test_assignment_with_use() {
     let y = index.symbols(file).get("y").unwrap();
     assert_eq!(y.flags(), SymbolFlags::IS_USED);
 
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
     assert_eq!(index.uses(file).len(), 1);
 }
 
 #[test]
 fn test_rhs_collected_before_lhs() {
-    // The first use site should be `y` (RHS) and the first binding site should be `x` (LHS).
+    // The first use site should be `y` (RHS) and the first definition site should be `x` (LHS).
     let index = index("x <- y");
     let file = ScopeId::from(0);
 
@@ -71,9 +76,9 @@ fn test_rhs_collected_before_lhs() {
     let use_sym = index.symbols(file).symbol(use_site.symbol());
     assert_eq!(use_sym.name(), "y");
 
-    let bind_site = &index.bindings(file)[BindingId::from(0)];
-    let bind_sym = index.symbols(file).symbol(bind_site.symbol());
-    assert_eq!(bind_sym.name(), "x");
+    let def_site = &index.definitions(file)[DefinitionId::from(0)];
+    let def_sym = index.symbols(file).symbol(def_site.symbol());
+    assert_eq!(def_sym.name(), "x");
 }
 
 #[test]
@@ -81,9 +86,9 @@ fn test_multiple_assignments_same_symbol() {
     let index = index("x <- 1\nx <- 2");
     let file = ScopeId::from(0);
 
-    // One symbol, two binding sites
+    // One symbol, two definition sites
     assert_eq!(index.symbols(file).len(), 1);
-    assert_eq!(index.bindings(file).len(), 2);
+    assert_eq!(index.definitions(file).len(), 2);
 }
 
 #[test]
@@ -112,7 +117,11 @@ fn test_function_creates_scope() {
             .union(SymbolFlags::IS_USED)
     );
 
-    assert_eq!(index.bindings(fun_scope).len(), 1);
+    assert_eq!(index.definitions(fun_scope).len(), 1);
+    assert_eq!(
+        index.definitions(fun_scope)[DefinitionId::from(0)].kind(),
+        DefinitionKind::Parameter
+    );
     assert_eq!(index.uses(fun_scope).len(), 1);
 }
 
@@ -167,7 +176,7 @@ fn test_call_argument_equals_not_assignment() {
     let index = index("f(x = 1)");
     let file = ScopeId::from(0);
 
-    // Only `f` is recorded (as a use), `x` is an argument name, not a binding
+    // Only `f` is recorded (as a use), `x` is an argument name, not a definition
     assert_eq!(index.symbols(file).len(), 1);
     assert!(index.symbols(file).get("f").is_some());
     assert!(index.symbols(file).get("x").is_none());
@@ -183,7 +192,7 @@ fn test_complex_lhs_not_binding() {
     assert_eq!(x.flags(), SymbolFlags::IS_USED);
 
     assert!(index.symbols(file).get("foo").is_none());
-    assert_eq!(index.bindings(file).len(), 0);
+    assert_eq!(index.definitions(file).len(), 0);
 }
 
 #[test]
@@ -270,6 +279,11 @@ fn test_for_loop_body() {
 
     let i = idx.symbols(file).get("i").unwrap();
     assert_eq!(i.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
+
+    assert_eq!(
+        idx.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::ForVariable
+    );
 }
 
 #[test]
@@ -293,7 +307,7 @@ fn test_braced_expression_assignments() {
     let index = index("f <- function() {\n  x <- 1\n  y <- x\n}");
     let fun = ScopeId::from(1);
 
-    assert_eq!(index.bindings(fun).len(), 2);
+    assert_eq!(index.definitions(fun).len(), 2);
     assert!(index.symbols(fun).get("x").is_some());
     assert!(index.symbols(fun).get("y").is_some());
 
@@ -345,19 +359,19 @@ fn test_arrow_assignment_in_if_condition() {
 
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
 }
 
 #[test]
 fn test_arrow_assignment_in_call_argument() {
-    // `<-` in a call argument still creates a binding in the enclosing scope
+    // `<-` in a call argument still creates a definition in the enclosing scope
     let index = index("f(x <- 1)");
     let file = ScopeId::from(0);
 
     assert!(index.symbols(file).get("x").is_some());
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
 }
 
 #[test]
@@ -367,7 +381,7 @@ fn test_equals_in_call_argument_still_not_assignment() {
     let file = ScopeId::from(0);
 
     assert!(index.symbols(file).get("x").is_none());
-    assert_eq!(index.bindings(file).len(), 0);
+    assert_eq!(index.definitions(file).len(), 0);
 }
 
 #[test]
@@ -378,7 +392,7 @@ fn test_parenthesized_arrow_assignment() {
 
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
 }
 
 #[test]
@@ -391,7 +405,7 @@ fn test_parenthesized_equals_is_assignment() {
 
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
 }
 
 #[test]
@@ -404,7 +418,7 @@ fn test_right_assignment() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -429,9 +443,9 @@ fn test_right_assignment_rhs_collected_before_lhs() {
     let use_sym = index.symbols(file).symbol(use_site.symbol());
     assert_eq!(use_sym.name(), "y");
 
-    let bind_site = &index.bindings(file)[BindingId::from(0)];
-    let bind_sym = index.symbols(file).symbol(bind_site.symbol());
-    assert_eq!(bind_sym.name(), "x");
+    let def_site = &index.definitions(file)[DefinitionId::from(0)];
+    let def_sym = index.symbols(file).symbol(def_site.symbol());
+    assert_eq!(def_sym.name(), "x");
 }
 
 #[test]
@@ -443,7 +457,7 @@ fn test_right_assignment_complex_target() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_USED);
 
-    assert_eq!(index.bindings(file).len(), 0);
+    assert_eq!(index.definitions(file).len(), 0);
 }
 
 #[test]
@@ -457,7 +471,7 @@ fn test_subset_assignment_complex_lhs() {
     let value = index.symbols(file).get("value").unwrap();
     assert_eq!(value.flags(), SymbolFlags::IS_USED);
 
-    assert_eq!(index.bindings(file).len(), 0);
+    assert_eq!(index.definitions(file).len(), 0);
 }
 
 #[test]
@@ -468,7 +482,7 @@ fn test_double_bracket_assignment_complex_lhs() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_USED);
 
-    assert_eq!(index.bindings(file).len(), 0);
+    assert_eq!(index.definitions(file).len(), 0);
 }
 
 #[test]
@@ -530,9 +544,13 @@ fn test_super_assignment_at_file_scope() {
     let file = ScopeId::from(0);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
+    assert_eq!(
+        index.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::SuperAssignment
+    );
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -542,25 +560,40 @@ fn test_super_assignment_right_at_file_scope() {
     let file = ScopeId::from(0);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
+    assert_eq!(
+        index.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::SuperAssignment
+    );
     assert_eq!(index.uses(file).len(), 0);
 }
 
 #[test]
 fn test_super_assignment_lands_in_file_scope() {
-    // No ancestor has a binding for `x`, so `<<-` lands in the file scope
+    // No ancestor has a definition for `x`, so `<<-` lands in the file scope
     let index = index("f <- function() { x <<- 1 }");
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
-    assert_eq!(index.bindings(file).len(), 2); // `f` + `x`
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+    assert_eq!(index.definitions(file).len(), 2); // `f` + `x`
+
+    // `x <<- 1` is visited during the function body (value side) before
+    // `f` gets its binding (target side)
+    assert_eq!(
+        index.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::SuperAssignment
+    );
+    assert_eq!(
+        index.definitions(file)[DefinitionId::from(1)].kind(),
+        DefinitionKind::Assignment
+    );
 
     assert!(index.symbols(fun).get("x").is_none());
-    assert_eq!(index.bindings(fun).len(), 0);
+    assert_eq!(index.definitions(fun).len(), 0);
 }
 
 #[test]
@@ -570,7 +603,7 @@ fn test_super_assignment_right_lands_in_file_scope() {
     let fun = ScopeId::from(1);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
     assert!(index.symbols(fun).get("x").is_none());
 }
@@ -578,7 +611,7 @@ fn test_super_assignment_right_lands_in_file_scope() {
 #[test]
 fn test_super_assignment_finds_existing_binding() {
     // `x` is bound in the file scope, so `x <<- 2` inside the function
-    // lands there rather than creating a new binding
+    // lands there rather than creating a new definition
     let index = index("x <- 1\nf <- function() { x <<- 2 }");
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
@@ -586,13 +619,17 @@ fn test_super_assignment_finds_existing_binding() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
-    // Two binding sites in file scope: the `<-` and the `<<-`
-    let x_bindings: Vec<_> = index
-        .bindings(file)
+    // Two definition sites in file scope: the `<-` and the `<<-`
+    let x_defs: Vec<_> = index
+        .definitions(file)
         .iter()
-        .filter(|(_, b)| index.symbols(file).symbol(b.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
         .collect();
-    assert_eq!(x_bindings.len(), 2);
+    assert_eq!(x_defs.len(), 2);
+
+    // First is Assignment, second is SuperAssignment
+    assert_eq!(x_defs[0].1.kind(), DefinitionKind::Assignment);
+    assert_eq!(x_defs[1].1.kind(), DefinitionKind::SuperAssignment);
 
     assert!(index.symbols(fun).get("x").is_none());
 }
@@ -606,15 +643,24 @@ fn test_super_assignment_finds_nearest_ancestor() {
     let outer = ScopeId::from(1);
     let inner = ScopeId::from(2);
 
-    // `<<-` targeting an existing binding uses `IS_BOUND`, not `IS_SUPER_BOUND`
+    // Outer function has both Assignment and SuperAssignment definitions for `x`
     let x_outer = index.symbols(outer).get("x").unwrap();
     assert_eq!(x_outer.flags(), SymbolFlags::IS_BOUND);
+
+    let x_outer_defs: Vec<_> = index
+        .definitions(outer)
+        .iter()
+        .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_outer_defs.len(), 2);
+    assert_eq!(x_outer_defs[0].1.kind(), DefinitionKind::Assignment);
+    assert_eq!(x_outer_defs[1].1.kind(), DefinitionKind::SuperAssignment);
 
     // File scope `x` is untouched by the inner `<<-`
     let x_file = index.symbols(file).get("x").unwrap();
     assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
-    // Inner function has no binding for `x`
+    // Inner function has no definition for `x`
     assert!(index.symbols(inner).get("x").is_none());
 }
 
@@ -644,7 +690,16 @@ fn test_super_assignment_creates_file_scope_binding() {
     let fun = ScopeId::from(1);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
+
+    // The definition is a SuperAssignment
+    let x_defs: Vec<_> = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_defs.len(), 1);
+    assert_eq!(x_defs[0].1.kind(), DefinitionKind::SuperAssignment);
 
     let (scope, _) = index.resolve_symbol("x", fun).unwrap();
     assert_eq!(scope, file);
@@ -726,7 +781,7 @@ fn test_fixme_quote_records_assignment() {
 
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
 }
 
 #[test]
@@ -736,5 +791,5 @@ fn test_fixme_formula_records_assignment() {
 
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
-    assert_eq!(index.bindings(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 1);
 }

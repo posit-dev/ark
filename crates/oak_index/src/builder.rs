@@ -18,8 +18,9 @@ use biome_rowan::WalkEvent;
 
 use crate::arena::Idx;
 use crate::arena::IndexVec;
-use crate::semantic_index::Binding;
-use crate::semantic_index::BindingId;
+use crate::semantic_index::Definition;
+use crate::semantic_index::DefinitionId;
+use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
@@ -43,7 +44,7 @@ pub fn build(root: &RRoot) -> SemanticIndex {
 struct SemanticIndexBuilder {
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
-    bindings: IndexVec<ScopeId, IndexVec<BindingId, Binding>>,
+    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     current_scope: ScopeId,
 }
@@ -52,7 +53,7 @@ impl SemanticIndexBuilder {
     fn new(range: TextRange) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
-        let mut bindings = IndexVec::new();
+        let mut definitions = IndexVec::new();
         let mut uses = IndexVec::new();
 
         // The descendants range starts empty (`n+1..n+1`). `pop_scope` later
@@ -66,13 +67,13 @@ impl SemanticIndexBuilder {
         });
 
         symbol_tables.push(SymbolTableBuilder::new());
-        bindings.push(IndexVec::new());
+        definitions.push(IndexVec::new());
         uses.push(IndexVec::new());
 
         Self {
             scopes,
             symbol_tables,
-            bindings,
+            definitions,
             uses,
             current_scope: file,
         }
@@ -95,7 +96,7 @@ impl SemanticIndexBuilder {
         self.current_scope = id;
 
         self.symbol_tables.push(SymbolTableBuilder::new());
-        self.bindings.push(IndexVec::new());
+        self.definitions.push(IndexVec::new());
         self.uses.push(IndexVec::new());
 
         id
@@ -111,42 +112,47 @@ impl SemanticIndexBuilder {
         };
     }
 
-    fn add_binding(&mut self, name: &str, flags: SymbolFlags, range: TextRange) {
-        self.add_binding_in_scope(self.current_scope, name, flags, range);
+    fn add_definition(
+        &mut self,
+        name: &str,
+        flags: SymbolFlags,
+        kind: DefinitionKind,
+        range: TextRange,
+    ) {
+        self.add_definition_in_scope(self.current_scope, name, flags, kind, range);
     }
 
-    fn add_binding_in_scope(
+    fn add_definition_in_scope(
         &mut self,
         scope: ScopeId,
         name: &str,
         flags: SymbolFlags,
+        kind: DefinitionKind,
         range: TextRange,
     ) {
         let symbol = self.symbol_tables[scope].intern(name, flags);
-        self.bindings[scope].push(Binding { symbol, range });
+        self.definitions[scope].push(Definition {
+            symbol,
+            kind,
+            range,
+        });
     }
 
     /// Walk from `current_scope` up through ancestors looking for a scope
     /// that already has a binding for `name`. Returns the file scope if
     /// no existing binding is found (matching R's runtime `<<-` semantics).
-    ///
-    /// When an existing binding is found, returns `IS_BOUND` (it's a
-    /// regular binding in that scope). `IS_SUPER_BOUND` is only used
-    /// when no ancestor has a binding, meaning the `<<-` creates a new
-    /// name at file scope as a side effect. Typically we'll issue a
-    /// diagnostic in that case.
-    fn resolve_super_target(&self, name: &str) -> (ScopeId, SymbolFlags) {
+    fn resolve_super_target(&self, name: &str) -> ScopeId {
         let file = ScopeId::from(0);
         let mut scope = self.scopes[self.current_scope].parent;
         while let Some(id) = scope {
             if let Some(sym) = self.symbol_tables[id].get(name) {
                 if sym.flags().contains(SymbolFlags::IS_BOUND) {
-                    return (id, SymbolFlags::IS_BOUND);
+                    return id;
                 }
             }
             scope = self.scopes[id].parent;
         }
-        (file, SymbolFlags::IS_SUPER_BOUND)
+        file
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
@@ -246,9 +252,10 @@ impl SemanticIndexBuilder {
 
             AnyRExpression::RForStatement(stmt) => {
                 if let Ok(variable) = stmt.variable() {
-                    self.add_binding(
+                    self.add_definition(
                         &variable.syntax().text_trimmed().to_string(),
                         SymbolFlags::IS_BOUND,
+                        DefinitionKind::ForVariable,
                         variable.syntax().text_trimmed_range(),
                     );
                 }
@@ -326,19 +333,26 @@ impl SemanticIndexBuilder {
         if let Ok(name) = param.name() {
             match &name {
                 AnyRParameterName::RIdentifier(ident) => {
-                    self.add_binding(
+                    self.add_definition(
                         &ident.syntax().text_trimmed().to_string(),
                         flags,
+                        DefinitionKind::Parameter,
                         ident.syntax().text_trimmed_range(),
                     );
                 },
                 AnyRParameterName::RDots(dots) => {
-                    self.add_binding("...", flags, dots.syntax().text_trimmed_range());
+                    self.add_definition(
+                        "...",
+                        flags,
+                        DefinitionKind::Parameter,
+                        dots.syntax().text_trimmed_range(),
+                    );
                 },
                 AnyRParameterName::RDotDotI(ddi) => {
-                    self.add_binding(
+                    self.add_definition(
                         &ddi.syntax().text_trimmed().to_string(),
                         flags,
+                        DefinitionKind::Parameter,
                         ddi.syntax().text_trimmed_range(),
                     );
                 },
@@ -372,10 +386,21 @@ impl SemanticIndexBuilder {
                 let range = ident.syntax().text_trimmed_range();
 
                 if super_assign {
-                    let (target_scope, flags) = self.resolve_super_target(&name);
-                    self.add_binding_in_scope(target_scope, &name, flags, range);
+                    let target_scope = self.resolve_super_target(&name);
+                    self.add_definition_in_scope(
+                        target_scope,
+                        &name,
+                        SymbolFlags::IS_BOUND,
+                        DefinitionKind::SuperAssignment,
+                        range,
+                    );
                 } else {
-                    self.add_binding(&name, SymbolFlags::IS_BOUND, range);
+                    self.add_definition(
+                        &name,
+                        SymbolFlags::IS_BOUND,
+                        DefinitionKind::Assignment,
+                        range,
+                    );
                 }
             },
 
@@ -397,7 +422,7 @@ impl SemanticIndexBuilder {
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
         let symbol_tables = self.symbol_tables.into_iter().map(|b| b.build()).collect();
-        SemanticIndex::new(self.scopes, symbol_tables, self.bindings, self.uses)
+        SemanticIndex::new(self.scopes, symbol_tables, self.definitions, self.uses)
     }
 }
 

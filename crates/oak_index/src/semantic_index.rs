@@ -12,8 +12,8 @@ define_index!(ScopeId);
 // Scope-local symbol identifier
 define_index!(SymbolId);
 
-// Binding site identifier
-define_index!(BindingId);
+// Definition site identifier
+define_index!(DefinitionId);
 
 // Use site identifier
 define_index!(UseId);
@@ -23,7 +23,7 @@ define_index!(UseId);
 // scripts) is a separate concern handled by layers above this.
 // Consequently, `ScopeId(0)` is always the top-level scope of a file.
 //
-// Scopes, symbol tables, bindings, and uses are stored in parallel arrays
+// Scopes, symbol tables, definitions, and uses are stored in parallel arrays
 // (all indexed by `ScopeId`) rather than bundled into a single struct, so
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
@@ -38,18 +38,18 @@ pub struct SemanticIndex {
     // We defer that until salsa is introduced.
     symbol_tables: IndexVec<ScopeId, SymbolTable>,
 
-    // Flat per-scope lists of binding and use sites. These support rename and
-    // go-to-definition by letting us find all sites for a given symbol without
-    // control-flow analysis.
+    // Flat per-scope lists of definition and use sites. These support rename
+    // and go-to-definition by letting us find all sites for a given symbol
+    // without control-flow analysis.
     //
     // In ty, this role is filled by salsa-tracked `Definition<'db>` structs
     // and `AstIds`. When we introduce salsa, these lists may be restructured
     // to match.
     //
     // Use-def maps will layer on top of these lists, not replace them. A
-    // use-def map tracks which bindings reach each use through control flow,
-    // referencing `BindingId` and `UseId` indices into these arenas.
-    bindings: IndexVec<ScopeId, IndexVec<BindingId, Binding>>,
+    // use-def map tracks which definitions reach each use through control flow,
+    // referencing `DefinitionId` and `UseId` indices into these arenas.
+    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
 }
 
@@ -57,13 +57,13 @@ impl SemanticIndex {
     pub(crate) fn new(
         scopes: IndexVec<ScopeId, Scope>,
         symbol_tables: IndexVec<ScopeId, SymbolTable>,
-        bindings: IndexVec<ScopeId, IndexVec<BindingId, Binding>>,
+        definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     ) -> Self {
         Self {
             scopes,
             symbol_tables,
-            bindings,
+            definitions,
             uses,
         }
     }
@@ -76,8 +76,8 @@ impl SemanticIndex {
         &self.symbol_tables[scope]
     }
 
-    pub fn bindings(&self, scope: ScopeId) -> &IndexVec<BindingId, Binding> {
-        &self.bindings[scope]
+    pub fn definitions(&self, scope: ScopeId) -> &IndexVec<DefinitionId, Definition> {
+        &self.definitions[scope]
     }
 
     pub fn uses(&self, scope: ScopeId) -> &IndexVec<UseId, Use> {
@@ -125,7 +125,7 @@ impl SemanticIndex {
                 if self.symbol_tables[ancestor]
                     .symbol(id)
                     .flags
-                    .intersects(SymbolFlags::IS_BOUND.union(SymbolFlags::IS_SUPER_BOUND))
+                    .contains(SymbolFlags::IS_BOUND)
                 {
                     return Some((ancestor, id));
                 }
@@ -183,11 +183,6 @@ impl SymbolFlags {
     pub const IS_BOUND: Self = Self(1 << 1);
     // Appears in a function's formal parameter list.
     pub const IS_PARAMETER: Self = Self(1 << 2);
-    // A name introduced at file scope purely by `<<-` or `->>`, with no
-    // prior local binding. This only appears at file scope. When `<<-`
-    // targets an ancestor that already has a binding, `IS_SUPER_BOUND`
-    // is not added.
-    pub const IS_SUPER_BOUND: Self = Self(1 << 3);
 
     pub const fn empty() -> Self {
         Self(0)
@@ -301,17 +296,30 @@ impl std::ops::Deref for SymbolTableBuilder {
     }
 }
 
-// --- Binding and Use sites ---
+// --- Definition and Use sites ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefinitionKind {
+    Assignment,
+    SuperAssignment,
+    Parameter,
+    ForVariable,
+}
 
 #[derive(Debug)]
-pub struct Binding {
+pub struct Definition {
     pub(crate) symbol: SymbolId,
+    pub(crate) kind: DefinitionKind,
     pub(crate) range: TextRange,
 }
 
-impl Binding {
+impl Definition {
     pub fn symbol(&self) -> SymbolId {
         self.symbol
+    }
+
+    pub fn kind(&self) -> DefinitionKind {
+        self.kind
     }
 
     pub fn range(&self) -> TextRange {
