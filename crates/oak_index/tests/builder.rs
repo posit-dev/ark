@@ -1,5 +1,6 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
+use aether_syntax::RSyntaxKind;
 use oak_index::builder::build;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::DefinitionKind;
@@ -33,10 +34,11 @@ fn test_simple_assignment() {
     assert_eq!(sym.flags(), SymbolFlags::IS_BOUND);
 
     assert_eq!(index.definitions(file).len(), 1);
-    assert_eq!(
-        index.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::Assignment
-    );
+    let DefinitionKind::Assignment(node) = index.definitions(file)[DefinitionId::from(0)].kind()
+    else {
+        panic!("expected Assignment");
+    };
+    assert_eq!(node.kind(), RSyntaxKind::R_BINARY_EXPRESSION);
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -118,10 +120,12 @@ fn test_function_creates_scope() {
     );
 
     assert_eq!(index.definitions(fun_scope).len(), 1);
-    assert_eq!(
-        index.definitions(fun_scope)[DefinitionId::from(0)].kind(),
-        DefinitionKind::Parameter
-    );
+    let DefinitionKind::Parameter(node) =
+        index.definitions(fun_scope)[DefinitionId::from(0)].kind()
+    else {
+        panic!("expected Parameter");
+    };
+    assert_eq!(node.kind(), RSyntaxKind::R_PARAMETER);
     assert_eq!(index.uses(fun_scope).len(), 1);
 }
 
@@ -280,10 +284,11 @@ fn test_for_loop_body() {
     let i = idx.symbols(file).get("i").unwrap();
     assert_eq!(i.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
 
-    assert_eq!(
-        idx.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::ForVariable
-    );
+    let DefinitionKind::ForVariable(node) = idx.definitions(file)[DefinitionId::from(0)].kind()
+    else {
+        panic!("expected ForVariable");
+    };
+    assert_eq!(node.kind(), RSyntaxKind::R_FOR_STATEMENT);
 }
 
 #[test]
@@ -547,10 +552,12 @@ fn test_super_assignment_at_file_scope() {
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
     assert_eq!(index.definitions(file).len(), 1);
-    assert_eq!(
-        index.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::SuperAssignment
-    );
+    let DefinitionKind::SuperAssignment(node) =
+        index.definitions(file)[DefinitionId::from(0)].kind()
+    else {
+        panic!("expected SuperAssignment");
+    };
+    assert_eq!(node.kind(), RSyntaxKind::R_BINARY_EXPRESSION);
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -563,10 +570,10 @@ fn test_super_assignment_right_at_file_scope() {
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
     assert_eq!(index.definitions(file).len(), 1);
-    assert_eq!(
+    assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::SuperAssignment
-    );
+        DefinitionKind::SuperAssignment(_)
+    ));
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -583,14 +590,14 @@ fn test_super_assignment_lands_in_file_scope() {
 
     // `x <<- 1` is visited during the function body (value side) before
     // `f` gets its binding (target side)
-    assert_eq!(
+    assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
-        DefinitionKind::SuperAssignment
-    );
-    assert_eq!(
+        DefinitionKind::SuperAssignment(_)
+    ));
+    assert!(matches!(
         index.definitions(file)[DefinitionId::from(1)].kind(),
-        DefinitionKind::Assignment
-    );
+        DefinitionKind::Assignment(_)
+    ));
 
     assert!(index.symbols(fun).get("x").is_none());
     assert_eq!(index.definitions(fun).len(), 0);
@@ -628,8 +635,11 @@ fn test_super_assignment_finds_existing_binding() {
     assert_eq!(x_defs.len(), 2);
 
     // First is Assignment, second is SuperAssignment
-    assert_eq!(x_defs[0].1.kind(), DefinitionKind::Assignment);
-    assert_eq!(x_defs[1].1.kind(), DefinitionKind::SuperAssignment);
+    assert!(matches!(x_defs[0].1.kind(), DefinitionKind::Assignment(_)));
+    assert!(matches!(
+        x_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
 
     assert!(index.symbols(fun).get("x").is_none());
 }
@@ -653,8 +663,14 @@ fn test_super_assignment_finds_nearest_ancestor() {
         .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_outer_defs.len(), 2);
-    assert_eq!(x_outer_defs[0].1.kind(), DefinitionKind::Assignment);
-    assert_eq!(x_outer_defs[1].1.kind(), DefinitionKind::SuperAssignment);
+    assert!(matches!(
+        x_outer_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+    assert!(matches!(
+        x_outer_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
 
     // File scope `x` is untouched by the inner `<<-`
     let x_file = index.symbols(file).get("x").unwrap();
@@ -699,7 +715,10 @@ fn test_super_assignment_creates_file_scope_binding() {
         .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_defs.len(), 1);
-    assert_eq!(x_defs[0].1.kind(), DefinitionKind::SuperAssignment);
+    assert!(matches!(
+        x_defs[0].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
 
     let (scope, _) = index.resolve_symbol("x", fun).unwrap();
     assert_eq!(scope, file);

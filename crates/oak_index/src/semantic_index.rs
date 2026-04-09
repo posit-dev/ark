@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use rustc_hash::FxHashMap;
 
@@ -359,12 +360,12 @@ pub struct Definition {
     pub(crate) range: TextRange,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum DefinitionKind {
-    Assignment,
-    SuperAssignment,
-    Parameter,
-    ForVariable,
+    Assignment(RSyntaxNode),
+    SuperAssignment(RSyntaxNode),
+    Parameter(RSyntaxNode),
+    ForVariable(RSyntaxNode),
 }
 
 impl Definition {
@@ -372,8 +373,8 @@ impl Definition {
         self.symbol
     }
 
-    pub fn kind(&self) -> DefinitionKind {
-        self.kind
+    pub fn kind(&self) -> &DefinitionKind {
+        &self.kind
     }
 
     pub fn range(&self) -> TextRange {

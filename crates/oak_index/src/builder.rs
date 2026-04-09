@@ -255,7 +255,7 @@ impl SemanticIndexBuilder {
                     self.add_definition(
                         &variable.syntax().text_trimmed().to_string(),
                         SymbolFlags::IS_BOUND,
-                        DefinitionKind::ForVariable,
+                        DefinitionKind::ForVariable(stmt.syntax().clone()),
                         variable.syntax().text_trimmed_range(),
                     );
                 }
@@ -336,7 +336,7 @@ impl SemanticIndexBuilder {
                     self.add_definition(
                         &ident.syntax().text_trimmed().to_string(),
                         flags,
-                        DefinitionKind::Parameter,
+                        DefinitionKind::Parameter(param.syntax().clone()),
                         ident.syntax().text_trimmed_range(),
                     );
                 },
@@ -344,7 +344,7 @@ impl SemanticIndexBuilder {
                     self.add_definition(
                         "...",
                         flags,
-                        DefinitionKind::Parameter,
+                        DefinitionKind::Parameter(param.syntax().clone()),
                         dots.syntax().text_trimmed_range(),
                     );
                 },
@@ -352,7 +352,7 @@ impl SemanticIndexBuilder {
                     self.add_definition(
                         &ddi.syntax().text_trimmed().to_string(),
                         flags,
-                        DefinitionKind::Parameter,
+                        DefinitionKind::Parameter(param.syntax().clone()),
                         ddi.syntax().text_trimmed_range(),
                     );
                 },
@@ -391,14 +391,14 @@ impl SemanticIndexBuilder {
                         target_scope,
                         &name,
                         SymbolFlags::IS_BOUND,
-                        DefinitionKind::SuperAssignment,
+                        DefinitionKind::SuperAssignment(op.syntax().clone()),
                         range,
                     );
                 } else {
                     self.add_definition(
                         &name,
                         SymbolFlags::IS_BOUND,
-                        DefinitionKind::Assignment,
+                        DefinitionKind::Assignment(op.syntax().clone()),
                         range,
                     );
                 }
