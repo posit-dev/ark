@@ -17,8 +17,8 @@ use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
 use biome_rowan::WalkEvent;
 
-use crate::arena::Idx;
-use crate::arena::IndexVec;
+use crate::index_vec::Idx;
+use crate::index_vec::IndexVec;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;

@@ -7,8 +7,8 @@ pub trait Idx: Copy + fmt::Debug + Eq {
     fn index(self) -> usize;
 }
 
-/// A typed arena: a `Vec<V>` indexed by a strongly-typed newtype `I` instead
-/// of `usize`, so that indices from different arenas can't be mixed up.
+/// A `Vec<V>` indexed by a strongly-typed newtype `I` instead of `usize`,
+/// so that indices from different vectors can't be mixed up.
 pub struct IndexVec<I: Idx, V> {
     raw: Vec<V>,
     _phantom: PhantomData<I>,
@@ -104,7 +104,7 @@ macro_rules! define_index {
             }
         }
 
-        impl $crate::arena::Idx for $name {
+        impl $crate::index_vec::Idx for $name {
             fn new(value: usize) -> Self {
                 assert!(value <= Self::MAX);
                 Self(value as u32)

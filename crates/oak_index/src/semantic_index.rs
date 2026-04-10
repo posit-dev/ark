@@ -4,8 +4,8 @@ use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use rustc_hash::FxHashMap;
 
-use crate::arena::define_index;
-use crate::arena::IndexVec;
+use crate::index_vec::define_index;
+use crate::index_vec::IndexVec;
 
 // File-local scope identifier
 define_index!(ScopeId);
