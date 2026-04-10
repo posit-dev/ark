@@ -125,6 +125,25 @@ use crate::semantic_index::UseId;
 //   {}          | true           | no local def, parent scope reference
 //   {A, B}      | true           | some paths define, some don't
 
+/// The immutable use-def map for a single scope. For each use site, stores the
+/// set of definitions that can reach it through control flow.
+#[derive(Debug)]
+pub struct UseDefMap {
+    bindings_by_use: IndexVec<UseId, Bindings>,
+}
+
+impl UseDefMap {
+    pub(crate) fn empty() -> Self {
+        Self {
+            bindings_by_use: IndexVec::new(),
+        }
+    }
+
+    pub fn bindings_at_use(&self, use_id: UseId) -> &Bindings {
+        &self.bindings_by_use[use_id]
+    }
+}
+
 /// The set of definitions that can reach a particular point in control flow,
 /// plus whether the symbol may be unbound (no definition on some path).
 ///
@@ -196,32 +215,6 @@ fn sorted_union(a: &[DefinitionId], b: &[DefinitionId]) -> SmallVec<[DefinitionI
             EitherOrBoth::Left(&id) | EitherOrBoth::Right(&id) | EitherOrBoth::Both(&id, _) => id,
         })
         .collect()
-}
-
-/// A snapshot of all symbol states at a particular point in control flow.
-#[derive(Clone, Debug)]
-pub(crate) struct FlowSnapshot {
-    symbol_states: IndexVec<SymbolId, Bindings>,
-}
-
-/// The immutable use-def map for a single scope, produced by finalizing the
-/// builder. For each use site, stores the set of definitions that can reach
-/// it through control flow.
-#[derive(Debug)]
-pub struct UseDefMap {
-    bindings_by_use: IndexVec<UseId, Bindings>,
-}
-
-impl UseDefMap {
-    pub(crate) fn empty() -> Self {
-        Self {
-            bindings_by_use: IndexVec::new(),
-        }
-    }
-
-    pub fn bindings_at_use(&self, use_id: UseId) -> &Bindings {
-        &self.bindings_by_use[use_id]
-    }
 }
 
 /// Mutable builder for constructing a [`UseDefMap`] during the tree walk.
@@ -391,4 +384,10 @@ impl UseDefMapBuilder {
             }
         }
     }
+}
+
+/// A snapshot of all symbol states at a particular point in control flow.
+#[derive(Clone, Debug)]
+pub(crate) struct FlowSnapshot {
+    symbol_states: IndexVec<SymbolId, Bindings>,
 }
