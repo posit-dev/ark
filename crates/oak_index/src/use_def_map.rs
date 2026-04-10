@@ -285,6 +285,11 @@ impl UseDefMapBuilder {
     /// created inside the body). Those new definitions are added to all
     /// uses of that symbol from `first_use` onwards, which covers exactly
     /// the uses recorded during the body.
+    ///
+    /// This runs after the body (not eagerly at each definition) because
+    /// the body may contain branches. A diff at the end captures the
+    /// converged state after all snapshot/restore/merge within the body
+    /// has resolved.
     pub(crate) fn finish_loop_defs(&mut self, pre_loop: &FlowSnapshot, first_use: UseId) {
         for i in 0..self.symbol_states.len() {
             let symbol_id = SymbolId::new(i);
