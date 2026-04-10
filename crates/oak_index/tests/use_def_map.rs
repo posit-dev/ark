@@ -589,8 +589,8 @@ fn test_super_assignment_not_in_function_use_def() {
     let index = index(
         "\
 function() {
-    x <<- 1      # recorded here with IS_SUPER_BOUND, skipped by use-def
-    x            # use 0: unbound in function scope
+    x <<- 1      # fun: def 0, recorded with IS_SUPER_BOUND, skipped by use-def
+    x            # fun: use 0: unbound in function scope
 }
 ",
     );
@@ -600,6 +600,141 @@ function() {
     let bindings = map.bindings_at_use(UseId::from(0));
     assert!(bindings.definitions().is_empty());
     assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_super_assignment_visible_in_parent_use_def() {
+    let index = index(
+        "\
+x <- 1                       # file: def 0
+f <- function() { x <<- 2 }  # file: def 1 (x <<- extra def), def 2 (f)
+x                            # file: use 0 -> {def 0, def 1}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // The <<- extra definition (def 1) is recorded in the file scope
+    // during function body processing, before the `f <-` assignment (def 2).
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(1)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_super_assignment_without_prior_def() {
+    let index = index(
+        "\
+f <- function() { x <<- 1 }  # file: def 0 (x <<- extra def), def 1 (f)
+x                            # file: use 0 -> {def 0}, may_be_unbound
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_fixme_super_assignment_not_visible_before_function_def() {
+    let index = index(
+        "\
+x                            # file: use 0 -> unbound
+f <- function() { x <<- 1 }  # file: def 0 (f), def 1 (x <<- in parent)
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // The use of `x` precedes the `<<-` definition in the flow.
+    // FIXME: Ideally the use would be mapped to the extra definition.
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert!(bindings.definitions().is_empty());
+    assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_super_assignment_merges_with_if() {
+    let index = index(
+        "\
+x <- 1                            # file: def 0
+if (cond) {
+    f <- function() { x <<- 2 }   # file: def 1 (x <<- extra def), def 2 (f)
+}
+x                                 # use 1 -> {def 0, def 1}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: `cond` is use 0, final `x` is use 1.
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(1)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_super_assignment_targets_grandparent() {
+    let index = index(
+        "\
+x <- 1                                       # file: def 0
+f <- function() {                            # file: def 2 (f)
+    g <- function() { x <<- 2 }              # file: def 1 (x <<-)
+}
+x                                            # file: use 0 -> {def 0, def 1}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // `<<-` in g walks up: g's parent is f, f has no binding for x,
+    // so it continues to file scope where x has IS_BOUND. The extra
+    // binding lands in the file scope, skipping the intermediate f scope.
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(1)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_super_assignment_targets_intermediate_scope() {
+    let index = index(
+        "\
+x <- 1                                       # file: def 0
+f <- function() {
+    x <- 10                                  # outer: def 0
+    g <- function() { x <<- 2 }              # outer: def 1 (x <<-)
+}
+x                                            # file: use 0 -> {def 0} only
+",
+    );
+    let file = ScopeId::from(0);
+    let outer = ScopeId::from(1);
+
+    // `<<-` in g walks up: g's parent is f, f has x with IS_BOUND
+    // (from `x <- 10`), so it targets f -- not the file scope.
+    let file_map = index.use_def_map(file);
+    let bindings = file_map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_not!(bindings.may_be_unbound());
+
+    // The extra binding is in f's scope, not the file scope.
+    let outer_defs: Vec<_> = index
+        .definitions(outer)
+        .iter()
+        .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(outer_defs.len(), 2);
 }
 
 // --- Combined control flow ---

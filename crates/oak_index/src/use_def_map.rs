@@ -121,7 +121,7 @@ impl Bindings {
 
     /// Replace all live definitions with a single new one, marking the
     /// symbol as definitely bound.
-    fn record_binding(&mut self, def_id: DefinitionId) {
+    fn record_definition(&mut self, def_id: DefinitionId) {
         self.definitions.clear();
         self.definitions.push(def_id);
         self.may_be_unbound = false;
@@ -229,15 +229,15 @@ impl UseDefMapBuilder {
 
     /// Record a new binding for `symbol_id`. Replaces (shadows) all previous
     /// live definitions for that symbol.
-    pub(crate) fn record_binding(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
-        self.symbol_states[symbol_id].record_binding(def_id);
+    pub(crate) fn record_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+        self.symbol_states[symbol_id].record_definition(def_id);
     }
 
-    /// Record a loop-carried binding. Adds the definition to the symbol's
-    /// live set without clearing existing definitions or changing
-    /// `may_be_unbound`. This represents a value that might arrive from a
-    /// previous loop iteration.
-    pub(crate) fn record_loop_binding(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+    /// Add a definition to the symbol's live set without clearing existing
+    /// definitions or changing `may_be_unbound`. Unlike `record_binding`
+    /// which shadows all prior definitions, this appends to the live set.
+    /// Used for loop-header placeholders and super-assignments.
+    pub(crate) fn append_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].add_definition(def_id);
     }
 

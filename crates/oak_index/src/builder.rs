@@ -151,20 +151,84 @@ impl SemanticIndexBuilder {
         });
 
         self.current_use_def.ensure_symbol(symbol_id);
-        self.current_use_def.record_binding(symbol_id, def_id);
+        self.current_use_def.record_definition(symbol_id, def_id);
     }
 
     // Super-assignment is lexically in the current scope but binds in an
-    // ancestor. We record the definition here (for go-to-definition, rename)
-    // but skip use-def tracking since the binding doesn't affect local flow.
+    // ancestor. We record the definition in the current scope and append
+    // it to the target scope's use-def map (without shadowing prior
+    // definitions).
+    //
+    // R's `<<-` walks up the environment chain from the parent, targeting
+    // the first scope where the symbol is already bound. If no binding is
+    // found, it assigns in the global (file) scope.
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
         let symbol_id =
             self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
         self.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
+            kind: kind.clone(),
+            range,
+        });
+
+        let target_scope = self.resolve_super_target(name);
+
+        let target_symbol = self.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
+        let target_def_id = self.definitions[target_scope].push(Definition {
+            symbol: target_symbol,
             kind,
             range,
         });
+
+        let builder = self.use_def_builder_mut(target_scope);
+        builder.ensure_symbol(target_symbol);
+        builder.append_definition(target_symbol, target_def_id);
+    }
+
+    // Walk up from the parent scope looking for a scope where `name` already
+    // has `IS_BOUND`. Returns that scope, or the file scope if no binding is
+    // found (mirroring R's assignment to the global environment).
+    fn resolve_super_target(&self, name: &str) -> ScopeId {
+        let file_scope = ScopeId::from(0);
+        let mut scope = match self.scopes[self.current_scope].parent {
+            Some(parent) => parent,
+            None => return file_scope,
+        };
+
+        loop {
+            if let Some(id) = self.symbol_tables[scope].id(name) {
+                if self.symbol_tables[scope]
+                    .symbol(id)
+                    .flags()
+                    .contains(SymbolFlags::IS_BOUND)
+                {
+                    return scope;
+                }
+            }
+            scope = match self.scopes[scope].parent {
+                Some(parent) => parent,
+                None => return file_scope,
+            };
+        }
+    }
+
+    fn use_def_builder_mut(&mut self, target: ScopeId) -> &mut UseDefMapBuilder {
+        if target == self.current_scope {
+            return &mut self.current_use_def;
+        }
+
+        let mut steps = 0;
+        let mut scope = self.current_scope;
+        while scope != target {
+            scope = match self.scopes[scope].parent {
+                Some(parent) => parent,
+                None => panic!("Target scope {target:?} is not an ancestor of current scope"),
+            };
+            steps += 1;
+        }
+
+        let index = self.use_def_stack.len() - steps;
+        &mut self.use_def_stack[index]
     }
 
     fn add_use(&mut self, name: &str, range: TextRange) {
@@ -513,7 +577,7 @@ impl SemanticIndexBuilder {
             });
 
             self.current_use_def.ensure_symbol(symbol_id);
-            self.current_use_def.record_loop_binding(symbol_id, def_id);
+            self.current_use_def.append_definition(symbol_id, def_id);
             loop_header.push((symbol_id, def_id));
         }
 
