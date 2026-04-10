@@ -12,6 +12,11 @@ use oak_index::semantic_index::UseId;
 
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
+
+    if parsed.has_error() {
+        panic!("source has syntax errors: {source}");
+    }
+
     build(&parsed.tree())
 }
 
