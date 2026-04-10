@@ -1157,7 +1157,10 @@ fn test_nested_for_loops() {
     let j = index.symbols(file).get("j").unwrap();
     assert_eq!(j.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
 
-    assert_eq!(index.definitions(file).len(), 2);
+    // 2 real defs (i, j) + 1 placeholder LoopHeader (j from inner for,
+    // discovered by outer loop's pre-walk). Note the placeholder definitions
+    // remain in the Definition arena to preserve IDs. The arena is append-only.
+    assert_eq!(index.definitions(file).len(), 3);
 }
 
 // --- Assignment in loop body ---
@@ -1173,5 +1176,6 @@ fn test_assignment_in_for_body() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
-    assert_eq!(index.definitions(file).len(), 2);
+    // 2 real defs (i, x) + 1 placeholder LoopHeader (x from body pre-walk)
+    assert_eq!(index.definitions(file).len(), 3);
 }

@@ -127,6 +127,33 @@ impl Bindings {
         self.may_be_unbound = false;
     }
 
+    /// Add a definition to the live set without clearing existing ones and
+    /// without changing `may_be_unbound`. Used for `LoopHeader` placeholder
+    /// definitions that represent a value carried from a previous iteration.
+    fn add_definition(&mut self, def_id: DefinitionId) {
+        let pos = self.definitions.partition_point(|&id| id < def_id);
+        if pos >= self.definitions.len() || self.definitions[pos] != def_id {
+            self.definitions.insert(pos, def_id);
+        }
+    }
+
+    fn remove_definition(&mut self, def_id: DefinitionId) {
+        if let Some(pos) = self.definitions.iter().position(|&id| id == def_id) {
+            self.definitions.remove(pos);
+        }
+    }
+
+    /// Replace `old` with `replacements` in the definition set. If `old` is
+    /// not present, this is a no-op. Maintains sorted order and deduplicates.
+    fn replace_definition(&mut self, old: DefinitionId, replacements: &[DefinitionId]) {
+        if let Some(pos) = self.definitions.iter().position(|&id| id == old) {
+            self.definitions.remove(pos);
+            for &def_id in replacements {
+                self.add_definition(def_id);
+            }
+        }
+    }
+
     /// Union definitions from `other` into `self`, OR the `may_be_unbound`
     /// flags. Both sides are sorted by `DefinitionId`, so this is a linear
     /// merge-join.
@@ -204,6 +231,52 @@ impl UseDefMapBuilder {
     /// live definitions for that symbol.
     pub(crate) fn record_binding(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].record_binding(def_id);
+    }
+
+    /// Record a loop-carried binding. Adds the definition to the symbol's
+    /// live set without clearing existing definitions or changing
+    /// `may_be_unbound`. This represents a value that might arrive from a
+    /// previous loop iteration.
+    pub(crate) fn record_loop_binding(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+        self.symbol_states[symbol_id].add_definition(def_id);
+    }
+
+    /// Resolve a `LoopHeader` placeholder to the real definitions that
+    /// are live at the end of the loop body. Replaces the placeholder in
+    /// all `bindings_by_use` entries recorded during the body (from
+    /// `first_use` onwards) and removes it from the live symbol state.
+    ///
+    /// When Salsa is introduced, this eager rewriting will be replaced by
+    /// Salsa's `specify` mechanism: the synthesis step will create
+    /// Salsa-tracked `LoopToken` definitions (like ty's `LoopHeader`),
+    /// and this populate step will call `specify` on those tokens instead
+    /// of rewriting `bindings_by_use` in place. That lets downstream
+    /// queries lazily resolve loop headers and skip re-computation when
+    /// the set of reaching definitions hasn't changed.
+    pub(crate) fn resolve_placeholder(
+        &mut self,
+        symbol_id: SymbolId,
+        placeholder_id: DefinitionId,
+        first_use: UseId,
+    ) {
+        let replacements: SmallVec<[DefinitionId; 2]> = self.symbol_states[symbol_id]
+            .definitions()
+            .iter()
+            .filter(|&&id| id != placeholder_id)
+            .copied()
+            .collect();
+
+        for i in first_use.index()..self.bindings_by_use.len() {
+            let use_id = UseId::new(i);
+            self.bindings_by_use[use_id].replace_definition(placeholder_id, &replacements);
+        }
+
+        // Prevent the placeholder from leaking into post-loop state. When the
+        // body unconditionally assigns the symbol, `record_binding()` already
+        // cleared the placeholder, so this is a no-op. When the assignment is
+        // conditional, the placeholder would survive and leak if we did not
+        // explicitly remove it here.
+        self.symbol_states[symbol_id].remove_definition(placeholder_id);
     }
 
     /// Record a use of `symbol_id`. Clones the current live bindings for that
