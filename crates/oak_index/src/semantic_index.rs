@@ -390,16 +390,6 @@ pub enum DefinitionKind {
     SuperAssignment(RSyntaxNode),
     Parameter(RSyntaxNode),
     ForVariable(RSyntaxNode),
-    // The "loop header" is the entry point of a loop in the control flow
-    // graph. This placeholder definition, created at the loop header before
-    // visiting the body, represents a value carried from a previous
-    // iteration so that uses at the top of the body can see definitions
-    // from the bottom. After the body is visited, each placeholder is
-    // resolved to the real definitions that are live at the end of the
-    // body (see `finish_loop_header`). Resolved placeholders no longer
-    // appear in use-def results but remain in the definition arena to
-    // preserve `DefinitionId` stability (the arena is append-only).
-    LoopHeader,
 }
 
 impl Definition {
