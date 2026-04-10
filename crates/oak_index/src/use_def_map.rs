@@ -81,7 +81,7 @@ use crate::semantic_index::UseId;
 // ### Loop-carried definitions (`finish_loop_defs()`)
 //
 // ```r
-// x <- 0
+// x <- 0       # def A
 // while (cond) {
 //     print(x) # should see def A (pre-loop) AND def B (previous iteration)
 //     x <- 1   # def B
@@ -97,6 +97,12 @@ use crate::semantic_index::UseId;
 //
 // ### Deferred definitions (`record_deferred_definition()`)
 //
+// `<<-` modifies a symbol that should already be bound in an ancestor scope (if
+// there is no existing definition, R stores in the global environment, but
+// we'll lint about it). For this reason, `<<-` _adds_ to the set of potential
+// definitions reaching uses of that symbols, it doesn't overwrite like `<-`
+// would.
+//
 // ```r
 // x <- 0           # def A
 // print(x)         # should see def A AND def B
@@ -105,7 +111,7 @@ use crate::semantic_index::UseId;
 // }
 // ```
 //
-// The `<<-` creates a definition in the file scope, but it's encountered
+// Here the `<<-` creates a definition in the file scope, but it's encountered
 // during the function body walk, after `print(x)` was already recorded.
 // `record_deferred_definition()` adds it to the live state (so future uses
 // see it) and also stashes it. At finalization, `finish_deferred_defs()`
