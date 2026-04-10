@@ -549,20 +549,28 @@ fn test_repeat_loop() {
 
 #[test]
 fn test_super_assignment_at_file_scope() {
-    // At file scope, `<<-` records in file scope with IS_SUPER_BOUND
+    // At file scope, `<<-` targets the file scope itself (no parent to
+    // walk to), so the symbol gets both IS_SUPER_BOUND and IS_BOUND.
     let index = index("x <<- 1");
     let file = ScopeId::from(0);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(
+        x.flags(),
+        SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
+    );
 
-    assert_eq!(index.definitions(file).len(), 1);
-    let DefinitionKind::SuperAssignment(node) =
-        index.definitions(file)[DefinitionId::from(0)].kind()
-    else {
-        panic!("expected SuperAssignment");
-    };
-    assert_eq!(node.kind(), RSyntaxKind::R_BINARY_EXPRESSION);
+    // Two definitions: one from the current-scope recording, one from the
+    // target-scope recording (same scope in this case).
+    assert_eq!(index.definitions(file).len(), 2);
+    assert!(matches!(
+        index.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+    assert!(matches!(
+        index.definitions(file)[DefinitionId::from(1)].kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -572,9 +580,12 @@ fn test_super_assignment_right_at_file_scope() {
     let file = ScopeId::from(0);
 
     let x = index.symbols(file).get("x").unwrap();
-    assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
+    assert_eq!(
+        x.flags(),
+        SymbolFlags::IS_SUPER_BOUND.union(SymbolFlags::IS_BOUND)
+    );
 
-    assert_eq!(index.definitions(file).len(), 1);
+    assert_eq!(index.definitions(file).len(), 2);
     assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
         DefinitionKind::SuperAssignment(_)
@@ -585,16 +596,23 @@ fn test_super_assignment_right_at_file_scope() {
 #[test]
 fn test_super_assignment_recorded_in_current_scope() {
     // `<<-` records the definition in the function scope where it lexically
-    // appears, not in an ancestor scope.
+    // appears AND an extra definition in the parent scope.
     let index = index("f <- function() { x <<- 1 }");
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
-    // File scope only has `f`
-    assert!(index.symbols(file).get("x").is_none());
-    assert_eq!(index.definitions(file).len(), 1);
+    // File scope has `x` with IS_BOUND (extra definition from `<<-`)
+    // and `f` with IS_BOUND. The `x <<-` definition is added during
+    // function body processing, before `f <-`.
+    let x_file = index.symbols(file).get("x").unwrap();
+    assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
+    assert_eq!(index.definitions(file).len(), 2);
     assert!(matches!(
         index.definitions(file)[DefinitionId::from(0)].kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+    assert!(matches!(
+        index.definitions(file)[DefinitionId::from(1)].kind(),
         DefinitionKind::Assignment(_)
     ));
 
@@ -614,7 +632,8 @@ fn test_super_assignment_right_recorded_in_current_scope() {
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
-    assert!(index.symbols(file).get("x").is_none());
+    let x_file = index.symbols(file).get("x").unwrap();
+    assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
     let x = index.symbols(fun).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
@@ -623,12 +642,13 @@ fn test_super_assignment_right_recorded_in_current_scope() {
 #[test]
 fn test_super_assignment_does_not_pollute_ancestor() {
     // `x <- 1` is in file scope, `x <<- 2` is in the function. The `<<-`
-    // does NOT add a definition to the file scope.
+    // adds an extra definition to the file scope in addition to the
+    // existing `x <- 1` assignment.
     let index = index("x <- 1\nf <- function() { x <<- 2 }");
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
-    // File scope: `x` has IS_BOUND from the `<-`, `f` has IS_BOUND
+    // File scope: `x` has IS_BOUND (from both `<-` and `<<-`), `f` has IS_BOUND
     let x_file = index.symbols(file).get("x").unwrap();
     assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
@@ -637,10 +657,14 @@ fn test_super_assignment_does_not_pollute_ancestor() {
         .iter()
         .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
         .collect();
-    assert_eq!(x_file_defs.len(), 1);
+    assert_eq!(x_file_defs.len(), 2);
     assert!(matches!(
         x_file_defs[0].1.kind(),
         DefinitionKind::Assignment(_)
+    ));
+    assert!(matches!(
+        x_file_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
     ));
 
     // Function scope: `x` has IS_SUPER_BOUND from the `<<-`
@@ -656,7 +680,8 @@ fn test_super_assignment_does_not_pollute_ancestor() {
 #[test]
 fn test_super_assignment_nested_recorded_in_inner_scope() {
     // `x` is bound in both file and outer function. `<<-` in the inner
-    // function records the definition in the inner scope, not in any ancestor.
+    // function targets the outer function scope (immediate parent), adding
+    // an extra definition there.
     let index = index("x <- 0\nf <- function() { x <- 1; g <- function() { x <<- 2 } }");
     let file = ScopeId::from(0);
     let outer = ScopeId::from(1);
@@ -666,7 +691,8 @@ fn test_super_assignment_nested_recorded_in_inner_scope() {
     let x_file = index.symbols(file).get("x").unwrap();
     assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
-    // Outer function: `x` has IS_BOUND (from `<-`), no super-assignment here
+    // Outer function: `x` has IS_BOUND (from both `x <- 1` and the `<<-`
+    // extra definition from the inner function)
     let x_outer = index.symbols(outer).get("x").unwrap();
     assert_eq!(x_outer.flags(), SymbolFlags::IS_BOUND);
 
@@ -675,10 +701,14 @@ fn test_super_assignment_nested_recorded_in_inner_scope() {
         .iter()
         .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
         .collect();
-    assert_eq!(x_outer_defs.len(), 1);
+    assert_eq!(x_outer_defs.len(), 2);
     assert!(matches!(
         x_outer_defs[0].1.kind(),
         DefinitionKind::Assignment(_)
+    ));
+    assert!(matches!(
+        x_outer_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
     ));
 
     // Inner function: `x` has IS_SUPER_BOUND (from `<<-`)
@@ -693,8 +723,9 @@ fn test_super_assignment_nested_recorded_in_inner_scope() {
 
 #[test]
 fn test_super_assignment_coexists_with_use_in_ancestors() {
-    // Outer function uses `x` but doesn't bind it. `<<-` in the inner
-    // function records in the inner scope. Ancestors are unaffected.
+    // `<<-` in inner function walks up from outer, finds `x` bound in file
+    // scope (from `x <- 1`), so it targets the file scope -- not the outer
+    // function where `x` is only used.
     let index = index("x <- 1\nf <- function() { print(x); g <- function() { x <<- 2 } }");
     let file = ScopeId::from(0);
     let outer = ScopeId::from(1);
@@ -703,7 +734,8 @@ fn test_super_assignment_coexists_with_use_in_ancestors() {
     let x_file = index.symbols(file).get("x").unwrap();
     assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
-    // Outer function has `x` as `IS_USED` only (from `print(x)`)
+    // Outer function has `x` as IS_USED only (from `print(x)`). The `<<-`
+    // skips it because `x` is not bound here.
     let x_outer = index.symbols(outer).get("x").unwrap();
     assert_eq!(x_outer.flags(), SymbolFlags::IS_USED);
 
@@ -714,22 +746,24 @@ fn test_super_assignment_coexists_with_use_in_ancestors() {
 
 #[test]
 fn test_super_assignment_not_visible_to_resolve_symbol() {
-    // `<<-` does not create a binding visible to `resolve_symbol` (which
-    // checks IS_BOUND, not IS_SUPER_BOUND). Cross-scope effects of `<<-`
-    // are a runtime concern, not statically modelled.
+    // `<<-` creates an extra definition in the parent scope with IS_BOUND,
+    // which is visible to `resolve_symbol`.
     let index = index("f <- function() { x <<- 1 }");
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
-    // File scope has no `x`
-    assert!(index.symbols(file).get("x").is_none());
+    // File scope has `x` with IS_BOUND (extra definition from `<<-`)
+    let x_file = index.symbols(file).get("x").unwrap();
+    assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
     // Function scope has `x` with IS_SUPER_BOUND
     let x = index.symbols(fun).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
 
-    // resolve_symbol does not find `x` because no scope has IS_BOUND for it
-    assert!(index.resolve_symbol("x", fun).is_none());
+    // `resolve_symbol` finds `x` in the file scope via the extra definition
+    let resolved = index.resolve_symbol("x", fun);
+    assert!(resolved.is_some());
+    assert_eq!(resolved.unwrap().0, file);
 }
 
 #[test]
@@ -1122,7 +1156,8 @@ fn test_string_super_assignment() {
     let file = ScopeId::from(0);
     let fun = ScopeId::from(1);
 
-    assert!(index.symbols(file).get("x").is_none());
+    let x_file = index.symbols(file).get("x").unwrap();
+    assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
 
     let x = index.symbols(fun).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
@@ -1157,6 +1192,7 @@ fn test_nested_for_loops() {
     let j = index.symbols(file).get("j").unwrap();
     assert_eq!(j.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
 
+    // 2 real defs (i, j), no LoopHeader placeholders.
     assert_eq!(index.definitions(file).len(), 2);
 }
 
@@ -1173,5 +1209,6 @@ fn test_assignment_in_for_body() {
     let x = index.symbols(file).get("x").unwrap();
     assert_eq!(x.flags(), SymbolFlags::IS_BOUND);
 
+    // 2 real defs (i, x), no LoopHeader placeholders.
     assert_eq!(index.definitions(file).len(), 2);
 }
