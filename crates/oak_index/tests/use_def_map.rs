@@ -274,9 +274,9 @@ fn test_for_body_assignment_is_conditional() {
     let index = index(
         "\
 for (i in xs) { # def 0 (i)
-    x <- 1      # def 1
+    x <- 1      # def 2
 }
-x               # use 1 -> {def 1}, may_be_unbound (body may not execute)
+x               # use 1 -> {def 2}, may_be_unbound (body may not execute)
 ",
     );
     let file = ScopeId::from(0);
@@ -284,7 +284,7 @@ x               # use 1 -> {def 1}, may_be_unbound (body may not execute)
 
     // Uses: `xs` is use 0, final `x` is use 1.
     let bindings = map.bindings_at_use(UseId::from(1));
-    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(2)]);
     assert!(bindings.may_be_unbound());
 }
 
@@ -294,9 +294,9 @@ fn test_for_body_assignment_merges_with_pre_loop() {
         "\
 x <- 0          # def 0
 for (i in xs) { # def 1 (i)
-    x <- 1      # def 2
+    x <- 1      # def 3
 }
-x               # use 1 -> {def 0, def 2}
+x               # use 1 -> {def 0, def 3}
 ",
     );
     let file = ScopeId::from(0);
@@ -306,7 +306,7 @@ x               # use 1 -> {def 0, def 2}
     let bindings = map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions(), &[
         DefinitionId::from(0),
-        DefinitionId::from(2)
+        DefinitionId::from(3)
     ]);
     assert_not!(bindings.may_be_unbound());
 }
@@ -336,9 +336,9 @@ fn test_while_body_is_conditional() {
     let index = index(
         "\
 while (cond) {
-    x <- 1     # def 0
+    x <- 1     # def 1
 }
-x              # use 1 -> {def 0}, may_be_unbound
+x              # use 1 -> {def 1}, may_be_unbound
 ",
     );
     let file = ScopeId::from(0);
@@ -346,7 +346,7 @@ x              # use 1 -> {def 0}, may_be_unbound
 
     // Uses: `cond` is use 0, final `x` is use 1.
     let bindings = map.bindings_at_use(UseId::from(1));
-    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
     assert!(bindings.may_be_unbound());
 }
 
@@ -356,9 +356,9 @@ fn test_while_merges_with_pre_loop() {
         "\
 x <- 0         # def 0
 while (cond) {
-    x <- 1     # def 1
+    x <- 1     # def 2
 }
-x              # use 1 -> {def 0, def 1}
+x              # use 1 -> {def 0, def 2}
 ",
     );
     let file = ScopeId::from(0);
@@ -368,7 +368,7 @@ x              # use 1 -> {def 0, def 1}
     let bindings = map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions(), &[
         DefinitionId::from(0),
-        DefinitionId::from(1)
+        DefinitionId::from(2)
     ]);
     assert_not!(bindings.may_be_unbound());
 }
@@ -392,17 +392,17 @@ fn test_repeat_body_is_definite() {
     let index = index(
         "\
 repeat {
-    x <- 1   # def 0
+    x <- 1   # def 1
     break
 }
-x            # use 0 -> {def 0}, not unbound
+x            # use 0 -> {def 1}, not unbound
 ",
     );
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
 
     let bindings = map.bindings_at_use(UseId::from(0));
-    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
     assert_not!(bindings.may_be_unbound());
 }
 
@@ -412,18 +412,118 @@ fn test_repeat_shadows_prior_def() {
         "\
 x <- 0       # def 0
 repeat {
-    x <- 1   # def 1
+    x <- 1   # def 2
     break
 }
-x            # use 0 -> {def 1} (repeat always executes)
+x            # use 0 -> {def 2} (repeat always executes)
 ",
     );
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
 
     let bindings = map.bindings_at_use(UseId::from(0));
-    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(2)]);
     assert_not!(bindings.may_be_unbound());
+}
+
+// --- Loop-carried definitions ---
+//
+// Uses at the top of a loop body can see definitions from the bottom of the
+// body (from a previous iteration). The builder synthesizes `LoopHeader`
+// placeholders before visiting the body, then populates them with the real
+// definitions that are live at the end of the body. The placeholders never
+// appear in `bindings_at_use` results.
+
+#[test]
+fn test_while_loop_carried_def() {
+    let index = index(
+        "\
+x <- 0          # def 0
+while (cond) {
+    x           # use 1: sees {def 0, def 2} (pre-loop OR previous iteration)
+    x <- 1      # def 2
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: `cond` is use 0, `x` inside body is use 1.
+    // def 1 is the LoopHeader for `x`, populated with {def 2}.
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(2)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_for_loop_carried_def() {
+    let index = index(
+        "\
+x <- 0              # def 0
+for (i in xs) {     # def 1 (i)
+    x               # use 1: sees {def 0, def 3}
+    x <- 1          # def 3
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: `xs` is use 0, `x` inside body is use 1.
+    // def 2 is the LoopHeader for `x`, populated with {def 3}.
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(3)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_repeat_loop_carried_def() {
+    let index = index(
+        "\
+x <- 0       # def 0
+repeat {
+    x        # use 0: sees {def 0, def 2}
+    x <- 1   # def 2
+    break
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // def 1 is the LoopHeader for `x`, populated with {def 2}.
+    let bindings = map.bindings_at_use(UseId::from(0));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(2)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_loop_carried_unbound_before_loop() {
+    let index = index(
+        "\
+while (cond) {
+    x           # use 1: sees {def 1}, may_be_unbound
+    x <- 1      # def 1
+}
+",
+    );
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: `cond` is use 0, `x` inside body is use 1.
+    // def 0 is the LoopHeader for `x`, populated with {def 1}.
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
+    assert!(bindings.may_be_unbound());
 }
 
 // --- Function scopes ---
@@ -510,7 +610,7 @@ fn test_if_inside_for() {
         "\
 for (i in xs) { # def 0 (i)
     if (cond) {
-        x <- 1  # def 1
+        x <- 1  # def 2
     }
 }
 x               # use 2: may_be_unbound (loop might not run, if might not match)
@@ -520,8 +620,9 @@ x               # use 2: may_be_unbound (loop might not run, if might not match)
     let map = index.use_def_map(file);
 
     // Uses: `xs` is use 0, `cond` is use 1, final `x` is use 2.
+    // def 1 is the LoopHeader for `x`, populated before merge.
     let bindings = map.bindings_at_use(UseId::from(2));
-    assert!(bindings.definitions().contains(&DefinitionId::from(1)));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(2)]);
     assert!(bindings.may_be_unbound());
 }
 
@@ -532,12 +633,12 @@ fn test_if_else_inside_while() {
 x <- 0          # def 0
 while (cond) {
     if (c2) {
-        x <- 1  # def 1
+        x <- 1  # def 2
     } else {
-        x <- 2  # def 2
+        x <- 2  # def 3
     }
 }
-x               # use 2 -> {def 0, def 1, def 2} (while may not execute)
+x               # use 2 -> {def 0, def 2, def 3} (while may not execute)
 ",
     );
     let file = ScopeId::from(0);
@@ -547,8 +648,8 @@ x               # use 2 -> {def 0, def 1, def 2} (while may not execute)
     let bindings = map.bindings_at_use(UseId::from(2));
     assert_eq!(bindings.definitions(), &[
         DefinitionId::from(0),
-        DefinitionId::from(1),
-        DefinitionId::from(2)
+        DefinitionId::from(2),
+        DefinitionId::from(3)
     ]);
     assert_not!(bindings.may_be_unbound());
 }
