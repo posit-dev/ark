@@ -26,7 +26,7 @@ use crate::semantic_index::UseId;
 // print(x) # may_be_unbound: true, definitions: {A}
 // ```
 //
-// - `record_binding()`: A definition like `x <- 1` kills all previous live
+// - `record_definition()`: A definition like `x <- 1` kills all previous live
 //   definitions for that symbol and replaces them with a singleton.
 //   `may_be_unbound` becomes false.
 //
@@ -66,8 +66,50 @@ use crate::semantic_index::UseId;
 // The pre-if definition stays live because there's a path (the no-else path)
 // where it wasn't shadowed.
 //
-// The same primitives can be used to implement other control flow constructs
-// following similar considerations (the body of a loop might not execute).
+// The same primitives handle other control flow: a `while` body may not
+// execute, so we snapshot before, visit the body, then merge (like an
+// if-without-else). `for` is similar, except the loop variable is always
+// bound before the snapshot.
+//
+// ## Retroactive fixups
+//
+// The snapshot/restore/merge model is forward-only: a use sees definitions
+// recorded before it. Two situations need the opposite: definitions that
+// are recorded *after* a use must retroactively reach it. Without this,
+// features like rename and jump-to-definition would miss connections.
+//
+// ### Loop-carried definitions (`finish_loop_defs()`)
+//
+// ```r
+// x <- 0
+// while (cond) {
+//     print(x) # should see def A (pre-loop) AND def B (previous iteration)
+//     x <- 1   # def B
+// }
+// ```
+//
+// When visiting the body top-to-bottom, `print(x)` is recorded before
+// `x <- 1`, so it only sees `{A}`. But in a second iteration, `x <- 1`
+// from the first iteration should reach `print(x)`. After the body,
+// `finish_loop_defs()` diffs the pre-loop and post-body symbol states.
+// Any new definition (here, B) is retroactively added to uses of that
+// symbol recorded during the body. Result: `print(x)` sees `{A, B}`.
+//
+// ### Deferred definitions (`record_deferred_definition()`)
+//
+// ```r
+// x <- 0           # def A
+// print(x)         # should see def A AND def B
+// f <- function() {
+//     x <<- 1      # def B (targets file scope)
+// }
+// ```
+//
+// The `<<-` creates a definition in the file scope, but it's encountered
+// during the function body walk, after `print(x)` was already recorded.
+// `record_deferred_definition()` adds it to the live state (so future uses
+// see it) and also stashes it. At finalization, `finish_deferred_defs()`
+// retroactively adds it to all uses of that symbol, including `print(x)`.
 //
 // ## Interpreting `Bindings`
 //
@@ -128,29 +170,12 @@ impl Bindings {
     }
 
     /// Add a definition to the live set without clearing existing ones and
-    /// without changing `may_be_unbound`. Used for `LoopHeader` placeholder
-    /// definitions that represent a value carried from a previous iteration.
+    /// without changing `may_be_unbound`. Used for loop-carried definitions
+    /// and scope-wide definitions (`<<-`).
     fn add_definition(&mut self, def_id: DefinitionId) {
         let pos = self.definitions.partition_point(|&id| id < def_id);
         if pos >= self.definitions.len() || self.definitions[pos] != def_id {
             self.definitions.insert(pos, def_id);
-        }
-    }
-
-    fn remove_definition(&mut self, def_id: DefinitionId) {
-        if let Some(pos) = self.definitions.iter().position(|&id| id == def_id) {
-            self.definitions.remove(pos);
-        }
-    }
-
-    /// Replace `old` with `replacements` in the definition set. If `old` is
-    /// not present, this is a no-op. Maintains sorted order and deduplicates.
-    fn replace_definition(&mut self, old: DefinitionId, replacements: &[DefinitionId]) {
-        if let Some(pos) = self.definitions.iter().position(|&id| id == old) {
-            self.definitions.remove(pos);
-            for &def_id in replacements {
-                self.add_definition(def_id);
-            }
         }
     }
 
@@ -206,6 +231,13 @@ impl UseDefMap {
 pub(crate) struct UseDefMapBuilder {
     symbol_states: IndexVec<SymbolId, Bindings>,
     bindings_by_use: IndexVec<UseId, Bindings>,
+    // Maps each use to its symbol, so retroactive fixups (for `<<-` and
+    // loop-carried definitions) can find which uses to patch for a given
+    // symbol.
+    symbol_for_use: IndexVec<UseId, SymbolId>,
+    // Definitions whose effect on past uses is deferred to `finish()`.
+    // Currently used for `<<-` extra definitions in ancestor scopes.
+    deferred_defs: Vec<(SymbolId, DefinitionId)>,
 }
 
 impl UseDefMapBuilder {
@@ -213,6 +245,8 @@ impl UseDefMapBuilder {
         Self {
             symbol_states: IndexVec::new(),
             bindings_by_use: IndexVec::new(),
+            symbol_for_use: IndexVec::new(),
+            deferred_defs: Vec::new(),
         }
     }
 
@@ -233,50 +267,61 @@ impl UseDefMapBuilder {
         self.symbol_states[symbol_id].record_definition(def_id);
     }
 
-    /// Add a definition to the symbol's live set without clearing existing
-    /// definitions or changing `may_be_unbound`. Unlike `record_binding`
-    /// which shadows all prior definitions, this appends to the live set.
-    /// Used for loop-header placeholders and super-assignments.
-    pub(crate) fn append_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+    /// Record a definition whose effect on past uses is deferred to
+    /// `finish()`. The definition is added to the current flow state
+    /// immediately (so future uses see it), but uses already recorded
+    /// are patched up at finalization time. Used for `<<-` extra
+    /// definitions.
+    pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].add_definition(def_id);
+        self.deferred_defs.push((symbol_id, def_id));
     }
 
-    /// Resolve a `LoopHeader` placeholder to the real definitions that
-    /// are live at the end of the loop body. Replaces the placeholder in
-    /// all `bindings_by_use` entries recorded during the body (from
-    /// `first_use` onwards) and removes it from the live symbol state.
+    /// After visiting a loop body, retroactively patch uses so that
+    /// definitions from the bottom of the body reach uses at the top
+    /// (simulating a previous iteration).
     ///
-    /// When Salsa is introduced, this eager rewriting will be replaced by
-    /// Salsa's `specify` mechanism: the synthesis step will create
-    /// Salsa-tracked `LoopToken` definitions (like ty's `LoopHeader`),
-    /// and this populate step will call `specify` on those tokens instead
-    /// of rewriting `bindings_by_use` in place. That lets downstream
-    /// queries lazily resolve loop headers and skip re-computation when
-    /// the set of reaching definitions hasn't changed.
-    pub(crate) fn resolve_placeholder(
-        &mut self,
-        symbol_id: SymbolId,
-        placeholder_id: DefinitionId,
-        first_use: UseId,
-    ) {
-        let replacements: SmallVec<[DefinitionId; 2]> = self.symbol_states[symbol_id]
-            .definitions()
-            .iter()
-            .filter(|&&id| id != placeholder_id)
-            .copied()
-            .collect();
+    /// Diffs each symbol's definitions before (`pre_loop`) and after the
+    /// body. Any definition present after but not before is new (it was
+    /// created inside the body). Those new definitions are added to all
+    /// uses of that symbol from `first_use` onwards, which covers exactly
+    /// the uses recorded during the body.
+    pub(crate) fn finish_loop_defs(&mut self, pre_loop: &FlowSnapshot, first_use: UseId) {
+        for i in 0..self.symbol_states.len() {
+            let symbol_id = SymbolId::new(i);
 
-        for i in first_use.index()..self.bindings_by_use.len() {
-            let use_id = UseId::new(i);
-            self.bindings_by_use[use_id].replace_definition(placeholder_id, &replacements);
+            let pre_defs = if i < pre_loop.symbol_states.len() {
+                pre_loop.symbol_states[symbol_id].definitions()
+            } else {
+                // Symbol was first interned during the body, so it had
+                // no definitions before the loop.
+                &[]
+            };
+            let post_defs = self.symbol_states[symbol_id].definitions();
+
+            // Collect new definitions introduced in the body
+            let new_defs: SmallVec<[DefinitionId; 2]> = post_defs
+                .iter()
+                .filter(|d| !pre_defs.contains(d))
+                .copied()
+                .collect();
+
+            // Most symbols are unchanged, exit early in that case
+            if new_defs.is_empty() {
+                continue;
+            }
+
+            // Add new defs to uses recorded during the body (`first_use`
+            // onwards). Uses before the loop are unaffected.
+            for j in first_use.index()..self.bindings_by_use.len() {
+                let use_id = UseId::new(j);
+                if self.symbol_for_use[use_id] == symbol_id {
+                    for &def_id in &new_defs {
+                        self.bindings_by_use[use_id].add_definition(def_id);
+                    }
+                }
+            }
         }
-
-        // Prevent the placeholder from leaking into post-loop state. When the
-        // body unconditionally assigns the symbol, `record_binding()` already
-        // cleared the placeholder, so this is a no-op. When the assignment is
-        // conditional, the placeholder would survive and leak if we did not
-        // explicitly remove it here.
-        self.symbol_states[symbol_id].remove_definition(placeholder_id);
     }
 
     /// Record a use of `symbol_id`. Clones the current live bindings for that
@@ -284,6 +329,7 @@ impl UseDefMapBuilder {
     pub(crate) fn record_use(&mut self, symbol_id: SymbolId, use_id: UseId) {
         let bindings = self.symbol_states[symbol_id].clone();
         let pushed_id = self.bindings_by_use.push(bindings);
+        self.symbol_for_use.push(symbol_id);
         stdext::soft_assert!(use_id == pushed_id);
     }
 
@@ -325,9 +371,24 @@ impl UseDefMapBuilder {
     }
 
     /// Finalize into an immutable [`UseDefMap`].
-    pub(crate) fn finish(self) -> UseDefMap {
+    pub(crate) fn finish(mut self) -> UseDefMap {
+        self.finish_deferred_defs();
         UseDefMap {
             bindings_by_use: self.bindings_by_use,
+        }
+    }
+
+    /// Retroactively add deferred definitions (from `<<-`) to all
+    /// uses of the corresponding symbol, including uses that were
+    /// recorded before the definition was encountered in the walk.
+    fn finish_deferred_defs(&mut self) {
+        for &(symbol_id, def_id) in &self.deferred_defs {
+            for i in 0..self.bindings_by_use.len() {
+                let use_id = UseId::new(i);
+                if self.symbol_for_use[use_id] == symbol_id {
+                    self.bindings_by_use[use_id].add_definition(def_id);
+                }
+            }
         }
     }
 }

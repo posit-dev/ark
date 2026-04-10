@@ -4,7 +4,6 @@ use aether_syntax::AnyRValue;
 use aether_syntax::RArgumentList;
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RExpressionList;
-use aether_syntax::RForStatement;
 use aether_syntax::RFunctionDefinition;
 use aether_syntax::RParameter;
 use aether_syntax::RParameters;
@@ -28,7 +27,6 @@ use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
-use crate::semantic_index::SymbolId;
 use crate::semantic_index::SymbolTableBuilder;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
@@ -182,7 +180,7 @@ impl SemanticIndexBuilder {
 
         let builder = self.use_def_builder_mut(target_scope);
         builder.ensure_symbol(target_symbol);
-        builder.append_definition(target_symbol, target_def_id);
+        builder.record_deferred_definition(target_symbol, target_def_id);
     }
 
     // Walk up from the parent scope looking for a scope where `name` already
@@ -353,9 +351,8 @@ impl SemanticIndexBuilder {
 
                 if let Ok(body) = stmt.body() {
                     let first_use = self.uses[self.current_scope].next_id();
-                    let loop_header = self.build_loop_header(body.syntax());
                     self.collect_expression(&body);
-                    self.finish_loop_header(&loop_header, first_use);
+                    self.current_use_def.finish_loop_defs(&pre_loop, first_use);
                 }
 
                 self.current_use_def.merge(pre_loop);
@@ -398,9 +395,8 @@ impl SemanticIndexBuilder {
 
                 if let Ok(body) = stmt.body() {
                     let first_use = self.uses[self.current_scope].next_id();
-                    let loop_header = self.build_loop_header(body.syntax());
                     self.collect_expression(&body);
-                    self.finish_loop_header(&loop_header, first_use);
+                    self.current_use_def.finish_loop_defs(&pre_loop, first_use);
                 }
 
                 // Body may not execute
@@ -410,10 +406,10 @@ impl SemanticIndexBuilder {
             AnyRExpression::RRepeatStatement(stmt) => {
                 // Body always executes at least once, no snapshot needed
                 if let Ok(body) = stmt.body() {
+                    let pre_loop = self.current_use_def.snapshot();
                     let first_use = self.uses[self.current_scope].next_id();
-                    let loop_header = self.build_loop_header(body.syntax());
                     self.collect_expression(&body);
-                    self.finish_loop_header(&loop_header, first_use);
+                    self.current_use_def.finish_loop_defs(&pre_loop, first_use);
                 }
             },
 
@@ -553,87 +549,6 @@ impl SemanticIndexBuilder {
         }
     }
 
-    // Pre-walk a loop body to find all symbols that will be bound, then
-    // create `LoopHeader` placeholder definitions for each. These are
-    // recorded as additional (non-shadowing) bindings so that uses at the
-    // top of the body can see definitions from a previous iteration.
-    // After the body is visited, `finish_loop_header` resolves each
-    // placeholder to the real definitions that are live at the end of
-    // the body.
-    //
-    // Skips function bodies (different scope) and super-assignments (don't
-    // affect local flow).
-    fn build_loop_header(&mut self, body: &RSyntaxNode) -> Vec<(SymbolId, DefinitionId)> {
-        let names = Self::collect_loop_bound_names(body);
-        let mut loop_header = Vec::new();
-
-        for name in names {
-            let symbol_id =
-                self.symbol_tables[self.current_scope].intern(&name, SymbolFlags::IS_BOUND);
-            let def_id = self.definitions[self.current_scope].push(Definition {
-                symbol: symbol_id,
-                kind: DefinitionKind::LoopHeader,
-                range: body.text_trimmed_range(),
-            });
-
-            self.current_use_def.ensure_symbol(symbol_id);
-            self.current_use_def.append_definition(symbol_id, def_id);
-            loop_header.push((symbol_id, def_id));
-        }
-
-        loop_header
-    }
-
-    fn finish_loop_header(&mut self, loop_header: &[(SymbolId, DefinitionId)], first_use: UseId) {
-        for &(symbol_id, placeholder_id) in loop_header {
-            self.current_use_def
-                .resolve_placeholder(symbol_id, placeholder_id, first_use);
-        }
-    }
-
-    // Keep in sync with `collect_expression`: Every construct that creates
-    // a definition there must be matched here so that loop headers account
-    // for all bindings in the body.
-    fn collect_loop_bound_names(body: &RSyntaxNode) -> Vec<String> {
-        let mut names = Vec::new();
-        let mut preorder = body.preorder();
-
-        while let Some(event) = preorder.next() {
-            let WalkEvent::Enter(node) = event else {
-                continue;
-            };
-
-            match node.kind() {
-                // Function bodies are separate scopes. In the future we'll need
-                // an indirection here to handle other kinds of local scopes, in
-                // particular from NSE functions like `local()`.
-                RSyntaxKind::R_FUNCTION_DEFINITION => {
-                    preorder.skip_subtree();
-                },
-
-                RSyntaxKind::R_BINARY_EXPRESSION => {
-                    let op: RBinaryExpression = node.cast().unwrap();
-                    if let Some((name, _)) = assignment_target(&op) {
-                        names.push(name);
-                    }
-                },
-
-                RSyntaxKind::R_FOR_STATEMENT => {
-                    let for_stmt: RForStatement = node.cast().unwrap();
-                    if let Ok(variable) = for_stmt.variable() {
-                        names.push(identifier_text(&variable));
-                    }
-                },
-
-                _ => {},
-            }
-        }
-
-        names.sort();
-        names.dedup();
-        names
-    }
-
     fn collect_arguments(&mut self, args: &RArgumentList) {
         for item in args.iter() {
             let Ok(arg) = item else { continue };
@@ -707,18 +622,6 @@ fn string_value_text(s: &aether_syntax::RStringValue) -> Option<String> {
     let token = s.value_token().ok()?;
     let text = token.text_trimmed();
     Some(text[1..text.len() - 1].to_string())
-}
-
-/// For a local (non-super) assignment, extract the binding name and range.
-/// Returns `None` if the expression is not an assignment, is a
-/// super-assignment, or has a complex target (`x$foo`, `x[1]`, etc.).
-fn assignment_target(bin: &RBinaryExpression) -> Option<(String, TextRange)> {
-    if !is_assignment(bin) || is_super_assignment(bin) {
-        return None;
-    }
-    let right = is_right_assignment(bin);
-    let target = if right { bin.right() } else { bin.left() }.ok()?;
-    assignment_target_name(&target)
 }
 
 /// Extract the binding name and range from an assignment target expression.
