@@ -16,17 +16,22 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
 use biome_rowan::WalkEvent;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::index_vec::Idx;
 use crate::index_vec::IndexVec;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
+use crate::semantic_index::EnclosingSnapshotId;
+use crate::semantic_index::EnclosingSnapshotKey;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
+use crate::semantic_index::SymbolId;
 use crate::semantic_index::SymbolTableBuilder;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
@@ -36,6 +41,7 @@ use crate::use_def_map::UseDefMapBuilder;
 pub fn build(root: &RRoot) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
     let mut builder = SemanticIndexBuilder::new(range);
+    builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
     builder.finish()
 }
@@ -50,6 +56,9 @@ struct SemanticIndexBuilder {
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
     current_scope: ScopeId,
+    current_pre_scan: PreScanScope,
+    pre_scan_stack: Vec<PreScanScope>,
+    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
 }
 
 impl SemanticIndexBuilder {
@@ -85,6 +94,9 @@ impl SemanticIndexBuilder {
             uses,
             use_def_maps,
             current_scope: file,
+            current_pre_scan: PreScanScope::new(),
+            pre_scan_stack: Vec::new(),
+            enclosing_snapshots: FxHashMap::default(),
         }
     }
 
@@ -109,6 +121,9 @@ impl SemanticIndexBuilder {
         self.uses.push(IndexVec::new());
         self.use_def_maps.push(UseDefMapBuilder::new());
 
+        let parent_pre_scan = std::mem::replace(&mut self.current_pre_scan, PreScanScope::new());
+        self.pre_scan_stack.push(parent_pre_scan);
+
         id
     }
 
@@ -119,6 +134,11 @@ impl SemanticIndexBuilder {
         self.current_scope = match self.scopes[id].parent {
             Some(parent) => parent,
             None => panic!("`pop_scope()` called on the file scope"),
+        };
+
+        self.current_pre_scan = match self.pre_scan_stack.pop() {
+            Some(pre_scan) => pre_scan,
+            None => panic!("`pop_scope()` called with empty pre-scan stack"),
         };
     }
 
@@ -202,6 +222,71 @@ impl SemanticIndexBuilder {
         });
         self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
         self.use_def_maps[self.current_scope].record_use(symbol_id, use_id);
+
+        // Associate free variables with the enclosing snapshot where the
+        // variable is defined
+        if self.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
+            self.register_enclosing_snapshot(name, symbol_id);
+        }
+    }
+
+    fn register_enclosing_snapshot(&mut self, name: &str, nested_symbol_id: SymbolId) {
+        // We're looking for a parent definition for this scope's free variable
+        // so start from parent
+        let Some(mut current_scope) = self.scopes[self.current_scope].parent else {
+            return;
+        };
+        let Some(mut stack_idx) = self.pre_scan_stack.len().checked_sub(1) else {
+            return;
+        };
+
+        loop {
+            let found_by_flag = self.symbol_tables[current_scope]
+                .id(name)
+                .is_some_and(|sym_id| {
+                    self.symbol_tables[current_scope]
+                        .symbol(sym_id)
+                        .flags()
+                        .contains(SymbolFlags::IS_BOUND)
+                });
+
+            let found_by_prescan = self.pre_scan_stack[stack_idx].has_name(name);
+
+            if found_by_flag || found_by_prescan {
+                // Intern with empty flags: we just need a stable `SymbolId` for
+                // the lookup key. If found via `found_by_flag`, the symbol
+                // already exists with `IS_BOUND`. If found via pre-scan only,
+                // the later `add_definition` call during the full walk will set
+                // `IS_BOUND`.
+                let enclosing_symbol_id =
+                    self.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
+
+                let key = EnclosingSnapshotKey {
+                    nested_scope: self.current_scope,
+                    nested_symbol: nested_symbol_id,
+                };
+                if self.enclosing_snapshots.contains_key(&key) {
+                    return;
+                }
+
+                self.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
+                let snapshot_id = self.use_def_maps[current_scope]
+                    .register_enclosing_snapshot(enclosing_symbol_id);
+                self.enclosing_snapshots
+                    .insert(key, (current_scope, snapshot_id));
+
+                return;
+            }
+
+            let Some(parent) = self.scopes[current_scope].parent else {
+                return;
+            };
+            let Some(next_idx) = stack_idx.checked_sub(1) else {
+                return;
+            };
+            current_scope = parent;
+            stack_idx = next_idx;
+        }
     }
 
     // --- Recursive descent ---
@@ -316,7 +401,11 @@ impl SemanticIndexBuilder {
                 if let Ok(body) = stmt.body() {
                     let first_use = self.uses[self.current_scope].next_id();
                     self.collect_expression(&body);
-                    self.use_def_maps[self.current_scope].finish_loop_defs(&pre_loop, first_use);
+                    self.use_def_maps[self.current_scope].finish_loop_defs(
+                        &pre_loop,
+                        first_use,
+                        &self.uses[self.current_scope],
+                    );
                 }
 
                 self.use_def_maps[self.current_scope].merge(pre_loop);
@@ -360,7 +449,11 @@ impl SemanticIndexBuilder {
                 if let Ok(body) = stmt.body() {
                     let first_use = self.uses[self.current_scope].next_id();
                     self.collect_expression(&body);
-                    self.use_def_maps[self.current_scope].finish_loop_defs(&pre_loop, first_use);
+                    self.use_def_maps[self.current_scope].finish_loop_defs(
+                        &pre_loop,
+                        first_use,
+                        &self.uses[self.current_scope],
+                    );
                 }
 
                 // Body may not execute
@@ -368,12 +461,16 @@ impl SemanticIndexBuilder {
             },
 
             AnyRExpression::RRepeatStatement(stmt) => {
-                // Body always executes at least once, no snapshot needed
+                // Body always executes at least once, so no merge with pre-loop state.
                 if let Ok(body) = stmt.body() {
                     let pre_loop = self.use_def_maps[self.current_scope].snapshot();
                     let first_use = self.uses[self.current_scope].next_id();
                     self.collect_expression(&body);
-                    self.use_def_maps[self.current_scope].finish_loop_defs(&pre_loop, first_use);
+                    self.use_def_maps[self.current_scope].finish_loop_defs(
+                        &pre_loop,
+                        first_use,
+                        &self.uses[self.current_scope],
+                    );
                 }
             },
 
@@ -423,10 +520,58 @@ impl SemanticIndexBuilder {
             self.collect_parameters(&params);
         }
         if let Ok(body) = fun.body() {
+            self.pre_scan_scope(body.syntax());
             self.collect_expression(&body);
         }
 
         self.pop_scope(scope);
+    }
+
+    /// Pre-scan a scope to collect all definition names (skipping nested
+    /// function bodies). Runs before the full walk so that enclosing
+    /// snapshot registration can find where free variables are bound,
+    /// even when the walk in the parent scope hasn't reached the
+    /// definition yet. Must stay in sync with the full walk's definition
+    /// handling: any construct that calls `add_definition` should have a
+    /// corresponding entry here.
+    fn pre_scan_scope(&mut self, node: &RSyntaxNode) {
+        let mut preorder = node.preorder();
+        while let Some(event) = preorder.next() {
+            let WalkEvent::Enter(node) = event else {
+                continue;
+            };
+            let Some(expr) = AnyRExpression::cast(node) else {
+                continue;
+            };
+            match &expr {
+                // NSE scopes (e.g. `local({...})`) will also need to
+                // be skipped here once recognized, since their
+                // definitions belong to a child scope.
+                AnyRExpression::RFunctionDefinition(_) => {
+                    preorder.skip_subtree();
+                },
+                AnyRExpression::RBinaryExpression(bin) if is_assignment(bin) => {
+                    if !is_super_assignment(bin) {
+                        let right = is_right_assignment(bin);
+                        let target = if right { bin.right() } else { bin.left() };
+                        if let Ok(target) = target {
+                            if let Some((name, range)) = assignment_target_name(&target) {
+                                self.current_pre_scan.add(name, range);
+                            }
+                        }
+                    }
+                },
+                AnyRExpression::RForStatement(stmt) => {
+                    if let Ok(variable) = stmt.variable() {
+                        self.current_pre_scan.add(
+                            identifier_text(&variable),
+                            variable.syntax().text_trimmed_range(),
+                        );
+                    }
+                },
+                _ => {},
+            }
+        }
     }
 
     fn collect_parameters(&mut self, params: &RParameters) {
@@ -526,7 +671,12 @@ impl SemanticIndexBuilder {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
         let symbol_tables = self.symbol_tables.into_iter().map(|b| b.build()).collect();
-        let use_def_maps = self.use_def_maps.into_iter().map(|b| b.finish()).collect();
+        let use_def_maps: IndexVec<ScopeId, _> = self
+            .use_def_maps
+            .into_iter()
+            .zip(self.uses.iter())
+            .map(|(b, (_, uses))| b.finish(uses))
+            .collect();
 
         SemanticIndex::new(
             self.scopes,
@@ -534,7 +684,56 @@ impl SemanticIndexBuilder {
             self.definitions,
             self.uses,
             use_def_maps,
+            self.enclosing_snapshots,
         )
+    }
+}
+
+/// All definitions in a scope, collected before the full walk. Skips nested
+/// function bodies (those belong to child scopes). Two consumers:
+///
+/// - Enclosing snapshots: `has_name()` checks whether a symbol will be
+///   defined in an ancestor scope (even when the ancestor's walk hasn't reached
+///   that definition yet), so that `register_enclosing_snapshot()` can find the
+///   right ancestor for free variables.
+/// - NSE resolution: With NSE, each function call potentially pushes a scope
+///   (which can be lazy or eager). We need to resolve the called function's
+///   semantic during the walk. Inside lazy scopes (e.g. function bodies),
+///   `by_name` provides the complete set of parent definitions so that the
+///   function can be resolved against all the parent scope's definitions (if NSE
+///   semantics don't match across definitions, we pick one and lint). Intra-scope
+///   resolution is linear and uses the current `symbol_states` directly instead.
+struct PreScanScope {
+    _defs: Vec<PreScanDef>,
+    by_name: FxHashMap<String, SmallVec<[usize; 2]>>,
+}
+
+/// A single definition site found during the pre-scan. Fields are not
+/// read yet but will be used for NSE lookup.
+struct PreScanDef {
+    _name: String,
+    _range: TextRange,
+}
+
+impl PreScanScope {
+    fn new() -> Self {
+        Self {
+            _defs: Vec::new(),
+            by_name: FxHashMap::default(),
+        }
+    }
+
+    fn add(&mut self, name: String, range: TextRange) {
+        let idx = self._defs.len();
+        self.by_name.entry(name.clone()).or_default().push(idx);
+        self._defs.push(PreScanDef {
+            _name: name,
+            _range: range,
+        });
+    }
+
+    fn has_name(&self, name: &str) -> bool {
+        self.by_name.contains_key(name)
     }
 }
 
