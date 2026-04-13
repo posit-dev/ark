@@ -1,11 +1,14 @@
 use itertools::EitherOrBoth;
 use itertools::Itertools;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::index_vec::Idx;
 use crate::index_vec::IndexVec;
 use crate::semantic_index::DefinitionId;
+use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::SymbolId;
+use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 
 // Use-def tracking answers: "at this use of `x`, which specific definitions
@@ -93,7 +96,8 @@ use crate::semantic_index::UseId;
 // from the first iteration should reach `print(x)`. After the body,
 // `finish_loop_defs()` diffs the pre-loop and post-body symbol states.
 // Any new definition (here, B) is retroactively added to uses of that
-// symbol recorded during the body. Result: `print(x)` sees `{A, B}`.
+// symbol recorded during the body (identified via the scope's `uses`
+// list). Result: `print(x)` sees `{A, B}`.
 //
 // ### Deferred definitions (`record_deferred_definition()`)
 //
@@ -115,7 +119,8 @@ use crate::semantic_index::UseId;
 // during the function body walk, after `print(x)` was already recorded.
 // `record_deferred_definition()` adds it to the live state (so future uses
 // see it) and also stashes it. At finalization, `finish_deferred_defs()`
-// retroactively adds it to all uses of that symbol, including `print(x)`.
+// retroactively adds it to all uses of that symbol (iterating the scope's
+// `uses` list), including `print(x)`.
 //
 // ## Interpreting `Bindings`
 //
@@ -130,23 +135,95 @@ use crate::semantic_index::UseId;
 //   {A}         | true           | conditional definition (e.g. if without else)
 //   {}          | true           | no local def, parent scope reference
 //   {A, B}      | true           | some paths define, some don't
+//
+// ## Enclosing snapshots
+//
+// Use-def maps are per-scope, so a free variable in a nested function
+// gets `{ definitions: [], may_be_unbound: true }` locally. To resolve
+// it, we need the enclosing scope's bindings. Enclosing snapshots
+// bridge this gap.
+//
+// A snapshot is registered when `add_use` detects `may_be_unbound` in
+// the nested scope. The builder walks up the scope chain to find the
+// ancestor where the symbol is bound and records a snapshot in that
+// ancestor's `UseDefMapBuilder`. The snapshot captures what's live at
+// the nested scope's definition point, then a watcher accumulates
+// subsequent definitions. We take the union of all subsequent definitions
+// because we can't tractably know exactly when the function is called. In the
+// following example, `x`'s use sees both B and C even though from this
+// particular snippet it can only see B.
+//
+// Providing more accurate answers in the general case would require whole
+// program analysis (e.g. `f` may be passed down to other functions). For now we
+// accept the over-approximation of taking the union of subsequent definitions,
+// although we could improve on that for simple cases in the future (tracking
+// simple calls, and falling back to over-approximation in the other cases).
+//
+// ```r
+// x <- 0              # def A
+// x <- 1              # def B (shadows A)
+// f <- function() x   # snapshot initialized: {B}
+// f()
+// x <- 2              # watcher fires → snapshot: {B, C}
+// ```
+//
+// Note that the snapshot is {B, C}, not {A, B, C}, because def A was already
+// shadowed when `f` was first defined. The rule: what was live at the
+// definition point (prior shadowing applied) plus every definition added after.
+//
+// When `may_be_unbound` is true due to a conditional local definition, the
+// snapshot is also consulted (unlike Python, R has no name-binding rule, so
+// conditional local definitions don't prevent fallthrough):
+//
+// ```r
+// x <- 1
+// f <- function(cond) {
+//     if (cond) x <- 2
+//     x                  # local: {x <- 2, may_be_unbound: true}
+// }                      # enclosing snapshot: {x <- 1}
+// ```
+//
+// The consumer combines both: the local bindings and the enclosing
+// snapshot give the full picture of what `x` could be.
+//
+// For eager NSE scopes (e.g. `local()`), the snapshot will be even more
+// precise: since the body executes at the call site, the snapshot is a
+// point-in-time capture with no watcher, reflecting exactly the linear state.
+// No union over-approximation needed.
 
 /// The immutable use-def map for a single scope. For each use site, stores the
 /// set of definitions that can reach it through control flow.
+///
+/// Also stores enclosing snapshots: the bindings that lazy nested scopes
+/// (i.e. nested functions) see when they reference a symbol defined in this
+/// scope. Looked up via `SemanticIndex::enclosing_bindings()`.
 #[derive(Debug)]
 pub struct UseDefMap {
     bindings_by_use: IndexVec<UseId, Bindings>,
+
+    /// Bindings visible to nested scopes that reference symbols defined here.
+    /// Initialized from the flow state at the nested scope's definition point
+    /// (prior shadowing applied), then conservatively extended with every
+    /// subsequent definition (because we can't know staticaly when the nested
+    /// scope is called). Consulted when a use in the nested scope has
+    /// `may_be_unbound: true`.
+    enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
 }
 
 impl UseDefMap {
     pub(crate) fn empty() -> Self {
         Self {
             bindings_by_use: IndexVec::new(),
+            enclosing_snapshots: IndexVec::new(),
         }
     }
 
     pub fn bindings_at_use(&self, use_id: UseId) -> &Bindings {
         &self.bindings_by_use[use_id]
+    }
+
+    pub fn enclosing_snapshot(&self, id: EnclosingSnapshotId) -> &Bindings {
+        &self.enclosing_snapshots[id]
     }
 }
 
@@ -230,13 +307,11 @@ fn sorted_union(a: &[DefinitionId], b: &[DefinitionId]) -> SmallVec<[DefinitionI
 pub(crate) struct UseDefMapBuilder {
     symbol_states: IndexVec<SymbolId, Bindings>,
     bindings_by_use: IndexVec<UseId, Bindings>,
-    // Maps each use to its symbol, so retroactive fixups (for `<<-` and
-    // loop-carried definitions) can find which uses to patch for a given
-    // symbol.
-    symbol_for_use: IndexVec<UseId, SymbolId>,
     // Definitions whose effect on past uses is deferred to `finish()`.
     // Currently used for `<<-` extra definitions in ancestor scopes.
     deferred_defs: Vec<(SymbolId, DefinitionId)>,
+    enclosing_snapshots: IndexVec<EnclosingSnapshotId, Bindings>,
+    snapshot_watchers: FxHashMap<SymbolId, SmallVec<[EnclosingSnapshotId; 1]>>,
 }
 
 impl UseDefMapBuilder {
@@ -244,8 +319,9 @@ impl UseDefMapBuilder {
         Self {
             symbol_states: IndexVec::new(),
             bindings_by_use: IndexVec::new(),
-            symbol_for_use: IndexVec::new(),
             deferred_defs: Vec::new(),
+            enclosing_snapshots: IndexVec::new(),
+            snapshot_watchers: FxHashMap::default(),
         }
     }
 
@@ -264,16 +340,7 @@ impl UseDefMapBuilder {
     /// live definitions for that symbol.
     pub(crate) fn record_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
         self.symbol_states[symbol_id].record_definition(def_id);
-    }
-
-    /// Record a definition whose effect on past uses is deferred to
-    /// `finish()`. The definition is added to the current flow state
-    /// immediately (so future uses see it), but uses already recorded
-    /// are patched up at finalization time. Used for `<<-` extra
-    /// definitions.
-    pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
-        self.symbol_states[symbol_id].add_definition(def_id);
-        self.deferred_defs.push((symbol_id, def_id));
+        self.update_enclosing_snapshots(symbol_id, def_id);
     }
 
     /// After visiting a loop body, retroactively patch uses so that
@@ -285,12 +352,12 @@ impl UseDefMapBuilder {
     /// created inside the body). Those new definitions are added to all
     /// uses of that symbol from `first_use` onwards, which covers exactly
     /// the uses recorded during the body.
-    ///
-    /// This runs after the body (not eagerly at each definition) because
-    /// the body may contain branches. A diff at the end captures the
-    /// converged state after all snapshot/restore/merge within the body
-    /// has resolved.
-    pub(crate) fn finish_loop_defs(&mut self, pre_loop: &FlowSnapshot, first_use: UseId) {
+    pub(crate) fn finish_loop_defs(
+        &mut self,
+        pre_loop: &FlowSnapshot,
+        first_use: UseId,
+        uses: &IndexVec<UseId, Use>,
+    ) {
         for i in 0..self.symbol_states.len() {
             let symbol_id = SymbolId::new(i);
 
@@ -315,11 +382,11 @@ impl UseDefMapBuilder {
                 continue;
             }
 
-            // Add new defs to uses recorded during the body (`first_use`
-            // onwards). Uses before the loop are unaffected.
+            // Now retroactively patch loop-carried definitions into uses inside
+            // the loop
             for j in first_use.index()..self.bindings_by_use.len() {
                 let use_id = UseId::new(j);
-                if self.symbol_for_use[use_id] == symbol_id {
+                if uses[use_id].symbol() == symbol_id {
                     for &def_id in &new_defs {
                         self.bindings_by_use[use_id].add_definition(def_id);
                     }
@@ -328,12 +395,22 @@ impl UseDefMapBuilder {
         }
     }
 
+    /// Record a definition whose effect on past uses is deferred to
+    /// `finish()`. The definition is added to the current flow state
+    /// immediately (so future uses see it), but uses already recorded
+    /// are patched up at finalization time. Used for `<<-` extra
+    /// definitions.
+    pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+        self.symbol_states[symbol_id].add_definition(def_id);
+        self.deferred_defs.push((symbol_id, def_id));
+        self.update_enclosing_snapshots(symbol_id, def_id);
+    }
+
     /// Record a use of `symbol_id`. Clones the current live bindings for that
     /// symbol and associates them with `use_id`.
     pub(crate) fn record_use(&mut self, symbol_id: SymbolId, use_id: UseId) {
         let bindings = self.symbol_states[symbol_id].clone();
         let pushed_id = self.bindings_by_use.push(bindings);
-        self.symbol_for_use.push(symbol_id);
         stdext::soft_assert!(use_id == pushed_id);
     }
 
@@ -374,22 +451,57 @@ impl UseDefMapBuilder {
         }
     }
 
+    /// Returns `true` if `symbol_id` may be unbound at this point,
+    /// meaning some control-flow path falls through to an enclosing scope.
+    /// This covers both purely-free variables (no local definitions) and
+    /// conditionally-defined variables (local definitions exist but don't
+    /// cover all paths).
+    pub(crate) fn is_may_be_unbound(&self, symbol_id: SymbolId) -> bool {
+        self.symbol_states[symbol_id].may_be_unbound()
+    }
+
+    /// Register an enclosing snapshot for `symbol_id`. The snapshot starts from
+    /// the current flow state (prior shadowing applied). A watcher is
+    /// registered so that each subsequent definition of this symbol we
+    /// encounter is conservatively merged in, because we can't know statically
+    /// when the nested scope will be called.
+    pub(crate) fn register_enclosing_snapshot(
+        &mut self,
+        symbol_id: SymbolId,
+    ) -> EnclosingSnapshotId {
+        let bindings = self.symbol_states[symbol_id].clone();
+        let id = self.enclosing_snapshots.push(bindings);
+        self.snapshot_watchers
+            .entry(symbol_id)
+            .or_default()
+            .push(id);
+        id
+    }
+
+    fn update_enclosing_snapshots(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+        if let Some(watchers) = self.snapshot_watchers.get(&symbol_id) {
+            for &snapshot_id in watchers {
+                self.enclosing_snapshots[snapshot_id].add_definition(def_id);
+            }
+        }
+    }
+
     /// Finalize into an immutable [`UseDefMap`].
-    pub(crate) fn finish(mut self) -> UseDefMap {
-        self.finish_deferred_defs();
+    pub(crate) fn finish(mut self, uses: &IndexVec<UseId, Use>) -> UseDefMap {
+        self.finish_deferred_defs(uses);
         UseDefMap {
             bindings_by_use: self.bindings_by_use,
+            enclosing_snapshots: self.enclosing_snapshots,
         }
     }
 
     /// Retroactively add deferred definitions (from `<<-`) to all
     /// uses of the corresponding symbol, including uses that were
     /// recorded before the definition was encountered in the walk.
-    fn finish_deferred_defs(&mut self) {
+    fn finish_deferred_defs(&mut self, uses: &IndexVec<UseId, Use>) {
         for &(symbol_id, def_id) in &self.deferred_defs {
-            for i in 0..self.bindings_by_use.len() {
-                let use_id = UseId::new(i);
-                if self.symbol_for_use[use_id] == symbol_id {
+            for (use_id, use_site) in uses.iter() {
+                if use_site.symbol() == symbol_id {
                     self.bindings_by_use[use_id].add_definition(def_id);
                 }
             }

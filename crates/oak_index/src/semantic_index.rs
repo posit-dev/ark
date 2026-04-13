@@ -6,6 +6,7 @@ use rustc_hash::FxHashMap;
 
 use crate::index_vec::define_index;
 use crate::index_vec::IndexVec;
+use crate::use_def_map::Bindings;
 use crate::use_def_map::UseDefMap;
 
 // File-local scope identifier
@@ -19,6 +20,9 @@ define_index!(DefinitionId);
 
 // Scope-local use site identifier
 define_index!(UseId);
+
+// Scope-local enclosing snapshot identifier
+define_index!(EnclosingSnapshotId);
 
 // One `SemanticIndex` per R source file. This reflects the physical reality of
 // a single file. Cross-file resolution (e.g. package namespaces, sourced
@@ -58,6 +62,10 @@ pub struct SemanticIndex {
     // Per-scope flow-sensitive map from each use site to the set of definitions
     // that can reach it. Built alongside the other arrays during the tree walk.
     use_def_maps: IndexVec<ScopeId, UseDefMap>,
+
+    // For each free variable in a nested scope, maps to the enclosing scope and
+    // snapshot where that symbol is bound.
+    enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
 }
 
 impl SemanticIndex {
@@ -67,6 +75,7 @@ impl SemanticIndex {
         definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
         use_def_maps: IndexVec<ScopeId, UseDefMap>,
+        enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     ) -> Self {
         Self {
             scopes,
@@ -74,6 +83,7 @@ impl SemanticIndex {
             definitions,
             uses,
             use_def_maps,
+            enclosing_snapshots,
         }
     }
 
@@ -137,7 +147,7 @@ impl SemanticIndex {
             if let Some(id) = self.symbol_tables[ancestor].id(name) {
                 if self.symbol_tables[ancestor]
                     .symbol(id)
-                    .flags
+                    .flags()
                     .contains(SymbolFlags::IS_BOUND)
                 {
                     return Some((ancestor, id));
@@ -146,6 +156,48 @@ impl SemanticIndex {
         }
         None
     }
+
+    /// Resolve a free variable's bindings from the enclosing scope.
+    ///
+    /// When a use in `scope` may be unbound (`may_be_unbound: true`), some
+    /// control-flow paths fall through to an enclosing scope. This looks up
+    /// the enclosing snapshot that was registered during the build and
+    /// returns the ancestor scope and its bindings. This covers both purely
+    /// free variables (no local definitions) and conditionally defined
+    /// variables (local definitions exist but don't cover all paths).
+    ///
+    /// Returns `None` if no enclosing snapshot was registered (e.g. the
+    /// variable is truly global or from the search path) and needs
+    /// cross-file resolution.
+    pub fn enclosing_bindings(
+        &self,
+        scope: ScopeId,
+        use_id: UseId,
+    ) -> Option<(ScopeId, &Bindings)> {
+        let use_site = &self.uses[scope][use_id];
+        let key = EnclosingSnapshotKey {
+            nested_scope: scope,
+            nested_symbol: use_site.symbol(),
+        };
+        let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
+        let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
+        Some((enclosing_scope, bindings))
+    }
+}
+
+/// Key for looking up an enclosing snapshot. Keyed by the nested scope and the
+/// symbol's `SymbolId` in the nested scope's symbol table (not the enclosing
+/// scope's), so consumers can do an O(1) lookup directly from a `UseId` without
+/// re-walking the ancestor chain.
+///
+/// When we implement NSE, we will add a `laziness: ScopeLaziness` field to
+/// distinguish lazy snapshots (functions, accumulated union via watchers) from
+/// eager snapshots (NSE scopes like `local()`, point-in-time capture at the
+/// call site). Currently all nested scopes are lazy, so the field is omitted.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EnclosingSnapshotKey {
+    pub nested_scope: ScopeId,
+    pub nested_symbol: SymbolId,
 }
 
 // --- Scope ---
