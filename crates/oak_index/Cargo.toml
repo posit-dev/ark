@@ -18,6 +18,7 @@ aether_syntax.workspace = true
 biome_rowan.workspace = true
 itertools.workspace = true
 log.workspace = true
+oak_core.workspace = true
 rustc-hash.workspace = true
 smallvec.workspace = true
 stdext.workspace = true

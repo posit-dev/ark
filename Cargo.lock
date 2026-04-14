@@ -2242,6 +2242,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_core"
+version = "0.1.0"
+dependencies = [
+ "air_r_parser",
+ "air_r_syntax",
+ "assert_matches",
+ "biome_rowan",
+]
+
+[[package]]
 name = "oak_index"
 version = "0.1.0"
 dependencies = [
@@ -2250,6 +2260,7 @@ dependencies = [
  "biome_rowan",
  "itertools 0.10.5",
  "log",
+ "oak_core",
  "rustc-hash",
  "smallvec",
  "stdext",
@@ -2264,6 +2275,7 @@ dependencies = [
  "anyhow",
  "biome_rowan",
  "log",
+ "oak_core",
  "regex",
  "tempfile",
 ]

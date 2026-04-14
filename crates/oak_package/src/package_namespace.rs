@@ -1,11 +1,10 @@
 use aether_parser::RParserOptions;
 use aether_syntax::AnyRExpression;
 use aether_syntax::RArgument;
-use aether_syntax::RIdentifier;
-use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
+use oak_core::syntax_ext::RIdentifierExt;
 
 /// Parsed NAMESPACE file
 #[derive(Default, Clone, Debug)]
@@ -40,7 +39,7 @@ impl Namespace {
             let Ok(AnyRExpression::RIdentifier(fn_ident)) = call.function() else {
                 continue;
             };
-            let fn_name = identifier_text(&fn_ident);
+            let fn_name = fn_ident.name_text();
             let Ok(args) = call.arguments() else {
                 continue;
             };
@@ -96,16 +95,7 @@ fn collect_arg_identifiers(
         let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
             continue;
         };
-        out.push(identifier_text(&ident));
-    }
-}
-
-/// Extract the text of an `RIdentifier`, stripping backticks if present.
-fn identifier_text(ident: &RIdentifier) -> String {
-    let text = ident.syntax().text_trimmed().to_string();
-    match text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-        Some(inner) => inner.to_string(),
-        None => text,
+        out.push(ident.name_text());
     }
 }
 
