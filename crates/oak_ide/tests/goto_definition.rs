@@ -228,6 +228,39 @@ fn test_external_import_from() {
     assert!(targets.is_empty());
 }
 
+// --- Member access (`$`) ---
+
+#[test]
+fn test_dollar_lhs_resolves() {
+    // Cursor on `foo` in `foo$bar` resolves to the definition of `foo`
+    let source = "foo <- list()\nfoo$bar\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    // `foo` in `foo$bar` starts at offset 14
+    let targets = goto_definition(offset(14), &file, &idx, &[], &library);
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "foo".to_string(),
+        full_range: text_range(0, 3),
+        focus_range: text_range(0, 3),
+    }]);
+}
+
+#[test]
+fn test_dollar_rhs_no_resolution() {
+    // Cursor on `bar` in `foo$bar`: member names are not tracked by the index
+    let source = "foo <- list()\nfoo$bar\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    // `bar` starts at offset 18
+    let targets = goto_definition(offset(18), &file, &idx, &[], &library);
+    assert!(targets.is_empty());
+}
+
 // --- No resolution ---
 
 #[test]
@@ -357,4 +390,189 @@ fn test_definition_site_for_variable() {
         full_range: text_range(5, 6),
         focus_range: text_range(5, 6),
     }]);
+}
+
+// --- Right assignment ---
+
+#[test]
+fn test_right_assignment_definition_site() {
+    // `1 -> x`: cursor on `x` (the definition target)
+    let source = "1 -> x\nx\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    let targets = goto_definition(offset(5), &file, &idx, &FileScope::default(), &library);
+    assert_eq!(targets, vec![NavigationTarget {
+        file: file.clone(),
+        name: "x".to_string(),
+        full_range: text_range(5, 6),
+        focus_range: text_range(5, 6),
+    }]);
+}
+
+#[test]
+fn test_right_assignment_use_resolves() {
+    // `1 -> x` then use `x`
+    let source = "1 -> x\nx\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    let targets = goto_definition(offset(7), &file, &idx, &FileScope::default(), &library);
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        full_range: text_range(5, 6),
+        focus_range: text_range(5, 6),
+    }]);
+}
+
+// --- Super assignment ---
+
+#[test]
+fn test_super_assignment_resolves_in_enclosing() {
+    // `x <<- 1` inside a function creates a definition in the file scope.
+    // A use of `x` in another function should resolve to it.
+    let source = "f <- function() x <<- 1\ng <- function() x\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    // `x` use in `g` body
+    let use_offset = source.rfind('x').unwrap() as u32;
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+    assert_eq!(targets[0].file, file);
+}
+
+#[test]
+fn test_super_assignment_definition_site() {
+    // Cursor on `x` in `x <<- 1`
+    let source = "f <- function() {\n  x <<- 1\n}\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    // `x` at offset 20
+    let def_offset = source.find("x <<-").unwrap() as u32;
+    let targets = goto_definition(
+        offset(def_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].name, "x");
+}
+
+// --- String definitions ---
+
+#[test]
+fn test_string_definition() {
+    // `"foo" <- 1` is equivalent to `foo <- 1` in R
+    let source = "\"foo\" <- 1\nfoo\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    // Use of `foo` at offset 11
+    let targets = goto_definition(offset(11), &file, &idx, &FileScope::default(), &library);
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "foo".to_string(),
+        // The definition range covers the string literal `"foo"`
+        full_range: text_range(0, 5),
+        focus_range: text_range(0, 5),
+    }]);
+}
+
+// --- Nested functions ---
+
+#[test]
+fn test_deeply_nested_function() {
+    // Free variable `z` resolves through two function scopes to file scope
+    let source = "z <- 1\nf <- function() {\n  g <- function() {\n    z\n  }\n}\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    let use_offset = source.rfind('z').unwrap() as u32;
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "z".to_string(),
+        full_range: text_range(0, 1),
+        focus_range: text_range(0, 1),
+    }]);
+}
+
+// --- Use on RHS of assignment ---
+
+#[test]
+fn test_use_on_rhs_of_assignment() {
+    // `x <- x + 1`: the `x` on the RHS refers to the previous binding
+    let source = "x <- 1\nx <- x + 1\n";
+    let file = file_url("test.R");
+    let idx = parse_source(source);
+    let library = empty_library();
+
+    // The `x` on the RHS of the second assignment. `x <- x + 1` starts at
+    // offset 7, the RHS `x` is at offset 12.
+    let rhs_offset = 7 + "x <- ".len() as u32;
+    let targets = goto_definition(
+        offset(rhs_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
+    assert_eq!(targets, vec![NavigationTarget {
+        file,
+        name: "x".to_string(),
+        // Resolves to the first definition
+        full_range: text_range(0, 1),
+        focus_range: text_range(0, 1),
+    }]);
+}
+
+// --- library() directive in predecessor file ---
+
+#[test]
+fn test_library_directive_in_predecessor() {
+    // aaa.R has `library(dplyr)`, bbb.R uses `mutate`.
+    // The library() directive in aaa.R should make dplyr exports visible.
+    let aaa_source = "library(dplyr)\n";
+    let aaa_idx = parse_source(aaa_source);
+    let aaa_url = file_url("R/aaa.R");
+
+    let bbb_source = "mutate\n";
+    let bbb_url = file_url("R/bbb.R");
+    let bbb_idx = parse_source(bbb_source);
+
+    let aaa_layers = file_layers(aaa_url, &aaa_idx);
+    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+
+    let scope = FileScope {
+        top_level: aaa_layers.clone(),
+        lazy: aaa_layers,
+    };
+
+    let targets = goto_definition(offset(0), &bbb_url, &bbb_idx, &scope, &library);
+    // dplyr::mutate is a package symbol, no file/range to navigate to
+    assert!(targets.is_empty());
 }
