@@ -2258,13 +2258,16 @@ version = "0.1.0"
 dependencies = [
  "air_r_parser",
  "air_r_syntax",
+ "assert_matches",
  "biome_rowan",
  "itertools 0.10.5",
  "log",
  "oak_core",
+ "oak_package",
  "rustc-hash",
  "smallvec",
  "stdext",
+ "url",
 ]
 
 [[package]]

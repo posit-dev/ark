@@ -19,9 +19,13 @@ biome_rowan.workspace = true
 itertools.workspace = true
 log.workspace = true
 oak_core.workspace = true
+oak_package.workspace = true
 rustc-hash.workspace = true
 smallvec.workspace = true
 stdext.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 aether_parser.workspace = true
+assert_matches.workspace = true
+oak_package = { workspace = true, features = ["testing"] }
