@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use biome_rowan::TextRange;
 use oak_package::library::Library;
+use oak_package::package_namespace::Namespace;
 use url::Url;
 
 use crate::semantic_index::DirectiveKind;
@@ -103,6 +104,22 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
                 layers.push(BindingSource::PackageExports(pkg.clone()));
             },
         }
+    }
+
+    layers
+}
+
+/// Build the root layers for a package from its NAMESPACE.
+///
+/// These go at the bottom of every file's scope chain. Currently includes
+/// `PackageExports` layers from `import()` directives. `importFrom()`
+/// names are not yet included because the NAMESPACE parser doesn't
+/// preserve which package each name came from.
+pub fn package_root_layers(namespace: &Namespace) -> Vec<BindingSource> {
+    let mut layers = Vec::new();
+
+    for pkg in &namespace.package_imports {
+        layers.push(BindingSource::PackageExports(pkg.clone()));
     }
 
     layers

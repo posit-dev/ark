@@ -1,3 +1,4 @@
+pub mod collation;
 pub mod library;
 pub mod package;
 pub mod package_description;
