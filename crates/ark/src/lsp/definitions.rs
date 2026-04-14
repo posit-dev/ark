@@ -65,11 +65,17 @@ fn nav_target_to_link(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use assert_matches::assert_matches;
+    use oak_package::package::Package;
+    use oak_package::package_description::Description;
+    use oak_package::package_namespace::Namespace;
     use tower_lsp::lsp_types;
 
     use super::*;
     use crate::lsp::document::Document;
+    use crate::lsp::inputs::source_root::SourceRoot;
     use crate::lsp::util::test_path;
 
     fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {
@@ -157,6 +163,52 @@ mod tests {
 
         let params = make_params(uri, 0, 0);
         let result = goto_definition(&doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_other_file_not_visible_without_scope_chain() {
+        // file2 uses `foo` but file1's definition is not in the scope chain,
+        // so it should not resolve.
+        let doc1 = Document::new("foo <- 1\n", None);
+        let uri1 = test_path("file1.R");
+
+        let doc2 = Document::new("foo\n", None);
+        let uri2 = test_path("file2.R");
+
+        let mut state = WorldState::default();
+        state.documents.insert(uri1, doc1);
+        state.documents.insert(uri2.clone(), doc2.clone());
+
+        let params = make_params(uri2, 0, 0);
+        let result = goto_definition(&doc2, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_package_import_from_resolves() {
+        // A package with `importFrom(dplyr, mutate)` should make `mutate`
+        // visible. But we don't have a file/range for package symbols yet,
+        // so the result is None.
+        let doc = Document::new("mutate\n", None);
+        let uri = test_path("R/my_file.R");
+
+        let ns = Namespace {
+            imports: vec![("mutate".to_string(), "dplyr".to_string())],
+            ..Default::default()
+        };
+        let desc = Description {
+            name: "mypkg".to_string(),
+            ..Default::default()
+        };
+        let pkg = Package::from_parts(PathBuf::from("/fake"), desc, ns);
+
+        let mut state = make_state(&uri, &doc);
+        state.root = Some(SourceRoot::Package(pkg));
+
+        let params = make_params(uri, 0, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
+        // Package symbols don't produce NavigationTargets yet
         assert_eq!(result, None);
     }
 }
