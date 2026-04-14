@@ -115,12 +115,20 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
 
 /// Build the root layers for a package from its NAMESPACE.
 ///
-/// These go at the bottom of every file's scope chain. Currently includes
-/// `PackageExports` layers from `import()` directives. `importFrom()`
-/// names are not yet included because the NAMESPACE parser doesn't
-/// preserve which package each name came from.
+/// These go at the bottom of every file's scope chain:
+/// - `PackageImports` from `importFrom()` directives (name → package)
+/// - `PackageExports` from `import()` directives
 pub fn package_root_layers(namespace: &Namespace) -> Vec<BindingSource> {
     let mut layers = Vec::new();
+
+    if !namespace.imports.is_empty() {
+        let map = namespace
+            .imports
+            .iter()
+            .map(|(name, pkg)| (name.clone(), pkg.clone()))
+            .collect();
+        layers.push(BindingSource::PackageImports(map));
+    }
 
     for pkg in &namespace.package_imports {
         layers.push(BindingSource::PackageExports(pkg.clone()));

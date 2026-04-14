@@ -11,8 +11,9 @@ use oak_core::syntax_ext::RIdentifierExt;
 pub struct Namespace {
     /// Names of objects exported with `export()`
     pub exports: Vec<String>,
-    /// Names of objects imported with `importFrom()`
-    pub imports: Vec<String>,
+    /// Names of objects imported with `importFrom()`, with their source package.
+    /// Each entry is `(name, package)`.
+    pub imports: Vec<(String, String)>,
     /// Names of packages bulk-imported with `import()`
     pub package_imports: Vec<String>,
 }
@@ -53,8 +54,22 @@ impl Namespace {
                     collect_arg_identifiers(args.items().iter(), &mut exports);
                 },
                 "importFrom" => {
-                    // First arg is the package name, rest are imported names
-                    collect_arg_identifiers(args.items().iter().skip(1), &mut imports);
+                    let mut arg_iter = args.items().iter();
+                    let Some(Ok(first_arg)) = arg_iter.next() else {
+                        continue;
+                    };
+                    let Some(AnyRExpression::RIdentifier(pkg_ident)) = first_arg.value() else {
+                        continue;
+                    };
+                    let pkg_name = pkg_ident.name_text();
+
+                    for item in arg_iter {
+                        let Ok(arg) = item else { continue };
+                        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
+                            continue;
+                        };
+                        imports.push((ident.name_text(), pkg_name.clone()));
+                    }
                 },
                 "import" => {
                     collect_arg_identifiers(args.items().iter(), &mut package_imports);
@@ -67,8 +82,8 @@ impl Namespace {
         // this but for now just be defensive.
         exports.sort();
         exports.dedup();
-        imports.sort();
-        imports.dedup();
+        imports.sort_by(|a, b| a.0.cmp(&b.0));
+        imports.dedup_by(|a, b| a.0 == b.0);
         package_imports.sort();
         package_imports.dedup();
 
@@ -80,7 +95,7 @@ impl Namespace {
     }
 
     /// TODO: Take a `Library` and incorporate bulk imports
-    pub(crate) fn _resolve_imports(&self) -> &Vec<String> {
+    pub(crate) fn _resolve_imports(&self) -> &Vec<(String, String)> {
         &self.imports
     }
 }
@@ -123,7 +138,10 @@ mod tests {
             importsFrom(utils, tail) # typo
         "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.imports, vec!["head", "median"]);
+        assert_eq!(parsed.imports, vec![
+            ("head".to_string(), "utils".to_string()),
+            ("median".to_string(), "stats".to_string()),
+        ]);
         assert!(parsed.exports.is_empty());
     }
 
@@ -138,7 +156,10 @@ mod tests {
         "#;
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.exports, vec!["bar", "foo"]);
-        assert_eq!(parsed.imports, vec!["head", "median"]);
+        assert_eq!(parsed.imports, vec![
+            ("head".to_string(), "utils".to_string()),
+            ("median".to_string(), "stats".to_string()),
+        ]);
     }
 
     #[test]
@@ -153,7 +174,10 @@ mod tests {
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.package_imports, vec!["rlang", "utils"]);
         assert_eq!(parsed.exports, vec!["foo"]);
-        assert_eq!(parsed.imports, vec!["median"]);
+        assert_eq!(parsed.imports, vec![(
+            "median".to_string(),
+            "stats".to_string()
+        )]);
     }
 
     #[test]
@@ -164,7 +188,11 @@ mod tests {
                 importFrom(pkg, a, b, c)
             "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.imports, vec!["a", "b", "c"]);
+        assert_eq!(parsed.imports, vec![
+            ("a".to_string(), "pkg".to_string()),
+            ("b".to_string(), "pkg".to_string()),
+            ("c".to_string(), "pkg".to_string()),
+        ]);
         assert_eq!(parsed.package_imports, vec!["bar", "foo"]);
         assert_eq!(parsed.exports, vec!["baz", "qux"]);
     }
