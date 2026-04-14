@@ -5,12 +5,12 @@ use aether_parser::RParserOptions;
 use assert_matches::assert_matches;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_index::builder::build;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::resolve_external_name;
 use oak_index::external::BindingSource;
 use oak_index::external::ExternalDefinition;
+use oak_index::semantic_index;
 use oak_package::library::Library;
 use oak_package::package::Package;
 use oak_package::package_description::Description;
@@ -263,7 +263,7 @@ fn test_resolve_file_exports_last_definition_wins() {
 
 fn index_source(source: &str) -> oak_index::semantic_index::SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    build(&parsed.tree())
+    semantic_index(&parsed.tree())
 }
 
 #[test]

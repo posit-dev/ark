@@ -1,7 +1,7 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxKind;
-use oak_index::builder::build;
+use oak_index::semantic_index;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::DirectiveKind;
@@ -18,7 +18,7 @@ fn index(source: &str) -> SemanticIndex {
         panic!("source has syntax errors: {source}");
     }
 
-    build(&parsed.tree())
+    semantic_index(&parsed.tree())
 }
 
 fn directive_kinds(index: &SemanticIndex) -> Vec<&DirectiveKind> {
