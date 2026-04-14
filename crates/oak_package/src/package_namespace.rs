@@ -1,16 +1,11 @@
-//
-// package_namespace.rs
-//
-// Copyright (C) 2025 by Posit Software, PBC
-//
-
-use std::sync::LazyLock;
-
-use tree_sitter::Parser;
-use tree_sitter::Query;
-
-use crate::lsp::traits::node::NodeExt;
-use crate::treesitter::TsQuery;
+use aether_parser::RParserOptions;
+use aether_syntax::AnyRExpression;
+use aether_syntax::RArgument;
+use aether_syntax::RIdentifier;
+use biome_rowan::AstNode;
+use biome_rowan::AstNodeList;
+use biome_rowan::AstSeparatedList;
+use biome_rowan::SyntaxResult;
 
 /// Parsed NAMESPACE file
 #[derive(Default, Clone, Debug)]
@@ -24,65 +19,50 @@ pub struct Namespace {
 }
 
 impl Namespace {
-    /// Parse a NAMESPACE file using tree-sitter to extract exports and imports.
+    /// Parse a NAMESPACE file to extract exports and imports.
     pub fn parse(contents: &str) -> anyhow::Result<Self> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(&tree_sitter_r::LANGUAGE.into())
-            .map_err(|err| anyhow::anyhow!("Failed to set tree-sitter language: {err:?}"))?;
+        let parsed = aether_parser::parse(contents, RParserOptions::default());
 
-        let tree = parser
-            .parse(contents, None)
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse NAMESPACE file"))?;
-        let root_node = tree.root_node();
+        if let Some(err) = parsed.error() {
+            return Err(anyhow::anyhow!("Failed to parse NAMESPACE file: {err:?}"));
+        }
 
-        // TODO: `import(foo, except = c(bar, baz))`
-        //
-        // Regarding `exportMethods`, see WRE: "Note that exporting methods on a
-        // generic in the namespace will also export the generic"
-        static NAMESPACE_QUERY: LazyLock<Query> = LazyLock::new(|| {
-            let query_str = r#"
-                (call
-                    function: (identifier) @fn_name
-                    arguments: (arguments (argument value: (identifier) @exported))
-                    (#match? @fn_name "^(export|exportClasses|exportMethods)$")
-                )
-                (call
-                    function: (identifier) @fn_name
-                    arguments: (arguments (argument value: (identifier) @pkg) (argument value: (identifier) @imported))
-                    (#eq? @fn_name "importFrom")
-                )
-                (call
-                    function: (identifier) @fn_name
-                    arguments: (arguments (argument value: (identifier) @imported_pkgs))
-                    (#eq? @fn_name "import")
-                )
-            "#;
-            let language = &tree_sitter_r::LANGUAGE.into();
-            tree_sitter::Query::new(language, query_str).expect("Failed to compile NAMESPACE query")
-        });
+        let root = parsed.tree();
 
-        let mut ts_query = TsQuery::from_query(&NAMESPACE_QUERY);
+        let mut exports = Vec::new();
+        let mut imports = Vec::new();
+        let mut package_imports = Vec::new();
 
-        let captures = ts_query.captures_by(
-            root_node,
-            &["exported", "imported", "imported_pkgs"],
-            contents.as_bytes(),
-        );
+        for expr in root.expressions().iter() {
+            let AnyRExpression::RCall(call) = expr else {
+                continue;
+            };
+            let Ok(AnyRExpression::RIdentifier(fn_ident)) = call.function() else {
+                continue;
+            };
+            let fn_name = identifier_text(&fn_ident);
+            let Ok(args) = call.arguments() else {
+                continue;
+            };
 
-        let as_strings = |nodes: &Vec<tree_sitter::Node>| {
-            nodes
-                .iter()
-                .map(|node| node.node_as_str(contents).unwrap_or("").to_string())
-                .collect::<Vec<_>>()
-        };
-
-        let mut exports = captures.get("exported").map(as_strings).unwrap_or_default();
-        let mut imports = captures.get("imported").map(as_strings).unwrap_or_default();
-        let mut package_imports = captures
-            .get("imported_pkgs")
-            .map(as_strings)
-            .unwrap_or_default();
+            // TODO: `import(foo, except = c(bar, baz))`
+            //
+            // Regarding `exportMethods`, see WRE: "Note that exporting methods on a
+            // generic in the namespace will also export the generic"
+            match fn_name.as_str() {
+                "export" | "exportClasses" | "exportMethods" => {
+                    collect_arg_identifiers(args.items().iter(), &mut exports);
+                },
+                "importFrom" => {
+                    // First arg is the package name, rest are imported names
+                    collect_arg_identifiers(args.items().iter().skip(1), &mut imports);
+                },
+                "import" => {
+                    collect_arg_identifiers(args.items().iter(), &mut package_imports);
+                },
+                _ => {},
+            }
+        }
 
         // Take unique values of imports and exports. In the future we'll lint
         // this but for now just be defensive.
@@ -103,6 +83,29 @@ impl Namespace {
     /// TODO: Take a `Library` and incorporate bulk imports
     pub(crate) fn _resolve_imports(&self) -> &Vec<String> {
         &self.imports
+    }
+}
+
+/// Collect identifier names from call arguments.
+fn collect_arg_identifiers(
+    args: impl Iterator<Item = SyntaxResult<RArgument>>,
+    out: &mut Vec<String>,
+) {
+    for item in args {
+        let Ok(arg) = item else { continue };
+        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
+            continue;
+        };
+        out.push(identifier_text(&ident));
+    }
+}
+
+/// Extract the text of an `RIdentifier`, stripping backticks if present.
+fn identifier_text(ident: &RIdentifier) -> String {
+    let text = ident.syntax().text_trimmed().to_string();
+    match text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        Some(inner) => inner.to_string(),
+        None => text,
     }
 }
 

@@ -2256,6 +2256,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_package"
+version = "0.1.0"
+dependencies = [
+ "air_r_parser",
+ "air_r_syntax",
+ "anyhow",
+ "biome_rowan",
+ "log",
+ "regex",
+ "tempfile",
+]
+
+[[package]]
 name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
