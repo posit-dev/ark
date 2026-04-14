@@ -1,8 +1,8 @@
 [package]
-name = "oak_package"
+name = "oak_core"
 version = "0.1.0"
 description = """
-R package metadata: DESCRIPTION, NAMESPACE, INDEX readers and Library cache.
+Shared utilities and extension traits for oak crates.
 """
 
 authors.workspace = true
@@ -14,13 +14,9 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-aether_parser.workspace = true
 aether_syntax.workspace = true
 biome_rowan.workspace = true
-anyhow.workspace = true
-log.workspace = true
-oak_core.workspace = true
-regex.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
+aether_parser.workspace = true
+assert_matches.workspace = true
