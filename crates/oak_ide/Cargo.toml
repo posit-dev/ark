@@ -15,8 +15,10 @@ workspace = true
 
 [dependencies]
 biome_rowan.workspace = true
+log.workspace = true
 oak_index.workspace = true
 oak_package.workspace = true
+stdext.workspace = true
 url.workspace = true
 
 [dev-dependencies]
