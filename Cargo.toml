@@ -16,6 +16,7 @@ members = [
     "crates/harp",
     "crates/libr",
     "crates/oak_core",
+    "crates/oak_ide",
     "crates/oak_index",
     "crates/oak_package",
     "crates/stdext",
@@ -78,6 +79,7 @@ mime_guess = "2.0.4"
 nix = { version = "0.26.2", features = ["signal"] }
 notify = "6.0.0"
 oak_core = { path = "crates/oak_core" }
+oak_ide = { path = "crates/oak_ide" }
 oak_index = { path = "crates/oak_index" }
 oak_package = { path = "crates/oak_package" }
 once_cell = "1.17.1"
