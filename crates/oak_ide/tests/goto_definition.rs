@@ -66,7 +66,7 @@ fn test_local_simple() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(&file, &idx, &[], &library, offset(7));
+    let targets = goto_definition(offset(7), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -83,7 +83,7 @@ fn test_local_reassignment_shadows() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(&file, &idx, &[], &library, offset(14));
+    let targets = goto_definition(offset(14), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -101,7 +101,7 @@ fn test_local_conditional_returns_both() {
 
     let use_offset = source.rfind('x').unwrap() as u32;
 
-    let targets = goto_definition(&file, &idx, &[], &library, offset(use_offset));
+    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
     assert_eq!(targets, vec![
         NavigationTarget {
             file: file.clone(),
@@ -126,7 +126,7 @@ fn test_local_in_function() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(&file, &idx, &[], &library, offset(use_offset));
+    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -143,7 +143,7 @@ fn test_local_parameter() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(&file, &idx, &[], &library, offset(use_offset));
+    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -162,7 +162,7 @@ fn test_enclosing_scope() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(&file, &idx, &[], &library, offset(use_offset));
+    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -185,7 +185,7 @@ fn test_external_project_file() {
     let other_idx = parse_source(other_source);
     let scope_chain = file_layers(other_url.clone(), &other_idx);
 
-    let targets = goto_definition(&file, &idx, &scope_chain, &library, offset(0));
+    let targets = goto_definition(offset(0), &file, &idx, &scope_chain, &library);
     assert_eq!(targets, vec![NavigationTarget {
         file: other_url,
         name: "foo".to_string(),
@@ -205,7 +205,7 @@ fn test_external_package() {
 
     let scope_chain = vec![BindingSource::PackageExports("dplyr".to_string())];
 
-    let targets = goto_definition(&file, &idx, &scope_chain, &library, offset(0));
+    let targets = goto_definition(offset(0), &file, &idx, &scope_chain, &library);
     // No navigation target for package symbols (no file/range to navigate to)
     assert!(targets.is_empty());
 }
@@ -223,7 +223,7 @@ fn test_external_import_from() {
     imports.insert("tibble".to_string(), "tibble".to_string());
     let scope_chain = vec![BindingSource::PackageImports(imports)];
 
-    let targets = goto_definition(&file, &idx, &scope_chain, &library, offset(0));
+    let targets = goto_definition(offset(0), &file, &idx, &scope_chain, &library);
     // importFrom resolves to a package, no file/range to navigate to
     assert!(targets.is_empty());
 }
@@ -237,7 +237,7 @@ fn test_no_use_at_offset() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(&file, &idx, &[], &library, offset(3));
+    let targets = goto_definition(offset(3), &file, &idx, &[], &library);
     assert!(targets.is_empty());
 }
 
@@ -248,7 +248,7 @@ fn test_unresolved_symbol() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(&file, &idx, &[], &library, offset(0));
+    let targets = goto_definition(offset(0), &file, &idx, &[], &library);
     assert!(targets.is_empty());
 }
 
@@ -264,7 +264,7 @@ fn test_local_shadows_external() {
     let scope_chain = vec![BindingSource::PackageExports("pkg".to_string())];
 
     let use_offset = source.rfind("foo").unwrap() as u32;
-    let targets = goto_definition(&file, &idx, &scope_chain, &library, offset(use_offset));
+    let targets = goto_definition(offset(use_offset), &file, &idx, &scope_chain, &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -289,7 +289,7 @@ fn test_conditional_definition_includes_external() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(&file, &idx, &scope_chain, &library, offset(use_offset));
+    let targets = goto_definition(offset(use_offset), &file, &idx, &scope_chain, &library);
     assert_eq!(targets, vec![
         NavigationTarget {
             file,
@@ -316,7 +316,7 @@ fn test_definition_site_assignment() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(&file, &idx, &[], &library, offset(0));
+    let targets = goto_definition(offset(0), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -333,7 +333,7 @@ fn test_definition_site_parameter() {
     let library = empty_library();
 
     // Cursor on the `x` parameter name (offset 14)
-    let targets = goto_definition(&file, &idx, &[], &library, offset(14));
+    let targets = goto_definition(offset(14), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -350,7 +350,7 @@ fn test_definition_site_for_variable() {
     let library = empty_library();
 
     // Cursor on the `i` in `for (i in ...)`
-    let targets = goto_definition(&file, &idx, &[], &library, offset(5));
+    let targets = goto_definition(offset(5), &file, &idx, &[], &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "i".to_string(),
