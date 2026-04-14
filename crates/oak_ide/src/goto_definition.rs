@@ -28,11 +28,11 @@ use crate::NavigationTarget;
 /// Returns an empty `Vec` if the offset doesn't point at a definition or
 /// use site, or if the symbol cannot be resolved.
 pub fn goto_definition(
+    offset: TextSize,
     file: &Url,
     index: &SemanticIndex,
     scope_chain: &[BindingSource],
     library: &Library,
-    offset: TextSize,
 ) -> Vec<NavigationTarget> {
     // Definition site: navigate to itself.
     if let Some((scope_id, def_id)) = index.definition_at_offset(offset) {
@@ -49,19 +49,19 @@ pub fn goto_definition(
 
     // Use site: resolve through use-def map, enclosing scopes, external.
     if let Some((scope_id, use_id)) = index.use_at_offset(offset) {
-        return resolve_use(file, index, scope_chain, library, scope_id, use_id);
+        return resolve_use(scope_id, use_id, file, index, scope_chain, library);
     }
 
     Vec::new()
 }
 
 fn resolve_use(
+    scope_id: ScopeId,
+    use_id: UseId,
     file: &Url,
     index: &SemanticIndex,
     scope_chain: &[BindingSource],
     library: &Library,
-    scope_id: ScopeId,
-    use_id: UseId,
 ) -> Vec<NavigationTarget> {
     let use_def_map = index.use_def_map(scope_id);
     let bindings = use_def_map.bindings_at_use(use_id);
