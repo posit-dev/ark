@@ -419,13 +419,20 @@ fn test_root_layers_empty_namespace() {
 }
 
 #[test]
-fn test_root_layers_ignores_importfrom() {
+fn test_root_layers_includes_importfrom() {
     let ns = Namespace {
-        imports: vec!["median".to_string()],
+        imports: vec![
+            ("median".to_string(), "stats".to_string()),
+            ("head".to_string(), "utils".to_string()),
+        ],
         ..Default::default()
     };
     let layers = package_root_layers(&ns);
-    assert!(layers.is_empty());
+    assert_eq!(layers.len(), 1);
+    assert_matches!(&layers[0], BindingSource::PackageImports(map) => {
+        assert_eq!(map.get("median").unwrap(), "stats");
+        assert_eq!(map.get("head").unwrap(), "utils");
+    });
 }
 
 #[test]

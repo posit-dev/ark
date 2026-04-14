@@ -136,6 +136,9 @@ importFrom(pkg, baz)
 
         // Namespace is parsed
         assert_eq!(pkg.namespace.exports, vec!["bar", "foo"]);
-        assert_eq!(pkg.namespace.imports, vec!["baz"]);
+        assert_eq!(pkg.namespace.imports, vec![(
+            "baz".to_string(),
+            "pkg".to_string()
+        )]);
     }
 }
