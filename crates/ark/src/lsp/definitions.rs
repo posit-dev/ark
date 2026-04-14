@@ -30,8 +30,13 @@ pub(crate) fn goto_definition(
     )?;
 
     let index = document.semantic_index();
-    let targets =
-        oak_ide::goto_definition(offset, &uri, &index, &state.root_scope(), &state.library);
+    let targets = oak_ide::goto_definition(
+        offset,
+        &uri,
+        &index,
+        &state.file_scope(&uri),
+        &state.library,
+    );
 
     if targets.is_empty() {
         return Ok(None);
@@ -209,6 +214,105 @@ mod tests {
         let params = make_params(uri, 0, 0);
         let result = goto_definition(&doc, params, &state).unwrap();
         // Package symbols don't produce NavigationTargets yet
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_cross_file_via_collation() {
+        // Collation order: aaa.R, bbb.R, ccc.R
+        // bbb.R defines `helper`. ccc.R (later) can see it,
+        // aaa.R (earlier) cannot.
+        let pkg_root = std::env::temp_dir().join("test_pkg");
+
+        let doc_aaa = Document::new("helper\n", None);
+        let uri_aaa = lsp_types::Url::from_file_path(pkg_root.join("R/aaa.R")).unwrap();
+
+        let doc_bbb = Document::new("helper <- function() 1\n", None);
+        let uri_bbb = lsp_types::Url::from_file_path(pkg_root.join("R/bbb.R")).unwrap();
+
+        let doc_ccc = Document::new("helper\n", None);
+        let uri_ccc = lsp_types::Url::from_file_path(pkg_root.join("R/ccc.R")).unwrap();
+
+        let ns = Namespace::default();
+        let desc = Description {
+            name: "mypkg".to_string(),
+            ..Default::default()
+        };
+        let pkg = Package::from_parts(pkg_root, desc, ns);
+
+        let mut state = WorldState::default();
+        state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
+        state.documents.insert(uri_bbb.clone(), doc_bbb);
+        state.documents.insert(uri_ccc.clone(), doc_ccc.clone());
+        state.root = Some(SourceRoot::Package(pkg));
+
+        // ccc.R sees bbb.R's definition (later in collation)
+        let params = make_params(uri_ccc, 0, 0);
+        assert_matches!(
+            goto_definition(&doc_ccc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, uri_bbb);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(0, 6),
+                    }
+                );
+            }
+        );
+
+        // aaa.R cannot see bbb.R's definition (earlier in collation)
+        let params = make_params(uri_aaa, 0, 0);
+        let result = goto_definition(&doc_aaa, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_cross_file_collate_field_reverses_order() {
+        // Same files, but DESCRIPTION has `Collate: ccc.R bbb.R aaa.R`
+        // which reverses the order. Now aaa.R is last, so it can see
+        // bbb.R's definition. ccc.R is first, so it cannot.
+        let pkg_root = std::env::temp_dir().join("test_pkg_collate");
+
+        let doc_aaa = Document::new("helper\n", None);
+        let uri_aaa = lsp_types::Url::from_file_path(pkg_root.join("R/aaa.R")).unwrap();
+
+        let doc_bbb = Document::new("helper <- function() 1\n", None);
+        let uri_bbb = lsp_types::Url::from_file_path(pkg_root.join("R/bbb.R")).unwrap();
+
+        let doc_ccc = Document::new("helper\n", None);
+        let uri_ccc = lsp_types::Url::from_file_path(pkg_root.join("R/ccc.R")).unwrap();
+
+        let mut dcf_fields = std::collections::HashMap::new();
+        dcf_fields.insert("Collate".to_string(), "ccc.R bbb.R aaa.R".to_string());
+
+        let ns = Namespace::default();
+        let desc = Description {
+            name: "mypkg".to_string(),
+            fields: oak_package::Dcf { fields: dcf_fields },
+            ..Default::default()
+        };
+        let pkg = Package::from_parts(pkg_root, desc, ns);
+
+        let mut state = WorldState::default();
+        state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
+        state.documents.insert(uri_bbb.clone(), doc_bbb);
+        state.documents.insert(uri_ccc.clone(), doc_ccc.clone());
+        state.root = Some(SourceRoot::Package(pkg));
+
+        // aaa.R is now last in collation, so it can see bbb.R's definition
+        let params = make_params(uri_aaa, 0, 0);
+        assert_matches!(
+            goto_definition(&doc_aaa, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, uri_bbb);
+            }
+        );
+
+        // ccc.R is now first in collation, so it cannot see bbb.R's definition
+        let params = make_params(uri_ccc, 0, 0);
+        let result = goto_definition(&doc_ccc, params, &state).unwrap();
         assert_eq!(result, None);
     }
 }
