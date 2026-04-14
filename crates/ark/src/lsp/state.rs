@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::anyhow;
+use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::BindingSource;
+use oak_package::collation::collation_order;
 use oak_package::library::Library;
 use url::Url;
 
@@ -83,12 +85,70 @@ impl WorldState {
         }
     }
 
-    pub(crate) fn root_scope(&self) -> Vec<BindingSource> {
-        if let Some(SourceRoot::Package(ref pkg)) = self.root {
-            package_root_layers(&pkg.namespace)
-        } else {
-            Vec::new()
+    /// Create a scope chain for a particular file, taking into account the
+    /// current project type. For packages, this creates a scope containing
+    /// imports and top-level definitions in other files, respecting the
+    /// collation order.
+    pub(crate) fn file_scope(&self, file: &Url) -> Vec<BindingSource> {
+        let Some(SourceRoot::Package(ref pkg)) = self.root else {
+            // All non-package scripts are isolated
+            return Vec::new();
+        };
+
+        let root_layers = package_root_layers(&pkg.namespace);
+
+        // Collect R source file URIs from watched documents that live under
+        // the package's R/ directory.
+        let r_dir = Url::from_directory_path(pkg.path.join("R")).ok();
+
+        let r_file_uris: Vec<&Url> = self
+            .documents
+            .keys()
+            .filter(|uri| {
+                r_dir
+                    .as_ref()
+                    .is_some_and(|dir| uri.as_str().starts_with(dir.as_str()))
+            })
+            .collect();
+
+        // Extract bare filenames for collation ordering.
+        let filenames: Vec<String> = r_file_uris
+            .iter()
+            .filter_map(|uri| uri.path().rsplit('/').next().map(|s| s.to_string()))
+            .collect();
+
+        let ordered = collation_order(&pkg.description, &filenames);
+
+        let filename = file.path().rsplit('/').next().unwrap_or_default();
+
+        // Predecessors are files earlier in collation order. Later
+        // predecessors are more local (shadow earlier ones), so their
+        // layers go first in the chain. We collect predecessors then
+        // iterate in reverse.
+        let predecessors: Vec<_> = ordered
+            .iter()
+            .take_while(|name| name.as_str() != filename)
+            .collect();
+
+        let mut layers = Vec::new();
+
+        for name in predecessors.into_iter().rev() {
+            let Some(pred_uri) = r_file_uris
+                .iter()
+                .find(|uri| uri.path().ends_with(name.as_str()))
+            else {
+                continue;
+            };
+            let Some(pred_doc) = self.documents.get(*pred_uri) else {
+                continue;
+            };
+
+            let pred_index = pred_doc.semantic_index();
+            layers.extend(file_layers((*pred_uri).clone(), &pred_index));
         }
+
+        layers.extend(root_layers);
+        layers
     }
 }
 
