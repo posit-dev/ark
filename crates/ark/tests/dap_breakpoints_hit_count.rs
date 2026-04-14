@@ -344,6 +344,12 @@ foo()
 #[test]
 fn test_dap_hit_count_with_log_message() {
     let frontend = DummyArkFrontend::lock();
+
+    if !frontend.is_installed("glue") {
+        println!("Skipping test: glue package not installed");
+        return;
+    }
+
     let mut dap = frontend.start_dap();
 
     let file = SourceFile::new(
