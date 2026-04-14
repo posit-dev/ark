@@ -5,3 +5,4 @@ pub mod semantic_index;
 pub mod use_def_map;
 
 pub use builder::semantic_index;
+pub use semantic_index::DefinitionId;
