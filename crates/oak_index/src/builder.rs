@@ -26,6 +26,8 @@ use crate::index_vec::IndexVec;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
+use crate::semantic_index::Directive;
+use crate::semantic_index::DirectiveKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
 use crate::semantic_index::Scope;
@@ -64,6 +66,7 @@ struct SemanticIndexBuilder {
     current_pre_scan: PreScanScope,
     pre_scan_stack: Vec<PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+    directives: Vec<Directive>,
 }
 
 impl SemanticIndexBuilder {
@@ -101,6 +104,7 @@ impl SemanticIndexBuilder {
             current_pre_scan: PreScanScope::new(),
             pre_scan_stack: Vec::new(),
             enclosing_snapshots: FxHashMap::default(),
+            directives: Vec::new(),
         }
     }
 
@@ -387,6 +391,13 @@ impl SemanticIndexBuilder {
                 }
                 if let Ok(args) = call.arguments() {
                     self.collect_arguments(&args.items());
+                }
+                // TODO: When eager NSE scopes land (e.g. `local()`) we should
+                // also consider nested scopes as long as they're not lazy (e.g.
+                // function definitions or NSE calls that don't evaluate
+                // immediately.
+                if self.current_scope == ScopeId::from(0) {
+                    self.collect_directive(call);
                 }
             },
             AnyRExpression::RSubset(subset) => {
@@ -704,6 +715,52 @@ impl SemanticIndexBuilder {
         }
     }
 
+    /// Detect directives like `library(pkg)` and `require(pkg)` at the
+    /// file-level scope.
+    fn collect_directive(&mut self, call: &aether_syntax::RCall) {
+        let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
+            return;
+        };
+
+        let fn_name = ident.name_text();
+        if fn_name != "library" && fn_name != "require" {
+            return;
+        }
+
+        let Ok(args) = call.arguments() else {
+            return;
+        };
+        let mut items = args.items().iter();
+
+        // For now, only recognise exactly one unnamed argument. We'll do
+        // argument matching later (`character.only` unquoting is another
+        // complication).
+        let Some(Ok(first_arg)) = items.next() else {
+            return;
+        };
+        if first_arg.name_clause().is_some() || items.next().is_some() {
+            return;
+        }
+        let Some(value) = first_arg.value() else {
+            return;
+        };
+
+        // Extract the package name from identifier or string literal
+        let pkg_name = match &value {
+            AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
+            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
+            _ => None,
+        };
+        let Some(pkg_name) = pkg_name else {
+            return;
+        };
+
+        self.directives.push(Directive {
+            kind: DirectiveKind::Attach(pkg_name),
+            offset: call.syntax().text_trimmed_range().start(),
+        });
+    }
+
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
@@ -720,6 +777,7 @@ impl SemanticIndexBuilder {
             self.uses,
             self.use_def_maps,
             self.enclosing_snapshots,
+            self.directives,
         )
     }
 }

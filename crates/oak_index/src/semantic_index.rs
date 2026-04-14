@@ -2,6 +2,7 @@ use std::ops::Range;
 
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use rustc_hash::FxHashMap;
 
 use crate::index_vec::define_index;
@@ -66,6 +67,9 @@ pub struct SemanticIndex {
     // For each free variable in a nested scope, maps to the enclosing scope and
     // snapshot where that symbol is bound.
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+
+    // Scope-chain directives called at top-level, such as `library()` or `require()`.
+    directives: Vec<Directive>,
 }
 
 impl SemanticIndex {
@@ -76,6 +80,7 @@ impl SemanticIndex {
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
         use_def_maps: IndexVec<ScopeId, UseDefMap>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
+        directives: Vec<Directive>,
     ) -> Self {
         Self {
             scopes,
@@ -84,6 +89,7 @@ impl SemanticIndex {
             uses,
             use_def_maps,
             enclosing_snapshots,
+            directives,
         }
     }
 
@@ -105,6 +111,24 @@ impl SemanticIndex {
 
     pub fn use_def_map(&self, scope: ScopeId) -> &UseDefMap {
         &self.use_def_maps[scope]
+    }
+
+    /// Top-level definitions exported by this file (definitions in the file scope).
+    pub fn file_exports(&self) -> Vec<(&str, TextRange)> {
+        let file_scope = ScopeId::from(0);
+        let symbols = &self.symbol_tables[file_scope];
+        self.definitions[file_scope]
+            .iter()
+            .map(|(_id, def)| {
+                let name = symbols.symbol(def.symbol()).name();
+                (name, def.range())
+            })
+            .collect()
+    }
+
+    /// File-level directives (e.g. `library()` calls) recorded during indexing.
+    pub fn file_directives(&self) -> &[Directive] {
+        &self.directives
     }
 
     /// Find the innermost scope containing `offset`.
@@ -476,6 +500,30 @@ impl Use {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+}
+
+/// A file-level directive that affects the scope chain (e.g. `library()` calls).
+#[derive(Debug, Clone)]
+pub struct Directive {
+    pub(crate) kind: DirectiveKind,
+    pub(crate) offset: TextSize,
+}
+
+// TODO: `Source()` directives
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DirectiveKind {
+    /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
+    Attach(String),
+}
+
+impl Directive {
+    pub fn kind(&self) -> &DirectiveKind {
+        &self.kind
+    }
+
+    pub fn offset(&self) -> TextSize {
+        self.offset
     }
 }
 
