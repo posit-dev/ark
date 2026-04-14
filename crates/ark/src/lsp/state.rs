@@ -2,11 +2,11 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::anyhow;
+use oak_package::library::Library;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
-use crate::lsp::inputs::library::Library;
 use crate::lsp::inputs::source_root::SourceRoot;
 
 #[derive(Clone, Default, Debug)]

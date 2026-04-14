@@ -52,7 +52,7 @@ impl Library {
     }
 
     /// Insert a package in the library for testing purposes.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn insert(self, name: &str, package: Package) -> Self {
         self.packages
             .write()

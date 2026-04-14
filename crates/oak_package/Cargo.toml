@@ -10,6 +10,9 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+testing = ["dep:tempfile"]
+
 [lints]
 workspace = true
 
@@ -21,6 +24,10 @@ anyhow.workspace = true
 log.workspace = true
 oak_core.workspace = true
 regex.workspace = true
+
+[dependencies.tempfile]
+workspace = true
+optional = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -427,13 +427,13 @@ fn new_syntax_diagnostic(
 
 #[cfg(test)]
 mod tests {
+    use oak_package::library::Library;
     use tower_lsp::lsp_types::Diagnostic;
     use tower_lsp::lsp_types::Position;
 
     use crate::lsp::diagnostics::DiagnosticContext;
     use crate::lsp::diagnostics_syntax::syntax_diagnostics;
     use crate::lsp::document::Document;
-    use crate::lsp::inputs::library::Library;
 
     fn text_diagnostics(text: &str) -> Vec<Diagnostic> {
         let document = Document::new(text, None);
