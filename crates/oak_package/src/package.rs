@@ -47,7 +47,7 @@ impl Package {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn from_parts(path: PathBuf, description: Description, namespace: Namespace) -> Self {
         Self::new(path, description, namespace, Index::default())
     }
@@ -120,8 +120,8 @@ impl Package {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn temp_palmerpenguin() -> tempfile::TempDir {
+#[cfg(any(test, feature = "testing"))]
+pub fn temp_palmerpenguin() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
 
     // Write DESCRIPTION

@@ -5,7 +5,7 @@
 //
 //
 
-use super::package::Package;
+use oak_package::package::Package;
 
 /// The root of a source tree.
 /// Currently only supports packages, but can be extended to scripts.

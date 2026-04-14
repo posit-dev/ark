@@ -14,6 +14,8 @@ use anyhow::bail;
 use anyhow::Result;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
+use oak_package::library::Library;
+use oak_package::package::Package;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -26,8 +28,6 @@ use crate::lsp::declarations::top_level_declare;
 use crate::lsp::diagnostics_syntax::syntax_diagnostics;
 use crate::lsp::document::Document;
 use crate::lsp::indexer;
-use crate::lsp::inputs::library::Library;
-use crate::lsp::inputs::package::Package;
 use crate::lsp::inputs::source_root::SourceRoot;
 use crate::lsp::state::WorldState;
 use crate::lsp::traits::node::NodeExt;
@@ -1132,17 +1132,17 @@ mod tests {
     use std::path::PathBuf;
 
     use harp::eval::RParseEvalOptions;
+    use oak_package::library::Library;
+    use oak_package::package::Package;
+    use oak_package::package_description::Dcf;
+    use oak_package::package_description::Description;
+    use oak_package::package_namespace::Namespace;
     use once_cell::sync::Lazy;
     use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
 
     use crate::console::console_inputs;
     use crate::lsp::document::Document;
-    use crate::lsp::inputs::library::Library;
-    use crate::lsp::inputs::package::Package;
-    use crate::lsp::inputs::package_description::Dcf;
-    use crate::lsp::inputs::package_description::Description;
-    use crate::lsp::inputs::package_namespace::Namespace;
     use crate::lsp::state::WorldState;
     use crate::r_task;
 
@@ -1845,7 +1845,7 @@ foo
     #[test]
     fn test_penguins_symbol_no_diagnostic() {
         r_task(|| {
-            let palmerpenguins_dir = crate::lsp::inputs::package::temp_palmerpenguin();
+            let palmerpenguins_dir = oak_package::package::temp_palmerpenguin();
             let palmerpenguins_pkg = Package::load_from_folder(palmerpenguins_dir.path())
                 .unwrap()
                 .unwrap();

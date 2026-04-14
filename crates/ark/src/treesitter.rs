@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::anyhow;
 use stdext::result::ResultExt;
 use streaming_iterator::StreamingIterator;
@@ -699,32 +697,6 @@ impl<'ts_query> TsQuery<'ts_query> {
                     None
                 }
             })
-    }
-
-    /// Run the query on `contents` and filter captures that match `capture_names`.
-    /// They are returned in a hashmap keyed by capture name.
-    pub(crate) fn captures_by<'tree, 'query>(
-        &'query mut self,
-        node: tree_sitter::Node<'tree>,
-        capture_names: &[&str],
-        contents: &'query [u8],
-    ) -> HashMap<String, Vec<tree_sitter::Node<'tree>>>
-    where
-        'tree: 'query,
-    {
-        let mut result: HashMap<String, Vec<tree_sitter::Node<'tree>>> = HashMap::new();
-
-        for &name in capture_names {
-            result.insert(name.to_string(), Vec::new());
-        }
-
-        for (name, node) in self.all_captures(node, contents) {
-            if let Some(nodes) = result.get_mut(&name) {
-                nodes.push(node);
-            }
-        }
-
-        result
     }
 }
 
