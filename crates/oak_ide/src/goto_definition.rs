@@ -33,14 +33,12 @@ pub fn goto_definition(
     let use_site = &index.uses(scope_id)[use_id];
     let symbol_name = index.symbols(scope_id).symbol(use_site.symbol()).name();
 
-    // If we have local definitions, return them. Even when `may_be_unbound`
-    // (conditional defs), the user most likely wants the local binding.
     let definitions = bindings.definitions();
-    if !definitions.is_empty() {
-        return definitions
-            .iter()
+
+    let local_targets = |scope, defs: &[oak_index::DefinitionId]| -> Vec<NavigationTarget> {
+        defs.iter()
             .map(|&def_id| {
-                let def = &index.definitions(scope_id)[def_id];
+                let def = &index.definitions(scope)[def_id];
                 NavigationTarget {
                     file: file.clone(),
                     name: symbol_name.to_string(),
@@ -48,7 +46,22 @@ pub fn goto_definition(
                     focus_range: def.range(),
                 }
             })
-            .collect();
+            .collect()
+    };
+
+    let external_targets = || resolve_external(library, scope_chain, symbol_name);
+
+    // Fully bound locally: all control-flow paths have a definition.
+    if !definitions.is_empty() && !bindings.may_be_unbound() {
+        return local_targets(scope_id, definitions);
+    }
+
+    // Conditionally bound: some paths define it, some don't. Return both
+    // the local defs and any external resolution.
+    if !definitions.is_empty() {
+        let mut targets = local_targets(scope_id, definitions);
+        targets.extend(external_targets());
+        return targets;
     }
 
     // No local definitions. If we're in a nested scope, check enclosing
@@ -56,23 +69,27 @@ pub fn goto_definition(
     if let Some((enclosing_scope, enclosing_bindings)) = index.enclosing_bindings(scope_id, use_id)
     {
         let enclosing_defs = enclosing_bindings.definitions();
+
+        if !enclosing_defs.is_empty() && !enclosing_bindings.may_be_unbound() {
+            return local_targets(enclosing_scope, enclosing_defs);
+        }
+
         if !enclosing_defs.is_empty() {
-            return enclosing_defs
-                .iter()
-                .map(|&def_id| {
-                    let def = &index.definitions(enclosing_scope)[def_id];
-                    NavigationTarget {
-                        file: file.clone(),
-                        name: symbol_name.to_string(),
-                        full_range: def.range(),
-                        focus_range: def.range(),
-                    }
-                })
-                .collect();
+            let mut targets = local_targets(enclosing_scope, enclosing_defs);
+            targets.extend(external_targets());
+            return targets;
         }
     }
 
     // No local or enclosing definitions. Try external resolution.
+    external_targets()
+}
+
+fn resolve_external(
+    library: &Library,
+    scope_chain: &[BindingSource],
+    symbol_name: &str,
+) -> Vec<NavigationTarget> {
     let Some(external) = resolve_external_name(library, scope_chain, symbol_name) else {
         return Vec::new();
     };

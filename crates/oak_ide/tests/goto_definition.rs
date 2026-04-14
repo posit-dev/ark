@@ -275,20 +275,32 @@ fn test_local_shadows_external() {
 // --- Conditional definition (may_be_unbound but has local defs) ---
 
 #[test]
-fn test_conditional_definition_prefers_local() {
+fn test_conditional_definition_includes_external() {
     let source = "if (TRUE) x <- 1\nx\n";
     let file = file_url("test.R");
     let idx = index(source);
-    let library = test_library(vec![("pkg", vec!["x"])]);
 
-    let scope_chain = vec![BindingSource::PackageExports("pkg".to_string())];
+    let other_url = file_url("other.R");
+    let other_source = "x <- 99\n";
+    let other_idx = index(other_source);
+    let scope_chain = file_layers(other_url.clone(), &other_idx);
+
+    let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
     let targets = goto_definition(&file, &idx, &scope_chain, &library, offset(use_offset));
-    assert_eq!(targets, vec![NavigationTarget {
-        file,
-        name: "x".to_string(),
-        full_range: text_range(10, 11),
-        focus_range: text_range(10, 11),
-    }]);
+    assert_eq!(targets, vec![
+        NavigationTarget {
+            file,
+            name: "x".to_string(),
+            full_range: text_range(10, 11),
+            focus_range: text_range(10, 11),
+        },
+        NavigationTarget {
+            file: other_url,
+            name: "x".to_string(),
+            full_range: text_range(0, 1),
+            focus_range: text_range(0, 1),
+        },
+    ]);
 }
