@@ -31,7 +31,7 @@ pub(crate) fn goto_definition(
 
     let index = document.semantic_index();
     let targets =
-        oak_ide::goto_definition(&uri, &index, &state.root_scope(), &state.library, offset);
+        oak_ide::goto_definition(offset, &uri, &index, &state.root_scope(), &state.library);
 
     if targets.is_empty() {
         return Ok(None);
