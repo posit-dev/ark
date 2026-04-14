@@ -1,6 +1,6 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
-use oak_index::builder::build;
+use oak_index::semantic_index;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::ScopeId;
 use oak_index::semantic_index::SemanticIndex;
@@ -9,7 +9,7 @@ use stdext::assert_not;
 
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    build(&parsed.tree())
+    semantic_index(&parsed.tree())
 }
 
 // --- Straight-line code ---

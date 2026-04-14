@@ -381,6 +381,8 @@ dependencies = [
  "mime_guess",
  "nix",
  "notify",
+ "oak_ide",
+ "oak_index",
  "oak_package",
  "once_cell",
  "regex",
@@ -2250,6 +2252,18 @@ dependencies = [
  "air_r_syntax",
  "assert_matches",
  "biome_rowan",
+]
+
+[[package]]
+name = "oak_ide"
+version = "0.1.0"
+dependencies = [
+ "air_r_parser",
+ "assert_matches",
+ "biome_rowan",
+ "oak_index",
+ "oak_package",
+ "url",
 ]
 
 [[package]]

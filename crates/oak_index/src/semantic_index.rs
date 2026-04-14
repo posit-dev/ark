@@ -146,6 +146,16 @@ impl SemanticIndex {
         }
     }
 
+    /// Find the use site at `offset`, if any.
+    pub fn use_at_offset(&self, offset: TextSize) -> Option<(ScopeId, UseId)> {
+        let scope = self.scope_at(offset);
+        let use_id = self
+            .uses(scope)
+            .iter()
+            .find_map(|(id, u)| u.range().contains(offset).then_some(id));
+        Some((scope, use_id?))
+    }
+
     /// Iterate direct child scopes of `scope`.
     pub fn child_scopes(&self, scope: ScopeId) -> ChildScopesIter<'_> {
         let descendants = &self.scopes[scope].descendants;

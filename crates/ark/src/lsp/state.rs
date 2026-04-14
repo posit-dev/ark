@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::anyhow;
+use oak_index::external::package_root_layers;
+use oak_index::external::BindingSource;
 use oak_package::library::Library;
 use url::Url;
 
@@ -78,6 +80,14 @@ impl WorldState {
             Ok(doc)
         } else {
             Err(anyhow!("Can't find document for URI {uri}"))
+        }
+    }
+
+    pub(crate) fn root_scope(&self) -> Vec<BindingSource> {
+        if let Some(SourceRoot::Package(ref pkg)) = self.root {
+            package_root_layers(&pkg.namespace)
+        } else {
+            Vec::new()
         }
     }
 }

@@ -43,7 +43,7 @@ use crate::use_def_map::UseDefMap;
 use crate::use_def_map::UseDefMapBuilder;
 
 /// Build a [`SemanticIndex`] from a parsed R file.
-pub fn build(root: &RRoot) -> SemanticIndex {
+pub fn semantic_index(root: &RRoot) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
     let mut builder = SemanticIndexBuilder::new(range);
     builder.pre_scan_scope(root.syntax());
