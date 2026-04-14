@@ -4,6 +4,7 @@ use aether_syntax::RSyntaxKind;
 use oak_index::builder::build;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::DefinitionKind;
+use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::ScopeId;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
@@ -18,6 +19,10 @@ fn index(source: &str) -> SemanticIndex {
     }
 
     build(&parsed.tree())
+}
+
+fn directive_kinds(index: &SemanticIndex) -> Vec<&DirectiveKind> {
+    index.file_directives().iter().map(|d| d.kind()).collect()
 }
 
 #[test]
@@ -1254,4 +1259,122 @@ fn test_assignment_in_for_body() {
 
     // 2 real defs (i, x), no LoopHeader placeholders.
     assert_eq!(index.definitions(file).len(), 2);
+}
+
+// --- File exports ---
+
+#[test]
+fn test_file_exports_simple() {
+    let index = index("x <- 1\ny <- 2");
+    let exports = index.file_exports();
+    assert_eq!(exports.len(), 2);
+    assert_eq!(exports[0].0, "x");
+    assert_eq!(exports[1].0, "y");
+}
+
+#[test]
+fn test_file_exports_excludes_nested_definitions() {
+    let index = index("f <- function(x) { local_var <- x }");
+    let exports = index.file_exports();
+    assert_eq!(exports.len(), 1);
+    assert_eq!(exports[0].0, "f");
+}
+
+#[test]
+fn test_file_exports_empty() {
+    let index = index("1 + 2");
+    let exports = index.file_exports();
+    assert_eq!(exports.len(), 0);
+}
+
+#[test]
+fn test_file_exports_multiple_defs_same_symbol() {
+    let index = index("x <- 1\nx <- 2");
+    let exports = index.file_exports();
+    // Both definition sites are returned
+    assert_eq!(exports.len(), 2);
+    assert_eq!(exports[0].0, "x");
+    assert_eq!(exports[1].0, "x");
+}
+
+// --- File directives ---
+
+#[test]
+fn test_directive_library_identifier() {
+    let index = index("library(dplyr)");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    )]);
+}
+
+#[test]
+fn test_directive_library_string() {
+    let index = index("library(\"tidyr\")");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "tidyr".into()
+    )]);
+}
+
+#[test]
+fn test_directive_library_single_quoted_string() {
+    let index = index("library('ggplot2')");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "ggplot2".into()
+    )]);
+}
+
+#[test]
+fn test_directive_require() {
+    let index = index("require(data.table)");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "data.table".into()
+    )]);
+}
+
+#[test]
+fn test_directive_multiple_libraries() {
+    let index = index("library(dplyr)\nlibrary(tidyr)\nrequire(ggplot2)");
+    assert_eq!(directive_kinds(&index), [
+        &DirectiveKind::Attach("dplyr".into()),
+        &DirectiveKind::Attach("tidyr".into()),
+        &DirectiveKind::Attach("ggplot2".into()),
+    ]);
+}
+
+#[test]
+fn test_directive_named_argument_ignored() {
+    let index = index("library(package = dplyr)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_multiple_arguments_ignored() {
+    let index = index("library(dplyr, warn.conflicts = FALSE)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_no_arguments_ignored() {
+    let index = index("library()");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_not_at_file_scope() {
+    let index = index("f <- function() { library(dplyr) }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_non_static_argument_ignored() {
+    let index = index("library(get_pkg())");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_preserves_offset() {
+    let index = index("x <- 1\nlibrary(dplyr)");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 1);
+    assert_eq!(directives[0].offset(), biome_rowan::TextSize::from(7));
 }
