@@ -1,9 +1,3 @@
-//
-// package_description.rs
-//
-// Copyright (C) 2025 by Posit Software, PBC
-//
-
 use std::collections::HashMap;
 
 use anyhow;

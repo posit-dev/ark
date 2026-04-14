@@ -1,10 +1,3 @@
-//
-// package_index.rs
-//
-// Copyright (C) 2025 by Posit Software, PBC
-//
-//
-
 use std::path::Path;
 
 /// This represents an INDEX file.

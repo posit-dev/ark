@@ -1,16 +1,11 @@
-//
-// library.rs
-//
-// Copyright (C) 2025 by Posit Software, PBC
-//
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
+use log;
+
 use super::package::Package;
-use crate::lsp;
 
 /// Lazily manages a list of known R packages by name
 #[derive(Default, Clone, Debug)]
@@ -43,7 +38,7 @@ impl Library {
             Ok(Some(pkg)) => Some(Arc::new(pkg)),
             Ok(None) => None,
             Err(err) => {
-                lsp::log_error!("Can't load R package: {err:?}");
+                log::error!("Can't load R package: {err:?}");
                 None
             },
         };
