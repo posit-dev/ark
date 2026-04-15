@@ -1,10 +1,3 @@
-//
-// definitions.rs
-//
-// Copyright (C) 2022 Posit Software, PBC. All rights reserved.
-//
-//
-
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::anyhow;
