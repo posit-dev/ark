@@ -484,6 +484,12 @@ impl SemanticIndexBuilder {
             // quoting constructs (`~`, `quote()`, `bquote()`) are recorded as
             // uses and bindings. Refining this requires special-casing these
             // forms, which we defer as future work.
+            //
+            // Once quoting is handled, `declare()` and `~declare()` will need
+            // explicit treatment: its arguments are quoted (not evaluated) but
+            // should still be inspected for directives like `source()`.
+            // Currently this works by accident because the generic traversal is
+            // transparent to both `declare()` and `~`.
             _ => {
                 self.collect_descendants(expr.syntax());
             },

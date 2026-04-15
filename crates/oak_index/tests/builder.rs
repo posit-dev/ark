@@ -1451,3 +1451,97 @@ fn test_directive_source_mixed_with_library() {
         &DirectiveKind::Attach("tidyr".into()),
     ]);
 }
+
+// --- declare() directives ---
+
+#[test]
+fn test_directive_declare_source() {
+    let index = index("declare(source(\"helpers.R\"))");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Source(
+        "helpers.R".into()
+    )]);
+}
+
+#[test]
+fn test_directive_declare_source_single_quotes() {
+    let index = index("declare(source('utils.R'))");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Source(
+        "utils.R".into()
+    )]);
+}
+
+#[test]
+fn test_directive_tilde_declare_source() {
+    let index = index("~declare(source(\"helpers.R\"))");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Source(
+        "helpers.R".into()
+    )]);
+}
+
+#[test]
+fn test_fimxe_directive_declare_library_transparent() {
+    // `declare()` is transparent: the inner `library(dplyr)` is still
+    // picked up as a directive.
+    // FIXME: We should declare `declare()` as a quoting function.
+    let index = index("declare(library(dplyr))");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    )]);
+}
+
+#[test]
+fn test_directive_declare_not_at_file_scope() {
+    let index = index("f <- function() { declare(source(\"helpers.R\")) }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_tilde_declare_not_at_file_scope() {
+    let index = index("f <- function() { ~declare(source(\"helpers.R\")) }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_declare_mixed_with_bare() {
+    let index = index("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
+    assert_eq!(directive_kinds(&index), [
+        &DirectiveKind::Attach("dplyr".into()),
+        &DirectiveKind::Source("helpers.R".into()),
+        &DirectiveKind::Source("utils.R".into()),
+    ]);
+}
+
+#[test]
+fn test_directive_declare_preserves_offset() {
+    let index = index("x <- 1\ndeclare(source(\"helpers.R\"))");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 1);
+    // Offset of the `source(...)` call inside declare, not the declare call
+    assert_eq!(
+        directives[0].kind(),
+        &DirectiveKind::Source("helpers.R".into())
+    );
+}
+
+#[test]
+fn test_directive_tilde_declare_preserves_offset() {
+    let index = index("x <- 1\n~declare(source(\"helpers.R\"))");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 1);
+    assert_eq!(
+        directives[0].kind(),
+        &DirectiveKind::Source("helpers.R".into())
+    );
+}
+
+#[test]
+fn test_directive_declare_non_call_arg_ignored() {
+    let index = index("declare(42)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_declare_identifier_source_arg_ignored() {
+    let index = index("declare(source(my_file))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
