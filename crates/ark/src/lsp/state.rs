@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
@@ -9,6 +10,9 @@ use oak_index::external::directive_layers;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::BindingSource;
+use oak_index::semantic_index::SemanticIndex;
+use oak_index::semantic_index_with_source_resolver;
+use oak_index::SourceResolution;
 use oak_package::collation::collation_order;
 use oak_package::library::Library;
 use stdext::result::ResultExt;
@@ -90,13 +94,14 @@ impl WorldState {
         }
     }
 
-    /// Create a scope chain for a particular file, taking into account the
-    /// current project type. For packages, this creates a scope containing
-    /// imports and top-level definitions in other files, respecting the
-    /// collation order.
-    pub(crate) fn file_scope(&self, file: &Url) -> FileScope {
+    /// Create the semantic index and scope chain for a particular file.
+    ///
+    /// For scripts, the index is built with a source resolver so that
+    /// `source()` definitions are injected into the use-def map.
+    /// For packages, the index is the plain per-file index.
+    pub(crate) fn file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            return self.script_file_scope(file);
+            return self.script_file_analysis(file, doc);
         };
 
         let root_layers = package_root_layers(&pkg.namespace);
@@ -174,55 +179,50 @@ impl WorldState {
         lazy.extend(root_layers);
         lazy.push(BindingSource::PackageExports("base".to_string()));
 
-        FileScope::package(top_level, lazy)
+        (doc.semantic_index(), FileScope::package(top_level, lazy))
     }
 
-    /// Build the scope for a script file (not inside a package).
+    /// Build the semantic index and scope for a script file (not inside a
+    /// package).
     ///
-    /// Resolves `library()` and `source()` directives from the file's own
-    /// content, then appends the default R search path.
-    fn script_file_scope(&self, file: &Url) -> FileScope {
+    /// The index is built with a resolver callback so that `source()`
+    /// definitions are injected into the use-def map. `library()`
+    /// directives are extracted into the external scope chain.
+    fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
         let file_path = file.to_file_path().ok();
-
-        let doc = if let Some(open) = self.documents.get(file) {
-            open
-        } else if let Some(contents) = file_path
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).log_err())
-        {
-            &Document::new(&contents, None)
-        } else {
-            return FileScope::search_path(Vec::new(), default_search_path());
-        };
-
-        let index = doc.semantic_index();
-
         let file_dir = file_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
-        let mut visited = HashSet::new();
-        let directives = directive_layers(index.file_directives(), |path| {
+        let mut stack = HashSet::new();
+        stack.insert(file.clone());
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
             let dir = file_dir.as_ref()?;
-            self.resolve_source_layers(dir, path, &mut visited)
+            self.resolve_source(dir, path, &mut stack)
         });
 
-        FileScope::search_path(directives, default_search_path())
+        let directives = directive_layers(index.file_directives());
+        (
+            index,
+            FileScope::search_path(directives, default_search_path()),
+        )
     }
 
-    /// Resolve a `source()` directive into the full set of layers the sourced
-    /// file contributes: its own exports, `PackageExports` from any
-    /// `library()` calls, and layers from nested `source()` calls.
+    /// Resolve a `source()` call into a [`SourceResolution`] containing the
+    /// sourced file's exported definitions and `library()` package attachments.
     ///
-    /// `visited` tracks files already being resolved to break cycles.
-    fn resolve_source_layers(
+    /// `stack` tracks files currently being resolved (grey set) to break
+    /// cycles. A file is added when resolution starts and removed when it
+    /// finishes, so shared dependencies (diamond patterns) are resolved
+    /// independently for each parent.
+    fn resolve_source(
         &self,
         base_dir: &Path,
         path: &str,
-        visited: &mut HashSet<Url>,
-    ) -> Option<Vec<BindingSource>> {
+        stack: &mut HashSet<Url>,
+    ) -> Option<SourceResolution> {
         let resolved = base_dir.join(path);
         let url = Url::from_file_path(&resolved).log_err()?;
 
-        if !visited.insert(url.clone()) {
+        if !stack.insert(url.clone()) {
             return None;
         }
 
@@ -233,25 +233,35 @@ impl WorldState {
             &Document::new(&contents, None)
         };
 
-        let index = sourced_doc.semantic_index();
+        let source_dir = resolved.parent().map(PathBuf::from);
 
-        let mut layers = Vec::new();
-
-        let exports = index
-            .file_exports()
-            .into_iter()
-            .map(|(name, range)| (name.to_string(), range))
-            .collect();
-        layers.push(BindingSource::FileExports { file: url, exports });
-
-        // Recurse into the sourced document in case it itself calls `source()`
-        let source_dir = resolved.parent()?;
-        let nested = directive_layers(index.file_directives(), |nested_path| {
-            self.resolve_source_layers(source_dir, nested_path, visited)
+        // Build the sourced file's index with a nested resolver so that
+        // transitive `source()` calls are also resolved.
+        let index = semantic_index_with_source_resolver(&sourced_doc.parse.tree(), |nested_path| {
+            let dir = source_dir.as_ref()?;
+            self.resolve_source(dir, nested_path, stack)
         });
-        layers.extend(nested.into_iter().map(|(_, l)| l));
 
-        Some(layers)
+        let definitions = index
+            .file_all_definitions(&url)
+            .into_iter()
+            .map(|(name, file, range)| (name.to_string(), file, range))
+            .collect();
+
+        let packages = index
+            .file_directives()
+            .iter()
+            .map(|d| match d.kind() {
+                oak_index::semantic_index::DirectiveKind::Attach(pkg) => pkg.clone(),
+            })
+            .collect();
+
+        stack.remove(&url);
+
+        Some(SourceResolution {
+            definitions,
+            packages,
+        })
     }
 }
 

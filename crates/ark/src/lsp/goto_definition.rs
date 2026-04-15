@@ -23,16 +23,10 @@ pub(crate) fn goto_definition(
         document.position_encoding,
     )?;
 
-    let index = document.semantic_index();
+    let (index, file_scope) = state.file_analysis(&uri, document);
     let root = document.syntax();
-    let targets = oak_ide::goto_definition(
-        offset,
-        &uri,
-        &root,
-        &index,
-        &state.file_scope(&uri),
-        &state.library,
-    );
+    let targets =
+        oak_ide::goto_definition(offset, &uri, &root, &index, &file_scope, &state.library);
 
     if targets.is_empty() {
         return Ok(None);
@@ -747,6 +741,197 @@ mod tests {
             goto_definition(&script_doc, params, &state).unwrap(),
             Some(GotoDefinitionResponse::Link(ref links)) => {
                 assert_eq!(links[0].target_uri, b_uri);
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_in_function_scoping() {
+        // source() inside a function body: definitions are visible inside
+        // the function and its nested scopes, but NOT outside.
+        // This is independent of `local = TRUE/FALSE`. Even if sourced in the
+        // global environment, only code following the `source()` call in the
+        // current scope can assume these symbols are in scope.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "helper <- function() 1\n").unwrap();
+
+        //  Line 0: "f <- function() {\n"
+        //  Line 1: "  source(\"helpers.R\")\n"
+        //  Line 2: "  helper\n"               <- inside f, after source()
+        //  Line 3: "  function() helper\n"    <- nested scope inside f
+        //  Line 4: "}\n"
+        //  Line 5: "helper\n"                 <- outside f
+        let script_source =
+            "f <- function() {\n  source(\"helpers.R\")\n  helper\n  function() helper\n}\nhelper\n";
+        let script_doc = Document::new(script_source, None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
+
+        // `helper` on line 2 (inside f, after source()) — should resolve
+        let params = make_params(script_uri.clone(), 2, 2);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+            }
+        );
+
+        // `helper` on line 3 (nested function inside f) — should resolve
+        let params = make_params(script_uri.clone(), 3, 14);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+            }
+        );
+
+        // `helper` on line 5 (outside f) — should NOT resolve
+        let params = make_params(script_uri, 5, 0);
+        let result = goto_definition(&script_doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_script_source_does_not_shadow_local_def() {
+        // A local definition should take precedence over a sourced one.
+        // `source()` at file scope defines `foo`, but a subsequent local
+        // `foo <- "local"` should shadow it.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "foo <- function() 1\n").unwrap();
+
+        //  Line 0: "source(\"helpers.R\")\n"
+        //  Line 1: "foo <- \"local\"\n"
+        //  Line 2: "foo\n"
+        let script_source = "source(\"helpers.R\")\nfoo <- \"local\"\nfoo\n";
+        let script_doc = Document::new(script_source, None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        // `foo` on line 2 should resolve to the LOCAL definition on line 1,
+        // not to the sourced one from helpers.R.
+        let params = make_params(script_uri.clone(), 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, script_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 3),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_diamond_dependency() {
+        // Diamond: a.R and b.R both source helpers.R.
+        // script.R sources both a.R and b.R.
+        // `helper` (from helpers.R) should be visible — the grey-set
+        // cycle detection must not prevent re-resolving a shared dependency.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "helper <- function() 1\n").unwrap();
+        std::fs::write(
+            dir.path().join("a.R"),
+            "source(\"helpers.R\")\nfrom_a <- 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("b.R"),
+            "source(\"helpers.R\")\nfrom_b <- 2\n",
+        )
+        .unwrap();
+
+        let script_doc = Document::new(
+            "source(\"a.R\")\nsource(\"b.R\")\nhelper\nfrom_a\nfrom_b\n",
+            None,
+        );
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
+        let a_uri = lsp_types::Url::from_file_path(dir.path().join("a.R")).unwrap();
+        let b_uri = lsp_types::Url::from_file_path(dir.path().join("b.R")).unwrap();
+
+        // `helper` (line 2) — from helpers.R, reachable through both a.R and b.R
+        let params = make_params(script_uri.clone(), 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+            }
+        );
+
+        // `from_a` (line 3) — from a.R
+        let params = make_params(script_uri.clone(), 3, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, a_uri);
+            }
+        );
+
+        // `from_b` (line 4) — from b.R
+        let params = make_params(script_uri, 4, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, b_uri);
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_self_reference() {
+        // script.R sources itself. The grey-set pre-seeds the current file
+        // so the self-reference is a no-op and doesn't create duplicate
+        // definitions.
+        let dir = tempfile::tempdir().unwrap();
+
+        let script_path = dir.path().join("script.R");
+        std::fs::write(&script_path, "source(\"script.R\")\nmy_var <- 1\nmy_var\n").unwrap();
+        let script_uri = lsp_types::Url::from_file_path(&script_path).unwrap();
+
+        let script_doc = Document::new("source(\"script.R\")\nmy_var <- 1\nmy_var\n", None);
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        // `my_var` (line 2) should resolve to its own definition on line 1,
+        // not to a Sourced duplicate.
+        let params = make_params(script_uri.clone(), 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, script_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 6),
+                    }
+                );
             }
         );
     }

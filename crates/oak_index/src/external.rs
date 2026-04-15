@@ -110,10 +110,8 @@ pub fn resolve_in_package(
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
 /// one `PackageExports` layer per `library()`/`require()` directive.
 ///
-/// `Source` directives are skipped here because resolving them requires the
-/// sourced file's index. Use [`directive_layers`] with a resolver callback
-/// when cross-file resolution is available. Offsets are discarded since
-/// all of a predecessor file's layers are unconditionally visible.
+/// Offsets are discarded since all of a predecessor file's layers are
+/// unconditionally visible.
 pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
     let mut layers = Vec::new();
 
@@ -124,7 +122,7 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
     }
 
     layers.push(BindingSource::FileExports { file, exports });
-    let dir_layers = directive_layers(index.file_directives(), |_| None);
+    let dir_layers = directive_layers(index.file_directives());
     layers.extend(dir_layers.into_iter().map(|(_, l)| l));
 
     layers
@@ -132,29 +130,13 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
 
 /// Convert directives into scope-chain layers, each paired with the offset
 /// of the directive that produced it.
-///
-/// `Attach` directives become `PackageExports` layers. `Source` directives
-/// are resolved via the callback, which returns the full set of layers the
-/// sourced file contributes: its `FileExports`, any `PackageExports` from
-/// `library()` calls it contains, and layers from nested `source()` calls.
-/// The callback receives the raw path string from the `source()` call.
-///
-/// All layers produced by a single directive share that directive's offset.
-pub fn directive_layers(
-    directives: &[Directive],
-    mut resolve_source: impl FnMut(&str) -> Option<Vec<BindingSource>>,
-) -> Vec<(TextSize, BindingSource)> {
+pub fn directive_layers(directives: &[Directive]) -> Vec<(TextSize, BindingSource)> {
     let mut layers = Vec::new();
     for directive in directives {
         let offset = directive.offset();
         match directive.kind() {
             DirectiveKind::Attach(pkg) => {
                 layers.push((offset, BindingSource::PackageExports(pkg.clone())));
-            },
-            DirectiveKind::Source(path) => {
-                if let Some(source_layers) = resolve_source(path) {
-                    layers.extend(source_layers.into_iter().map(|l| (offset, l)));
-                }
             },
         }
     }

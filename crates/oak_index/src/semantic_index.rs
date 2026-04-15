@@ -4,6 +4,7 @@ use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use rustc_hash::FxHashMap;
+use url::Url;
 
 use crate::index_vec::define_index;
 use crate::index_vec::IndexVec;
@@ -114,14 +115,38 @@ impl SemanticIndex {
     }
 
     /// Top-level definitions exported by this file (definitions in the file scope).
+    /// Excludes `Sourced` definitions since those belong to other files.
     pub fn file_exports(&self) -> Vec<(&str, TextRange)> {
+        let file_scope = ScopeId::from(0);
+        let symbols = &self.symbol_tables[file_scope];
+        self.definitions[file_scope]
+            .iter()
+            .filter(|(_id, def)| !matches!(def.kind(), DefinitionKind::Sourced { .. }))
+            .map(|(_id, def)| {
+                let name = symbols.symbol(def.symbol()).name();
+                (name, def.range())
+            })
+            .collect()
+    }
+
+    /// All definitions visible at file scope, including sourced ones.
+    ///
+    /// Each entry carries the file URL where the definition lives and
+    /// the range within that file. For own definitions, `file_url` is
+    /// passed through; for `Sourced` definitions, the URL comes from
+    /// the `DefinitionKind`.
+    pub fn file_all_definitions(&self, file_url: &Url) -> Vec<(&str, Url, TextRange)> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
         self.definitions[file_scope]
             .iter()
             .map(|(_id, def)| {
                 let name = symbols.symbol(def.symbol()).name();
-                (name, def.range())
+                let url = match def.kind() {
+                    DefinitionKind::Sourced { file } => file.clone(),
+                    _ => file_url.clone(),
+                };
+                (name, url, def.range())
             })
             .collect()
     }
@@ -149,10 +174,12 @@ impl SemanticIndex {
     /// Find the definition site at `offset`, if any.
     pub fn definition_at_offset(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId)> {
         let scope = self.scope_at(offset);
-        let def_id = self
-            .definitions(scope)
-            .iter()
-            .find_map(|(id, d)| d.range().contains(offset).then_some(id));
+        let def_id = self.definitions(scope).iter().find_map(|(id, d)| {
+            if matches!(d.kind(), DefinitionKind::Sourced { .. }) {
+                return None;
+            }
+            d.range().contains(offset).then_some(id)
+        });
         Some((scope, def_id?))
     }
 
@@ -486,6 +513,11 @@ pub enum DefinitionKind {
     SuperAssignment(RSyntaxNode),
     Parameter(RSyntaxNode),
     ForVariable(RSyntaxNode),
+    /// Injected from a `source()` call. The definition lives in an external
+    /// file; `range` on the `Definition` gives the name's range in that file.
+    Sourced {
+        file: Url,
+    },
 }
 
 impl Definition {
@@ -534,9 +566,6 @@ pub struct Directive {
 pub enum DirectiveKind {
     /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
     Attach(String),
-    /// `source(path)`: splices the sourced file's bindings at this offset.
-    /// Stores the raw path string from the call site.
-    Source(String),
 }
 
 impl Directive {
