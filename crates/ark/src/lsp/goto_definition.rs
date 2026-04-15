@@ -74,8 +74,10 @@ fn nav_target_to_link(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::process::Command;
 
     use assert_matches::assert_matches;
+    use oak_package::library::Library;
     use oak_package::package::Package;
     use oak_package::package_description::Description;
     use oak_package::package_namespace::Namespace;
@@ -85,6 +87,19 @@ mod tests {
     use crate::lsp::document::Document;
     use crate::lsp::inputs::source_root::SourceRoot;
     use crate::lsp::util::test_path;
+
+    fn r_library() -> Option<Library> {
+        let output = Command::new("R")
+            .args(["--no-save", "-e", "cat(.libPaths(), sep='\\n')"])
+            .output()
+            .ok()?;
+        let stdout = String::from_utf8(output.stdout).ok()?;
+        let paths: Vec<PathBuf> = stdout.lines().map(PathBuf::from).collect();
+        if paths.is_empty() {
+            return None;
+        }
+        Some(Library::new(paths))
+    }
 
     fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {
         GotoDefinitionParams {
@@ -354,5 +369,133 @@ mod tests {
                 assert_eq!(links[0].target_uri, uri_zzz);
             }
         );
+    }
+
+    // --- Base R and search path ---
+
+    #[test]
+    fn test_package_scope_includes_base() {
+        // `cat` is in the base INDEX, so it resolves through the real
+        // library. file_scope adds base at the bottom of the package chain.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+
+        let pkg_root = std::env::temp_dir().join("test_pkg_base");
+
+        let doc = Document::new("cat(1)\n", None);
+        let uri = lsp_types::Url::from_file_path(pkg_root.join("R/foo.R")).unwrap();
+
+        let ns = Namespace::default();
+        let desc = Description {
+            name: "mypkg".to_string(),
+            ..Default::default()
+        };
+        let pkg = Package::from_parts(pkg_root, desc, ns);
+
+        let mut state = make_state(&uri, &doc);
+        state.root = Some(SourceRoot::Package(pkg));
+        state.library = library;
+
+        // `cat` at file level — package symbol, no NavigationTarget yet
+        let params = make_params(uri, 0, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_search_path_includes_defaults() {
+        // A script outside a package should see base symbols via the
+        // default search path built by file_scope.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+
+        let doc = Document::new("cat(1)\n", None);
+        let uri = test_path("script.R");
+
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        let params = make_params(uri, 0, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
+        // Package symbol, no NavigationTarget yet
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_search_path_same_for_top_level_and_function() {
+        // Unlike packages, scripts use the same scope chain everywhere.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+
+        let code = "f <- function() cat(1)\ncat(2)\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("script.R");
+
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        // `cat` at top level (line 1, col 0)
+        let params = make_params(uri.clone(), 1, 0);
+        let top_result = goto_definition(&doc, params, &state).unwrap();
+
+        // `cat` inside function body (line 0, col 16)
+        let params = make_params(uri, 0, 16);
+        let fn_result = goto_definition(&doc, params, &state).unwrap();
+
+        // Both resolve the same way (both None since package symbols
+        // don't produce NavigationTargets yet)
+        assert_eq!(top_result, None);
+        assert_eq!(fn_result, None);
+    }
+
+    #[test]
+    fn test_fixme_base_function_missing_from_index() {
+        // `is.null` is a base R function but it's not in the base INDEX
+        // file (it's documented under the `NULL` help page). Since base
+        // has no NAMESPACE, we rely on INDEX for exported symbols, which
+        // misses many common functions.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+
+        let pkg_root = std::env::temp_dir().join("test_pkg_base_fixme");
+
+        let ns = Namespace::default();
+        let desc = Description {
+            name: "mypkg".to_string(),
+            ..Default::default()
+        };
+        let pkg = Package::from_parts(pkg_root.clone(), desc, ns);
+
+        // `cat` IS in the INDEX — verify it resolves (no NavigationTarget
+        // for package symbols, but the scope chain finds it)
+        let doc_cat = Document::new("cat(1)\n", None);
+        let uri_cat = lsp_types::Url::from_file_path(pkg_root.join("R/foo.R")).unwrap();
+
+        let mut state = make_state(&uri_cat, &doc_cat);
+        state.root = Some(SourceRoot::Package(pkg));
+        state.library = library;
+
+        let params = make_params(uri_cat, 0, 0);
+        let result = goto_definition(&doc_cat, params, &state).unwrap();
+        assert_eq!(result, None); // package symbol, no NavigationTarget yet
+
+        // `is.null` is NOT in the INDEX
+        let doc_null = Document::new("is.null(1)\n", None);
+        let uri_null = lsp_types::Url::from_file_path(pkg_root.join("R/bar.R")).unwrap();
+        state.documents.insert(uri_null.clone(), doc_null.clone());
+
+        let params = make_params(uri_null, 0, 0);
+        let result = goto_definition(&doc_null, params, &state).unwrap();
+        // FIXME: should resolve to base::is.null but doesn't because
+        // `is.null` is missing from the INDEX-based export list.
+        assert_eq!(result, None);
     }
 }

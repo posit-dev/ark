@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::anyhow;
@@ -6,6 +7,7 @@ use oak_core::file::list_r_files;
 use oak_ide::FileScope;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
+use oak_index::external::BindingSource;
 use oak_package::collation::collation_order;
 use oak_package::library::Library;
 use stdext::result::ResultExt;
@@ -93,20 +95,39 @@ impl WorldState {
     /// collation order.
     pub(crate) fn file_scope(&self, file: &Url) -> FileScope {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            return FileScope::default();
+            return FileScope::search_path(default_search_path());
         };
 
         let root_layers = package_root_layers(&pkg.namespace);
 
-        // Discover all R source files in the package's R/ directory.
+        // Collect R source filenames from open documents and disk. Open
+        // documents take precedence for content (handled below when building
+        // layers), but we also need to discover files that only exist on disk
+        // (not yet opened).
         let r_dir = pkg.path.join("R");
-        let r_files = list_r_files(r_dir.as_ref());
+        let r_dir_url = Url::from_directory_path(&r_dir).ok();
 
-        let filenames: Vec<String> = r_files
-            .iter()
-            .filter_map(|p| p.file_name()?.to_str().map(|s| s.to_string()))
-            .collect();
+        let mut filenames = HashSet::new();
 
+        // Discover open documents
+        if let Some(ref dir_url) = r_dir_url {
+            for uri in self.documents.keys() {
+                if uri.as_str().starts_with(dir_url.as_str()) {
+                    if let Some(name) = uri.path().rsplit('/').next() {
+                        filenames.insert(name.to_string());
+                    }
+                }
+            }
+        }
+
+        // Then files on disk that aren't already known from open documents.
+        for path in list_r_files(r_dir.as_ref()) {
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                filenames.insert(name.to_string());
+            }
+        }
+
+        let filenames: Vec<String> = filenames.into_iter().collect();
         let ordered = collation_order(&pkg.description, &filenames);
 
         let filename = file.path().rsplit('/').next().unwrap_or_default();
@@ -148,10 +169,33 @@ impl WorldState {
         }
 
         top_level.extend(root_layers.clone());
+        top_level.push(BindingSource::PackageExports("base".to_string()));
         lazy.extend(root_layers);
+        lazy.push(BindingSource::PackageExports("base".to_string()));
 
         FileScope::package(top_level, lazy)
     }
+}
+
+/// The default R search path for scripts: the default packages that R
+/// attaches on startup, in search order (last attached = searched first).
+fn default_search_path() -> Vec<BindingSource> {
+    // R's default packages, in reverse attachment order (most recently
+    // attached first). These are always on the search path unless
+    // overridden by `R_DEFAULT_PACKAGES`.
+    let default_packages = [
+        "utils",
+        "stats",
+        "datasets",
+        "methods",
+        "grDevices",
+        "graphics",
+        "base",
+    ];
+    default_packages
+        .into_iter()
+        .map(|pkg| BindingSource::PackageExports(pkg.to_string()))
+        .collect()
 }
 
 pub(crate) fn with_document<T, F>(
