@@ -1,5 +1,7 @@
+use aether_syntax::RSyntaxNode;
 use biome_rowan::TextSize;
 use oak_index::external::resolve_external_name;
+use oak_index::external::resolve_in_package;
 use oak_index::external::ExternalDefinition;
 use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
@@ -11,11 +13,12 @@ use oak_package::library::Library;
 use url::Url;
 
 use crate::ExternalScope;
+use crate::Identifier;
 use crate::NavigationTarget;
 
 /// Resolve the symbol at `offset` in a file.
 ///
-/// Queries the semantic index to classify the offset:
+/// Uses `Identifier::classify` to determine what the offset points at:
 ///
 /// - Definition site (LHS of assignment, parameter, for variable):
 ///   navigates to itself. We round-trip through the index to get
@@ -27,37 +30,47 @@ use crate::NavigationTarget;
 /// - Use site (name reference): resolves via the use-def map, enclosing
 ///   scopes, and the external scope chain.
 ///
-/// Returns an empty `Vec` if the offset doesn't point at a definition or
-/// use site, or if the symbol cannot be resolved.
+/// - Namespace access (`pkg::sym` or `pkg:::sym`): resolves the symbol
+///   directly in the named package.
+///
+/// Returns an empty `Vec` if the offset doesn't point at a known
+/// identifier, or if the symbol cannot be resolved.
 pub fn goto_definition(
     offset: TextSize,
     file: &Url,
+    root: &RSyntaxNode,
     index: &SemanticIndex,
     scope: &ExternalScope,
     library: &Library,
 ) -> Vec<NavigationTarget> {
-    let (scope_id, _) = index.scope_at(offset);
+    let Some(ident) = Identifier::classify(root, index, offset) else {
+        return Vec::new();
+    };
 
-    // Definition site: navigate to itself.
-    if let Some((_def_id, def)) = index.definitions(scope_id).contains(offset) {
-        let name = index.symbols(scope_id).symbol(def.symbol()).name();
+    match ident {
+        Identifier::Definition { scope_id, def_id } => {
+            let def = &index.definitions(scope_id)[def_id];
+            let name = index.symbols(scope_id).symbol(def.symbol()).name();
 
-        return vec![NavigationTarget {
-            file: file.clone(),
-            name: name.to_string(),
-            full_range: def.range(),
-            focus_range: def.range(),
-        }];
+            vec![NavigationTarget {
+                file: file.clone(),
+                name: name.to_string(),
+                full_range: def.range(),
+                focus_range: def.range(),
+            }]
+        },
+        Identifier::Use { scope_id, use_id } => {
+            let use_site = &index.uses(scope_id)[use_id];
+            resolve_use(
+                index, scope_id, use_id, use_site, file, offset, scope, library,
+            )
+        },
+        Identifier::NamespaceAccess {
+            ref package,
+            ref symbol,
+            ..
+        } => resolve_namespace_access(library, package, symbol),
     }
-
-    // Use site: resolve through use-def map, enclosing scopes, external.
-    if let Some((use_id, use_site)) = index.uses(scope_id).contains(offset) {
-        return resolve_use(
-            index, scope_id, use_id, use_site, file, offset, scope, library,
-        );
-    }
-
-    Vec::new()
 }
 
 fn resolve_use(
@@ -122,6 +135,17 @@ fn resolve_use(
     external_targets()
 }
 
+fn resolve_namespace_access(
+    library: &Library,
+    package: &str,
+    symbol: &str,
+) -> Vec<NavigationTarget> {
+    let Some(external) = resolve_in_package(library, package, symbol) else {
+        return Vec::new();
+    };
+    external_to_targets(external)
+}
+
 fn resolve_external(
     library: &Library,
     scope_chain: &[ScopeLayer],
@@ -130,7 +154,10 @@ fn resolve_external(
     let Some(external) = resolve_external_name(library, scope_chain, symbol_name) else {
         return Vec::new();
     };
+    external_to_targets(external)
+}
 
+fn external_to_targets(external: ExternalDefinition) -> Vec<NavigationTarget> {
     match external {
         ExternalDefinition::ProjectFile { file, name, range } => {
             vec![NavigationTarget {
