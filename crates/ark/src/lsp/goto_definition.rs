@@ -984,4 +984,33 @@ mod tests {
         let outer_chain = file_scope.at(&index, outer_offset);
         assert!(!has_dplyr(&outer_chain));
     }
+
+    #[test]
+    fn test_script_source_later_shadows_earlier() {
+        // When two sourced files define the same name, the later
+        // source() call shadows the earlier one.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("a.R"), "foo <- 1\n").unwrap();
+        std::fs::write(dir.path().join("b.R"), "foo <- 2\n").unwrap();
+
+        let script_doc = Document::new("source(\"a.R\")\nsource(\"b.R\")\nfoo\n", None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        let b_uri = lsp_types::Url::from_file_path(dir.path().join("b.R")).unwrap();
+
+        // `foo` (line 2) should resolve to b.R (later source shadows earlier)
+        let params = make_params(script_uri, 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, b_uri);
+            }
+        );
+    }
 }
