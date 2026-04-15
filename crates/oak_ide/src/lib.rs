@@ -8,6 +8,7 @@ use biome_rowan::TextSize;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
 use oak_index::external::BindingSource;
+use oak_index::semantic_index::ScopeId;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
 use url::Url;
@@ -34,7 +35,9 @@ pub enum FileScope {
         /// Layers from the file's own top-level directives, each stamped with
         /// the offset of the directive that produced them. Only layers with
         /// offset <= cursor position are active.
-        directive_layers: Vec<(TextSize, BindingSource)>,
+        directive_layers: Vec<(TextSize, ScopeId, BindingSource)>,
+        // FIXME: Redundant with `ScopeId(0)` check but avoids importing
+        // the index type at construction time. Remove once we have salsa.
         /// Always-visible base layers (default packages, base).
         base: Vec<BindingSource>,
     },
@@ -55,7 +58,7 @@ impl FileScope {
     }
 
     pub fn search_path(
-        directive_layers: Vec<(TextSize, BindingSource)>,
+        directive_layers: Vec<(TextSize, ScopeId, BindingSource)>,
         base: Vec<BindingSource>,
     ) -> Self {
         Self::SearchPath {
@@ -67,7 +70,8 @@ impl FileScope {
     /// Return the scope chain appropriate for the given offset. For
     /// packages, top-level scope uses predecessors only while lazy
     /// (function) scopes see all files. For scripts, only directives
-    /// before the cursor position are visible, plus the base layers.
+    /// whose scope is an ancestor of the cursor's scope and whose
+    /// offset <= cursor position are visible, plus the base layers.
     pub fn at(&self, index: &SemanticIndex, offset: TextSize) -> Cow<'_, [BindingSource]> {
         match self {
             Self::Package { top_level, lazy } => {
@@ -81,10 +85,14 @@ impl FileScope {
                 directive_layers,
                 base,
             } => {
+                let cursor_scope = index.scope_at(offset);
                 let mut layers: Vec<BindingSource> = directive_layers
                     .iter()
-                    .filter(|(dir_offset, _)| *dir_offset <= offset)
-                    .map(|(_, layer)| layer.clone())
+                    .filter(|(dir_offset, dir_scope, _)| {
+                        *dir_offset <= offset &&
+                            index.ancestor_scopes(cursor_scope).any(|s| s == *dir_scope)
+                    })
+                    .map(|(_, _, layer)| layer.clone())
                     .collect();
                 layers.extend(base.iter().cloned());
                 Cow::Owned(layers)
@@ -94,6 +102,8 @@ impl FileScope {
 
     /// The full scope for lazy contexts. Useful for features that don't
     /// have a cursor position (e.g. completions, workspace symbols).
+    /// Only file-scope directives are included since we don't know which
+    /// function the cursor is in.
     pub fn lazy(&self) -> Cow<'_, [BindingSource]> {
         match self {
             Self::Package { lazy, .. } => Cow::Borrowed(lazy),
@@ -101,8 +111,12 @@ impl FileScope {
                 directive_layers,
                 base,
             } => {
-                let mut layers: Vec<BindingSource> =
-                    directive_layers.iter().map(|(_, l)| l.clone()).collect();
+                let file_scope = ScopeId::from(0);
+                let mut layers: Vec<BindingSource> = directive_layers
+                    .iter()
+                    .filter(|(_, scope, _)| *scope == file_scope)
+                    .map(|(_, _, l)| l.clone())
+                    .collect();
                 layers.extend(base.iter().cloned());
                 Cow::Owned(layers)
             },
