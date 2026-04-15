@@ -7,6 +7,7 @@
 
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
+use anyhow::anyhow;
 use oak_ide::NavigationTarget;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
@@ -54,7 +55,16 @@ fn nav_target_to_link(
     target: NavigationTarget,
     state: &WorldState,
 ) -> anyhow::Result<LocationLink> {
-    let doc = state.get_document(&target.file)?;
+    let doc = if let Some(open) = state.documents.get(&target.file) {
+        open
+    } else {
+        let path = target
+            .file
+            .to_file_path()
+            .map_err(|_| anyhow!("Can't convert URI to path: {}", target.file))?;
+        let contents = std::fs::read_to_string(&path)?;
+        &Document::new(&contents, None)
+    };
 
     let target_range = to_proto::range(target.full_range, &doc.line_index, doc.position_encoding)?;
     let target_selection_range =
@@ -314,5 +324,42 @@ mod tests {
         let params = make_params(uri_ccc, 0, 0);
         let result = goto_definition(&doc_ccc, params, &state).unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_use_in_function_body_resolves_across_files() {
+        // aaa.R uses `helper` inside a function body. zzz.R defines
+        // `helper` at the top level. In alphabetical collation zzz.R
+        // comes after aaa.R, but the definition should still be visible
+        // because function bodies execute lazily — the full package
+        // namespace is populated before any function is called.
+        let pkg_root = std::env::temp_dir().join("test_pkg_lazy");
+
+        let doc_aaa = Document::new("f <- function() helper()\n", None);
+        let uri_aaa = lsp_types::Url::from_file_path(pkg_root.join("R/aaa.R")).unwrap();
+
+        let doc_zzz = Document::new("helper <- function() 1\n", None);
+        let uri_zzz = lsp_types::Url::from_file_path(pkg_root.join("R/zzz.R")).unwrap();
+
+        let ns = Namespace::default();
+        let desc = Description {
+            name: "mypkg".to_string(),
+            ..Default::default()
+        };
+        let pkg = Package::from_parts(pkg_root, desc, ns);
+
+        let mut state = WorldState::default();
+        state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
+        state.documents.insert(uri_zzz.clone(), doc_zzz);
+        state.root = Some(SourceRoot::Package(pkg));
+
+        // Cursor on `helper` inside the function body (line 0, col 16)
+        let params = make_params(uri_aaa, 0, 16);
+        assert_matches!(
+            goto_definition(&doc_aaa, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, uri_zzz);
+            }
+        );
     }
 }

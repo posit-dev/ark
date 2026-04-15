@@ -9,6 +9,7 @@ use oak_index::UseId;
 use oak_package::library::Library;
 use url::Url;
 
+use crate::FileScope;
 use crate::NavigationTarget;
 
 /// Resolve the symbol at `offset` in a file.
@@ -31,7 +32,7 @@ pub fn goto_definition(
     offset: TextSize,
     file: &Url,
     index: &SemanticIndex,
-    scope_chain: &[BindingSource],
+    scope: &FileScope,
     library: &Library,
 ) -> Vec<NavigationTarget> {
     // Definition site: navigate to itself.
@@ -49,6 +50,7 @@ pub fn goto_definition(
 
     // Use site: resolve through use-def map, enclosing scopes, external.
     if let Some((scope_id, use_id)) = index.use_at_offset(offset) {
+        let scope_chain = scope.at(index, offset);
         return resolve_use(scope_id, use_id, file, index, scope_chain, library);
     }
 
