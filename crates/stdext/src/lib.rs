@@ -12,6 +12,7 @@ pub mod event;
 pub mod join;
 pub mod local;
 pub mod ok;
+pub mod option;
 pub mod push;
 pub mod result;
 pub mod sorted_vec;
@@ -21,6 +22,7 @@ pub mod unwrap;
 
 pub use crate::join::Joined;
 pub use crate::ok::Ok;
+pub use crate::option::OptionExt;
 pub use crate::push::Push;
 pub use crate::sorted_vec::SortedVec;
 pub use crate::testing::assert_testing;

@@ -1,3 +1,5 @@
+mod builder_nse;
+
 use std::collections::HashMap;
 
 use aether_syntax::AnyRArgumentName;
@@ -22,9 +24,11 @@ use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
+use rustc_hash::FxHashSet;
 use url::Url;
 
+use crate::external::ExternalResolver;
+use crate::external::NoopResolver;
 use crate::index_vec::Idx;
 use crate::index_vec::IndexVec;
 use crate::semantic_index::Definition;
@@ -34,9 +38,11 @@ use crate::semantic_index::Directive;
 use crate::semantic_index::DirectiveKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
+use crate::semantic_index::NseScope;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
+use crate::semantic_index::ScopeLaziness;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolTableBuilder;
@@ -46,11 +52,16 @@ use crate::use_def_map::UseDefMapBuilder;
 
 /// Build a [`SemanticIndex`] from a parsed R file.
 pub fn semantic_index(root: &RRoot) -> SemanticIndex {
-    let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range, None);
-    builder.pre_scan_scope(root.syntax());
-    builder.collect_expression_list(&root.expressions());
-    builder.finish()
+    build_semantic_index(root, None, &NoopResolver)
+}
+
+/// Build a [`SemanticIndex`] with an external [`ExternalResolver`] for cross-file
+/// NSE callee resolution.
+pub fn semantic_index_with_nse_resolver(
+    root: &RRoot,
+    resolver: &dyn ExternalResolver,
+) -> SemanticIndex {
+    build_semantic_index(root, None, resolver)
 }
 
 /// Build a [`SemanticIndex`] with cross-file `source()` resolution.
@@ -63,10 +74,65 @@ pub fn semantic_index_with_source_resolver<'a>(
     root: &RRoot,
     resolver: impl FnMut(&str) -> Option<SourceResolution> + 'a,
 ) -> SemanticIndex {
+    build_semantic_index(root, Some(Box::new(resolver)), &NoopResolver)
+}
+
+/// Build a [`SemanticIndex`] with both `source()` and NSE resolution.
+pub fn semantic_index_with_resolvers<'a>(
+    root: &RRoot,
+    source_resolver: impl FnMut(&str) -> Option<SourceResolution> + 'a,
+    nse_resolver: &dyn ExternalResolver,
+) -> SemanticIndex {
+    build_semantic_index(root, Some(Box::new(source_resolver)), nse_resolver)
+}
+
+fn build_semantic_index(
+    root: &RRoot,
+    source_resolver: Option<SourceResolver<'_>>,
+    nse_resolver: &dyn ExternalResolver,
+) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range, Some(Box::new(resolver)));
+
+    // First walk: no NSE scopes pushed, so NSE call bodies (e.g. `local({...})`)
+    // are walked inline. In this phase we discover which calls are NSE.
+    let mut builder = SemanticIndexBuilder::new(range, source_resolver, nse_resolver);
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
+
+    if !builder.found_nse {
+        return builder.finish();
+    }
+
+    // Re-walk loop: Keep pushing new NSE scopes until convergence
+    // (`nse_nested_ranges` stabilizes). Each iteration can only grow the set
+    // (definitions move into child scopes, unmasking more callees), so this
+    // necessarily terminates. In practice it converges in one iteration. The
+    // loop handles the pathological case where an NSE function name is
+    // redefined inside an NSE body, unmasking a later call on the next
+    // iteration.
+    //
+    // For comparison, rust-analyzer's name-resolution fixed-point loop
+    // (resolving imports and expanding macros) caps at 8192 iterations.
+    // Our iteration set is just the NSE call-body ranges in one file,
+    // bounded by the number of call sites, so a small cap suffices.
+    const MAX_NSE_ITERATIONS: usize = 10;
+    for _ in 0..MAX_NSE_ITERATIONS {
+        let prev_ranges = std::mem::take(&mut builder.nse_nested_ranges);
+        let source_resolver = builder.source_resolver.take();
+        builder = SemanticIndexBuilder::new_for_rewalk(
+            range,
+            prev_ranges.clone(),
+            source_resolver,
+            nse_resolver,
+        );
+        builder.pre_scan_scope(root.syntax());
+        builder.collect_expression_list(&root.expressions());
+
+        if builder.nse_nested_ranges == prev_ranges {
+            return builder.finish();
+        }
+    }
+
     builder.finish()
 }
 
@@ -97,10 +163,57 @@ struct SemanticIndexBuilder<'a> {
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     directives: Vec<Directive>,
     source_resolver: Option<SourceResolver<'a>>,
+    // Ranges of argument bodies that create Nested NSE scopes. Populated
+    // on each iteration; compared across iterations for convergence.
+    nse_nested_ranges: FxHashSet<TextRange>,
+    // `true` when any scope-pushing NSE combo was found. Triggers the
+    // re-walk loop.
+    found_nse: bool,
+    // Controls whether NSE scopes are pushed at call sites. `false` on the
+    // first walk because the pre-scan includes definitions from inside NSE
+    // bodies (e.g. `x` from `local({x <- 1})`), which would cause enclosing
+    // snapshots to be registered at the wrong ancestor scope.
+    is_rewalk: bool,
+    nse_resolver: &'a dyn ExternalResolver,
 }
 
 impl<'a> SemanticIndexBuilder<'a> {
-    fn new(range: TextRange, source_resolver: Option<SourceResolver<'a>>) -> Self {
+    fn new(
+        range: TextRange,
+        source_resolver: Option<SourceResolver<'a>>,
+        nse_resolver: &'a dyn ExternalResolver,
+    ) -> Self {
+        Self::create(
+            range,
+            FxHashSet::default(),
+            false,
+            source_resolver,
+            nse_resolver,
+        )
+    }
+
+    fn new_for_rewalk(
+        range: TextRange,
+        nse_nested_ranges: FxHashSet<TextRange>,
+        source_resolver: Option<SourceResolver<'a>>,
+        nse_resolver: &'a dyn ExternalResolver,
+    ) -> Self {
+        Self::create(
+            range,
+            nse_nested_ranges,
+            true,
+            source_resolver,
+            nse_resolver,
+        )
+    }
+
+    fn create(
+        range: TextRange,
+        nse_nested_ranges: FxHashSet<TextRange>,
+        is_rewalk: bool,
+        source_resolver: Option<SourceResolver<'a>>,
+        nse_resolver: &'a dyn ExternalResolver,
+    ) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
@@ -138,6 +251,10 @@ impl<'a> SemanticIndexBuilder<'a> {
             enclosing_snapshots: FxHashMap::default(),
             directives: Vec::new(),
             source_resolver,
+            nse_nested_ranges,
+            found_nse: false,
+            is_rewalk,
+            nse_resolver,
         }
     }
 
@@ -183,6 +300,18 @@ impl<'a> SemanticIndexBuilder<'a> {
         kind: DefinitionKind,
         range: TextRange,
     ) {
+        // `Nse(Current, Lazy)` scopes route definitions to the parent: the scope
+        // exists for enclosing snapshot registration but definitions belong to
+        // the outer environment. `Current + Eager` never reaches here because
+        // it doesn't push a scope.
+        if matches!(
+            self.scopes[self.current_scope].kind,
+            ScopeKind::Nse(NseScope::Current, ScopeLaziness::Lazy)
+        ) {
+            self.add_definition_to_parent(name, flags, kind, range);
+            return;
+        }
+
         let symbol_id = self.symbol_tables[self.current_scope].intern(name, flags);
         let def_id = self.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
@@ -275,6 +404,15 @@ impl<'a> SemanticIndexBuilder<'a> {
             return;
         };
 
+        // If the use scope is eager and no lazy scope is crossed on the way
+        // to the definition, `capture_eager_snapshot()` gives a precise
+        // point-in-time snapshot. Otherwise fall back to watchers.
+        let use_eager = matches!(
+            self.scopes[self.current_scope].kind,
+            ScopeKind::Nse(_, ScopeLaziness::Eager)
+        );
+        let mut all_eager = use_eager;
+
         loop {
             let found_by_flag = self.symbol_tables[current_scope]
                 .id(name)
@@ -301,12 +439,24 @@ impl<'a> SemanticIndexBuilder<'a> {
                 }
 
                 self.use_def_maps[current_scope].ensure_symbol(enclosing_symbol_id);
-                let snapshot_id = self.use_def_maps[current_scope]
-                    .register_enclosing_snapshot(enclosing_symbol_id);
+                let snapshot_id = if all_eager {
+                    self.use_def_maps[current_scope].capture_eager_snapshot(enclosing_symbol_id)
+                } else {
+                    self.use_def_maps[current_scope]
+                        .register_enclosing_snapshot(enclosing_symbol_id)
+                };
                 self.enclosing_snapshots
                     .insert(use_key, (current_scope, snapshot_id));
 
                 return;
+            }
+
+            // Track laziness as we cross scopes
+            if matches!(
+                self.scopes[current_scope].kind,
+                ScopeKind::Function | ScopeKind::Nse(_, ScopeLaziness::Lazy)
+            ) {
+                all_eager = false;
             }
 
             let Some(parent) = self.scopes[current_scope].parent else {
@@ -370,16 +520,34 @@ impl<'a> SemanticIndexBuilder<'a> {
             // clauses contain `RIdentifier` nodes that should not be recorded
             // as uses.
             AnyRExpression::RCall(call) => {
+                // Record callee as a use (or no-op for namespace expressions)
                 if let Ok(func) = call.function() {
                     self.collect_expression(&func);
                 }
-                if let Ok(args) = call.arguments() {
-                    self.collect_arguments(&args.items());
+
+                // Resolve NSE annotation
+                let annotation = self.resolve_nse_callee(call);
+
+                match annotation {
+                    Some(annotation) if self.is_rewalk => {
+                        // Record ranges for convergence checking, then push
+                        // scopes and walk bodies.
+                        self.record_nse_decision(call, annotation);
+                        self.collect_nse_call(call, annotation);
+                    },
+                    Some(annotation) => {
+                        // First walk: record decision, process args flat
+                        self.record_nse_decision(call, annotation);
+                        if let Ok(args) = call.arguments() {
+                            self.collect_arguments(&args.items());
+                        }
+                    },
+                    None => {
+                        if let Ok(args) = call.arguments() {
+                            self.collect_arguments(&args.items());
+                        }
+                    },
                 }
-                // TODO: When eager NSE scopes land (e.g. `local()`) we should
-                // also consider nested scopes as long as they're not lazy (e.g.
-                // function definitions or NSE calls that don't evaluate
-                // immediately.
                 self.collect_directive(call);
             },
             AnyRExpression::RSubset(subset) => {
@@ -582,10 +750,15 @@ impl<'a> SemanticIndexBuilder<'a> {
                 continue;
             };
             match &expr {
-                // NSE scopes (e.g. `local({...})`) will also need to
-                // be skipped here once recognized, since their
-                // definitions belong to a child scope.
                 AnyRExpression::RFunctionDefinition(_) => {
+                    preorder.skip_subtree();
+                },
+                // On re-walk, skip Nested NSE scope bodies: their definitions
+                // belong to child scopes, not the scope being pre-scanned.
+                _ if self
+                    .nse_nested_ranges
+                    .contains(&expr.syntax().text_trimmed_range()) =>
+                {
                     preorder.skip_subtree();
                 },
                 AnyRExpression::RBinaryExpression(bin) if is_assignment(bin) => {
@@ -593,16 +766,15 @@ impl<'a> SemanticIndexBuilder<'a> {
                         let right = is_right_assignment(bin);
                         let target = if right { bin.right() } else { bin.left() };
                         if let Ok(target) = target {
-                            if let Some((name, range)) = assignment_target_name(&target) {
-                                self.pre_scans[self.current_scope].add(name, range);
+                            if let Some((name, _)) = assignment_target_name(&target) {
+                                self.pre_scans[self.current_scope].add(name);
                             }
                         }
                     }
                 },
                 AnyRExpression::RForStatement(stmt) => {
                     if let Ok(variable) = stmt.variable() {
-                        self.pre_scans[self.current_scope]
-                            .add(variable.name_text(), variable.syntax().text_trimmed_range());
+                        self.pre_scans[self.current_scope].add(variable.name_text());
                     }
                 },
                 _ => {},
@@ -939,51 +1111,27 @@ impl<'a> SemanticIndexBuilder<'a> {
     }
 }
 
-/// All definitions in a scope, collected before the full walk. Skips nested
-/// function bodies (those belong to child scopes). Two consumers:
-///
-/// - Enclosing snapshots: `has_name()` checks whether a symbol will be
-///   defined in an ancestor scope (even when the ancestor's walk hasn't reached
-///   that definition yet), so that `register_enclosing_snapshot()` can find the
-///   right ancestor for free variables.
-/// - NSE resolution: With NSE, each function call potentially pushes a scope
-///   (which can be lazy or eager). We need to resolve the called function's
-///   semantic during the walk. Inside lazy scopes (e.g. function bodies),
-///   `by_name` provides the complete set of parent definitions so that the
-///   function can be resolved against all the parent scope's definitions (if NSE
-///   semantics don't match across definitions, we pick one and lint). Intra-scope
-///   resolution is linear and uses the current `symbol_states` directly instead.
+/// Set of names assigned in a scope, collected before the full walk. Skips
+/// nested function bodies (those belong to child scopes). Used by
+/// `register_enclosing_snapshot()` to find where free variables are bound,
+/// even when the ancestor's walk hasn't reached the definition yet.
 struct PreScanScope {
-    _defs: Vec<PreScanDef>,
-    by_name: FxHashMap<String, SmallVec<[usize; 2]>>,
-}
-
-/// A single definition site found during the pre-scan. Fields are not
-/// read yet but will be used for NSE lookup.
-struct PreScanDef {
-    _name: String,
-    _range: TextRange,
+    by_name: FxHashSet<String>,
 }
 
 impl PreScanScope {
     fn new() -> Self {
         Self {
-            _defs: Vec::new(),
-            by_name: FxHashMap::default(),
+            by_name: FxHashSet::default(),
         }
     }
 
-    fn add(&mut self, name: String, range: TextRange) {
-        let idx = self._defs.len();
-        self.by_name.entry(name.clone()).or_default().push(idx);
-        self._defs.push(PreScanDef {
-            _name: name,
-            _range: range,
-        });
+    fn add(&mut self, name: String) {
+        self.by_name.insert(name);
     }
 
     fn has_name(&self, name: &str) -> bool {
-        self.by_name.contains_key(name)
+        self.by_name.contains(name)
     }
 }
 

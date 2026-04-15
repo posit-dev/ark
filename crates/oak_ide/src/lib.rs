@@ -9,7 +9,6 @@ pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
 use oak_index::external::BindingSource;
 use oak_index::semantic_index::ScopeId;
-use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
 use url::Url;
 
@@ -76,9 +75,14 @@ impl FileScope {
         match self {
             Self::Package { top_level, lazy } => {
                 let scope = index.scope_at(offset);
-                match index.scope(scope).kind() {
-                    ScopeKind::File => Cow::Borrowed(top_level),
-                    ScopeKind::Function => Cow::Borrowed(lazy),
+                let is_lazy = index.scope(scope).kind().is_lazy() ||
+                    index
+                        .ancestor_scopes(scope)
+                        .any(|id| index.scope(id).kind().is_lazy());
+                if is_lazy {
+                    Cow::Borrowed(lazy)
+                } else {
+                    Cow::Borrowed(top_level)
                 }
             },
             Self::SearchPath {

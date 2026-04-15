@@ -10,7 +10,9 @@ use oak_index::external::directive_layers;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::BindingSource;
+use oak_index::external::ScopeResolver;
 use oak_index::semantic_index::SemanticIndex;
+use oak_index::semantic_index_with_resolvers;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::SourceResolution;
 use oak_package::collation::collation_order;
@@ -194,7 +196,9 @@ impl WorldState {
         lazy.extend(root_layers);
         lazy.push(BindingSource::PackageExports("base".to_string()));
 
-        (doc.semantic_index(), FileScope::package(top_level, lazy))
+        let nse_resolver = ScopeResolver::new(&lazy, &self.library);
+        let index = doc.semantic_index_with_nse_resolver(&nse_resolver);
+        (index, FileScope::package(top_level, lazy))
     }
 
     fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
@@ -216,10 +220,16 @@ impl WorldState {
         let mut stack = HashSet::new();
         stack.insert(file.clone());
 
-        let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
-            let dir = source_root.as_ref()?;
-            self.resolve_source(dir, path, &mut stack)
-        });
+        let search_path = default_search_path();
+        let nse_resolver = ScopeResolver::new(&search_path, &self.library);
+        let index = semantic_index_with_resolvers(
+            &doc.parse.tree(),
+            |path| {
+                let dir = source_root.as_ref()?;
+                self.resolve_source(dir, path, &mut stack)
+            },
+            &nse_resolver,
+        );
 
         let directives = directive_layers(index.file_directives());
         (

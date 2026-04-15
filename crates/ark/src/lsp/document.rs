@@ -212,6 +212,13 @@ impl Document {
         oak_index::semantic_index(&self.parse.tree())
     }
 
+    pub fn semantic_index_with_nse_resolver(
+        &self,
+        resolver: &dyn oak_index::external::ExternalResolver,
+    ) -> SemanticIndex {
+        oak_index::semantic_index_with_nse_resolver(&self.parse.tree(), resolver)
+    }
+
     pub fn tree_sitter_point_from_lsp_position(
         &self,
         position: lsp_types::Position,

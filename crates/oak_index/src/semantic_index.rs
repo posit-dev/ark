@@ -279,11 +279,6 @@ impl SemanticIndex {
 /// symbol's `SymbolId` in the nested scope's symbol table (not the enclosing
 /// scope's), so consumers can do an O(1) lookup directly from a `UseId` without
 /// re-walking the ancestor chain.
-///
-/// When we implement NSE, we will add a `laziness: ScopeLaziness` field to
-/// distinguish lazy snapshots (functions, accumulated union via watchers) from
-/// eager snapshots (NSE scopes like `local()`, point-in-time capture at the
-/// call site). Currently all nested scopes are lazy, so the field is omitted.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnclosingSnapshotKey {
     pub nested_scope: ScopeId,
@@ -297,9 +292,8 @@ pub struct EnclosingSnapshotKey {
 // by the file: walking `parent` from any scope eventually reaches the
 // `File` scope which itself has `parent: None`.
 //
-// Currently only `function()` creates a new scope. In the future, constructs
-// like `local()`, `with()`, `within()` may also create scopes (determined
-// by function declarations resolved via salsa queries).
+// `function()` creates `Function` scopes. NSE constructs like `local()`,
+// `with()`, `test_that()` create `Nse` scopes once wired in.
 #[derive(Debug)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
@@ -318,6 +312,26 @@ pub enum ScopeKind {
     // cross-file resolution (package namespace, session, etc.) takes over.
     File,
     Function,
+    Nse(NseScope, ScopeLaziness),
+}
+
+/// Where definitions in an NSE scope land.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NseScope {
+    /// Definitions go to the current (parent) environment.
+    /// e.g. `rlang::on_load()`
+    Current,
+    /// Definitions go to a nested environment.
+    /// e.g. `local()`, `test_that()`, `with()`
+    Nested,
+}
+
+/// Whether an NSE scope evaluates eagerly (at the call site) or lazily
+/// (at an unknown later time).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeLaziness {
+    Eager,
+    Lazy,
 }
 
 impl Scope {
@@ -331,6 +345,16 @@ impl Scope {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+}
+
+impl ScopeKind {
+    pub fn is_lazy(self) -> bool {
+        match self {
+            ScopeKind::File => false,
+            ScopeKind::Function => true,
+            ScopeKind::Nse(_, laziness) => laziness == ScopeLaziness::Lazy,
+        }
     }
 }
 
