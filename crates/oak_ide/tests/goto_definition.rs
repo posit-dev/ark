@@ -18,6 +18,8 @@ use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index;
 use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::SemanticIndex;
+use oak_index::semantic_index_with_source_resolver;
+use oak_index::SourceResolution;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
 use oak_sources::test::TestPackageCache;
@@ -1214,7 +1216,7 @@ fn test_namespace_classify_string_selectors() {
 #[test]
 fn test_source_directive_resolves_to_sourced_file() {
     // script.R has `source("helpers.R")` then uses `helper`.
-    // The caller detects the Source directive and splices in the
+    // The builder resolves source() via the callback and injects the
     // sourced file's exports, enabling goto-definition.
     let helpers_source = "helper <- function() 1\n";
     let (_helpers_root, helpers_idx) = parse_source(helpers_source);
@@ -1222,30 +1224,24 @@ fn test_source_directive_resolves_to_sourced_file() {
 
     let script_source = "source(\"helpers.R\")\nhelper\n";
     let script_url = file_url("script.R");
-    let (script_root, script_idx) = parse_source(script_source);
 
-    // The semantic index detects the source() directive
-    let directives = script_idx.file_directives();
-    assert_eq!(directives.len(), 1);
-    assert_eq!(
-        directives[0].kind(),
-        &DirectiveKind::Source("helpers.R".into())
-    );
-
-    // The caller resolves Source directives via `directive_layers`, which
-    // calls back to get the full layers the sourced file contributes.
     let helpers_url_clone = helpers_url.clone();
-    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
-        let exports = helpers_idx
-            .file_exports()
-            .into_iter()
-            .map(|(name, range)| (name.to_string(), range))
-            .collect();
-        Some(vec![ScopeLayer::FileExports {
-            file: helpers_url_clone.clone(),
-            exports,
-        }])
+    let helpers_exports: Vec<_> = helpers_idx
+        .file_exports()
+        .into_iter()
+        .map(|(name, range)| (name.to_string(), helpers_url_clone.clone(), range))
+        .collect();
+
+    let parsed = parse(script_source, RParserOptions::default());
+    let script_root = parsed.syntax();
+    let script_idx = semantic_index_with_source_resolver(&parsed.tree(), move |_path| {
+        Some(SourceResolution {
+            definitions: helpers_exports.clone(),
+            packages: Vec::new(),
+        })
     });
+
+    let dir_layers = directive_layers(script_idx.file_directives());
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let library = empty_library();
@@ -1271,34 +1267,41 @@ fn test_source_directive_resolves_to_sourced_file() {
 fn test_source_directive_resolves_nested_library() {
     // helpers.R has `library(dplyr)` and defines `helper`.
     // script.R sources helpers.R then uses `mutate` (from dplyr).
-    // The nested library() directive should be visible.
+    // The nested library() directive should be visible via the resolver.
     let helpers_source = "library(dplyr)\nhelper <- function() 1\n";
     let (_helpers_root, helpers_idx) = parse_source(helpers_source);
     let helpers_url = file_url("helpers.R");
 
+    let helpers_exports: Vec<_> = helpers_idx
+        .file_exports()
+        .into_iter()
+        .map(|(name, range)| (name.to_string(), helpers_url.clone(), range))
+        .collect();
+    let helpers_packages: Vec<_> = helpers_idx
+        .file_directives()
+        .iter()
+        .map(|d| match d.kind() {
+            DirectiveKind::Attach(pkg) => pkg.clone(),
+        })
+        .collect();
+
     let script_source = "source(\"helpers.R\")\nmutate\n";
     let script_url = file_url("script.R");
-    let (script_root, script_idx) = parse_source(script_source);
 
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
-    let helpers_url_clone = helpers_url.clone();
-    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
-        let exports = helpers_idx
-            .file_exports()
-            .into_iter()
-            .map(|(name, range)| (name.to_string(), range))
-            .collect();
-        let mut layers = vec![ScopeLayer::FileExports {
-            file: helpers_url_clone.clone(),
-            exports,
-        }];
-        // Nested directives from helpers.R (unstamped, they inherit the
-        // parent source() directive's offset)
-        let nested = directive_layers(helpers_idx.file_directives(), |_| None);
-        layers.extend(nested.into_iter().map(|(_, l)| l));
-        Some(layers)
+    let exports_clone = helpers_exports.clone();
+    let packages_clone = helpers_packages.clone();
+    let parsed = parse(script_source, RParserOptions::default());
+    let script_root = parsed.syntax();
+    let script_idx = semantic_index_with_source_resolver(&parsed.tree(), move |_path| {
+        Some(SourceResolution {
+            definitions: exports_clone.clone(),
+            packages: packages_clone.clone(),
+        })
     });
+
+    let dir_layers = directive_layers(script_idx.file_directives());
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     // `mutate` resolves via dplyr (attached by helpers.R's library() call)
@@ -1316,23 +1319,19 @@ fn test_source_directive_resolves_nested_library() {
 
     // `helper` still resolves to helpers.R
     let source_with_helper = "source(\"helpers.R\")\nhelper\n";
-    let (script_root2, script_idx2) = parse_source(source_with_helper);
 
-    let helpers_url_clone = helpers_url.clone();
-    let dir_layers = directive_layers(script_idx2.file_directives(), |_path| {
-        let exports = helpers_idx
-            .file_exports()
-            .into_iter()
-            .map(|(name, range)| (name.to_string(), range))
-            .collect();
-        let mut layers = vec![ScopeLayer::FileExports {
-            file: helpers_url_clone.clone(),
-            exports,
-        }];
-        let nested = directive_layers(helpers_idx.file_directives(), |_| None);
-        layers.extend(nested.into_iter().map(|(_, l)| l));
-        Some(layers)
+    let exports_clone = helpers_exports.clone();
+    let packages_clone = helpers_packages.clone();
+    let parsed2 = parse(source_with_helper, RParserOptions::default());
+    let script_root2 = parsed2.syntax();
+    let script_idx2 = semantic_index_with_source_resolver(&parsed2.tree(), move |_path| {
+        Some(SourceResolution {
+            definitions: exports_clone.clone(),
+            packages: packages_clone.clone(),
+        })
     });
+
+    let dir_layers = directive_layers(script_idx2.file_directives());
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let use_offset = source_with_helper.rfind("helper").unwrap() as u32;
@@ -1369,22 +1368,26 @@ fn test_directive_not_visible_before_call_site() {
 
     let script_source = "mutate\nhelper\nlibrary(dplyr)\nsource(\"helpers.R\")\nmutate\nhelper\n";
     let script_url = file_url("script.R");
-    let (script_root, script_idx) = parse_source(script_source);
 
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
     let helpers_url_clone = helpers_url.clone();
-    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
-        let exports = helpers_idx
-            .file_exports()
-            .into_iter()
-            .map(|(name, range)| (name.to_string(), range))
-            .collect();
-        Some(vec![ScopeLayer::FileExports {
-            file: helpers_url_clone.clone(),
-            exports,
-        }])
+    let helpers_exports: Vec<_> = helpers_idx
+        .file_exports()
+        .into_iter()
+        .map(|(name, range)| (name.to_string(), helpers_url_clone.clone(), range))
+        .collect();
+
+    let parsed = parse(script_source, RParserOptions::default());
+    let script_root = parsed.syntax();
+    let script_idx = semantic_index_with_source_resolver(&parsed.tree(), move |_path| {
+        Some(SourceResolution {
+            definitions: helpers_exports.clone(),
+            packages: Vec::new(),
+        })
     });
+
+    let dir_layers = directive_layers(script_idx.file_directives());
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     // `mutate` before library(dplyr) (offset 0) — should NOT resolve
@@ -1440,12 +1443,8 @@ fn test_directive_not_visible_before_call_site() {
 #[test]
 fn test_directives_in_function_body_are_inert() {
     // `source()` and `library()` inside a function body should NOT
-    // produce directives. They're lazy (only evaluated when the
-    // function is called), so they don't affect the file's scope.
-    let helpers_source = "helper <- function() 1\n";
-    let (_helpers_root, helpers_idx) = parse_source(helpers_source);
-    let helpers_url = file_url("helpers.R");
-
+    // produce file-level directives. `library()` is guarded to file
+    // scope; `source()` without a resolver is a no-op.
     let script_source =
         "f <- function() {\n  source(\"helpers.R\")\n  library(dplyr)\n}\nhelper\nmutate\n";
     let script_url = file_url("script.R");
@@ -1456,21 +1455,10 @@ fn test_directives_in_function_body_are_inert() {
     // No file-level directives should be detected
     assert!(script_idx.file_directives().is_empty());
 
-    let helpers_url_clone = helpers_url.clone();
-    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
-        let exports = helpers_idx
-            .file_exports()
-            .into_iter()
-            .map(|(name, range)| (name.to_string(), range))
-            .collect();
-        Some(vec![ScopeLayer::FileExports {
-            file: helpers_url_clone.clone(),
-            exports,
-        }])
-    });
+    let dir_layers = directive_layers(script_idx.file_directives());
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
-    // `helper` — not resolved (source() was inside a function)
+    // `helper` — not resolved (source() was inside a function, no resolver)
     let use_offset = script_source.find("\nhelper").unwrap() as u32 + 1;
     let targets = goto_definition(
         offset(use_offset),
@@ -1486,6 +1474,68 @@ fn test_directives_in_function_body_are_inert() {
     let use_offset = script_source.find("\nmutate").unwrap() as u32 + 1;
     let targets = goto_definition(
         offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert!(targets.is_empty());
+}
+
+#[test]
+fn test_source_in_function_body_scoping() {
+    // `source()` inside a function body with a resolver injects definitions
+    // into the function scope. `helper` resolves inside f but not at file level.
+    let helpers_source = "helper <- function() 1\n";
+    let (_helpers_root, helpers_idx) = parse_source(helpers_source);
+    let helpers_url = file_url("helpers.R");
+
+    let script_source = "f <- function() {\n  source(\"helpers.R\")\n  helper\n}\nhelper\n";
+    let script_url = file_url("script.R");
+
+    let helpers_url_clone = helpers_url.clone();
+    let helpers_exports: Vec<_> = helpers_idx
+        .file_exports()
+        .into_iter()
+        .map(|(name, range)| (name.to_string(), helpers_url_clone.clone(), range))
+        .collect();
+
+    let parsed = parse(script_source, RParserOptions::default());
+    let script_root = parsed.syntax();
+    let script_idx = semantic_index_with_source_resolver(&parsed.tree(), move |_path| {
+        Some(SourceResolution {
+            definitions: helpers_exports.clone(),
+            packages: Vec::new(),
+        })
+    });
+
+    let dir_layers = directive_layers(script_idx.file_directives());
+    let scope = ExternalScope::search_path(dir_layers, Vec::new());
+
+    let library = empty_library();
+
+    // `helper` inside the function body — should resolve to helpers.R
+    let inner_offset = script_source.find("  helper\n}").unwrap() as u32 + 2;
+    let targets = goto_definition(
+        offset(inner_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert_eq!(targets, vec![NavigationTarget {
+        file: helpers_url,
+        name: "helper".to_string(),
+        full_range: text_range(0, 6),
+        focus_range: text_range(0, 6),
+    }]);
+
+    // `helper` outside the function — should NOT resolve
+    let outer_offset = script_source.rfind("\nhelper\n").unwrap() as u32 + 1;
+    let targets = goto_definition(
+        offset(outer_offset),
         &script_url,
         &script_root,
         &script_idx,

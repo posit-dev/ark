@@ -7,6 +7,7 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
+use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
@@ -37,8 +38,10 @@ impl Identifier {
     pub fn classify(root: &RSyntaxNode, index: &SemanticIndex, offset: TextSize) -> Option<Self> {
         let (scope_id, _) = index.scope_at(offset);
 
-        if let Some((def_id, _)) = index.definitions(scope_id).contains(offset) {
-            return Some(Identifier::Definition { scope_id, def_id });
+        if let Some((def_id, def)) = index.definitions(scope_id).contains(offset) {
+            if !matches!(def.kind(), DefinitionKind::Sourced { .. }) {
+                return Some(Identifier::Definition { scope_id, def_id });
+            }
         }
 
         if let Some((use_id, _)) = index.uses(scope_id).contains(offset) {

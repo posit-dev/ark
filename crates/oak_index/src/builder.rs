@@ -22,6 +22,7 @@ use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use url::Url;
 
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
@@ -40,19 +41,48 @@ use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 use crate::use_def_map::UseDefMapBuilder;
 
+/// The result of resolving a `source()` call. Returned by the resolver
+/// callback passed to the builder.
+pub struct SourceResolution {
+    /// Definitions to inject as synthetic bindings in the calling scope.
+    /// Each entry is (name, file_url, range_in_source_file).
+    pub definitions: Vec<(String, Url, TextRange)>,
+    /// Package names from `library()` directives in the sourced file
+    /// (and transitively from files it sources).
+    pub packages: Vec<String>,
+}
+
 /// Build a [`SemanticIndex`] from a parsed R file.
 pub fn semantic_index(root: &RRoot) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range);
+    let mut builder = SemanticIndexBuilder::new(range, None);
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
     builder.finish()
 }
 
+/// Build a [`SemanticIndex`] with cross-file `source()` resolution.
+///
+/// The resolver callback is called when the builder encounters a
+/// `source("path")` call. It should return the sourced file's exported
+/// definitions and any `library()` package attachments.
+pub fn semantic_index_with_source_resolver<'a>(
+    root: &RRoot,
+    resolver: impl FnMut(&str) -> Option<SourceResolution> + 'a,
+) -> SemanticIndex {
+    let range = root.syntax().text_trimmed_range();
+    let mut builder = SemanticIndexBuilder::new(range, Some(Box::new(resolver)));
+    builder.pre_scan_scope(root.syntax());
+    builder.collect_expression_list(&root.expressions());
+    builder.finish()
+}
+
+type SourceResolver<'a> = Box<dyn FnMut(&str) -> Option<SourceResolution> + 'a>;
+
 // Maintains the preorder allocation invariant on `Scope::descendants`. The
 // parallel arrays are pushed in lockstep so they stay indexed by the same
 // `ScopeId`.
-struct SemanticIndexBuilder {
+struct SemanticIndexBuilder<'a> {
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
@@ -62,10 +92,11 @@ struct SemanticIndexBuilder {
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     directives: Vec<Directive>,
+    source_resolver: Option<SourceResolver<'a>>,
 }
 
-impl SemanticIndexBuilder {
-    fn new(range: TextRange) -> Self {
+impl<'a> SemanticIndexBuilder<'a> {
+    fn new(range: TextRange, source_resolver: Option<SourceResolver<'a>>) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
@@ -102,6 +133,7 @@ impl SemanticIndexBuilder {
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
             directives: Vec::new(),
+            source_resolver,
         }
     }
 
@@ -344,9 +376,7 @@ impl SemanticIndexBuilder {
                 // also consider nested scopes as long as they're not lazy (e.g.
                 // function definitions or NSE calls that don't evaluate
                 // immediately.
-                if self.current_scope == ScopeId::from(0) {
-                    self.collect_directive(call);
-                }
+                self.collect_directive(call);
             },
             AnyRExpression::RSubset(subset) => {
                 if let Ok(object) = subset.function() {
@@ -669,8 +699,6 @@ impl SemanticIndexBuilder {
         }
     }
 
-    /// Detect directives like `library(pkg)` and `require(pkg)` at the
-    /// file-level scope.
     fn collect_directive(&mut self, call: &aether_syntax::RCall) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
@@ -683,14 +711,17 @@ impl SemanticIndexBuilder {
             return;
         }
 
+        // library()/require() only at file scope -- in a function body the
+        // attachment is a runtime side effect we can't model statically.
+        if is_attach && self.current_scope != ScopeId::from(0) {
+            return;
+        }
+
         let Ok(args) = call.arguments() else {
             return;
         };
         let mut items = args.items().iter();
 
-        // For now, only recognise exactly one unnamed argument. We'll do
-        // argument matching later (`character.only` unquoting is another
-        // complication).
         let Some(Ok(first_arg)) = items.next() else {
             return;
         };
@@ -701,7 +732,9 @@ impl SemanticIndexBuilder {
             return;
         };
 
-        let kind = if is_attach {
+        let call_offset = call.syntax().text_trimmed_range().start();
+
+        if is_attach {
             let pkg_name = match &value {
                 AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
                 AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
@@ -710,8 +743,12 @@ impl SemanticIndexBuilder {
             let Some(pkg_name) = pkg_name else {
                 return;
             };
-            DirectiveKind::Attach(pkg_name)
+            self.directives.push(Directive {
+                kind: DirectiveKind::Attach(pkg_name),
+                offset: call_offset,
+            });
         } else {
+            // source() -- resolve via callback and inject definitions
             let path = match &value {
                 AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
                 _ => None,
@@ -719,13 +756,29 @@ impl SemanticIndexBuilder {
             let Some(path) = path else {
                 return;
             };
-            DirectiveKind::Source(path)
-        };
 
-        self.directives.push(Directive {
-            kind,
-            offset: call.syntax().text_trimmed_range().start(),
-        });
+            // Take the resolver out to avoid borrow conflict with `&mut self`
+            let mut resolver = self.source_resolver.take();
+            if let Some(ref mut resolve) = resolver {
+                if let Some(resolution) = resolve(&path) {
+                    for (name, file, range) in resolution.definitions {
+                        self.add_definition(
+                            &name,
+                            SymbolFlags::IS_BOUND,
+                            DefinitionKind::Sourced { file },
+                            range,
+                        );
+                    }
+                    for pkg in resolution.packages {
+                        self.directives.push(Directive {
+                            kind: DirectiveKind::Attach(pkg),
+                            offset: call_offset,
+                        });
+                    }
+                }
+            }
+            self.source_resolver = resolver;
+        }
     }
 
     fn finish(mut self) -> SemanticIndex {
