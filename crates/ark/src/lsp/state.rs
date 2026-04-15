@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::anyhow;
+use oak_core::file::list_r_files;
+use oak_ide::FileScope;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
-use oak_index::external::BindingSource;
 use oak_package::collation::collation_order;
 use oak_package::library::Library;
+use stdext::result::ResultExt;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
@@ -89,66 +91,66 @@ impl WorldState {
     /// current project type. For packages, this creates a scope containing
     /// imports and top-level definitions in other files, respecting the
     /// collation order.
-    pub(crate) fn file_scope(&self, file: &Url) -> Vec<BindingSource> {
+    pub(crate) fn file_scope(&self, file: &Url) -> FileScope {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            // All non-package scripts are isolated
-            return Vec::new();
+            return FileScope::default();
         };
 
         let root_layers = package_root_layers(&pkg.namespace);
 
-        // Collect R source file URIs from watched documents that live under
-        // the package's R/ directory.
-        let r_dir = Url::from_directory_path(pkg.path.join("R")).ok();
+        // Discover all R source files in the package's R/ directory.
+        let r_dir = pkg.path.join("R");
+        let r_files = list_r_files(r_dir.as_ref());
 
-        let r_file_uris: Vec<&Url> = self
-            .documents
-            .keys()
-            .filter(|uri| {
-                r_dir
-                    .as_ref()
-                    .is_some_and(|dir| uri.as_str().starts_with(dir.as_str()))
-            })
-            .collect();
-
-        // Extract bare filenames for collation ordering.
-        let filenames: Vec<String> = r_file_uris
+        let filenames: Vec<String> = r_files
             .iter()
-            .filter_map(|uri| uri.path().rsplit('/').next().map(|s| s.to_string()))
+            .filter_map(|p| p.file_name()?.to_str().map(|s| s.to_string()))
             .collect();
 
         let ordered = collation_order(&pkg.description, &filenames);
 
         let filename = file.path().rsplit('/').next().unwrap_or_default();
 
-        // Predecessors are files earlier in collation order. Later
-        // predecessors are more local (shadow earlier ones), so their
-        // layers go first in the chain. We collect predecessors then
-        // iterate in reverse.
-        let predecessors: Vec<_> = ordered
-            .iter()
-            .take_while(|name| name.as_str() != filename)
-            .collect();
+        // Iterate in reverse collation order so later files (which shadow
+        // earlier ones) come first in the chain. Split at the current file
+        // to separate predecessors from the full set.
+        let mut top_level = Vec::new();
+        let mut lazy = Vec::new();
+        let mut past_current = false;
 
-        let mut layers = Vec::new();
-
-        for name in predecessors.into_iter().rev() {
-            let Some(pred_uri) = r_file_uris
-                .iter()
-                .find(|uri| uri.path().ends_with(name.as_str()))
-            else {
+        for name in ordered.iter().rev() {
+            if name.as_str() == filename {
+                past_current = true;
                 continue;
-            };
-            let Some(pred_doc) = self.documents.get(*pred_uri) else {
+            }
+
+            let path = r_dir.join(name);
+            let Some(uri) = Url::from_file_path(&path).log_err() else {
                 continue;
             };
 
-            let pred_index = pred_doc.semantic_index();
-            layers.extend(file_layers((*pred_uri).clone(), &pred_index));
+            // Use the open document if available, otherwise read from disk.
+            // TODO: Store non-opened workspace documents in VFS.
+            let doc = if let Some(open) = self.documents.get(&uri) {
+                open
+            } else {
+                let Ok(contents) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                &Document::new(&contents, None)
+            };
+
+            let layers = file_layers(uri, &doc.semantic_index());
+            lazy.extend(layers.clone());
+            if past_current {
+                top_level.extend(layers);
+            }
         }
 
-        layers.extend(root_layers);
-        layers
+        top_level.extend(root_layers.clone());
+        lazy.extend(root_layers);
+
+        FileScope::package(top_level, lazy)
     }
 }
 
