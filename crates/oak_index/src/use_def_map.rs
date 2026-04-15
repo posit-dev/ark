@@ -139,12 +139,6 @@ pub struct UseDefMap {
 }
 
 impl UseDefMap {
-    pub(crate) fn empty() -> Self {
-        Self {
-            bindings_by_use: IndexVec::new(),
-        }
-    }
-
     pub fn bindings_at_use(&self, use_id: UseId) -> &Bindings {
         &self.bindings_by_use[use_id]
     }
