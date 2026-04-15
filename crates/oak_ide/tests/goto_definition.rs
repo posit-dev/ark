@@ -6,6 +6,7 @@ use aether_parser::RParserOptions;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_ide::goto_definition;
+use oak_ide::FileScope;
 use oak_ide::NavigationTarget;
 use oak_index::external::file_layers;
 use oak_index::external::BindingSource;
@@ -66,7 +67,7 @@ fn test_local_simple() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(offset(7), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(7), &file, &idx, &FileScope::default(), &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -83,7 +84,7 @@ fn test_local_reassignment_shadows() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(offset(14), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(14), &file, &idx, &FileScope::default(), &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -101,7 +102,13 @@ fn test_local_conditional_returns_both() {
 
     let use_offset = source.rfind('x').unwrap() as u32;
 
-    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
     assert_eq!(targets, vec![
         NavigationTarget {
             file: file.clone(),
@@ -126,7 +133,13 @@ fn test_local_in_function() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -143,7 +156,13 @@ fn test_local_parameter() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -162,7 +181,13 @@ fn test_enclosing_scope() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &idx, &[], &library);
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::default(),
+        &library,
+    );
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -185,7 +210,13 @@ fn test_external_project_file() {
     let other_idx = parse_source(other_source);
     let scope_chain = file_layers(other_url.clone(), &other_idx);
 
-    let targets = goto_definition(offset(0), &file, &idx, &scope_chain, &library);
+    let targets = goto_definition(
+        offset(0),
+        &file,
+        &idx,
+        &FileScope::package(scope_chain.clone(), scope_chain),
+        &library,
+    );
     assert_eq!(targets, vec![NavigationTarget {
         file: other_url,
         name: "foo".to_string(),
@@ -205,7 +236,13 @@ fn test_external_package() {
 
     let scope_chain = vec![BindingSource::PackageExports("dplyr".to_string())];
 
-    let targets = goto_definition(offset(0), &file, &idx, &scope_chain, &library);
+    let targets = goto_definition(
+        offset(0),
+        &file,
+        &idx,
+        &FileScope::package(scope_chain.clone(), scope_chain),
+        &library,
+    );
     // No navigation target for package symbols (no file/range to navigate to)
     assert!(targets.is_empty());
 }
@@ -223,7 +260,13 @@ fn test_external_import_from() {
     imports.insert("tibble".to_string(), "tibble".to_string());
     let scope_chain = vec![BindingSource::PackageImports(imports)];
 
-    let targets = goto_definition(offset(0), &file, &idx, &scope_chain, &library);
+    let targets = goto_definition(
+        offset(0),
+        &file,
+        &idx,
+        &FileScope::package(scope_chain.clone(), scope_chain),
+        &library,
+    );
     // importFrom resolves to a package, no file/range to navigate to
     assert!(targets.is_empty());
 }
@@ -239,7 +282,7 @@ fn test_dollar_lhs_resolves() {
     let library = empty_library();
 
     // `foo` in `foo$bar` starts at offset 14
-    let targets = goto_definition(offset(14), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(14), &file, &idx, &FileScope::default(), &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -257,8 +300,41 @@ fn test_dollar_rhs_no_resolution() {
     let library = empty_library();
 
     // `bar` starts at offset 18
-    let targets = goto_definition(offset(18), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(18), &file, &idx, &FileScope::default(), &library);
     assert!(targets.is_empty());
+}
+
+// --- Use inside function body with cross-file definition ---
+
+#[test]
+fn test_use_in_function_body_resolves_via_external() {
+    // Reproduces: `is_null` used inside a function body, defined in another
+    // file. The use is free in the function scope, so resolution should fall
+    // through enclosing scopes to the external scope chain.
+    let source = "f <- function(x) {\n  if (is_null(x)) NULL\n}\n";
+    let file = file_url("R/cnd-last.R");
+    let idx = parse_source(source);
+
+    let other_source = "is_null <- is.null\n";
+    let other_idx = parse_source(other_source);
+    let other_url = file_url("R/types.R");
+    let scope_chain = file_layers(other_url.clone(), &other_idx);
+
+    let library = empty_library();
+
+    // `is_null` starts at offset 24
+    let is_null_offset = source.find("is_null").unwrap();
+    assert_eq!(is_null_offset, 25);
+
+    let scope = FileScope::package(Vec::new(), scope_chain);
+
+    let targets = goto_definition(offset(is_null_offset as u32), &file, &idx, &scope, &library);
+    assert_eq!(targets, vec![NavigationTarget {
+        file: other_url,
+        name: "is_null".to_string(),
+        full_range: text_range(0, 7),
+        focus_range: text_range(0, 7),
+    }]);
 }
 
 // --- No resolution ---
@@ -270,7 +346,7 @@ fn test_no_use_at_offset() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(offset(3), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(3), &file, &idx, &FileScope::default(), &library);
     assert!(targets.is_empty());
 }
 
@@ -281,7 +357,7 @@ fn test_unresolved_symbol() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(offset(0), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(0), &file, &idx, &FileScope::default(), &library);
     assert!(targets.is_empty());
 }
 
@@ -297,7 +373,13 @@ fn test_local_shadows_external() {
     let scope_chain = vec![BindingSource::PackageExports("pkg".to_string())];
 
     let use_offset = source.rfind("foo").unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &idx, &scope_chain, &library);
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::package(scope_chain.clone(), scope_chain),
+        &library,
+    );
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -322,7 +404,13 @@ fn test_conditional_definition_includes_external() {
     let library = empty_library();
 
     let use_offset = source.rfind('x').unwrap() as u32;
-    let targets = goto_definition(offset(use_offset), &file, &idx, &scope_chain, &library);
+    let targets = goto_definition(
+        offset(use_offset),
+        &file,
+        &idx,
+        &FileScope::package(scope_chain.clone(), scope_chain),
+        &library,
+    );
     assert_eq!(targets, vec![
         NavigationTarget {
             file,
@@ -349,7 +437,7 @@ fn test_definition_site_assignment() {
     let idx = parse_source(source);
     let library = empty_library();
 
-    let targets = goto_definition(offset(0), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(0), &file, &idx, &FileScope::default(), &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "foo".to_string(),
@@ -366,7 +454,7 @@ fn test_definition_site_parameter() {
     let library = empty_library();
 
     // Cursor on the `x` parameter name (offset 14)
-    let targets = goto_definition(offset(14), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(14), &file, &idx, &FileScope::default(), &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "x".to_string(),
@@ -383,7 +471,7 @@ fn test_definition_site_for_variable() {
     let library = empty_library();
 
     // Cursor on the `i` in `for (i in ...)`
-    let targets = goto_definition(offset(5), &file, &idx, &[], &library);
+    let targets = goto_definition(offset(5), &file, &idx, &FileScope::default(), &library);
     assert_eq!(targets, vec![NavigationTarget {
         file,
         name: "i".to_string(),
@@ -567,10 +655,7 @@ fn test_library_directive_in_predecessor() {
     let aaa_layers = file_layers(aaa_url, &aaa_idx);
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
-    let scope = FileScope {
-        top_level: aaa_layers.clone(),
-        lazy: aaa_layers,
-    };
+    let scope = FileScope::package(aaa_layers.clone(), aaa_layers);
 
     let targets = goto_definition(offset(0), &bbb_url, &bbb_idx, &scope, &library);
     // dplyr::mutate is a package symbol, no file/range to navigate to

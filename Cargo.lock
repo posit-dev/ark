@@ -381,6 +381,7 @@ dependencies = [
  "mime_guess",
  "nix",
  "notify",
+ "oak_core",
  "oak_ide",
  "oak_index",
  "oak_package",
