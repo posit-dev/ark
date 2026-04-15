@@ -1,6 +1,6 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
-use oak_index::semantic_index;
+use oak_index::nse_registry::RegistryResolver;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::NseScope;
 use oak_index::semantic_index::ScopeId;
@@ -9,6 +9,7 @@ use oak_index::semantic_index::ScopeLaziness;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index::SymbolFlags;
 use oak_index::semantic_index::UseId;
+use oak_index::semantic_index_with_resolver;
 
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
@@ -17,7 +18,7 @@ fn index(source: &str) -> SemanticIndex {
         panic!("source has syntax errors: {source}");
     }
 
-    semantic_index(&parsed.tree())
+    semantic_index_with_resolver(&parsed.tree(), &RegistryResolver)
 }
 
 // --- NSE scopes ---

@@ -2,6 +2,7 @@ use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::anyhow;
 use oak_ide::NavigationTarget;
+use oak_index::external::ScopeResolver;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
@@ -23,16 +24,11 @@ pub(crate) fn goto_definition(
         document.position_encoding,
     )?;
 
-    let index = document.semantic_index();
+    let scope = state.file_scope(&uri);
+    let resolver = ScopeResolver::new(scope.lazy(), &state.library);
+    let index = document.semantic_index_with_resolver(&resolver);
     let root = document.syntax();
-    let targets = oak_ide::goto_definition(
-        offset,
-        &uri,
-        &root,
-        &index,
-        &state.file_scope(&uri),
-        &state.library,
-    );
+    let targets = oak_ide::goto_definition(offset, &uri, &root, &index, &scope, &state.library);
 
     if targets.is_empty() {
         return Ok(None);
@@ -498,6 +494,110 @@ mod tests {
         let result = goto_definition(&doc_null, params, &state).unwrap();
         // FIXME: should resolve to base::is.null but doesn't because
         // `is.null` is missing from the INDEX-based export list.
+        assert_eq!(result, None);
+    }
+
+    // --- NSE scopes ---
+
+    #[test]
+    fn test_with_definition_not_visible_outside() {
+        // `x` defined inside `with()` should not be visible at file scope.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+        let code = "with(NULL, {\n    x <- 1\n})\nx\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("test.R");
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        // Cursor on `x` at file level (line 3, col 0)
+        let params = make_params(uri, 3, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_with_goto_def_resolves_inside() {
+        // `x` used inside `with()` after being defined there should
+        // resolve to the definition inside the scope.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+        let code = "with(NULL, {\n    x <- 1\n    x\n})\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("test.R");
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        // Cursor on `x` usage inside with (line 2, col 4)
+        let params = make_params(uri.clone(), 2, 4);
+        assert_matches!(
+            goto_definition(&doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 4),
+                        end: lsp_types::Position::new(1, 5),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_with_free_variable_resolves_to_enclosing() {
+        // `y` defined before `with()` should be visible inside via
+        // eager enclosing snapshot.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+        let code = "y <- 42\nwith(NULL, {\n    y\n})\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("test.R");
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        // Cursor on `y` inside with (line 2, col 4)
+        let params = make_params(uri.clone(), 2, 4);
+        assert_matches!(
+            goto_definition(&doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(0, 1),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_local_definition_not_visible_outside() {
+        // `local` is not in base's INDEX file, but the base fallback in
+        // `resolve_nse_name` handles it. `x` defined inside `local()`
+        // should not be visible at file scope.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+        let code = "local({\n    x <- 1\n})\nx\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("test.R");
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        // Cursor on `x` at file level (line 3, col 0)
+        let params = make_params(uri, 3, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
         assert_eq!(result, None);
     }
 }

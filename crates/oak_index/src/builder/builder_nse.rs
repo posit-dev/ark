@@ -10,6 +10,7 @@ use oak_core::syntax_ext::RStringValueExt;
 use stdext::OptionExt;
 
 use super::SemanticIndexBuilder;
+use crate::external::ExternalDefinition;
 use crate::nse_registry;
 use crate::nse_registry::NseAnnotation;
 use crate::nse_registry::ScopedArg;
@@ -20,7 +21,7 @@ use crate::semantic_index::ScopeKind;
 use crate::semantic_index::ScopeLaziness;
 use crate::semantic_index::SymbolFlags;
 
-impl SemanticIndexBuilder {
+impl<'a> SemanticIndexBuilder<'a> {
     // --- NSE callee resolution ---
 
     /// Resolve the callee of a call to an NSE annotation.
@@ -40,12 +41,12 @@ impl SemanticIndexBuilder {
                     stdext::debug_panic!(
                         "Callee `{name}` not interned: collect_expression should have run first"
                     );
-                    return nse_registry::lookup_by_name(&name);
+                    return self.resolve_nse_name(&name);
                 };
                 if !self.current_use_def.is_unbound(symbol_id) {
                     return None;
                 }
-                nse_registry::lookup_by_name(&name)
+                self.resolve_nse_name(&name)
             },
             AnyRExpression::RNamespaceExpression(ns_expr) => {
                 let left = ns_expr.left().ok()?;
@@ -55,6 +56,21 @@ impl SemanticIndexBuilder {
                 nse_registry::lookup(&pkg, &func_name)
             },
             _ => None,
+        }
+    }
+
+    fn resolve_nse_name(&self, name: &str) -> Option<&'static NseAnnotation> {
+        match self.resolver.resolve(name) {
+            Some(ExternalDefinition::Package { ref package, .. }) => {
+                nse_registry::lookup(package, name)
+            },
+            Some(ExternalDefinition::ProjectFile { .. }) => None,
+            None => {
+                // Base is always attached but may not be discoverable through
+                // the resolver (base has no NAMESPACE and its INDEX is
+                // incomplete). Fall back to a direct registry check.
+                nse_registry::lookup("base", name)
+            },
         }
     }
 

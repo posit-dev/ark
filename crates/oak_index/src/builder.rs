@@ -23,6 +23,8 @@ use oak_core::syntax_ext::RStringValueExt;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 
+use crate::external::ExternalResolver;
+use crate::external::NoopResolver;
 use crate::index_vec::Idx;
 use crate::index_vec::IndexVec;
 use crate::semantic_index::Definition;
@@ -48,11 +50,24 @@ use crate::use_def_map::UseDefMapBuilder;
 
 /// Build a [`SemanticIndex`] from a parsed R file.
 pub fn semantic_index(root: &RRoot) -> SemanticIndex {
+    build_semantic_index(root, &NoopResolver)
+}
+
+/// Build a [`SemanticIndex`] with an external [`ExternalResolver`] for cross-file
+/// NSE callee resolution.
+pub fn semantic_index_with_resolver(
+    root: &RRoot,
+    resolver: &dyn ExternalResolver,
+) -> SemanticIndex {
+    build_semantic_index(root, resolver)
+}
+
+fn build_semantic_index(root: &RRoot, resolver: &dyn ExternalResolver) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
 
     // First walk: no NSE scopes pushed, so NSE call bodies (e.g. `local({...})`)
     // are walked inline. In this phase we discover which calls are NSE.
-    let mut builder = SemanticIndexBuilder::new(range);
+    let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
 
@@ -75,7 +90,7 @@ pub fn semantic_index(root: &RRoot) -> SemanticIndex {
     const MAX_NSE_ITERATIONS: usize = 10;
     for _ in 0..MAX_NSE_ITERATIONS {
         let prev_ranges = std::mem::take(&mut builder.nse_nested_ranges);
-        builder = SemanticIndexBuilder::new_for_rewalk(range, prev_ranges.clone());
+        builder = SemanticIndexBuilder::new_for_rewalk(range, prev_ranges.clone(), resolver);
         builder.pre_scan_scope(root.syntax());
         builder.collect_expression_list(&root.expressions());
 
@@ -90,7 +105,7 @@ pub fn semantic_index(root: &RRoot) -> SemanticIndex {
 // Maintains the preorder allocation invariant on `Scope::descendants`. The
 // parallel arrays are pushed in lockstep so they stay indexed by the same
 // `ScopeId`.
-struct SemanticIndexBuilder {
+struct SemanticIndexBuilder<'a> {
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
@@ -114,18 +129,28 @@ struct SemanticIndexBuilder {
     // bodies (e.g. `x` from `local({x <- 1})`), which would cause enclosing
     // snapshots to be registered at the wrong ancestor scope.
     is_rewalk: bool,
+    resolver: &'a dyn ExternalResolver,
 }
 
-impl SemanticIndexBuilder {
-    fn new(range: TextRange) -> Self {
-        Self::create(range, FxHashSet::default(), false)
+impl<'a> SemanticIndexBuilder<'a> {
+    fn new(range: TextRange, resolver: &'a dyn ExternalResolver) -> Self {
+        Self::create(range, FxHashSet::default(), false, resolver)
     }
 
-    fn new_for_rewalk(range: TextRange, nse_nested_ranges: FxHashSet<TextRange>) -> Self {
-        Self::create(range, nse_nested_ranges, true)
+    fn new_for_rewalk(
+        range: TextRange,
+        nse_nested_ranges: FxHashSet<TextRange>,
+        resolver: &'a dyn ExternalResolver,
+    ) -> Self {
+        Self::create(range, nse_nested_ranges, true, resolver)
     }
 
-    fn create(range: TextRange, nse_nested_ranges: FxHashSet<TextRange>, is_rewalk: bool) -> Self {
+    fn create(
+        range: TextRange,
+        nse_nested_ranges: FxHashSet<TextRange>,
+        is_rewalk: bool,
+        resolver: &'a dyn ExternalResolver,
+    ) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
@@ -163,6 +188,7 @@ impl SemanticIndexBuilder {
             nse_nested_ranges,
             found_nse: false,
             is_rewalk,
+            resolver,
         }
     }
 

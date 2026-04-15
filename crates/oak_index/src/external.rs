@@ -156,3 +156,39 @@ pub fn package_root_layers(namespace: &Namespace) -> Vec<BindingSource> {
 
     layers
 }
+
+/// Resolves a bare unbound function name to its external definition.
+/// Used during the semantic index build to determine whether a call target
+/// is an NSE function from a known package.
+pub trait ExternalResolver {
+    fn resolve(&self, name: &str) -> Option<ExternalDefinition>;
+}
+
+/// Resolves names against a scope chain and library. Wraps
+/// `resolve_external_name` behind the `ExternalResolver` trait.
+pub struct ScopeResolver<'a> {
+    scope: &'a [BindingSource],
+    library: &'a Library,
+}
+
+impl<'a> ScopeResolver<'a> {
+    pub fn new(scope: &'a [BindingSource], library: &'a Library) -> Self {
+        Self { scope, library }
+    }
+}
+
+impl ExternalResolver for ScopeResolver<'_> {
+    fn resolve(&self, name: &str) -> Option<ExternalDefinition> {
+        resolve_external_name(self.library, self.scope, name)
+    }
+}
+
+/// Noop resolver that never finds external definitions.
+/// Used by `semantic_index()` when no cross-file context is available.
+pub(crate) struct NoopResolver;
+
+impl ExternalResolver for NoopResolver {
+    fn resolve(&self, _name: &str) -> Option<ExternalDefinition> {
+        None
+    }
+}

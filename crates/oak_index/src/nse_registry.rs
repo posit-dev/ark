@@ -269,3 +269,26 @@ pub fn lookup_by_name(function: &str) -> Option<&'static NseAnnotation> {
     }
     found
 }
+
+/// Resolver for tests: looks up function names across all registered
+/// packages. Returns `None` if the name is ambiguous (multiple packages).
+pub struct RegistryResolver;
+
+impl crate::external::ExternalResolver for RegistryResolver {
+    fn resolve(&self, name: &str) -> Option<crate::external::ExternalDefinition> {
+        let mut found_package = None;
+        for entry in REGISTRY.iter() {
+            if entry.function == name {
+                if found_package.is_some() {
+                    return None;
+                }
+                found_package = Some(entry.package);
+            }
+        }
+        let package = found_package?;
+        Some(crate::external::ExternalDefinition::Package {
+            package: package.to_string(),
+            name: name.to_string(),
+        })
+    }
+}
