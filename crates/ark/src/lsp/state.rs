@@ -3,14 +3,13 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use biome_rowan::TextSize;
 use oak_core::file::list_r_files;
 use oak_ide::ExternalScope;
 use oak_index::library::Library;
+use oak_index::scope_layer::directive_layers;
 use oak_index::scope_layer::file_layers;
 use oak_index::scope_layer::package_root_layers;
 use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index::DirectiveKind;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -104,8 +103,7 @@ impl WorldState {
     /// collation order.
     pub(crate) fn external_scope(&self, file: &Url) -> ExternalScope {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            let directives = self.directive_layers(file);
-            return ExternalScope::search_path(directives, default_search_path());
+            return self.script_file_scope(file);
         };
 
         let root_layers = package_root_layers(pkg.namespace());
@@ -174,18 +172,69 @@ impl WorldState {
         ExternalScope::package(top_level, lazy)
     }
 
-    fn directive_layers(&self, file: &Url) -> Vec<(TextSize, ScopeLayer)> {
-        let Some(doc) = self.documents.get(file) else {
-            return Vec::new();
+    /// Build the scope for a script file (not inside a package).
+    ///
+    /// Resolves `library()` and `source()` directives from the file's own
+    /// content, then appends the default R search path.
+    fn script_file_scope(&self, file: &Url) -> ExternalScope {
+        let file_path = file.to_file_path().ok();
+
+        let doc = if let Some(open) = self.documents.get(file) {
+            open
+        } else if let Some(contents) = file_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).log_err())
+        {
+            &Document::new(&contents, None)
+        } else {
+            return ExternalScope::search_path(Vec::new(), default_search_path());
         };
+
         let index = doc.semantic_index();
-        index
-            .file_directives()
-            .iter()
-            .map(|d| match d.kind() {
-                DirectiveKind::Attach(pkg) => (d.offset(), ScopeLayer::PackageExports(pkg.clone())),
-            })
-            .collect()
+
+        let file_dir = file_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
+
+        let directives = directive_layers(index.file_directives(), |path| {
+            let dir = file_dir.as_ref()?;
+            self.resolve_source_layers(dir, path)
+        });
+
+        ExternalScope::search_path(directives, default_search_path())
+    }
+
+    /// Resolve a `source()` directive into the full set of layers the sourced
+    /// file contributes: its own exports, `PackageExports` from any
+    /// `library()` calls, and layers from nested `source()` calls.
+    fn resolve_source_layers(&self, base_dir: &Path, path: &str) -> Option<Vec<ScopeLayer>> {
+        let resolved = base_dir.join(path);
+        let url = Url::from_file_path(&resolved).log_err()?;
+
+        let sourced_doc = if let Some(open) = self.documents.get(&url) {
+            open
+        } else {
+            let contents = std::fs::read_to_string(&resolved).log_err()?;
+            &Document::new(&contents, None)
+        };
+
+        let index = sourced_doc.semantic_index();
+
+        let mut layers = Vec::new();
+
+        let exports = index
+            .file_exports()
+            .into_iter()
+            .map(|(name, range)| (name.to_string(), range))
+            .collect();
+        layers.push(ScopeLayer::FileExports { file: url, exports });
+
+        // Recurse into the sourced document in case it itself calls `source()`
+        let source_dir = resolved.parent()?;
+        let nested = directive_layers(index.file_directives(), |nested_path| {
+            self.resolve_source_layers(source_dir, nested_path)
+        });
+        layers.extend(nested.into_iter().map(|(_, l)| l));
+
+        Some(layers)
     }
 }
 

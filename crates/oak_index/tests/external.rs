@@ -364,6 +364,22 @@ fn test_file_layers_empty_file() {
     });
 }
 
+#[test]
+fn test_file_layers_source_directive_skipped() {
+    let index = index_source("library(dplyr)\nsource(\"helpers.R\")\nx <- 1");
+    let layers = file_layers(file_url("script.R"), &index);
+
+    // FileExports + PackageExports(dplyr), source() is not emitted as a layer
+    assert_eq!(layers.len(), 2);
+    assert_matches!(&layers[0], ScopeLayer::FileExports { exports, .. } => {
+        assert_eq!(exports.len(), 1);
+        assert!(exports.contains_key("x"));
+    });
+    assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
+        assert_eq!(pkg, "dplyr");
+    });
+}
+
 // --- Integration: file_layers -> resolve_external_name ---
 
 #[test]
