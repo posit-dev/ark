@@ -1,6 +1,7 @@
 pub mod builder;
 pub mod external;
 pub(crate) mod index_vec;
+pub mod nse_registry;
 pub mod semantic_index;
 pub mod use_def_map;
 

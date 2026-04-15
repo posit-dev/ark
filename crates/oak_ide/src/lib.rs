@@ -6,7 +6,6 @@ use biome_rowan::TextSize;
 pub use goto_definition::goto_definition;
 pub use identifier::Identifier;
 use oak_index::external::BindingSource;
-use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
 use url::Url;
 
@@ -53,9 +52,14 @@ impl FileScope {
         match self {
             Self::Package { top_level, lazy } => {
                 let scope = index.scope_at(offset);
-                match index.scope(scope).kind() {
-                    ScopeKind::File => top_level,
-                    ScopeKind::Function => lazy,
+                let is_lazy = index.scope(scope).kind().is_lazy() ||
+                    index
+                        .ancestor_scopes(scope)
+                        .any(|id| index.scope(id).kind().is_lazy());
+                if is_lazy {
+                    lazy
+                } else {
+                    top_level
                 }
             },
             Self::SearchPath(layers) => layers,
