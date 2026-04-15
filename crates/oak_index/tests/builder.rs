@@ -1648,3 +1648,46 @@ fn test_source_resolver_packages_become_directives() {
         "dplyr".into()
     )]);
 }
+
+#[test]
+fn test_source_resolver_later_shadows_earlier() {
+    let code = "source(\"a.R\")\nsource(\"b.R\")\nfoo\n";
+    let parsed = parse(code, RParserOptions::default());
+
+    let a_url = Url::parse("file:///test/a.R").unwrap();
+    let b_url = Url::parse("file:///test/b.R").unwrap();
+    let a_url_clone = a_url.clone();
+    let b_url_clone = b_url.clone();
+
+    let index = semantic_index_with_source_resolver(&parsed.tree(), move |path| {
+        let (url, range) = match path {
+            "a.R" => (
+                a_url_clone.clone(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            ),
+            "b.R" => (
+                b_url_clone.clone(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            ),
+            _ => return None,
+        };
+        Some(SourceResolution {
+            definitions: vec![("foo".to_string(), url, range)],
+            packages: Vec::new(),
+        })
+    });
+
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: source(0), source(1), foo(2)
+    let bindings = map.bindings_at_use(UseId::from(2));
+    assert_eq!(bindings.definitions().len(), 1);
+
+    let def_id = bindings.definitions()[0];
+    let def = &index.definitions(file)[def_id];
+    let DefinitionKind::Sourced { file: ref url } = def.kind() else {
+        panic!("expected Sourced definition, got {:?}", def.kind());
+    };
+    assert_eq!(*url, b_url);
+}
