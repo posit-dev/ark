@@ -142,7 +142,7 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
 /// All layers produced by a single directive share that directive's offset.
 pub fn directive_layers(
     directives: &[Directive],
-    resolve_source: impl Fn(&str) -> Option<Vec<BindingSource>>,
+    mut resolve_source: impl FnMut(&str) -> Option<Vec<BindingSource>>,
 ) -> Vec<(TextSize, BindingSource)> {
     let mut layers = Vec::new();
     for directive in directives {

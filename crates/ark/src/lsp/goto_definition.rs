@@ -657,4 +657,97 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_script_source_transitive() {
+        // script.R sources a.R, a.R sources b.R.
+        // script.R should see b.R's exports transitively.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            dir.path().join("b.R"),
+            "library(dplyr)\nfrom_b <- function() 1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("a.R"),
+            "source(\"b.R\")\nfrom_a <- function() 2\n",
+        )
+        .unwrap();
+
+        let script_doc = Document::new("source(\"a.R\")\nfrom_a\nfrom_b\nmutate\n", None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+
+        let mut state = make_state(&script_uri, &script_doc);
+        state.library = library;
+
+        // `from_a` (line 1) — defined in a.R
+        let a_uri = lsp_types::Url::from_file_path(dir.path().join("a.R")).unwrap();
+        let params = make_params(script_uri.clone(), 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, a_uri);
+            }
+        );
+
+        // `from_b` (line 2) — defined in b.R, reachable transitively
+        let b_uri = lsp_types::Url::from_file_path(dir.path().join("b.R")).unwrap();
+        let params = make_params(script_uri.clone(), 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, b_uri);
+            }
+        );
+
+        // `mutate` (line 3) — from dplyr, attached by b.R's library() call.
+        // Package symbol, no NavigationTarget.
+        let params = make_params(script_uri, 3, 0);
+        let result = goto_definition(&script_doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_script_source_cycle_does_not_hang() {
+        // a.R sources b.R, b.R sources a.R. Should not recurse infinitely.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("a.R"), "source(\"b.R\")\nfrom_a <- 1\n").unwrap();
+        std::fs::write(dir.path().join("b.R"), "source(\"a.R\")\nfrom_b <- 2\n").unwrap();
+
+        let script_doc = Document::new("source(\"a.R\")\nfrom_a\nfrom_b\n", None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        // Should resolve without hanging. Both symbols are reachable
+        // because a.R is visited first (gets its exports + b.R's exports),
+        // and b.R's attempt to re-source a.R is a no-op due to cycle detection.
+        let a_uri = lsp_types::Url::from_file_path(dir.path().join("a.R")).unwrap();
+        let params = make_params(script_uri.clone(), 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, a_uri);
+            }
+        );
+
+        let b_uri = lsp_types::Url::from_file_path(dir.path().join("b.R")).unwrap();
+        let params = make_params(script_uri, 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, b_uri);
+            }
+        );
+    }
 }

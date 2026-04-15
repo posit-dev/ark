@@ -199,9 +199,10 @@ impl WorldState {
 
         let file_dir = file_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
+        let mut visited = HashSet::new();
         let directives = directive_layers(index.file_directives(), |path| {
             let dir = file_dir.as_ref()?;
-            self.resolve_source_layers(dir, path)
+            self.resolve_source_layers(dir, path, &mut visited)
         });
 
         FileScope::search_path(directives, default_search_path())
@@ -210,9 +211,20 @@ impl WorldState {
     /// Resolve a `source()` directive into the full set of layers the sourced
     /// file contributes: its own exports, `PackageExports` from any
     /// `library()` calls, and layers from nested `source()` calls.
-    fn resolve_source_layers(&self, base_dir: &Path, path: &str) -> Option<Vec<BindingSource>> {
+    ///
+    /// `visited` tracks files already being resolved to break cycles.
+    fn resolve_source_layers(
+        &self,
+        base_dir: &Path,
+        path: &str,
+        visited: &mut HashSet<Url>,
+    ) -> Option<Vec<BindingSource>> {
         let resolved = base_dir.join(path);
         let url = Url::from_file_path(&resolved).log_err()?;
+
+        if !visited.insert(url.clone()) {
+            return None;
+        }
 
         let sourced_doc = if let Some(open) = self.documents.get(&url) {
             open
@@ -235,7 +247,7 @@ impl WorldState {
         // Recurse into the sourced document in case it itself calls `source()`
         let source_dir = resolved.parent()?;
         let nested = directive_layers(index.file_directives(), |nested_path| {
-            self.resolve_source_layers(source_dir, nested_path)
+            self.resolve_source_layers(source_dir, nested_path, visited)
         });
         layers.extend(nested.into_iter().map(|(_, l)| l));
 
