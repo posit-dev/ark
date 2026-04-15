@@ -19,6 +19,7 @@ use oak_index::semantic_index;
 use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index_with_source_resolver;
+use oak_index::ScopeId;
 use oak_index::SourceResolution;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
@@ -1441,24 +1442,40 @@ fn test_directive_not_visible_before_call_site() {
 }
 
 #[test]
-fn test_directives_in_function_body_are_inert() {
-    // `source()` and `library()` inside a function body should NOT
-    // produce file-level directives. `library()` is guarded to file
-    // scope; `source()` without a resolver is a no-op.
+fn test_directives_in_function_body_are_scoped() {
+    // `library()` inside a function body produces a scoped directive:
+    // visible inside the function but not at file scope.
+    // `source()` without a resolver is still a no-op.
     let script_source =
-        "f <- function() {\n  source(\"helpers.R\")\n  library(dplyr)\n}\nhelper\nmutate\n";
+        "f <- function() {\n  source(\"helpers.R\")\n  library(dplyr)\n  mutate\n}\nhelper\nmutate\n";
     let script_url = file_url("script.R");
     let (script_root, script_idx) = parse_source(script_source);
 
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
-    // No file-level directives should be detected
-    assert!(script_idx.file_directives().is_empty());
+    // library() inside f produces a scoped directive
+    let directives = script_idx.file_directives();
+    assert_eq!(directives.len(), 1);
+    assert_eq!(directives[0].kind(), &DirectiveKind::Attach("dplyr".into()));
+    assert_ne!(directives[0].scope(), ScopeId::from(0));
 
     let dir_layers = directive_layers(script_idx.file_directives());
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
-    // `helper` — not resolved (source() was inside a function, no resolver)
+    // `mutate` inside f (after library()) — resolves via scoped dplyr
+    let use_offset = script_source.find("  mutate").unwrap() as u32 + 2;
+    let targets = goto_definition(
+        offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    // Package symbol, no NavigationTarget
+    assert!(targets.is_empty());
+
+    // `helper` at file scope — not resolved (source() had no resolver)
     let use_offset = script_source.find("\nhelper").unwrap() as u32 + 1;
     let targets = goto_definition(
         offset(use_offset),
@@ -1470,8 +1487,9 @@ fn test_directives_in_function_body_are_inert() {
     );
     assert!(targets.is_empty());
 
-    // `mutate` — not resolved (library() was inside a function)
-    let use_offset = script_source.find("\nmutate").unwrap() as u32 + 1;
+    // `mutate` at file scope — not resolved (library() directive is
+    // scoped to f, not visible here)
+    let use_offset = script_source.rfind("mutate").unwrap() as u32;
     let targets = goto_definition(
         offset(use_offset),
         &script_url,

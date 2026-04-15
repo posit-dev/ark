@@ -711,12 +711,6 @@ impl<'a> SemanticIndexBuilder<'a> {
             return;
         }
 
-        // library()/require() only at file scope -- in a function body the
-        // attachment is a runtime side effect we can't model statically.
-        if is_attach && self.current_scope != ScopeId::from(0) {
-            return;
-        }
-
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -746,6 +740,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             self.directives.push(Directive {
                 kind: DirectiveKind::Attach(pkg_name),
                 offset: call_offset,
+                scope: self.current_scope,
             });
         } else {
             // source() -- resolve via callback and inject definitions
@@ -773,6 +768,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                         self.directives.push(Directive {
                             kind: DirectiveKind::Attach(pkg),
                             offset: call_offset,
+                            scope: self.current_scope,
                         });
                     }
                 }

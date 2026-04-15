@@ -366,7 +366,7 @@ mod tests {
         let after = scope.at(&index, TextSize::from(code.rfind("inform").unwrap() as u32));
         assert!(has_package(&after, "rlang"));
 
-        assert!(has_package(scope.lazy(), "rlang"));
+        assert!(has_package(&scope.lazy(), "rlang"));
     }
 
     #[test]
@@ -394,6 +394,6 @@ mod tests {
 
         let (_index, scope) = state.file_analysis(&uri, &doc);
         let layers = scope.lazy();
-        assert_not!(has_package(layers, "rlang"));
+        assert_not!(has_package(&layers, "rlang"));
     }
 }

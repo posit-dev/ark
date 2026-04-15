@@ -577,6 +577,7 @@ impl Ranged for Use {
 pub struct Directive {
     pub(crate) kind: DirectiveKind,
     pub(crate) offset: TextSize,
+    pub(crate) scope: ScopeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -592,6 +593,10 @@ impl Directive {
 
     pub fn offset(&self) -> TextSize {
         self.offset
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
     }
 }
 

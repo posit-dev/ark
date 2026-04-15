@@ -981,4 +981,53 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_script_source_in_function_packages_scoped() {
+        // source() inside a function where the sourced file calls library(dplyr).
+        // The dplyr Attach directive should be scoped to the function: visible
+        // inside f (and nested scopes) but NOT at file scope.
+        //
+        // We verify by checking the scope chain at two offsets. Package symbols
+        // produce no NavigationTarget, so goto_definition can't distinguish
+        // "resolved to package" from "unresolved". The scope chain check is
+        // more direct.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            dir.path().join("helpers.R"),
+            "library(dplyr)\nhelper <- function() 1\n",
+        )
+        .unwrap();
+
+        //  "f <- function() {\n"              offset 0
+        //  "  source(\"helpers.R\")\n"         offset 18
+        //  "  mutate\n"                        offset 39
+        //  "}\n"                               offset 48
+        //  "mutate\n"                          offset 50
+        let script_source = "f <- function() {\n  source(\"helpers.R\")\n  mutate\n}\nmutate\n";
+        let script_doc = Document::new(script_source, None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        let (index, file_scope) = state.file_analysis(&script_uri, &script_doc);
+
+        let has_dplyr = |layers: &[oak_index::external::ScopeLayer]| -> bool {
+            layers.iter().any(|l| matches!(l, oak_index::external::ScopeLayer::PackageExports(pkg) if pkg == "dplyr"))
+        };
+
+        // Inside f (offset 41, on "mutate"): dplyr should be in the scope chain
+        let inner_offset = biome_rowan::TextSize::from(41);
+        let inner_chain = file_scope.at(&index, inner_offset);
+        assert!(has_dplyr(&inner_chain));
+
+        // Outside f (offset 50, on "mutate"): dplyr should NOT be in the scope chain
+        let outer_offset = biome_rowan::TextSize::from(50);
+        let outer_chain = file_scope.at(&index, outer_offset);
+        assert!(!has_dplyr(&outer_chain));
+    }
 }

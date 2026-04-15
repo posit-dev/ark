@@ -1366,9 +1366,14 @@ fn test_directive_no_arguments_ignored() {
 }
 
 #[test]
-fn test_directive_not_at_file_scope() {
+fn test_directive_library_in_function_scope() {
+    // library() in a function body now records a scoped directive
     let index = index("f <- function() { library(dplyr) }");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    )]);
+    let directives = index.file_directives();
+    assert_ne!(directives[0].scope(), ScopeId::from(0));
 }
 
 #[test]
