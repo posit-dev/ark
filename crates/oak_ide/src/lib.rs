@@ -1,8 +1,10 @@
 mod goto_definition;
+mod identifier;
 
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 pub use goto_definition::goto_definition;
+pub use identifier::Identifier;
 use oak_index::external::BindingSource;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
