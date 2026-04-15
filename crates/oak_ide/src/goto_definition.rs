@@ -60,7 +60,7 @@ pub fn goto_definition(
         },
         Identifier::Use { scope_id, use_id } => {
             let scope_chain = scope.at(index, offset);
-            resolve_use(scope_id, use_id, file, index, scope_chain, library)
+            resolve_use(scope_id, use_id, file, index, &scope_chain, library)
         },
         Identifier::NamespaceAccess {
             ref package,

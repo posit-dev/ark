@@ -1378,3 +1378,75 @@ fn test_directive_preserves_offset() {
     assert_eq!(directives.len(), 1);
     assert_eq!(directives[0].offset(), biome_rowan::TextSize::from(7));
 }
+
+// --- source() directives ---
+
+#[test]
+fn test_directive_source_string() {
+    let index = index("source(\"helpers.R\")");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Source(
+        "helpers.R".into()
+    )]);
+}
+
+#[test]
+fn test_directive_source_single_quoted_string() {
+    let index = index("source('utils/helpers.R')");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Source(
+        "utils/helpers.R".into()
+    )]);
+}
+
+#[test]
+fn test_directive_source_identifier_ignored() {
+    let index = index("source(my_file)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_non_static_argument_ignored() {
+    let index = index("source(paste0(\"path/\", name))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_named_argument_ignored() {
+    let index = index("source(file = \"helpers.R\")");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_multiple_arguments_ignored() {
+    let index = index("source(\"helpers.R\", local = TRUE)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_no_arguments_ignored() {
+    let index = index("source()");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_not_at_file_scope() {
+    let index = index("f <- function() { source(\"helpers.R\") }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_preserves_offset() {
+    let index = index("x <- 1\nsource(\"helpers.R\")");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 1);
+    assert_eq!(directives[0].offset(), biome_rowan::TextSize::from(7));
+}
+
+#[test]
+fn test_directive_source_mixed_with_library() {
+    let index = index("library(dplyr)\nsource(\"helpers.R\")\nlibrary(tidyr)");
+    assert_eq!(directive_kinds(&index), [
+        &DirectiveKind::Attach("dplyr".into()),
+        &DirectiveKind::Source("helpers.R".into()),
+        &DirectiveKind::Attach("tidyr".into()),
+    ]);
+}

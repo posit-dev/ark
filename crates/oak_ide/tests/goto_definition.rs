@@ -9,9 +9,11 @@ use biome_rowan::TextSize;
 use oak_ide::goto_definition;
 use oak_ide::FileScope;
 use oak_ide::NavigationTarget;
+use oak_index::external::directive_layers;
 use oak_index::external::file_layers;
 use oak_index::external::BindingSource;
 use oak_index::semantic_index;
+use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_package::library::Library;
 use oak_package::package::Package;
@@ -1066,4 +1068,290 @@ fn test_namespace_classify_string_selectors() {
             symbol_range: text_range(7, 12),
         })
     );
+}
+
+// --- source() directive ---
+
+#[test]
+fn test_source_directive_resolves_to_sourced_file() {
+    // script.R has `source("helpers.R")` then uses `helper`.
+    // The caller detects the Source directive and splices in the
+    // sourced file's exports, enabling goto-definition.
+    let helpers_source = "helper <- function() 1\n";
+    let (_helpers_root, helpers_idx) = parse_source(helpers_source);
+    let helpers_url = file_url("helpers.R");
+
+    let script_source = "source(\"helpers.R\")\nhelper\n";
+    let script_url = file_url("script.R");
+    let (script_root, script_idx) = parse_source(script_source);
+
+    // The semantic index detects the source() directive
+    let directives = script_idx.file_directives();
+    assert_eq!(directives.len(), 1);
+    assert_eq!(
+        directives[0].kind(),
+        &DirectiveKind::Source("helpers.R".into())
+    );
+
+    // The caller resolves Source directives via `directive_layers`, which
+    // calls back to get the full layers the sourced file contributes.
+    let helpers_url_clone = helpers_url.clone();
+    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
+        let exports = helpers_idx
+            .file_exports()
+            .into_iter()
+            .map(|(name, range)| (name.to_string(), range))
+            .collect();
+        Some(vec![BindingSource::FileExports {
+            file: helpers_url_clone.clone(),
+            exports,
+        }])
+    });
+    let scope = FileScope::search_path(dir_layers, Vec::new());
+
+    let library = empty_library();
+
+    let use_offset = script_source.rfind("helper").unwrap() as u32;
+    let targets = goto_definition(
+        offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert_eq!(targets, vec![NavigationTarget {
+        file: helpers_url,
+        name: "helper".to_string(),
+        full_range: text_range(0, 6),
+        focus_range: text_range(0, 6),
+    }]);
+}
+
+#[test]
+fn test_source_directive_resolves_nested_library() {
+    // helpers.R has `library(dplyr)` and defines `helper`.
+    // script.R sources helpers.R then uses `mutate` (from dplyr).
+    // The nested library() directive should be visible.
+    let helpers_source = "library(dplyr)\nhelper <- function() 1\n";
+    let (_helpers_root, helpers_idx) = parse_source(helpers_source);
+    let helpers_url = file_url("helpers.R");
+
+    let script_source = "source(\"helpers.R\")\nmutate\n";
+    let script_url = file_url("script.R");
+    let (script_root, script_idx) = parse_source(script_source);
+
+    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+
+    let helpers_url_clone = helpers_url.clone();
+    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
+        let exports = helpers_idx
+            .file_exports()
+            .into_iter()
+            .map(|(name, range)| (name.to_string(), range))
+            .collect();
+        let mut layers = vec![BindingSource::FileExports {
+            file: helpers_url_clone.clone(),
+            exports,
+        }];
+        // Nested directives from helpers.R (unstamped, they inherit the
+        // parent source() directive's offset)
+        let nested = directive_layers(helpers_idx.file_directives(), |_| None);
+        layers.extend(nested.into_iter().map(|(_, l)| l));
+        Some(layers)
+    });
+    let scope = FileScope::search_path(dir_layers, Vec::new());
+
+    // `mutate` resolves via dplyr (attached by helpers.R's library() call)
+    let use_offset = script_source.rfind("mutate").unwrap() as u32;
+    let targets = goto_definition(
+        offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    // Package symbol, no NavigationTarget
+    assert!(targets.is_empty());
+
+    // `helper` still resolves to helpers.R
+    let source_with_helper = "source(\"helpers.R\")\nhelper\n";
+    let (script_root2, script_idx2) = parse_source(source_with_helper);
+
+    let helpers_url_clone = helpers_url.clone();
+    let dir_layers = directive_layers(script_idx2.file_directives(), |_path| {
+        let exports = helpers_idx
+            .file_exports()
+            .into_iter()
+            .map(|(name, range)| (name.to_string(), range))
+            .collect();
+        let mut layers = vec![BindingSource::FileExports {
+            file: helpers_url_clone.clone(),
+            exports,
+        }];
+        let nested = directive_layers(helpers_idx.file_directives(), |_| None);
+        layers.extend(nested.into_iter().map(|(_, l)| l));
+        Some(layers)
+    });
+    let scope = FileScope::search_path(dir_layers, Vec::new());
+
+    let use_offset = source_with_helper.rfind("helper").unwrap() as u32;
+    let targets = goto_definition(
+        offset(use_offset),
+        &script_url,
+        &script_root2,
+        &script_idx2,
+        &scope,
+        &library,
+    );
+    assert_eq!(targets, vec![NavigationTarget {
+        file: helpers_url,
+        name: "helper".to_string(),
+        full_range: text_range(15, 21),
+        focus_range: text_range(15, 21),
+    }]);
+}
+
+#[test]
+fn test_directive_not_visible_before_call_site() {
+    // Directives are position-stamped: only code AFTER a `source()` or
+    // `library()` call sees its effects.
+    //
+    //  "mutate\n"                     offset 0..6
+    //  "helper\n"                     offset 7..13
+    //  "library(dplyr)\n"             offset 14..28
+    //  "source(\"helpers.R\")\n"      offset 29..48
+    //  "mutate\n"                     offset 49..55
+    //  "helper\n"                     offset 56..62
+    let helpers_source = "helper <- function() 1\n";
+    let (_helpers_root, helpers_idx) = parse_source(helpers_source);
+    let helpers_url = file_url("helpers.R");
+
+    let script_source = "mutate\nhelper\nlibrary(dplyr)\nsource(\"helpers.R\")\nmutate\nhelper\n";
+    let script_url = file_url("script.R");
+    let (script_root, script_idx) = parse_source(script_source);
+
+    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+
+    let helpers_url_clone = helpers_url.clone();
+    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
+        let exports = helpers_idx
+            .file_exports()
+            .into_iter()
+            .map(|(name, range)| (name.to_string(), range))
+            .collect();
+        Some(vec![BindingSource::FileExports {
+            file: helpers_url_clone.clone(),
+            exports,
+        }])
+    });
+    let scope = FileScope::search_path(dir_layers, Vec::new());
+
+    // `mutate` before library(dplyr) (offset 0) — should NOT resolve
+    let targets = goto_definition(
+        offset(0),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert!(targets.is_empty());
+
+    // `helper` before source() (offset 7) — should NOT resolve
+    let targets = goto_definition(
+        offset(7),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert!(targets.is_empty());
+
+    // `mutate` after library(dplyr) (offset 49) — package symbol, no NavigationTarget yet (FIXME)
+    let targets = goto_definition(
+        offset(49),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert!(targets.is_empty());
+
+    // `helper` after source() (offset 56) — should resolve to helpers.R
+    let targets = goto_definition(
+        offset(56),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert_eq!(targets, vec![NavigationTarget {
+        file: helpers_url,
+        name: "helper".to_string(),
+        full_range: text_range(0, 6),
+        focus_range: text_range(0, 6),
+    }]);
+}
+
+#[test]
+fn test_directives_in_function_body_are_inert() {
+    // `source()` and `library()` inside a function body should NOT
+    // produce directives. They're lazy (only evaluated when the
+    // function is called), so they don't affect the file's scope.
+    let helpers_source = "helper <- function() 1\n";
+    let (_helpers_root, helpers_idx) = parse_source(helpers_source);
+    let helpers_url = file_url("helpers.R");
+
+    let script_source =
+        "f <- function() {\n  source(\"helpers.R\")\n  library(dplyr)\n}\nhelper\nmutate\n";
+    let script_url = file_url("script.R");
+    let (script_root, script_idx) = parse_source(script_source);
+
+    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+
+    // No file-level directives should be detected
+    assert!(script_idx.file_directives().is_empty());
+
+    let helpers_url_clone = helpers_url.clone();
+    let dir_layers = directive_layers(script_idx.file_directives(), |_path| {
+        let exports = helpers_idx
+            .file_exports()
+            .into_iter()
+            .map(|(name, range)| (name.to_string(), range))
+            .collect();
+        Some(vec![BindingSource::FileExports {
+            file: helpers_url_clone.clone(),
+            exports,
+        }])
+    });
+    let scope = FileScope::search_path(dir_layers, Vec::new());
+
+    // `helper` — not resolved (source() was inside a function)
+    let use_offset = script_source.find("\nhelper").unwrap() as u32 + 1;
+    let targets = goto_definition(
+        offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert!(targets.is_empty());
+
+    // `mutate` — not resolved (library() was inside a function)
+    let use_offset = script_source.find("\nmutate").unwrap() as u32 + 1;
+    let targets = goto_definition(
+        offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+        &library,
+    );
+    assert!(targets.is_empty());
 }

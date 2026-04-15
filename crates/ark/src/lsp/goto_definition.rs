@@ -504,4 +504,157 @@ mod tests {
         // `is.null` is missing from the INDEX-based export list.
         assert_eq!(result, None);
     }
+
+    // --- source() directive in scripts ---
+
+    #[test]
+    fn test_script_source_directive_resolves() {
+        // script.R has `source("helpers.R")` then uses `helper`.
+        // WorldState::file_scope() should resolve the source() directive
+        // and make helpers.R's exports visible via the search path.
+        let script_dir = std::env::temp_dir().join("test_script_source");
+
+        let helpers_doc = Document::new("helper <- function() 1\n", None);
+        let helpers_uri = lsp_types::Url::from_file_path(script_dir.join("helpers.R")).unwrap();
+
+        let script_doc = Document::new("source(\"helpers.R\")\nhelper\n", None);
+        let script_uri = lsp_types::Url::from_file_path(script_dir.join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state.documents.insert(helpers_uri.clone(), helpers_doc);
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        // Cursor on `helper` (line 1, col 0)
+        let params = make_params(script_uri, 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(0, 6),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_directive_resolves_nested_library() {
+        // helpers.R has `library(dplyr)` and defines `helper`.
+        // script.R sources helpers.R then uses `mutate` (from dplyr).
+        // The nested library() directive should be visible through
+        // the source() resolution.
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+
+        let script_dir = std::env::temp_dir().join("test_script_source_nested");
+
+        let helpers_doc = Document::new("library(dplyr)\nhelper <- function() 1\n", None);
+        let helpers_uri = lsp_types::Url::from_file_path(script_dir.join("helpers.R")).unwrap();
+
+        let script_doc = Document::new("source(\"helpers.R\")\nmutate\nhelper\n", None);
+        let script_uri = lsp_types::Url::from_file_path(script_dir.join("script.R")).unwrap();
+
+        let mut state = make_state(&script_uri, &script_doc);
+        state.library = library;
+        state.documents.insert(helpers_uri.clone(), helpers_doc);
+
+        // `mutate` (line 1) resolves via dplyr, attached by helpers.R's library() call.
+        // Package symbol, no NavigationTarget.
+        let params = make_params(script_uri.clone(), 1, 0);
+        let result = goto_definition(&script_doc, params, &state).unwrap();
+        assert_eq!(result, None);
+
+        // `helper` (line 2) resolves to helpers.R's definition
+        let params = make_params(script_uri, 2, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 6),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_resolves_from_disk() {
+        // helpers.R exists on disk but is NOT in state.documents.
+        // script.R sources it. The resolver should read from disk.
+        let script_dir = tempfile::tempdir().unwrap();
+
+        let helpers_path = script_dir.path().join("helpers.R");
+        std::fs::write(&helpers_path, "helper <- function() 1\n").unwrap();
+        let helpers_uri = lsp_types::Url::from_file_path(&helpers_path).unwrap();
+
+        let script_doc = Document::new("source(\"helpers.R\")\nhelper\n", None);
+        let script_uri =
+            lsp_types::Url::from_file_path(script_dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+        // helpers.R is intentionally NOT inserted into state.documents
+
+        let params = make_params(script_uri, 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(0, 6),
+                    }
+                );
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_file_scope_from_disk() {
+        // The script itself is on disk, not in state.documents.
+        // file_scope should still read it and resolve its directives.
+        let script_dir = tempfile::tempdir().unwrap();
+
+        let helpers_path = script_dir.path().join("helpers.R");
+        std::fs::write(&helpers_path, "helper <- function() 1\n").unwrap();
+
+        let script_path = script_dir.path().join("script.R");
+        std::fs::write(&script_path, "source(\"helpers.R\")\nhelper\n").unwrap();
+        let script_uri = lsp_types::Url::from_file_path(&script_path).unwrap();
+
+        let script_doc = Document::new("source(\"helpers.R\")\nhelper\n", None);
+
+        // Neither file is in state.documents
+        let state = WorldState::default();
+
+        let params = make_params(script_uri, 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(0, 6),
+                    }
+                );
+            }
+        );
+    }
 }

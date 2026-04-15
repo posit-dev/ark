@@ -530,11 +530,13 @@ pub struct Directive {
     pub(crate) offset: TextSize,
 }
 
-// TODO: `Source()` directives
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectiveKind {
     /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
     Attach(String),
+    /// `source(path)`: splices the sourced file's bindings at this offset.
+    /// Stores the raw path string from the call site.
+    Source(String),
 }
 
 impl Directive {

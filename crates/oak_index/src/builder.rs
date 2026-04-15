@@ -671,7 +671,9 @@ impl SemanticIndexBuilder {
         };
 
         let fn_name = ident.name_text();
-        if fn_name != "library" && fn_name != "require" {
+        let is_attach = fn_name == "library" || fn_name == "require";
+        let is_source = fn_name == "source";
+        if !is_attach && !is_source {
             return;
         }
 
@@ -693,18 +695,29 @@ impl SemanticIndexBuilder {
             return;
         };
 
-        // Extract the package name from identifier or string literal
-        let pkg_name = match &value {
-            AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
-            AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
-            _ => None,
-        };
-        let Some(pkg_name) = pkg_name else {
-            return;
+        let kind = if is_attach {
+            let pkg_name = match &value {
+                AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
+                AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
+                _ => None,
+            };
+            let Some(pkg_name) = pkg_name else {
+                return;
+            };
+            DirectiveKind::Attach(pkg_name)
+        } else {
+            let path = match &value {
+                AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
+                _ => None,
+            };
+            let Some(path) = path else {
+                return;
+            };
+            DirectiveKind::Source(path)
         };
 
         self.directives.push(Directive {
-            kind: DirectiveKind::Attach(pkg_name),
+            kind,
             offset: call.syntax().text_trimmed_range().start(),
         });
     }
