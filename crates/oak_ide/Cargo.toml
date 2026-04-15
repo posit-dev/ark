@@ -14,8 +14,10 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+aether_syntax.workspace = true
 biome_rowan.workspace = true
 log.workspace = true
+oak_core.workspace = true
 oak_index.workspace = true
 oak_package.workspace = true
 stdext.workspace = true
