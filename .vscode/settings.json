@@ -17,6 +17,20 @@
     "rust-analyzer.check.extraArgs": [
         "--target-dir", "${workspaceFolder}/target/check"
     ],
+    // `Run Test` and `Run Tests` nextest support
+    "rust-analyzer.runnables.test.overrideCommand": [
+        "cargo",
+        "nextest",
+        "run",
+        "--package",
+        "${package}",
+        "${target_arg}",
+        "${target}",
+        "--",
+        "${test_name}",
+        "${exact}",
+        "${include_ignored}"
+    ],
     "files.insertFinalNewline": true,
     "files.trimFinalNewlines": true,
     "files.trimTrailingWhitespace": true,
