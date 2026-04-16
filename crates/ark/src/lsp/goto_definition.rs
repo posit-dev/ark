@@ -502,6 +502,37 @@ mod tests {
     // --- source() directive in scripts ---
 
     #[test]
+    fn test_script_source_resolves_from_workspace_root() {
+        // source() paths are resolved relative to the workspace root,
+        // not the sourcing file's directory. Here script.R is in a
+        // subdirectory but sources "helpers.R" which lives at the root.
+        let dir = tempfile::tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        std::fs::create_dir(&subdir).unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "helper <- function() 1\n").unwrap();
+
+        let script_doc = Document::new("source(\"helpers.R\")\nhelper\n", None);
+        let script_uri = lsp_types::Url::from_file_path(subdir.join("script.R")).unwrap();
+
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+        state.workspace.folders = vec![lsp_types::Url::from_directory_path(dir.path()).unwrap()];
+
+        let params = make_params(script_uri, 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+            }
+        );
+    }
+
+    #[test]
     fn test_script_source_directive_resolves() {
         // script.R has `source("helpers.R")` then uses `helper`.
         // WorldState::file_analysis() should resolve the source() directive
