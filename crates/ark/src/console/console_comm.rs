@@ -19,20 +19,31 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::ui::UI_COMM_NAME;
 
+// These methods take `&mut self` and use `get_mut()` for zero-cost access to
+// `self.comms`. The tradeoff: to pass `self` as `&Console` to handler methods,
+// we must first take/remove the comm so no `&mut` borrow through `self` is
+// active.
 impl Console {
     pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
-        if let Some(ref mut ui) = self.ui_comm {
-            if ui.comm_id == comm_id {
-                ui.handler.handle_msg(msg, &ui.ctx, Console::get());
-                return;
-            }
+        if self
+            .ui_comm
+            .as_ref()
+            .is_some_and(|ui| ui.comm_id == comm_id)
+        {
+            let mut ui = self.ui_comm.take().unwrap();
+            ui.handler.handle_msg(msg, &ui.ctx, self);
+            self.ui_comm = Some(ui);
+            return;
         }
 
-        let Some(comm) = self.comms.get_mut().get_mut(comm_id) else {
+        let Some(mut comm) = self.comms.get_mut().remove(comm_id) else {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
         };
-        comm.handler.handle_msg(msg, &comm.ctx, Console::get());
+        comm.handler.handle_msg(msg, &comm.ctx, self);
+
+        let key = comm.comm_id.clone();
+        self.comms.get_mut().insert(key, comm);
         self.drain_closed();
     }
 
@@ -43,7 +54,7 @@ impl Console {
             .is_some_and(|ui| ui.comm_id == comm_id)
         {
             let mut ui = self.ui_comm.take().unwrap();
-            ui.handler.handle_close(&ui.ctx, Console::get());
+            ui.handler.handle_close(&ui.ctx, self);
             return;
         }
 
@@ -51,7 +62,7 @@ impl Console {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
         };
-        comm.handler.handle_close(&comm.ctx, Console::get());
+        comm.handler.handle_close(&comm.ctx, self);
     }
 
     /// Register a backend-initiated comm on the R thread.
@@ -80,7 +91,7 @@ impl Console {
         );
 
         let ctx = CommHandlerContext::new(comm.outgoing_tx.clone(), self.comm_event_tx.clone());
-        handler.handle_open(&ctx, Console::get());
+        handler.handle_open(&ctx, self);
 
         self.comms
             .borrow_mut()
@@ -117,12 +128,12 @@ impl Console {
         mut handler: Box<dyn CommHandler>,
     ) {
         let ctx = CommHandlerContext::new(outgoing_tx, self.comm_event_tx.clone());
-        handler.handle_open(&ctx, Console::get());
+        handler.handle_open(&ctx, self);
 
         if comm_name == UI_COMM_NAME {
             if let Some(mut old) = self.ui_comm.take() {
                 log::info!("Replacing an existing UI comm.");
-                old.handler.handle_close(&old.ctx, Console::get());
+                old.handler.handle_close(&old.ctx, self);
             }
             self.ui_comm = Some(ConsoleComm {
                 comm_id,
@@ -139,14 +150,18 @@ impl Console {
     }
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
-        if let Some(ref mut ui) = self.ui_comm {
-            ui.handler
-                .handle_environment(event, &ui.ctx, Console::get());
+        if let Some(mut ui) = self.ui_comm.take() {
+            ui.handler.handle_environment(event, &ui.ctx, self);
+            self.ui_comm = Some(ui);
         }
 
-        for (_, comm) in self.comms.get_mut().iter_mut() {
-            comm.handler
-                .handle_environment(event, &comm.ctx, Console::get());
+        let ids: Vec<String> = self.comms.get_mut().keys().cloned().collect();
+        for id in ids {
+            let Some(mut comm) = self.comms.get_mut().remove(&id) else {
+                continue;
+            };
+            comm.handler.handle_environment(event, &comm.ctx, self);
+            self.comms.get_mut().insert(id, comm);
         }
         self.drain_closed();
     }
