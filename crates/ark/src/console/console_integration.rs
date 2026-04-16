@@ -21,7 +21,7 @@ impl Console {
     }
 
     pub(crate) fn ui_comm(&self) -> Option<UiCommRef<'_>> {
-        let comm = self.comms.get(self.ui_comm_id.as_deref()?)?;
+        let comm = self.ui_comm.as_ref()?;
         Some(UiCommRef {
             comm,
             originator: self
