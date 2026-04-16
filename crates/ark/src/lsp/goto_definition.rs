@@ -550,7 +550,7 @@ mod tests {
     #[test]
     fn test_script_source_directive_resolves() {
         // script.R has `source("helpers.R")` then uses `helper`.
-        // WorldState::file_scope() should resolve the source() directive
+        // WorldState::file_analysis() should resolve the source() directive
         // and make helpers.R's exports visible via the search path.
         let script_dir = std::env::temp_dir().join("test_script_source");
 

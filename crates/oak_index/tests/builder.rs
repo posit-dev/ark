@@ -1748,8 +1748,8 @@ fn test_source_resolver_local_true_shadows_local_def() {
 #[test]
 fn test_source_resolver_local_false_does_not_shadow_local_def() {
     // `source(local = FALSE)` (the default) in a function scope does not
-    // shadow a prior local binding: the sourced definition goes to the
-    // file scope, leaving the local one intact.
+    // shadow a prior local binding: the sourced definition becomes a
+    // directive scoped to the function, leaving the local one intact.
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
