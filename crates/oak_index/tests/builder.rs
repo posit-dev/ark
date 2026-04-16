@@ -1423,7 +1423,8 @@ fn test_directive_source_named_argument_ignored() {
 }
 
 #[test]
-fn test_directive_source_multiple_arguments_ignored() {
+fn test_directive_source_local_true_without_resolver() {
+    // `source("helpers.R", local = TRUE)` is recognized but no resolver, so no directives
     let index = index("source(\"helpers.R\", local = TRUE)");
     assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
 }
@@ -1435,7 +1436,8 @@ fn test_directive_source_no_arguments_ignored() {
 }
 
 #[test]
-fn test_directive_source_not_at_file_scope() {
+fn test_directive_source_nested_without_resolver() {
+    // Nested `source()` is recognized but no resolver, so no directives
     let index = index("f <- function() { source(\"helpers.R\") }");
     assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
 }
@@ -1559,13 +1561,13 @@ fn helper_resolution() -> SourceResolution {
 
 #[test]
 fn test_source_resolver_injects_definitions() {
+    // At file scope, source() injects Sourced definitions into the use-def map.
     let code = "source(\"helpers.R\")\nhelper\n";
     let index = index_with_resolver(code, |_| Some(helper_resolution()));
     let file = ScopeId::from(0);
 
-    // The use of `helper` resolves to the sourced definition
-    let map = index.use_def_map(file);
     // Use 0 is `source`, use 1 is `helper`
+    let map = index.use_def_map(file);
     let bindings = map.bindings_at_use(UseId::from(1));
     assert!(!bindings.definitions().is_empty());
 
@@ -1617,20 +1619,22 @@ fn test_source_resolver_in_function_scope() {
     let fun = ScopeId::from(1);
     let file = ScopeId::from(0);
 
-    // `helper` inside the function resolves to the sourced definition
-    // Function scope uses: source(0), helper(1)
     let fun_map = index.use_def_map(fun);
     let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
-    assert!(!inner_bindings.definitions().is_empty());
-    let def_id = inner_bindings.definitions()[0];
-    let def = &index.definitions(fun)[def_id];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+    assert!(inner_bindings.definitions().is_empty());
+    assert!(inner_bindings.may_be_unbound());
 
-    // `helper` at file scope does not resolve
     let file_map = index.use_def_map(file);
     let outer_bindings = file_map.bindings_at_use(UseId::from(0));
-    assert!(outer_bindings.may_be_unbound());
     assert!(outer_bindings.definitions().is_empty());
+    assert!(outer_bindings.may_be_unbound());
+
+    let source_directive = index
+        .file_directives()
+        .iter()
+        .find(|d| matches!(d.kind(), DirectiveKind::Source { .. }));
+    assert!(source_directive.is_some());
+    assert_eq!(source_directive.unwrap().scope(), ScopeId::from(1));
 }
 
 #[test]
@@ -1650,6 +1654,8 @@ fn test_source_resolver_packages_become_directives() {
 
 #[test]
 fn test_source_resolver_later_shadows_earlier() {
+    // At file scope, both source() calls inject Sourced definitions
+    // into the use-def map. The later one shadows the earlier.
     let code = "source(\"a.R\")\nsource(\"b.R\")\nfoo\n";
     let parsed = parse(code, RParserOptions::default());
 
@@ -1689,4 +1695,77 @@ fn test_source_resolver_later_shadows_earlier() {
         panic!("expected Sourced definition, got {:?}", def.kind());
     };
     assert_eq!(*url, b_url);
+}
+
+#[test]
+fn test_source_resolver_local_true_in_function_scope() {
+    // `local = TRUE` injects Sourced definitions into the function
+    // scope's use-def map, not into directives.
+    let code = "f <- function() {\n  source(\"helpers.R\", local = TRUE)\n  helper\n}\nhelper\n";
+    let index = index_with_resolver(code, |_| Some(helper_resolution()));
+    let fun = ScopeId::from(1);
+    let file = ScopeId::from(0);
+
+    let fun_map = index.use_def_map(fun);
+    // Function scope uses: source(0), helper(1)
+    let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert_eq!(inner_bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[inner_bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+
+    // File scope: `helper` does not resolve
+    let file_map = index.use_def_map(file);
+    let outer_bindings = file_map.bindings_at_use(UseId::from(0));
+    assert!(outer_bindings.definitions().is_empty());
+}
+
+#[test]
+fn test_source_resolver_local_true_shadows_local_def() {
+    // `source(local = TRUE)` injects into the use-def map and
+    // shadows a prior local binding.
+    let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\", local = TRUE)\n  foo\n}\n";
+    let index = index_with_resolver(code, |_| {
+        Some(SourceResolution {
+            definitions: vec![(
+                "foo".into(),
+                Url::parse("file:///test/helpers.R").unwrap(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            )],
+            packages: vec![],
+        })
+    });
+    let fun = ScopeId::from(1);
+
+    let fun_map = index.use_def_map(fun);
+    // Function scope uses: source(0), foo(1)
+    let bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+}
+
+#[test]
+fn test_source_resolver_local_false_does_not_shadow_local_def() {
+    // `source(local = FALSE)` (the default) in a function scope does not
+    // shadow a prior local binding: the sourced definition goes to the
+    // file scope, leaving the local one intact.
+    let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
+    let index = index_with_resolver(code, |_| {
+        Some(SourceResolution {
+            definitions: vec![(
+                "foo".into(),
+                Url::parse("file:///test/helpers.R").unwrap(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            )],
+            packages: vec![],
+        })
+    });
+    let fun = ScopeId::from(1);
+
+    let fun_map = index.use_def_map(fun);
+    // Function scope uses: source(0), foo(1)
+    let bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assignment(_)));
 }

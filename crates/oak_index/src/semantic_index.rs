@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::Range;
 
 use aether_syntax::RSyntaxNode;
@@ -115,7 +116,6 @@ impl SemanticIndex {
     }
 
     /// Top-level definitions exported by this file (definitions in the file scope).
-    /// Excludes `Sourced` definitions since those belong to other files.
     pub fn file_exports(&self) -> Vec<(&str, TextRange)> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
@@ -174,12 +174,11 @@ impl SemanticIndex {
     /// Find the definition site at `offset`, if any.
     pub fn definition_at_offset(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId)> {
         let scope = self.scope_at(offset);
-        let def_id = self.definitions(scope).iter().find_map(|(id, d)| {
-            if matches!(d.kind(), DefinitionKind::Sourced { .. }) {
-                return None;
-            }
-            d.range().contains(offset).then_some(id)
-        });
+        let def_id = self
+            .definitions(scope)
+            .iter()
+            .filter(|(_id, def)| !matches!(def.kind(), DefinitionKind::Sourced { .. }))
+            .find_map(|(id, d)| d.range().contains(offset).then_some(id));
         Some((scope, def_id?))
     }
 
@@ -567,6 +566,11 @@ pub struct Directive {
 pub enum DirectiveKind {
     /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
     Attach(String),
+    /// `source(file)`: brings exports from another file into scope.
+    Source {
+        file: Url,
+        exports: HashMap<String, TextRange>,
+    },
 }
 
 impl Directive {

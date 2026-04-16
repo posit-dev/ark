@@ -143,6 +143,12 @@ pub fn directive_layers(directives: &[Directive]) -> Vec<(TextSize, ScopeId, Bin
                     BindingSource::PackageExports(pkg.clone()),
                 ));
             },
+            DirectiveKind::Source { file, exports } => {
+                layers.push((offset, directive.scope(), BindingSource::FileExports {
+                    file: file.clone(),
+                    exports: exports.clone(),
+                }));
+            },
         }
     }
     layers

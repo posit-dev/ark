@@ -4,6 +4,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
+use biome_rowan::TextRange;
 use oak_core::file::list_r_files;
 use oak_ide::FileScope;
 use oak_index::external::directive_layers;
@@ -185,9 +186,9 @@ impl WorldState {
     /// Build the semantic index and scope for a script file (not inside a
     /// package).
     ///
-    /// The index is built with a resolver callback so that `source()`
-    /// definitions are injected into the use-def map. `library()`
-    /// directives are extracted into the external scope chain.
+    /// The index is built with a source resolver so that `source()`
+    /// directives carry the sourced file's exports. `library()` and
+    /// `source()` directives are extracted into the external scope chain.
     fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
         let file_path = file.to_file_path().ok();
         let file_dir = file_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
@@ -242,19 +243,28 @@ impl WorldState {
             self.resolve_source(dir, nested_path, stack)
         });
 
-        let definitions = index
+        let mut definitions: Vec<(String, Url, TextRange)> = index
             .file_all_definitions(&url)
             .into_iter()
             .map(|(name, file, range)| (name.to_string(), file, range))
             .collect();
 
-        let packages = index
-            .file_directives()
-            .iter()
-            .map(|d| match d.kind() {
-                oak_index::semantic_index::DirectiveKind::Attach(pkg) => pkg.clone(),
-            })
-            .collect();
+        let mut packages = Vec::new();
+        for d in index.file_directives() {
+            match d.kind() {
+                oak_index::semantic_index::DirectiveKind::Attach(pkg) => {
+                    packages.push(pkg.clone());
+                },
+                oak_index::semantic_index::DirectiveKind::Source {
+                    file: source_file,
+                    exports,
+                } => {
+                    for (name, range) in exports {
+                        definitions.push((name.clone(), source_file.clone(), *range));
+                    }
+                },
+            }
+        }
 
         stack.remove(&url);
 

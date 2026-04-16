@@ -86,8 +86,12 @@ impl FileScope {
                 base,
             } => {
                 let cursor_scope = index.scope_at(offset);
+                // Reverse so later directives are searched first, matching
+                // R's LIFO search path (last `library()` or `source()`
+                // wins when two layers define the same name).
                 let mut layers: Vec<BindingSource> = directive_layers
                     .iter()
+                    .rev()
                     .filter(|(dir_offset, dir_scope, _)| {
                         *dir_offset <= offset &&
                             index.ancestor_scopes(cursor_scope).any(|s| s == *dir_scope)
@@ -114,6 +118,7 @@ impl FileScope {
                 let file_scope = ScopeId::from(0);
                 let mut layers: Vec<BindingSource> = directive_layers
                     .iter()
+                    .rev()
                     .filter(|(_, scope, _)| *scope == file_scope)
                     .map(|(_, _, l)| l.clone())
                     .collect();
