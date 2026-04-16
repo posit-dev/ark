@@ -95,6 +95,20 @@ impl WorldState {
         }
     }
 
+    /// Look up a document by URL: returns an open document if available,
+    /// otherwise reads from disk.
+    ///
+    /// TODO: Replace with a proper VFS so non-opened workspace documents
+    /// are cached rather than re-read on every query.
+    fn workspace_document(&self, uri: &Url) -> Option<Document> {
+        if let Some(doc) = self.documents.get(uri) {
+            return Some(doc.clone());
+        }
+        let path = uri.to_file_path().log_err()?;
+        let contents = std::fs::read_to_string(&path).log_err()?;
+        Some(Document::new(&contents, None))
+    }
+
     /// Create the semantic index and scope chain for a particular file.
     ///
     /// For scripts, the index is built with a source resolver so that
@@ -165,16 +179,8 @@ impl WorldState {
             let Some(uri) = Url::from_file_path(&path).log_err() else {
                 continue;
             };
-
-            // Use the open document if available, otherwise read from disk.
-            // TODO: Store non-opened workspace documents in VFS.
-            let doc = if let Some(open) = self.documents.get(&uri) {
-                open
-            } else {
-                let Ok(contents) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                &Document::new(&contents, None)
+            let Some(doc) = self.workspace_document(&uri) else {
+                continue;
             };
 
             let layers = file_layers(uri, &doc.semantic_index());
@@ -231,13 +237,7 @@ impl WorldState {
             return None;
         }
 
-        let sourced_doc = if let Some(open) = self.documents.get(&url) {
-            open
-        } else {
-            let contents = std::fs::read_to_string(&resolved).log_err()?;
-            &Document::new(&contents, None)
-        };
-
+        let sourced_doc = self.workspace_document(&url)?;
         let source_dir = resolved.parent().map(PathBuf::from);
 
         // Build the sourced file's index with a nested resolver so that
