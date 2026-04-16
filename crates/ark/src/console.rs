@@ -226,9 +226,9 @@ pub struct Console {
     tasks_idle_any_rx: Receiver<QueuedRTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// Comm ID of the currently connected UI comm, if any.
-    /// The handler lives in `self.comms`; this is just an index into it.
-    ui_comm_id: Option<String>,
+    /// The UI comm, stored separately from `comms` so that `ui_comm()` can
+    /// borrow it independently of the comms map (which is behind a `RefCell`).
+    ui_comm: Option<ConsoleComm>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
@@ -338,7 +338,7 @@ pub struct Console {
     read_console_env_stack: RefCell<Vec<RObject>>,
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
-    comms: HashMap<String, ConsoleComm>,
+    comms: RefCell<HashMap<String, ConsoleComm>>,
 
     /// Graphics device state (plot recording, rendering, comm management).
     device_context: DeviceContext,

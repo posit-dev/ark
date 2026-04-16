@@ -21,7 +21,14 @@ use crate::ui::UI_COMM_NAME;
 
 impl Console {
     pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
-        let Some(comm) = self.comms.get_mut(comm_id) else {
+        if let Some(ref mut ui) = self.ui_comm {
+            if ui.comm_id == comm_id {
+                ui.handler.handle_msg(msg, &ui.ctx, Console::get());
+                return;
+            }
+        }
+
+        let Some(comm) = self.comms.get_mut().get_mut(comm_id) else {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
         };
@@ -30,6 +37,16 @@ impl Console {
     }
 
     pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
+        if self
+            .ui_comm
+            .as_ref()
+            .is_some_and(|ui| ui.comm_id == comm_id)
+        {
+            let mut ui = self.ui_comm.take().unwrap();
+            ui.handler.handle_close(&ui.ctx, Console::get());
+            return;
+        }
+
         let Some(mut comm) = self.comm_remove(comm_id) else {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
@@ -48,7 +65,7 @@ impl Console {
     /// `comm_msg` sent by the caller afterwards are ordered after the
     /// `comm_open` on IOPub.
     pub(crate) fn comm_open_backend(
-        &mut self,
+        &self,
         comm_name: &str,
         mut handler: Box<dyn CommHandler>,
     ) -> anyhow::Result<String> {
@@ -66,7 +83,12 @@ impl Console {
         handler.handle_open(&ctx, Console::get());
 
         self.comms
-            .insert(comm_id.clone(), ConsoleComm { handler, ctx });
+            .borrow_mut()
+            .insert(comm_id.clone(), ConsoleComm {
+                comm_id: comm_id.clone(),
+                handler,
+                ctx,
+            });
 
         self.comm_event_tx
             .send(CommEvent::Opened(comm, open_metadata))?;
@@ -98,38 +120,47 @@ impl Console {
         handler.handle_open(&ctx, Console::get());
 
         if comm_name == UI_COMM_NAME {
-            if let Some(old_id) = self.ui_comm_id.take() {
+            if let Some(mut old) = self.ui_comm.take() {
                 log::info!("Replacing an existing UI comm.");
-                if let Some(mut old) = self.comm_remove(&old_id) {
-                    old.handler.handle_close(&old.ctx, Console::get());
-                }
+                old.handler.handle_close(&old.ctx, Console::get());
             }
-            self.ui_comm_id = Some(comm_id.clone());
+            self.ui_comm = Some(ConsoleComm {
+                comm_id,
+                handler,
+                ctx,
+            });
+        } else {
+            self.comms.get_mut().insert(comm_id.clone(), ConsoleComm {
+                comm_id,
+                handler,
+                ctx,
+            });
         }
-
-        self.comms.insert(comm_id, ConsoleComm { handler, ctx });
     }
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
-        for (_, comm) in self.comms.iter_mut() {
+        if let Some(ref mut ui) = self.ui_comm {
+            ui.handler
+                .handle_environment(event, &ui.ctx, Console::get());
+        }
+
+        for (_, comm) in self.comms.get_mut().iter_mut() {
             comm.handler
                 .handle_environment(event, &comm.ctx, Console::get());
         }
         self.drain_closed();
     }
 
-    /// Remove a comm from the map, clearing `ui_comm_id` if it matches.
+    /// Remove a comm from the map.
     fn comm_remove(&mut self, comm_id: &str) -> Option<ConsoleComm> {
-        if self.ui_comm_id.as_deref() == Some(comm_id) {
-            self.ui_comm_id = None;
-        }
-        self.comms.remove(comm_id)
+        self.comms.get_mut().remove(comm_id)
     }
 
     /// Remove all comms whose handler requested closing via `ctx.close_on_exit()`.
     fn drain_closed(&mut self) {
         let closed_ids: Vec<String> = self
             .comms
+            .get_mut()
             .iter()
             .filter(|(_, comm)| comm.ctx.is_closed())
             .map(|(id, _)| id.clone())

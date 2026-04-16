@@ -311,12 +311,12 @@ impl DeviceContext {
     /// ggsave("temp.png", p)
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
-    fn hook_deactivate(&self, console: &Console) -> Option<PendingPlotComm> {
-        self.process_changes(console)
+    fn hook_deactivate(&self, console: &Console) {
+        self.process_changes(console);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
-    fn hook_holdflush(&self, level: i32, console: &Console) -> Option<PendingPlotComm> {
+    fn hook_holdflush(&self, level: i32, console: &Console) {
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
         let is_released = level <= 0;
@@ -324,9 +324,7 @@ impl DeviceContext {
 
         // Flush deferred changes on hold→release transition
         if !was_rendering && is_released {
-            self.process_changes(console)
-        } else {
-            None
+            self.process_changes(console);
         }
     }
 
@@ -547,10 +545,6 @@ impl DeviceContext {
         }
     }
 
-    pub(crate) fn register_comm(&self, id: PlotId, comm_id: String) {
-        self.comm_ids.borrow_mut().insert(id, comm_id);
-    }
-
     #[tracing::instrument(level = "trace", skip(self))]
     fn on_plot_closed(&self, id: &PlotId) {
         self.comm_ids.borrow_mut().remove(id);
@@ -585,12 +579,12 @@ impl DeviceContext {
     /// Uses execution context stored via `on_execute_request()` or falls back to
     /// getting context from Console's active request.
     #[tracing::instrument(level = "trace", skip_all)]
-    pub(crate) fn process_changes(&self, console: &Console) -> Option<PendingPlotComm> {
+    pub(crate) fn process_changes(&self, console: &Console) {
         let id = self.id();
 
         if !self.has_changes.get() {
             log::trace!("No changes to process for plot `id` {id}");
-            return None;
+            return;
         }
 
         log::trace!("Processing changes for plot `id` {id}");
@@ -615,25 +609,23 @@ impl DeviceContext {
             // Keep `has_changes` set so we re-enter this branch after the hold
             // is released (via `hook_holdflush`) and send the notification then.
             log::trace!("Deferring notification for plot `id` {id} (rendering held)");
-            return None;
+            return;
         }
 
         self.has_changes.replace(false);
 
         if self.is_new_page.replace(false) {
-            self.process_new_plot(&id, console)
+            self.process_new_plot(&id, console);
         } else {
             self.process_update_plot(&id, console);
-            None
         }
     }
 
-    fn process_new_plot(&self, id: &PlotId, console: &Console) -> Option<PendingPlotComm> {
+    fn process_new_plot(&self, id: &PlotId, console: &Console) {
         if self.should_use_dynamic_plots(console) {
-            Some(self.process_new_plot_positron(id, console))
+            self.process_new_plot_positron(id, console);
         } else {
             self.process_new_plot_jupyter_protocol(id, console);
-            None
         }
     }
 
@@ -651,7 +643,7 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_positron(&self, id: &PlotId, console: &Console) -> PendingPlotComm {
+    fn process_new_plot_positron(&self, id: &PlotId, console: &Console) {
         log::trace!("Notifying Positron of new plot");
 
         let ctx = self.capture_execution_context(console);
@@ -686,9 +678,13 @@ impl DeviceContext {
             open_data,
         };
 
-        PendingPlotComm {
-            id: id.clone(),
-            handler: Box::new(plot_comm),
+        match console.comm_open_backend(PLOT_COMM_NAME, Box::new(plot_comm)) {
+            Ok(comm_id) => {
+                self.comm_ids.borrow_mut().insert(id.clone(), comm_id);
+            },
+            Err(err) => {
+                log::error!("Failed to register plot comm: {err:?}");
+            },
         }
     }
 
@@ -912,11 +908,6 @@ struct PlotComm {
     open_data: serde_json::Value,
 }
 
-pub(crate) struct PendingPlotComm {
-    pub(crate) id: PlotId,
-    pub(crate) handler: Box<dyn CommHandler>,
-}
-
 impl CommHandler for PlotComm {
     fn open_metadata(&self) -> serde_json::Value {
         self.open_data.clone()
@@ -1100,19 +1091,6 @@ pub(crate) fn compute_plot_overrides(
     )
 }
 
-/// Register a pending plot comm
-///
-/// Called at the FFI boundary (C callbacks and `#[harp::register]` functions)
-/// after `DeviceContext::process_changes()` returns a pending comm. This is the
-/// only place that uses `Console::get_mut()` for plot comm registration.
-/// Will be eliminated when `comm_open_backend` moves to `&self` (#1145).
-fn register_pending_plot_comm(dc: &DeviceContext, pending: PendingPlotComm) {
-    match Console::get_mut().comm_open_backend(PLOT_COMM_NAME, pending.handler) {
-        Ok(comm_id) => dc.register_comm(pending.id, comm_id),
-        Err(err) => log::error!("Failed to register plot comm: {err:?}"),
-    }
-}
-
 /// Activation callback
 ///
 /// Only used for logging
@@ -1142,9 +1120,7 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
 
     // We run our hook first to record before we deactivate the underlying device,
     // in case device deactivation messes with the display list
-    if let Some(pending) = dc.hook_deactivate(console) {
-        register_pending_plot_comm(dc, pending);
-    }
+    dc.hook_deactivate(console);
     if let Some(callback) = dc.wrapped_callbacks.deactivate.get() {
         callback(dev);
     }
@@ -1174,9 +1150,7 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
             level
         },
     };
-    if let Some(pending) = dc.hook_holdflush(level, console) {
-        register_pending_plot_comm(dc, pending);
-    }
+    dc.hook_holdflush(level, console);
     level
 }
 
@@ -1289,10 +1263,7 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
     // Process changes related to the last plot before opening a new page.
     // Particularly important if we make multiple plots in a single chunk.
     let console = Console::get();
-    let dc = console.device_context();
-    if let Some(pending) = dc.process_changes(console) {
-        register_pending_plot_comm(dc, pending);
-    }
+    console.device_context().process_changes(console);
 
     Ok(harp::r_null())
 }

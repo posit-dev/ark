@@ -616,7 +616,7 @@ impl Console {
             comm_msg_originator: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm_id: None,
+            ui_comm: None,
             last_error: None,
             help_event_tx: None,
             help_port: None,
@@ -650,7 +650,7 @@ impl Console {
             read_console_env_stack: RefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
-            comms: HashMap::new(),
+            comms: RefCell::new(HashMap::new()),
             device_context,
         }
     }

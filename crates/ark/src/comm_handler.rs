@@ -108,6 +108,7 @@ pub enum EnvironmentChanged {
 
 /// A registered comm in the Console's comm table.
 pub(crate) struct ConsoleComm {
+    pub(crate) comm_id: String,
     pub(crate) handler: Box<dyn CommHandler>,
     pub(crate) ctx: CommHandlerContext,
 }
