@@ -102,6 +102,7 @@ mod console_comm;
 mod console_debug;
 mod console_error;
 mod console_filter;
+mod console_graphics;
 mod console_integration;
 mod console_repl;
 

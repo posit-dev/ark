@@ -1328,7 +1328,7 @@ impl Console {
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
         // so that the `parent` message is set correctly in any Jupyter messages)
-        graphics_device::on_did_execute_request();
+        self.graphics_on_did_execute_request();
 
         let (reply, result) = Self::prepare_execute_reply(req.exec_count, value);
 
@@ -1388,7 +1388,7 @@ impl Console {
                     .as_ref()
                     .map(graphics_device::compute_plot_overrides)
                     .unwrap_or((None, None));
-                graphics_device::on_execute_request(
+                self.graphics_on_execute_request(
                     originator.header.msg_id.clone(),
                     exec_req.code.clone(),
                     code_location,

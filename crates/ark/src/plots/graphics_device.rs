@@ -83,7 +83,7 @@ struct WrappedDeviceCallbacks {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct PlotId(String);
+pub(crate) struct PlotId(String);
 
 /// Execution context captured when an execute request starts.
 /// Stored on the graphics device so it can be associated with plots created during execution.
@@ -220,7 +220,7 @@ impl DeviceContext {
     }
 
     /// Set the current execution context (called when an execute request starts)
-    fn set_execution_context(
+    pub(crate) fn set_execution_context(
         &self,
         execution_id: String,
         code: String,
@@ -238,7 +238,7 @@ impl DeviceContext {
     }
 
     /// Clear the current execution context (called when an execute request completes)
-    fn clear_execution_context(&self) {
+    pub(crate) fn clear_execution_context(&self) {
         *self.execution_context.borrow_mut() = None;
     }
 
@@ -265,7 +265,7 @@ impl DeviceContext {
     }
 
     /// Clear any unconsumed pending origin.
-    fn clear_pending_origin(&self) {
+    pub(crate) fn clear_pending_origin(&self) {
         self.pending_origin.replace(None);
     }
 
@@ -282,8 +282,7 @@ impl DeviceContext {
     /// This allows plots to be dynamically resized by their `id`. Only possible if the UI
     /// comm is connected (i.e. we are connected to Positron) and if we are in
     /// [SessionMode::Console] mode.
-    fn should_use_dynamic_plots(&self) -> bool {
-        let console = Console::get();
+    fn should_use_dynamic_plots(&self, console: &Console) -> bool {
         console.ui_comm().is_some() && console.session_mode() == SessionMode::Console
     }
 
@@ -312,12 +311,12 @@ impl DeviceContext {
     /// ggsave("temp.png", p)
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
-    fn hook_deactivate(&self) {
-        self.process_changes();
+    fn hook_deactivate(&self, console: &Console) -> Option<PendingPlotComm> {
+        self.process_changes(console)
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
-    fn hook_holdflush(&self, level: i32) {
+    fn hook_holdflush(&self, level: i32, console: &Console) -> Option<PendingPlotComm> {
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
         let is_released = level <= 0;
@@ -325,12 +324,14 @@ impl DeviceContext {
 
         // Flush deferred changes on hold→release transition
         if !was_rendering && is_released {
-            self.process_changes();
+            self.process_changes(console)
+        } else {
+            None
         }
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
-    fn hook_mode(&self, mode: i32) {
+    fn hook_mode(&self, mode: i32, console: &Console) {
         let is_drawing = mode != 0;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
@@ -340,7 +341,7 @@ impl DeviceContext {
         // change set. The source context stack may be popped before
         // `process_changes()` runs, so we snapshot it now while it's available.
         if !old_has_changes && is_drawing {
-            let ctx = self.capture_execution_context();
+            let ctx = self.capture_execution_context(console);
             let origin = self.capture_plot_origin(&ctx);
             self.set_pending_origin(origin);
         }
@@ -371,7 +372,7 @@ impl DeviceContext {
     /// First checks for context pushed via `on_execute_request()`, then falls back
     /// to getting context from Console's active request (for backwards compatibility
     /// and edge cases). The fallback path does not include `code_location`.
-    fn capture_execution_context(&self) -> ExecutionContext {
+    fn capture_execution_context(&self, console: &Console) -> ExecutionContext {
         // Check if we have a stored execution context from on_execute_request()
         let stored = self.execution_context.borrow();
         if let Some(ctx) = stored.as_ref() {
@@ -387,7 +388,7 @@ impl DeviceContext {
 
         // Fall back to getting context from Console (for edge cases).
         // This path does not provide code_location or plot overrides.
-        let (execution_id, code) = Console::get().get_execution_context().unwrap_or_else(|| {
+        let (execution_id, code) = console.get_execution_context().unwrap_or_else(|| {
             // No active request - might be during startup or from R code
             (String::new(), String::new())
         });
@@ -546,6 +547,10 @@ impl DeviceContext {
         }
     }
 
+    pub(crate) fn register_comm(&self, id: PlotId, comm_id: String) {
+        self.comm_ids.borrow_mut().insert(id, comm_id);
+    }
+
     #[tracing::instrument(level = "trace", skip(self))]
     fn on_plot_closed(&self, id: &PlotId) {
         self.comm_ids.borrow_mut().remove(id);
@@ -580,12 +585,12 @@ impl DeviceContext {
     /// Uses execution context stored via `on_execute_request()` or falls back to
     /// getting context from Console's active request.
     #[tracing::instrument(level = "trace", skip_all)]
-    fn process_changes(&self) {
+    pub(crate) fn process_changes(&self, console: &Console) -> Option<PendingPlotComm> {
         let id = self.id();
 
         if !self.has_changes.get() {
             log::trace!("No changes to process for plot `id` {id}");
-            return;
+            return None;
         }
 
         log::trace!("Processing changes for plot `id` {id}");
@@ -610,23 +615,25 @@ impl DeviceContext {
             // Keep `has_changes` set so we re-enter this branch after the hold
             // is released (via `hook_holdflush`) and send the notification then.
             log::trace!("Deferring notification for plot `id` {id} (rendering held)");
-            return;
+            return None;
         }
 
         self.has_changes.replace(false);
 
         if self.is_new_page.replace(false) {
-            self.process_new_plot(&id);
+            self.process_new_plot(&id, console)
         } else {
-            self.process_update_plot(&id);
+            self.process_update_plot(&id, console);
+            None
         }
     }
 
-    fn process_new_plot(&self, id: &PlotId) {
-        if self.should_use_dynamic_plots() {
-            self.process_new_plot_positron(id);
+    fn process_new_plot(&self, id: &PlotId, console: &Console) -> Option<PendingPlotComm> {
+        if self.should_use_dynamic_plots(console) {
+            Some(self.process_new_plot_positron(id, console))
         } else {
-            self.process_new_plot_jupyter_protocol(id);
+            self.process_new_plot_jupyter_protocol(id, console);
+            None
         }
     }
 
@@ -644,10 +651,10 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_positron(&self, id: &PlotId) {
+    fn process_new_plot_positron(&self, id: &PlotId, console: &Console) -> PendingPlotComm {
         log::trace!("Notifying Positron of new plot");
 
-        let ctx = self.capture_execution_context();
+        let ctx = self.capture_execution_context(console);
         self.store_plot_context(id, &ctx);
 
         // Use render settings from the execute request if available, otherwise fall back
@@ -679,21 +686,17 @@ impl DeviceContext {
             open_data,
         };
 
-        match Console::get_mut().comm_open_backend(PLOT_COMM_NAME, Box::new(plot_comm)) {
-            Ok(comm_id) => {
-                self.comm_ids.borrow_mut().insert(id.clone(), comm_id);
-            },
-            Err(err) => {
-                log::error!("Failed to register plot comm: {err:?}");
-            },
+        PendingPlotComm {
+            id: id.clone(),
+            handler: Box::new(plot_comm),
         }
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
+    fn process_new_plot_jupyter_protocol(&self, id: &PlotId, console: &Console) {
         log::trace!("Notifying Jupyter frontend of new plot");
 
-        let ctx = self.capture_execution_context();
+        let ctx = self.capture_execution_context(console);
         self.store_plot_context(id, &ctx);
 
         let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
@@ -744,11 +747,11 @@ impl DeviceContext {
             });
     }
 
-    fn process_update_plot(&self, id: &PlotId) {
-        if self.should_use_dynamic_plots() {
+    fn process_update_plot(&self, id: &PlotId, console: &Console) {
+        if self.should_use_dynamic_plots(console) {
             self.process_update_plot_positron(id);
         } else {
-            self.process_update_plot_jupyter_protocol(id);
+            self.process_update_plot_jupyter_protocol(id, console);
         }
     }
 
@@ -795,10 +798,10 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_update_plot_jupyter_protocol(&self, id: &PlotId) {
+    fn process_update_plot_jupyter_protocol(&self, id: &PlotId, console: &Console) {
         log::trace!("Notifying Jupyter frontend of plot update");
 
-        let ctx = self.capture_execution_context();
+        let ctx = self.capture_execution_context(console);
         let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -907,6 +910,11 @@ impl DeviceContext {
 struct PlotComm {
     id: PlotId,
     open_data: serde_json::Value,
+}
+
+pub(crate) struct PendingPlotComm {
+    pub(crate) id: PlotId,
+    pub(crate) handler: Box<dyn CommHandler>,
 }
 
 impl CommHandler for PlotComm {
@@ -1092,55 +1100,17 @@ pub(crate) fn compute_plot_overrides(
     )
 }
 
-/// Hook applied when an execute request starts
+/// Register a pending plot comm
 ///
-/// Pushes the execution context (execution_id, code, code_location) to the graphics device
-/// so it can be captured when new plots are created. This allows plots to be
-/// correctly attributed to the code that generated them.
-///
-/// Called from `handle_execute_request()` after setting the active request.
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_execute_request(
-    execution_id: String,
-    code: String,
-    code_location: Option<CodeLocation>,
-    render_settings: Option<PlotRenderSettings>,
-    intrinsic_size: Option<IntrinsicSize>,
-) {
-    log::trace!("Entering on_execute_request");
-    Console::get().device_context().set_execution_context(
-        execution_id,
-        code,
-        code_location,
-        render_settings,
-        intrinsic_size,
-    );
-}
-
-/// Hook applied after a code chunk has finished executing
-///
-/// Not an official graphics device hook, instead we run this manually after
-/// completing execution of a chunk of R code.
-///
-/// This is particularly useful for recording "partial" states within a single
-/// page, for example:
-///
-/// ```r
-/// # Run this line by line
-/// par(mfrow = c(2, 1))
-/// plot(1:10)
-/// ```
-///
-/// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
-/// but we can still render this intermediate state and show it to the user until
-/// they add more plots or advance to another new page.
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_did_execute_request() {
-    log::trace!("Entering on_did_execute_request");
-    let dc = Console::get().device_context();
-    dc.process_changes();
-    dc.clear_execution_context();
-    dc.clear_pending_origin();
+/// Called at the FFI boundary (C callbacks and `#[harp::register]` functions)
+/// after `DeviceContext::process_changes()` returns a pending comm. This is the
+/// only place that uses `Console::get_mut()` for plot comm registration.
+/// Will be eliminated when `comm_open_backend` moves to `&self` (#1145).
+fn register_pending_plot_comm(dc: &DeviceContext, pending: PendingPlotComm) {
+    match Console::get_mut().comm_open_backend(PLOT_COMM_NAME, pending.handler) {
+        Ok(comm_id) => dc.register_comm(pending.id, comm_id),
+        Err(err) => log::error!("Failed to register plot comm: {err:?}"),
+    }
 }
 
 /// Activation callback
@@ -1167,10 +1137,14 @@ unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
 unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     log::trace!("Entering callback_deactivate");
 
-    let dc = Console::get().device_context();
+    let console = Console::get();
+    let dc = console.device_context();
+
     // We run our hook first to record before we deactivate the underlying device,
     // in case device deactivation messes with the display list
-    dc.hook_deactivate();
+    if let Some(pending) = dc.hook_deactivate(console) {
+        register_pending_plot_comm(dc, pending);
+    }
     if let Some(callback) = dc.wrapped_callbacks.deactivate.get() {
         callback(dev);
     }
@@ -1180,7 +1154,8 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
 unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) -> i32 {
     log::trace!("Entering callback_holdflush");
 
-    let dc = Console::get().device_context();
+    let console = Console::get();
+    let dc = console.device_context();
     // If our wrapped device has a `holdflush()` method, we rely on it to apply
     // the `level_delta` (typically `+1` or `-1`) and return the new level. Otherwise
     // we follow the lead of `devholdflush()` in R and use a resolved `level` of `0`.
@@ -1199,7 +1174,9 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
             level
         },
     };
-    dc.hook_holdflush(level);
+    if let Some(pending) = dc.hook_holdflush(level, console) {
+        register_pending_plot_comm(dc, pending);
+    }
     level
 }
 
@@ -1210,11 +1187,12 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     log::trace!("Entering callback_mode");
 
-    let dc = Console::get().device_context();
+    let console = Console::get();
+    let dc = console.device_context();
     if let Some(callback) = dc.wrapped_callbacks.mode.get() {
         callback(mode, dev);
     }
-    dc.hook_mode(mode);
+    dc.hook_mode(mode, console);
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
@@ -1310,7 +1288,11 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
 
     // Process changes related to the last plot before opening a new page.
     // Particularly important if we make multiple plots in a single chunk.
-    Console::get().device_context().process_changes();
+    let console = Console::get();
+    let dc = console.device_context();
+    if let Some(pending) = dc.process_changes(console) {
+        register_pending_plot_comm(dc, pending);
+    }
 
     Ok(harp::r_null())
 }
