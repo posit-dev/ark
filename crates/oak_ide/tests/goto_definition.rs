@@ -1281,8 +1281,9 @@ fn test_source_directive_resolves_nested_library() {
     let helpers_packages: Vec<_> = helpers_idx
         .file_directives()
         .iter()
-        .map(|d| match d.kind() {
-            DirectiveKind::Attach(pkg) => pkg.clone(),
+        .filter_map(|d| match d.kind() {
+            DirectiveKind::Attach(pkg) => Some(pkg.clone()),
+            DirectiveKind::Source { .. } => None,
         })
         .collect();
 
@@ -1503,8 +1504,8 @@ fn test_directives_in_function_body_are_scoped() {
 
 #[test]
 fn test_source_in_function_body_scoping() {
-    // `source()` inside a function body with a resolver injects definitions
-    // into the function scope. `helper` resolves inside f but not at file level.
+    // `source(local = FALSE)` inside a function body scopes directives to the
+    // function scope, so sourced definitions are NOT visible at file scope.
     let helpers_source = "helper <- function() 1\n";
     let (_helpers_root, helpers_idx) = parse_source(helpers_source);
     let helpers_url = file_url("helpers.R");
@@ -1550,7 +1551,7 @@ fn test_source_in_function_body_scoping() {
         focus_range: text_range(0, 6),
     }]);
 
-    // `helper` outside the function — should NOT resolve
+    // `helper` outside the function — NOT visible
     let outer_offset = script_source.rfind("\nhelper\n").unwrap() as u32 + 1;
     let targets = goto_definition(
         offset(outer_offset),

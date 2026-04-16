@@ -793,11 +793,8 @@ mod tests {
 
     #[test]
     fn test_script_source_in_function_scoping() {
-        // source() inside a function body: definitions are visible inside
-        // the function and its nested scopes, but NOT outside.
-        // This is independent of `local = TRUE/FALSE`. Even if sourced in the
-        // global environment, only code following the `source()` call in the
-        // current scope can assume these symbols are in scope.
+        // `source(local = FALSE)` inside a function scopes directives to the
+        // function scope, so definitions are NOT visible at file scope.
         let dir = tempfile::tempdir().unwrap();
 
         std::fs::write(dir.path().join("helpers.R"), "helper <- function() 1\n").unwrap();
@@ -838,7 +835,7 @@ mod tests {
             }
         );
 
-        // `helper` on line 5 (outside f) — should NOT resolve
+        // `helper` on line 5 (outside f) — NOT visible
         let params = make_params(script_uri, 5, 0);
         let result = goto_definition(&script_doc, params, &state).unwrap();
         assert_eq!(result, None);
@@ -984,14 +981,8 @@ mod tests {
 
     #[test]
     fn test_script_source_in_function_packages_scoped() {
-        // source() inside a function where the sourced file calls library(dplyr).
-        // The dplyr Attach directive should be scoped to the function: visible
-        // inside f (and nested scopes) but NOT at file scope.
-        //
-        // We verify by checking the scope chain at two offsets. Package symbols
-        // produce no NavigationTarget, so goto_definition can't distinguish
-        // "resolved to package" from "unresolved". The scope chain check is
-        // more direct.
+        // `source(local = FALSE)` inside a function scopes package directives
+        // to the function scope, so they are NOT visible at file scope.
         let dir = tempfile::tempdir().unwrap();
 
         std::fs::write(
@@ -1000,12 +991,14 @@ mod tests {
         )
         .unwrap();
 
-        //  "f <- function() {\n"              offset 0
-        //  "  source(\"helpers.R\")\n"         offset 18
-        //  "  mutate\n"                        offset 39
-        //  "}\n"                               offset 48
-        //  "mutate\n"                          offset 50
-        let script_source = "f <- function() {\n  source(\"helpers.R\")\n  mutate\n}\nmutate\n";
+        //  "mutate\n"                          offset 0
+        //  "f <- function() {\n"              offset 7
+        //  "  source(\"helpers.R\")\n"         offset 25
+        //  "  mutate\n"                        offset 46
+        //  "}\n"                               offset 55
+        //  "mutate\n"                          offset 57
+        let script_source =
+            "mutate\nf <- function() {\n  source(\"helpers.R\")\n  mutate\n}\nmutate\n";
         let script_doc = Document::new(script_source, None);
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
 
@@ -1020,13 +1013,19 @@ mod tests {
             layers.iter().any(|l| matches!(l, oak_index::external::ScopeLayer::PackageExports(pkg) if pkg == "dplyr"))
         };
 
-        // Inside f (offset 41, on "mutate"): dplyr should be in the scope chain
-        let inner_offset = biome_rowan::TextSize::from(41);
+        // Before f (offset 0, on "mutate"): dplyr is NOT visible because the
+        // directive's offset is the `source()` call site inside f.
+        let before_offset = biome_rowan::TextSize::from(0);
+        let before_chain = file_scope.at(&index, before_offset);
+        assert!(!has_dplyr(&before_chain));
+
+        // Inside f (offset 48, on "mutate"): dplyr should be in the scope chain
+        let inner_offset = biome_rowan::TextSize::from(48);
         let inner_chain = file_scope.at(&index, inner_offset);
         assert!(has_dplyr(&inner_chain));
 
-        // Outside f (offset 50, on "mutate"): dplyr should NOT be in the scope chain
-        let outer_offset = biome_rowan::TextSize::from(50);
+        // After f (offset 57, on "mutate"): dplyr is NOT visible
+        let outer_offset = biome_rowan::TextSize::from(57);
         let outer_chain = file_scope.at(&index, outer_offset);
         assert!(!has_dplyr(&outer_chain));
     }
@@ -1056,6 +1055,116 @@ mod tests {
             goto_definition(&script_doc, params, &state).unwrap(),
             Some(GotoDefinitionResponse::Link(ref links)) => {
                 assert_eq!(links[0].target_uri, b_uri);
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_local_true_in_function_scoping() {
+        // `source(local = TRUE)` injects definitions into the function
+        // scope, so `helper` is visible inside f but not outside.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "helper <- function() 1\n").unwrap();
+
+        let script_source =
+            "f <- function() {\n  source(\"helpers.R\", local = TRUE)\n  helper\n}\nhelper\n";
+        let script_doc = Document::new(script_source, None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
+
+        // `helper` on line 2 (inside f, after source(local = TRUE)) — resolves
+        let params = make_params(script_uri.clone(), 2, 2);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+            }
+        );
+
+        // `helper` on line 4 (outside f) — does NOT resolve
+        let params = make_params(script_uri, 4, 0);
+        let result = goto_definition(&script_doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_script_source_local_true_shadows_local_def() {
+        // `source(local = TRUE)` injects into the use-def map and
+        // shadows a prior local binding.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "foo <- function() 1\n").unwrap();
+
+        //  Line 0: "f <- function() {\n"
+        //  Line 1: "  foo <- \"local\"\n"
+        //  Line 2: "  source(\"helpers.R\", local = TRUE)\n"
+        //  Line 3: "  foo\n"
+        //  Line 4: "}\n"
+        let script_source =
+            "f <- function() {\n  foo <- \"local\"\n  source(\"helpers.R\", local = TRUE)\n  foo\n}\n";
+        let script_doc = Document::new(script_source, None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
+
+        // `foo` on line 3 resolves to helpers.R (sourced def shadows local)
+        let params = make_params(script_uri, 3, 2);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+            }
+        );
+    }
+
+    #[test]
+    fn test_script_source_local_false_does_not_shadow_local_def() {
+        // `source()` (default `local = FALSE`) in a function scope does
+        // not shadow a prior local binding.
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(dir.path().join("helpers.R"), "foo <- function() 1\n").unwrap();
+
+        //  Line 0: "f <- function() {\n"
+        //  Line 1: "  foo <- \"local\"\n"
+        //  Line 2: "  source(\"helpers.R\")\n"
+        //  Line 3: "  foo\n"
+        //  Line 4: "}\n"
+        let script_source =
+            "f <- function() {\n  foo <- \"local\"\n  source(\"helpers.R\")\n  foo\n}\n";
+        let script_doc = Document::new(script_source, None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        // `foo` on line 3 resolves to the local definition on line 1
+        let params = make_params(script_uri.clone(), 3, 2);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, script_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 2),
+                        end: lsp_types::Position::new(1, 5),
+                    }
+                );
             }
         );
     }

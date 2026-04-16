@@ -75,6 +75,7 @@ impl ExternalScope {
                 let in_function = cursor_scope != file_scope;
                 let layers: Vec<_> = directives
                     .iter()
+                    .rev()
                     .filter(|(off, dir_scope, _)| {
                         // File-scope directives are always visible inside
                         // function bodies (the function is typically called
@@ -104,6 +105,7 @@ impl ExternalScope {
                 let file_scope = ScopeId::from(0);
                 let mut layers: Vec<ScopeLayer> = directives
                     .iter()
+                    .rev()
                     .filter(|(_, scope, _)| *scope == file_scope)
                     .map(|(_, _, l)| l.clone())
                     .collect();
