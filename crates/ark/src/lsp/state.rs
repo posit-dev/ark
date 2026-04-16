@@ -201,14 +201,26 @@ impl WorldState {
     }
 
     fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, ExternalScope) {
-        let file_path = file.to_file_path().ok();
-        let file_dir = file_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        // Resolve `source()` paths relative to the workspace root,
+        // matching RStudio's behaviour of setting the working directory
+        // to the project root. Fall back to the file's own directory
+        // when no workspace folder is open.
+        let file_dir = file
+            .to_file_path()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let source_root = self
+            .workspace
+            .folders
+            .first()
+            .and_then(|url| url.to_file_path().ok())
+            .or(file_dir);
 
         let mut stack = HashSet::new();
         stack.insert(file.clone());
 
         let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
-            let dir = file_dir.as_ref()?;
+            let dir = source_root.as_ref()?;
             self.resolve_source(dir, path, &mut stack)
         });
 
@@ -240,13 +252,12 @@ impl WorldState {
         }
 
         let sourced_doc = self.workspace_document(&url)?;
-        let source_dir = resolved.parent().map(PathBuf::from);
 
         // Build the sourced file's index with a nested resolver so that
-        // transitive `source()` calls are also resolved.
+        // transitive `source()` calls are also resolved. The base
+        // directory stays the same (workspace root) throughout the chain.
         let index = semantic_index_with_source_resolver(&sourced_doc.parse.tree(), |nested_path| {
-            let dir = source_dir.as_ref()?;
-            self.resolve_source(dir, nested_path, stack)
+            self.resolve_source(base_dir, nested_path, stack)
         });
 
         let mut definitions: Vec<(String, Url, TextRange)> = index
