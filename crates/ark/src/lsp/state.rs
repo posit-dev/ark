@@ -98,13 +98,22 @@ impl WorldState {
     /// Create the semantic index and scope chain for a particular file.
     ///
     /// For scripts, the index is built with a source resolver so that
-    /// `source()` definitions are injected into the use-def map.
-    /// For packages, the index is the plain per-file index.
+    /// `source()` directives carry the sourced file's exports.
+    /// For packages, cross-file visibility comes from NAMESPACE imports and
+    /// collation ordering.
     pub(crate) fn file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
-        let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            return self.script_file_analysis(file, doc);
-        };
+        match self.root {
+            Some(SourceRoot::Package(ref pkg)) => self.package_file_analysis(file, doc, pkg),
+            _ => self.script_file_analysis(file, doc),
+        }
+    }
 
+    fn package_file_analysis(
+        &self,
+        file: &Url,
+        doc: &Document,
+        pkg: &oak_package::package::Package,
+    ) -> (SemanticIndex, FileScope) {
         let root_layers = package_root_layers(&pkg.namespace);
 
         // Collect R source filenames from open documents and disk. Open
@@ -183,18 +192,13 @@ impl WorldState {
         (doc.semantic_index(), FileScope::package(top_level, lazy))
     }
 
-    /// Build the semantic index and scope for a script file (not inside a
-    /// package).
-    ///
-    /// The index is built with a source resolver so that `source()`
-    /// directives carry the sourced file's exports. `library()` and
-    /// `source()` directives are extracted into the external scope chain.
     fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
         let file_path = file.to_file_path().ok();
         let file_dir = file_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
 
         let mut stack = HashSet::new();
         stack.insert(file.clone());
+
         let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
             let dir = file_dir.as_ref()?;
             self.resolve_source(dir, path, &mut stack)

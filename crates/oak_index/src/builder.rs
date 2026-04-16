@@ -44,17 +44,6 @@ use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 use crate::use_def_map::UseDefMapBuilder;
 
-/// The result of resolving a `source()` call. Returned by the resolver
-/// callback passed to the builder.
-pub struct SourceResolution {
-    /// Definitions to inject as synthetic bindings in the calling scope.
-    /// Each entry is (name, file_url, range_in_source_file).
-    pub definitions: Vec<(String, Url, TextRange)>,
-    /// Package names from `library()` directives in the sourced file
-    /// (and transitively from files it sources).
-    pub packages: Vec<String>,
-}
-
 /// Build a [`SemanticIndex`] from a parsed R file.
 pub fn semantic_index(root: &RRoot) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
@@ -68,7 +57,8 @@ pub fn semantic_index(root: &RRoot) -> SemanticIndex {
 ///
 /// The resolver callback is called when the builder encounters a
 /// `source("path")` call. It should return the sourced file's exported
-/// definitions and any `library()` package attachments.
+/// definitions and any `library()` package attachments. See the design
+/// comment on `collect_source_directive` for how these are handled.
 pub fn semantic_index_with_source_resolver<'a>(
     root: &RRoot,
     resolver: impl FnMut(&str) -> Option<SourceResolution> + 'a,
@@ -78,6 +68,17 @@ pub fn semantic_index_with_source_resolver<'a>(
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
     builder.finish()
+}
+
+/// The result of resolving a `source()` call. Returned by the resolver
+/// callback passed to the builder.
+pub struct SourceResolution {
+    /// Definitions to inject as synthetic bindings in the calling scope.
+    /// Each entry is (name, file_url, range_in_source_file).
+    pub definitions: Vec<(String, Url, TextRange)>,
+    /// Package names from `library()` directives in the sourced file
+    /// (and transitively from files it sources).
+    pub packages: Vec<String>,
 }
 
 type SourceResolver<'a> = Box<dyn FnMut(&str) -> Option<SourceResolution> + 'a>;
@@ -859,55 +860,60 @@ impl<'a> SemanticIndexBuilder<'a> {
         let call_offset = call.syntax().text_trimmed_range().start();
         let in_nested_scope = self.current_scope != ScopeId::from(0);
 
-        // Take the resolver out to avoid borrow conflict with `&mut self`
-        let mut resolver = self.source_resolver.take();
-        if let Some(ref mut resolve) = resolver {
-            if let Some(resolution) = resolve(&path) {
-                if is_local || !in_nested_scope {
-                    // `local = TRUE` or at file scope: inject into the
-                    // use-def map so sourced definitions shadow locals.
-                    for (name, file, range) in resolution.definitions {
-                        self.add_definition(
-                            &name,
-                            SymbolFlags::IS_BOUND,
-                            DefinitionKind::Sourced { file },
-                            range,
-                        );
-                    }
-                    for pkg in resolution.packages {
-                        self.directives.push(Directive {
-                            kind: DirectiveKind::Attach(pkg),
-                            offset: call_offset,
-                            scope: self.current_scope,
-                        });
-                    }
-                } else {
-                    // `local = FALSE` (default) in a nested scope:
-                    // cross-file resolution only via directives, scoped
-                    // to the current scope (not file scope) since the
-                    // function might never be called.
-                    let mut by_file: HashMap<Url, HashMap<String, TextRange>> = HashMap::new();
-                    for (name, file, range) in resolution.definitions {
-                        by_file.entry(file).or_default().insert(name, range);
-                    }
-                    for (file, exports) in by_file {
-                        self.directives.push(Directive {
-                            kind: DirectiveKind::Source { file, exports },
-                            offset: call_offset,
-                            scope: self.current_scope,
-                        });
-                    }
-                    for pkg in resolution.packages {
-                        self.directives.push(Directive {
-                            kind: DirectiveKind::Attach(pkg),
-                            offset: call_offset,
-                            scope: self.current_scope,
-                        });
-                    }
-                }
+        let Some(resolution) = self.resolve_source(&path) else {
+            return;
+        };
+
+        if is_local || !in_nested_scope {
+            // `local = TRUE` or at file scope: inject into the
+            // use-def map so sourced definitions shadow locals.
+            for (name, file, range) in resolution.definitions {
+                self.add_definition(
+                    &name,
+                    SymbolFlags::IS_BOUND,
+                    DefinitionKind::Sourced { file },
+                    range,
+                );
+            }
+            for pkg in resolution.packages {
+                self.directives.push(Directive {
+                    kind: DirectiveKind::Attach(pkg),
+                    offset: call_offset,
+                    scope: self.current_scope,
+                });
+            }
+        } else {
+            // `local = FALSE` (default) in a nested scope: cross-file
+            // resolution only via directives, scoped to the current scope
+            // instead of the file scope.
+            let mut by_file: HashMap<Url, HashMap<String, TextRange>> = HashMap::new();
+            for (name, file, range) in resolution.definitions {
+                by_file.entry(file).or_default().insert(name, range);
+            }
+            for (file, exports) in by_file {
+                self.directives.push(Directive {
+                    kind: DirectiveKind::Source { file, exports },
+                    offset: call_offset,
+                    scope: self.current_scope,
+                });
+            }
+            for pkg in resolution.packages {
+                self.directives.push(Directive {
+                    kind: DirectiveKind::Attach(pkg),
+                    offset: call_offset,
+                    scope: self.current_scope,
+                });
             }
         }
-        self.source_resolver = resolver;
+    }
+
+    /// Call the source resolver for `path`, temporarily taking it out of
+    /// `self` to avoid borrow conflicts.
+    fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
+        let mut resolver = self.source_resolver.take()?;
+        let result = resolver(path);
+        self.source_resolver = Some(resolver);
+        result
     }
 
     fn finish(mut self) -> SemanticIndex {
