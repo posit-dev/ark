@@ -13,6 +13,7 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
+use std::rc::Rc;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::plot_comm::IntrinsicSize;
@@ -186,6 +187,12 @@ pub(crate) struct DeviceContext {
     /// stack may be popped before `process_changes()` runs (e.g. `source()` completes
     /// before the execute request finishes), so we snapshot the origin at drawing time.
     pending_origin: RefCell<Option<Option<PlotOrigin>>>,
+}
+
+impl std::fmt::Debug for DeviceContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceContext").finish_non_exhaustive()
+    }
 }
 
 impl DeviceContext {
@@ -676,6 +683,7 @@ impl DeviceContext {
         let plot_comm = PlotComm {
             id: id.clone(),
             open_data,
+            device_context: console.device_context_rc(),
         };
 
         match console.comm_open_backend(PLOT_COMM_NAME, Box::new(plot_comm)) {
@@ -906,6 +914,7 @@ impl DeviceContext {
 struct PlotComm {
     id: PlotId,
     open_data: serde_json::Value,
+    device_context: Rc<DeviceContext>,
 }
 
 impl CommHandler for PlotComm {
@@ -913,15 +922,14 @@ impl CommHandler for PlotComm {
         self.open_data.clone()
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, console: &Console) {
-        let dc = console.device_context();
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
         handle_rpc_request(&ctx.outgoing_tx, PLOT_COMM_NAME, msg, |req| {
-            dc.handle_rpc(req, &self.id)
+            self.device_context.handle_rpc(req, &self.id)
         });
     }
 
-    fn handle_close(&mut self, _ctx: &CommHandlerContext, console: &Console) {
-        console.device_context().on_plot_closed(&self.id);
+    fn handle_close(&mut self, _ctx: &CommHandlerContext) {
+        self.device_context.on_plot_closed(&self.id);
     }
 }
 

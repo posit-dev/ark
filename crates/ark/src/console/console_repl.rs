@@ -10,6 +10,8 @@
 //! This module contains `impl Console` with methods and functions related to
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
+use std::rc::Rc;
+
 use super::*;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
@@ -603,7 +605,7 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
-        let device_context = DeviceContext::new(iopub_tx.clone());
+        let device_context = Rc::new(DeviceContext::new(iopub_tx.clone()));
 
         Self {
             r_request_rx,
@@ -761,6 +763,10 @@ impl Console {
 
     pub(crate) fn device_context(&self) -> &DeviceContext {
         &self.device_context
+    }
+
+    pub(crate) fn device_context_rc(&self) -> Rc<DeviceContext> {
+        Rc::clone(&self.device_context)
     }
 
     /// Run a closure while capturing console output.
