@@ -60,25 +60,7 @@ impl Namespace {
                     collect_arg_identifiers(args.items().iter(), &mut exports);
                 },
                 "importFrom" => {
-                    let mut arg_iter = args.items().iter();
-                    let Some(Ok(first_arg)) = arg_iter.next() else {
-                        continue;
-                    };
-                    let Some(AnyRExpression::RIdentifier(pkg_ident)) = first_arg.value() else {
-                        continue;
-                    };
-                    let pkg_name = pkg_ident.name_text();
-
-                    for item in arg_iter {
-                        let Ok(arg) = item else { continue };
-                        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
-                            continue;
-                        };
-                        imports.push(Import {
-                            name: ident.name_text(),
-                            package: pkg_name.clone(),
-                        });
-                    }
+                    collect_imports(args.items().iter(), &mut imports);
                 },
                 "import" => {
                     collect_arg_identifiers(args.items().iter(), &mut package_imports);
@@ -106,6 +88,30 @@ impl Namespace {
     /// TODO: Take a `Library` and incorporate bulk imports
     pub(crate) fn _resolve_imports(&self) -> &Vec<Import> {
         &self.imports
+    }
+}
+
+/// Collect `importFrom(pkg, a, b, c)` into `Import` entries. The first
+/// argument is the package name, the rest are imported symbols.
+fn collect_imports(args: impl Iterator<Item = SyntaxResult<RArgument>>, out: &mut Vec<Import>) {
+    let mut args = args;
+    let Some(Ok(first_arg)) = args.next() else {
+        return;
+    };
+    let Some(AnyRExpression::RIdentifier(pkg_ident)) = first_arg.value() else {
+        return;
+    };
+    let pkg_name = pkg_ident.name_text();
+
+    for item in args {
+        let Ok(arg) = item else { continue };
+        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
+            continue;
+        };
+        out.push(Import {
+            name: ident.name_text(),
+            package: pkg_name.clone(),
+        });
     }
 }
 
