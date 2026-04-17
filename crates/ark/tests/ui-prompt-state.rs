@@ -14,6 +14,7 @@ use ark_test::DummyArkFrontend;
 fn test_prompt_state_after_execution() {
     let frontend = DummyArkFrontend::lock();
     let comm_id = frontend.open_ui_comm();
+    frontend.set_ignore_ui_busy(false);
 
     frontend.send_execute_request("1 + 1", ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
@@ -34,6 +35,7 @@ fn test_prompt_state_after_execution() {
 fn test_prompt_state_custom_prompt() {
     let frontend = DummyArkFrontend::lock();
     let comm_id = frontend.open_ui_comm();
+    frontend.set_ignore_ui_busy(false);
 
     // Change the prompt
     frontend.send_execute_request(
@@ -67,6 +69,7 @@ fn test_prompt_state_custom_prompt() {
 fn test_prompt_state_browser() {
     let frontend = DummyArkFrontend::lock();
     let comm_id = frontend.open_ui_comm();
+    frontend.set_ignore_ui_busy(false);
 
     // Enter the browser. The busy sequence differs from normal execution:
     // R briefly goes idle entering the browser's ReadConsole, then busy
@@ -102,6 +105,7 @@ fn test_prompt_state_browser() {
 fn test_prompt_state_custom_continuation() {
     let frontend = DummyArkFrontend::lock();
     let comm_id = frontend.open_ui_comm();
+    frontend.set_ignore_ui_busy(false);
 
     frontend.send_execute_request(
         "options(continue = '... ')",

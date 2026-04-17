@@ -7,6 +7,8 @@
 
 //! Help, LSP, UI comm, and frontend method integration for the R console.
 
+use stdext::cell::DebugRef;
+
 use super::*;
 use crate::data_explorer::r_data_explorer::DataExplorerMode;
 use crate::data_explorer::r_data_explorer::InlineDataExplorerData;
@@ -21,9 +23,12 @@ impl Console {
     }
 
     pub(crate) fn ui_comm(&self) -> Option<UiCommRef<'_>> {
-        let comm = self.comms.get(self.ui_comm_id.as_deref()?)?;
+        let guard = self.ui_comm.borrow();
+        if guard.is_none() {
+            return None;
+        }
         Some(UiCommRef {
-            comm,
+            guard,
             originator: self
                 .active_request
                 .as_ref()
@@ -226,14 +231,18 @@ impl Console {
 ///
 /// Existence of this value guarantees the comm is connected.
 pub(crate) struct UiCommRef<'a> {
-    comm: &'a ConsoleComm,
+    guard: DebugRef<'a, Option<ConsoleComm>>,
     originator: Option<&'a Originator>,
     stdin_request_tx: &'a Sender<StdInRequest>,
 }
 
 impl UiCommRef<'_> {
+    fn comm(&self) -> &ConsoleComm {
+        self.guard.as_ref().unwrap()
+    }
+
     pub(crate) fn send_event(&self, event: &UiFrontendEvent) {
-        self.comm.ctx.send_event(event);
+        self.comm().ctx.send_event(event);
     }
 
     pub(crate) fn busy(&self, busy: bool) {

@@ -17,10 +17,10 @@ use crossbeam::channel::Sender;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use stdext::result::ResultExt;
+use stdext::DebugRefCell;
 
 /// Context provided to `CommHandler` methods, giving access to the outgoing
-/// channel and close-request mechanism. In the future, we'll provide access to
-/// more of the Console state, such as the currently active environment.
+/// channel and close-request mechanism.
 #[derive(Debug)]
 pub struct CommHandlerContext {
     pub outgoing_tx: CommOutgoingTx,
@@ -101,7 +101,8 @@ pub enum EnvironmentChanged {
 
 /// A registered comm in the Console's comm table.
 pub(crate) struct ConsoleComm {
-    pub(crate) handler: Box<dyn CommHandler>,
+    pub(crate) comm_id: String,
+    pub(crate) handler: DebugRefCell<Box<dyn CommHandler>>,
     pub(crate) ctx: CommHandlerContext,
 }
 
