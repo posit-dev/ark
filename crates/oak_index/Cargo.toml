@@ -16,7 +16,11 @@ workspace = true
 [dependencies]
 aether_syntax.workspace = true
 biome_rowan.workspace = true
+itertools.workspace = true
+log.workspace = true
 rustc-hash.workspace = true
+smallvec.workspace = true
+stdext.workspace = true
 
 [dev-dependencies]
 aether_parser.workspace = true

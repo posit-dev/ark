@@ -6,6 +6,7 @@ use rustc_hash::FxHashMap;
 
 use crate::index_vec::define_index;
 use crate::index_vec::IndexVec;
+use crate::use_def_map::UseDefMap;
 
 // File-local scope identifier
 define_index!(ScopeId);
@@ -48,11 +49,15 @@ pub struct SemanticIndex {
     // (a per-scope map from AST node positions to `ScopedUseId`). When we
     // introduce salsa, these lists may be restructured to match.
     //
-    // Use-def maps will layer on top of these lists, not replace them. A
-    // use-def map tracks which definitions reach each use through control flow,
-    // referencing `DefinitionId` and `UseId` indices into these arenas.
+    // Use-def maps layer on top of these lists. A use-def map tracks which
+    // definitions reach each use through control flow, referencing
+    // `DefinitionId` and `UseId` indices into these arenas.
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
+
+    // Per-scope flow-sensitive map from each use site to the set of definitions
+    // that can reach it. Built alongside the other arrays during the tree walk.
+    use_def_maps: IndexVec<ScopeId, UseDefMap>,
 }
 
 impl SemanticIndex {
@@ -61,12 +66,14 @@ impl SemanticIndex {
         symbol_tables: IndexVec<ScopeId, SymbolTable>,
         definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
+        use_def_maps: IndexVec<ScopeId, UseDefMap>,
     ) -> Self {
         Self {
             scopes,
             symbol_tables,
             definitions,
             uses,
+            use_def_maps,
         }
     }
 
@@ -84,6 +91,10 @@ impl SemanticIndex {
 
     pub fn uses(&self, scope: ScopeId) -> &IndexVec<UseId, Use> {
         &self.uses[scope]
+    }
+
+    pub fn use_def_map(&self, scope: ScopeId) -> &UseDefMap {
+        &self.use_def_maps[scope]
     }
 
     /// Find the innermost scope containing `offset`.
@@ -296,8 +307,8 @@ impl Symbol {
 // bound somewhere in this scope" but can't answer "which definition of x
 // reaches this point?" or "is x defined before this use?". Use-def maps
 // provide that precision. The flags remain useful for scope-level queries
-// like `resolve_symbol` and `resolve_super_target` (which walk the scope
-// chain checking `IS_BOUND`). They can also be useful as filters for
+// like `resolve_symbol` (which walks the scope chain checking
+// `IS_BOUND`). They can also be useful as filters for
 // short-circuiting unneeded expensive operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SymbolFlags(u8);
