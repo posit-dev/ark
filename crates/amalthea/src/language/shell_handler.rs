@@ -81,21 +81,20 @@ pub trait ShellHandler: Send {
     /// Docs: https://jupyter-client.readthedocs.io/en/stable/messaging.html#history
     async fn handle_history_request(&self, req: &HistoryRequest) -> crate::Result<HistoryReply>;
 
-    /// Handles a request to open a comm.
+    /// Handle a request to open a comm.
     ///
-    /// https://jupyter-client.readthedocs.io/en/stable/messaging.html#opening-a-comm
+    /// Returns `(true, Some(receiver))` if the comm was opened and the handler
+    /// was dispatched asynchronously. Shell will select-loop on the receiver
+    /// and `comm_event_rx` to drain comm events while the handler runs.
     ///
-    /// Returns true if the handler handled the request (and opened the comm), false if it did not.
-    ///
-    /// * `target` - The target name of the comm, such as `positron.variables`
-    /// * `comm` - The comm channel to use to communicate with the frontend
-    /// * `data` - The `data` payload from the `comm_open` message
-    async fn handle_comm_open(
-        &self,
+    /// Returns `(true, None)` if the comm was opened synchronously.
+    /// Returns `(false, None)` if the comm was not handled.
+    fn handle_comm_open(
+        &mut self,
         target: Comm,
         comm: CommSocket,
         data: serde_json::Value,
-    ) -> crate::Result<bool>;
+    ) -> crate::Result<(bool, Option<Receiver<()>>)>;
 
     /// Handle an incoming comm message (RPC or data).
     ///

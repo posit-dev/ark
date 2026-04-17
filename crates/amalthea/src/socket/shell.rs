@@ -264,6 +264,9 @@ impl Shell {
         if let Message::CommClose(req) = msg {
             return self.handle_comm_close_request(req);
         }
+        if let Message::CommOpen(req) = msg {
+            return self.handle_comm_open_request(req);
+        }
 
         // Extract references to the components we need to pass to handlers.
         // This allows us to borrow different fields of self independently.
@@ -290,20 +293,6 @@ impl Shell {
                     Self::handle_comm_info_request(open_comms, msg)
                 })
             },
-            Message::CommOpen(req) => {
-                let open_comms = &mut self.open_comms;
-                let server_handlers = &self.server_handlers;
-                Self::handle_notification(iopub_tx, req, |msg| {
-                    Self::handle_comm_open(
-                        iopub_tx,
-                        shell_handler,
-                        server_handlers,
-                        open_comms,
-                        msg,
-                    )
-                })
-            },
-
             Message::HistoryRequest(req) => Self::handle_request(iopub_tx, socket, req, |msg| {
                 block_on(shell_handler.handle_history_request(msg))
             }),
@@ -476,6 +465,32 @@ impl Shell {
         result
     }
 
+    fn handle_comm_open_request(&mut self, req: JupyterMessage<CommOpen>) -> crate::Result<()> {
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Busy))
+            .unwrap();
+
+        log::info!("Received shell notification: {req:?}");
+
+        let (result, done_rx) = Self::handle_comm_open(
+            &self.iopub_tx,
+            &mut self.shell_handler,
+            &self.server_handlers,
+            &mut self.open_comms,
+            &req.content,
+        );
+
+        if let Some(done_rx) = done_rx {
+            self.drain_comm_events_until(&done_rx);
+        }
+
+        self.iopub_tx
+            .send(status(req.clone(), ExecutionState::Idle))
+            .unwrap();
+
+        result
+    }
+
     /// Drain comm events while waiting for a completion signal.
     /// Same pattern as the select-loop in `handle_execute_request`.
     fn drain_comm_events_until(&mut self, done_rx: &Receiver<()>) {
@@ -497,34 +512,6 @@ impl Shell {
         }
     }
 
-    fn handle_notification<Not, Handler>(
-        iopub_tx: &Sender<IOPubMessage>,
-        not: JupyterMessage<Not>,
-        handler: Handler,
-    ) -> crate::Result<()>
-    where
-        Not: ProtocolMessage,
-        Handler: FnOnce(&Not) -> crate::Result<()>,
-    {
-        // Enter the kernel-busy state in preparation for handling the message
-        iopub_tx
-            .send(status(not.clone(), ExecutionState::Busy))
-            .unwrap();
-
-        log::info!("Received shell notification: {not:?}");
-
-        // Handle the message
-        let result = handler(&not.content);
-
-        // Return to idle
-        iopub_tx
-            .send(status(not.clone(), ExecutionState::Idle))
-            .unwrap();
-
-        result
-    }
-
-    /// Handle a request for open comms
     fn handle_comm_info_request(
         open_comms: &[CommSocket],
         req: &CommInfoRequest,
@@ -573,15 +560,16 @@ impl Shell {
         server_handlers: &HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
         open_comms: &mut Vec<CommSocket>,
         msg: &CommOpen,
-    ) -> crate::Result<()> {
+    ) -> (crate::Result<()>, Option<Receiver<()>>) {
         log::info!("Received request to open comm: {msg:?}");
 
         // Process the comm open request
-        let result = Self::open_comm(iopub_tx, shell_handler, server_handlers, open_comms, msg);
+        let (result, done_rx) =
+            Self::open_comm(iopub_tx, shell_handler, server_handlers, open_comms, msg);
 
         // There is no error reply for a comm open request. Instead we must send
         // a `comm_close` message as soon as possible. The error is logged on our side.
-        if let Err(err) = result {
+        if let Err(ref err) = result {
             iopub_tx
                 .send(IOPubMessage::CommOutgoing(
                     msg.comm_id.clone(),
@@ -591,7 +579,7 @@ impl Shell {
             log::warn!("Failed to open comm: {err:?}");
         }
 
-        Ok(())
+        (Ok(()), done_rx)
     }
 
     /// Deliver a request from the frontend to a comm. Specifically, this is a
@@ -659,7 +647,7 @@ impl Shell {
         server_handlers: &HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
         open_comms: &mut Vec<CommSocket>,
         msg: &CommOpen,
-    ) -> crate::Result<()> {
+    ) -> (crate::Result<()>, Option<Receiver<()>>) {
         // Check to see whether the target name begins with "positron." This
         // prefix designates comm IDs that are known to the Positron IDE.
         let comm = match msg.target_name.starts_with("positron.") {
@@ -676,7 +664,7 @@ impl Shell {
                         &msg.target_name,
                         err
                     );
-                    return Err(Error::UnknownCommName(msg.target_name.clone()));
+                    return (Err(Error::UnknownCommName(msg.target_name.clone())), None);
                 },
             },
 
@@ -707,6 +695,7 @@ impl Shell {
         // internal ID or a reference to the IOPub channel.
 
         let mut lsp_comm = false;
+        let mut done_rx: Option<Receiver<()>> = None;
 
         let opened = match comm {
             Comm::Lsp => {
@@ -722,40 +711,53 @@ impl Shell {
                 };
 
                 let handler = server_handlers.get(target_key).cloned();
-                server_started_rx = Some(Self::start_server_comm(msg, handler, &comm_socket)?);
+                match Self::start_server_comm(msg, handler, &comm_socket) {
+                    Ok(rx) => server_started_rx = Some(rx),
+                    Err(err) => return (Err(err), None),
+                };
                 true
             },
 
             Comm::Other(_) => {
                 // This might be a server comm or a regular comm
                 if let Some(handler) = server_handlers.get(&msg.target_name).cloned() {
-                    server_started_rx =
-                        Some(Self::start_server_comm(msg, Some(handler), &comm_socket)?);
+                    match Self::start_server_comm(msg, Some(handler), &comm_socket) {
+                        Ok(rx) => server_started_rx = Some(rx),
+                        Err(err) => return (Err(err), None),
+                    };
                     true
                 } else {
                     // No server handler found, pass through to shell handler
-                    block_on(shell_handler.handle_comm_open(
+                    let (opened, rx) = match shell_handler.handle_comm_open(
                         comm,
                         comm_socket.clone(),
                         msg.data.clone(),
-                    ))?
+                    ) {
+                        Ok(val) => val,
+                        Err(err) => return (Err(err), None),
+                    };
+                    done_rx = rx;
+                    opened
                 }
             },
 
             // All comms tied to known Positron clients are passed through to the shell handler
             _ => {
-                // Call the shell handler to open the comm
-                block_on(shell_handler.handle_comm_open(
+                let (opened, rx) = match shell_handler.handle_comm_open(
                     comm,
                     comm_socket.clone(),
                     msg.data.clone(),
-                ))?
+                ) {
+                    Ok(val) => val,
+                    Err(err) => return (Err(err), None),
+                };
+                done_rx = rx;
+                opened
             },
         };
 
         if !opened {
-            // Fail if the comm was not opened
-            return Err(Error::UnknownCommName(comm_name.clone()));
+            return (Err(Error::UnknownCommName(comm_name.clone())), None);
         }
 
         // Add the comm to our list of open comms
@@ -793,11 +795,11 @@ impl Shell {
             if let Err(err) = result {
                 let msg = format!("With comm '{comm_name}': {err}");
                 log::error!("{msg}");
-                return Err(Error::SendError(msg));
+                return (Err(Error::SendError(msg)), None);
             }
         }
 
-        Ok(())
+        (Ok(()), done_rx)
     }
 
     fn start_server_comm(

@@ -233,18 +233,20 @@ impl ShellHandler for Shell {
     ///
     /// Note that there might be multiple requests during a single session if
     /// the UI has been disconnected and reconnected.
-    async fn handle_comm_open(
-        &self,
+    fn handle_comm_open(
+        &mut self,
         target: Comm,
         comm: CommSocket,
         data: serde_json::Value,
-    ) -> amalthea::Result<bool> {
+    ) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
         match target {
-            Comm::Variables => handle_comm_open_variables(comm),
+            Comm::Variables => Ok((handle_comm_open_variables(comm)?, None)),
             Comm::Ui => handle_comm_open_ui(comm, self.kernel_request_tx.clone(), data),
-            Comm::Help => handle_comm_open_help(comm),
-            Comm::Other(target_name) if target_name == "ark" => ArkComm::handle_comm_open(comm),
-            _ => Ok(false),
+            Comm::Help => Ok((handle_comm_open_help(comm)?, None)),
+            Comm::Other(target_name) if target_name == "ark" => {
+                Ok((ArkComm::handle_comm_open(comm)?, None))
+            },
+            _ => Ok((false, None)),
         }
     }
 
@@ -315,7 +317,7 @@ fn handle_comm_open_ui(
     comm: CommSocket,
     kernel_request_tx: Sender<KernelRequest>,
     data: serde_json::Value,
-) -> amalthea::Result<bool> {
+) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
     let handler = UiComm::new(data);
 
     let (done_tx, done_rx) = bounded(0);
@@ -328,11 +330,8 @@ fn handle_comm_open_ui(
             done_tx,
         })
         .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
-    done_rx
-        .recv()
-        .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
 
-    Ok(true)
+    Ok((true, Some(done_rx)))
 }
 
 fn handle_comm_open_help(comm: CommSocket) -> amalthea::Result<bool> {
