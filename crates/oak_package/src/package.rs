@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 
+use stdext::SortedVec;
+
 use crate::package_description::Description;
 use crate::package_index::Index;
 use crate::package_namespace::Namespace;
@@ -19,7 +21,7 @@ pub struct Package {
     // documented symbols listed in INDEX. The latter is a stopgap to ensure we
     // support exported datasets and prevent spurious diagnostics (we accept
     // false negatives to avoid annoying false positives).
-    pub exported_symbols: Vec<String>,
+    pub exported_symbols: SortedVec<String>,
 }
 
 impl Package {
@@ -30,14 +32,12 @@ impl Package {
         index: Index,
     ) -> Self {
         // Compute exported symbols. Start from explicit NAMESPACE exports.
-        let mut exported_symbols = namespace.exports.clone();
+        let mut symbols = namespace.exports.clone();
 
         // Add all documented symbols. This should cover documented datasets.
-        exported_symbols.extend(index.names.iter().cloned());
+        symbols.extend(index.names.iter().cloned());
 
-        // Sort and deduplicate (we expect lots of duplicates)
-        exported_symbols.sort();
-        exported_symbols.dedup();
+        let exported_symbols = SortedVec::from_vec(symbols);
 
         Self {
             path,
@@ -184,7 +184,7 @@ mod tests {
         };
 
         let pkg = new_package("foo", ns, index);
-        assert_eq!(pkg.exported_symbols, vec!["a", "b", "c"]);
+        assert_eq!(&*pkg.exported_symbols, &["a", "b", "c"]);
     }
 
     #[test]
@@ -202,7 +202,7 @@ mod tests {
         let pkg = Package::load_from_folder(dir.path()).unwrap().unwrap();
 
         // Should include all exports and all index names, sorted and deduped
-        assert_eq!(pkg.exported_symbols, vec![
+        assert_eq!(&*pkg.exported_symbols, &[
             "path_to_file",
             "penguins",
             "penguins_raw"
