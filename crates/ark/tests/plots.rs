@@ -700,6 +700,54 @@ fn test_plot_default_size_without_metadata() {
     frontend.recv_shell_execute_reply();
 }
 
+/// Test that a plot created without an active execution context (e.g. from
+/// a task callback that fires between execute requests) has empty metadata.
+///
+/// This exercises the `capture_execution_context` fallback path where no
+/// context was pushed via `graphics_on_execute_request`.
+#[test]
+fn test_plot_without_execution_context_has_empty_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Register a task callback that creates a plot. Task callbacks fire
+    // after each top-level R evaluation completes, at which point the
+    // execution context has already been cleared by `on_did_execute_request`.
+    // The callback removes itself after one invocation (returns FALSE).
+    //
+    // The task callback fires immediately after this evaluation completes
+    // (but still within the busy/idle window), so the display_data for the
+    // plot arrives before idle.
+    frontend.send_execute_request(
+        r#"invisible(addTaskCallback(function(...) { plot(1:10); FALSE }))"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let display_id = frontend.recv_iopub_display_data_id();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Query metadata using the display_id from the plot
+    let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query_code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // execution_id and code should be empty since the plot was created
+    // outside of an execute request's execution context
+    assert!(
+        result.contains("$execution_id") && result.contains("[1] \"\""),
+        "execution_id should be empty, got:\n{result}"
+    );
+    assert!(
+        result.contains("$code") && result.contains("[1] \"\""),
+        "code should be empty, got:\n{result}"
+    );
+}
+
 /// Test that `dev.hold()` suppresses intermediate plot output.
 ///
 /// Without hold, each `plot()` call emits a separate `display_data`.

@@ -812,17 +812,6 @@ impl Console {
         self.active_request.as_ref().map(|req| &req.request)
     }
 
-    /// Get the current execution context if an active request exists.
-    /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
-    pub(crate) fn get_execution_context(&self) -> Option<(String, String)> {
-        self.active_request.as_ref().map(|req| {
-            (
-                req.originator.header.msg_id.clone(),
-                req.request.code.clone(),
-            )
-        })
-    }
-
     // Async messages for the Console. Processed at interrupt time.
     async fn process_console_notifications(
         mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,

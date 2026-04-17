@@ -87,6 +87,7 @@ pub(crate) struct PlotId(String);
 
 /// Execution context captured when an execute request starts.
 /// Stored on the graphics device so it can be associated with plots created during execution.
+#[derive(Clone, Default)]
 struct ExecutionContext {
     execution_id: String,
     code: String,
@@ -339,7 +340,7 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(mode = %mode))]
-    fn hook_mode(&self, mode: i32, console: &Console) {
+    fn hook_mode(&self, mode: i32) {
         let is_drawing = mode != 0;
         self.is_drawing.replace(is_drawing);
         let old_has_changes = self.has_changes.get();
@@ -349,7 +350,7 @@ impl DeviceContext {
         // change set. The source context stack may be popped before
         // `process_changes()` runs, so we snapshot it now while it's available.
         if !old_has_changes && is_drawing {
-            let ctx = self.capture_execution_context(console);
+            let ctx = self.capture_execution_context();
             let origin = self.capture_plot_origin(&ctx);
             self.set_pending_origin(origin);
         }
@@ -377,37 +378,13 @@ impl DeviceContext {
 
     /// Capture the current execution context for a new plot.
     ///
-    /// First checks for context pushed via `on_execute_request()`, then falls back
-    /// to getting context from Console's active request (for backwards compatibility
-    /// and edge cases). The fallback path does not include `code_location`.
-    fn capture_execution_context(&self, console: &Console) -> ExecutionContext {
-        // Check if we have a stored execution context from on_execute_request()
-        let stored = self.execution_context.borrow();
-        if let Some(ctx) = stored.as_ref() {
-            return ExecutionContext {
-                execution_id: ctx.execution_id.clone(),
-                code: ctx.code.clone(),
-                code_location: ctx.code_location.clone(),
-                render_settings: ctx.render_settings,
-                intrinsic_size: ctx.intrinsic_size.clone(),
-            };
-        }
-        drop(stored);
-
-        // Fall back to getting context from Console (for edge cases).
-        // This path does not provide code_location or plot overrides.
-        let (execution_id, code) = console.get_execution_context().unwrap_or_else(|| {
-            // No active request - might be during startup or from R code
-            (String::new(), String::new())
-        });
-
-        ExecutionContext {
-            execution_id,
-            code,
-            code_location: None,
-            render_settings: None,
-            intrinsic_size: None,
-        }
+    /// Returns the context pushed via `graphics_on_execute_request()`, or an
+    /// empty default for plots created outside of an execute request (e.g.
+    /// during startup).
+    fn capture_execution_context(&self) -> ExecutionContext {
+        // No execution context was pushed. This can happen for plots created
+        // outside of an execute request (e.g. during startup).
+        self.execution_context.borrow().clone().unwrap_or_default()
     }
 
     /// Determine the plot origin for a new plot.
@@ -635,7 +612,7 @@ impl DeviceContext {
         if self.should_use_dynamic_plots(console) {
             self.process_new_plot_positron(id, console);
         } else {
-            self.process_new_plot_jupyter_protocol(id, console);
+            self.process_new_plot_jupyter_protocol(id);
         }
     }
 
@@ -656,7 +633,7 @@ impl DeviceContext {
     fn process_new_plot_positron(&self, id: &PlotId, console: &Console) {
         log::trace!("Notifying Positron of new plot");
 
-        let ctx = self.capture_execution_context(console);
+        let ctx = self.capture_execution_context();
         self.store_plot_context(id, &ctx);
 
         // Use render settings from the execute request if available, otherwise fall back
@@ -700,10 +677,10 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_jupyter_protocol(&self, id: &PlotId, console: &Console) {
+    fn process_new_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Notifying Jupyter frontend of new plot");
 
-        let ctx = self.capture_execution_context(console);
+        let ctx = self.capture_execution_context();
         self.store_plot_context(id, &ctx);
 
         let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
@@ -758,7 +735,7 @@ impl DeviceContext {
         if self.should_use_dynamic_plots(console) {
             self.process_update_plot_positron(id);
         } else {
-            self.process_update_plot_jupyter_protocol(id, console);
+            self.process_update_plot_jupyter_protocol(id);
         }
     }
 
@@ -805,10 +782,10 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_update_plot_jupyter_protocol(&self, id: &PlotId, console: &Console) {
+    fn process_update_plot_jupyter_protocol(&self, id: &PlotId) {
         log::trace!("Notifying Jupyter frontend of plot update");
 
-        let ctx = self.capture_execution_context(console);
+        let ctx = self.capture_execution_context();
         let data = unwrap!(self.create_display_data_plot(id, &ctx), Err(error) => {
             log::error!("Failed to create plot due to: {error}.");
             return;
@@ -1184,7 +1161,7 @@ unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     if let Some(callback) = dc.wrapped_callbacks.mode.get() {
         callback(mode, dev);
     }
-    dc.hook_mode(mode, console);
+    dc.hook_mode(mode);
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
@@ -1373,5 +1350,60 @@ fn r_option_positive_f64(name: &str) -> Option<f64> {
     match value {
         Ok(v) if v > 0.0 => Some(v),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::console::SessionMode;
+
+    fn test_device_context() -> DeviceContext {
+        let (tx, _rx) = crossbeam::channel::unbounded();
+        DeviceContext::new(tx, SessionMode::Console)
+    }
+
+    #[test]
+    fn test_capture_execution_context_default_when_empty() {
+        let dc = test_device_context();
+        let ctx = dc.capture_execution_context();
+        assert_eq!(ctx.execution_id, "");
+        assert_eq!(ctx.code, "");
+        assert!(ctx.code_location.is_none());
+        assert!(ctx.render_settings.is_none());
+        assert!(ctx.intrinsic_size.is_none());
+    }
+
+    #[test]
+    fn test_capture_execution_context_returns_stored() {
+        let dc = test_device_context();
+        dc.set_execution_context(
+            String::from("msg-123"),
+            String::from("plot(1:10)"),
+            None,
+            None,
+            None,
+        );
+
+        let ctx = dc.capture_execution_context();
+        assert_eq!(ctx.execution_id, "msg-123");
+        assert_eq!(ctx.code, "plot(1:10)");
+    }
+
+    #[test]
+    fn test_capture_execution_context_after_clear() {
+        let dc = test_device_context();
+        dc.set_execution_context(
+            String::from("msg-123"),
+            String::from("plot(1:10)"),
+            None,
+            None,
+            None,
+        );
+        dc.clear_execution_context();
+
+        let ctx = dc.capture_execution_context();
+        assert_eq!(ctx.execution_id, "");
+        assert_eq!(ctx.code, "");
     }
 }
