@@ -16,6 +16,8 @@ use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
 use biome_rowan::WalkEvent;
+use oak_core::syntax_ext::RIdentifierExt;
+use oak_core::syntax_ext::RStringValueExt;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -285,7 +287,7 @@ impl SemanticIndexBuilder {
     fn collect_expression(&mut self, expr: &AnyRExpression) {
         match expr {
             AnyRExpression::RIdentifier(ident) => {
-                let name = identifier_text(ident);
+                let name = ident.name_text();
                 let range = ident.syntax().text_trimmed_range();
                 self.add_use(&name, range);
             },
@@ -371,7 +373,7 @@ impl SemanticIndexBuilder {
                 // (body may not execute for empty sequences).
                 if let Ok(variable) = stmt.variable() {
                     self.add_definition(
-                        &identifier_text(&variable),
+                        &variable.name_text(),
                         SymbolFlags::IS_BOUND,
                         DefinitionKind::ForVariable(stmt.syntax().clone()),
                         variable.syntax().text_trimmed_range(),
@@ -548,10 +550,8 @@ impl SemanticIndexBuilder {
                 },
                 AnyRExpression::RForStatement(stmt) => {
                     if let Ok(variable) = stmt.variable() {
-                        self.pre_scans[self.current_scope].add(
-                            identifier_text(&variable),
-                            variable.syntax().text_trimmed_range(),
-                        );
+                        self.pre_scans[self.current_scope]
+                            .add(variable.name_text(), variable.syntax().text_trimmed_range());
                     }
                 },
                 _ => {},
@@ -573,7 +573,7 @@ impl SemanticIndexBuilder {
             match &name {
                 AnyRParameterName::RIdentifier(ident) => {
                     self.add_definition(
-                        &identifier_text(ident),
+                        &ident.name_text(),
                         flags,
                         DefinitionKind::Parameter(param.syntax().clone()),
                         ident.syntax().text_trimmed_range(),
@@ -746,44 +746,19 @@ fn is_right_assignment(bin: &RBinaryExpression) -> bool {
     )
 }
 
-/// Extract the name of an `RIdentifier`, stripping backticks if present.
-///
-/// Backtick-quoted identifiers like `` `my var` `` are parsed as `RIdentifier`
-/// nodes whose `text_trimmed()` includes the backticks. The backticks are a
-/// quoting mechanism, not part of the symbol name.
-fn identifier_text(ident: &aether_syntax::RIdentifier) -> String {
-    let text = ident.syntax().text_trimmed().to_string();
-    match text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-        Some(inner) => inner.to_string(),
-        None => text,
-    }
-}
-
-/// Extract the unquoted text of an `RStringValue`.
-///
-/// Note: `RStringValue::inner_string_text()` from aether_syntax would be the
-/// idiomatic API for this, but it delegates to the free `inner_string_text()`
-/// which checks for node kind `R_STRING_VALUE` instead of token kind
-/// `R_STRING_LITERAL`, so it never actually strips the delimiters.
-fn string_value_text(s: &aether_syntax::RStringValue) -> Option<String> {
-    let token = s.value_token().ok()?;
-    let text = token.text_trimmed();
-    Some(text[1..text.len() - 1].to_string())
-}
-
 /// Extract the binding name and range from an assignment target expression.
 /// Returns `None` for complex targets (`x$foo`, `x[1]`, etc.) that don't
 /// represent simple name bindings.
 fn assignment_target_name(target: &AnyRExpression) -> Option<(String, TextRange)> {
     match target {
         AnyRExpression::RIdentifier(ident) => {
-            let name = identifier_text(ident);
+            let name = ident.name_text();
             let range = ident.syntax().text_trimmed_range();
             Some((name, range))
         },
         // `"x" <- 1` is equivalent to `x <- 1` in R
         AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => {
-            let name = string_value_text(s)?;
+            let name = s.string_text()?;
             let range = s.syntax().text_trimmed_range();
             Some((name, range))
         },

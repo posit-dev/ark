@@ -1,16 +1,9 @@
-//
-// package.rs
-//
-// Copyright (C) 2025 by Posit Software, PBC
-//
-//
-
 use std::fs;
 use std::path::PathBuf;
 
-use crate::lsp::inputs::package_description::Description;
-use crate::lsp::inputs::package_index::Index;
-use crate::lsp::inputs::package_namespace::Namespace;
+use crate::package_description::Description;
+use crate::package_index::Index;
+use crate::package_namespace::Namespace;
 
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
@@ -54,7 +47,7 @@ impl Package {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn from_parts(path: PathBuf, description: Description, namespace: Namespace) -> Self {
         Self::new(path, description, namespace, Index::default())
     }
@@ -78,7 +71,7 @@ impl Package {
             let namespace_contents = fs::read_to_string(&namespace_path)?;
             Namespace::parse(&namespace_contents)?
         } else {
-            tracing::info!(
+            log::info!(
                 "Package `{name}` doesn't contain a NAMESPACE file, using defaults",
                 name = description.name
             );
@@ -88,7 +81,7 @@ impl Package {
         let index = match Index::load_from_folder(package_path) {
             Ok(index) => index,
             Err(err) => {
-                tracing::warn!(
+                log::warn!(
                     "Can't load INDEX file from `{path}`: {err:?}",
                     path = package_path.to_string_lossy()
                 );
@@ -127,8 +120,8 @@ impl Package {
     }
 }
 
-#[cfg(test)]
-pub(crate) fn temp_palmerpenguin() -> tempfile::TempDir {
+#[cfg(any(test, feature = "testing"))]
+pub fn temp_palmerpenguin() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
 
     // Write DESCRIPTION
@@ -163,9 +156,9 @@ penguins_raw            Penguin size, clutch, and blood isotope data
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lsp::inputs::package_description::Description;
-    use crate::lsp::inputs::package_index::Index;
-    use crate::lsp::inputs::package_namespace::Namespace;
+    use crate::package_description::Description;
+    use crate::package_index::Index;
+    use crate::package_namespace::Namespace;
 
     fn new_package(name: &str, ns: Namespace, index: Index) -> Package {
         Package::new(

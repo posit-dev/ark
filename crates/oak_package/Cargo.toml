@@ -1,8 +1,8 @@
 [package]
-name = "oak_index"
+name = "oak_package"
 version = "0.1.0"
 description = """
-Per-file semantic index for R: scopes, symbols, bindings, and uses.
+R package metadata: DESCRIPTION, NAMESPACE, INDEX readers and Library cache.
 """
 
 authors.workspace = true
@@ -10,18 +10,24 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+testing = ["dep:tempfile"]
+
 [lints]
 workspace = true
 
 [dependencies]
+aether_parser.workspace = true
 aether_syntax.workspace = true
 biome_rowan.workspace = true
-itertools.workspace = true
+anyhow.workspace = true
 log.workspace = true
 oak_core.workspace = true
-rustc-hash.workspace = true
-smallvec.workspace = true
-stdext.workspace = true
+regex.workspace = true
+
+[dependencies.tempfile]
+workspace = true
+optional = true
 
 [dev-dependencies]
-aether_parser.workspace = true
+tempfile.workspace = true
