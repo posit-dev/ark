@@ -80,6 +80,7 @@ mod tests {
     use oak_package::library::Library;
     use oak_package::package::Package;
     use oak_package::package_description::Description;
+    use oak_package::package_namespace::Import;
     use oak_package::package_namespace::Namespace;
     use tower_lsp::lsp_types;
 
@@ -217,7 +218,10 @@ mod tests {
         let uri = test_path("R/my_file.R");
 
         let ns = Namespace {
-            imports: vec![("mutate".to_string(), "dplyr".to_string())],
+            imports: vec![Import {
+                name: "mutate".to_string(),
+                package: "dplyr".to_string(),
+            }],
             ..Default::default()
         };
         let desc = Description {
