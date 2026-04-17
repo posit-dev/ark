@@ -32,12 +32,9 @@ impl Console {
             return;
         }
 
-        let Some(mut comm) = self.comms.borrow_mut().remove(comm_id) else {
-            log::warn!("Received message for unknown registered comm {comm_id}");
-            return;
-        };
-        comm.handler.handle_msg(msg, &comm.ctx);
-        self.comms.borrow_mut().insert(comm.comm_id.clone(), comm);
+        self.with_comm_mut(comm_id, |comm| {
+            comm.handler.handle_msg(msg, &comm.ctx);
+        });
         self.drain_closed();
     }
 
@@ -48,11 +45,9 @@ impl Console {
             return;
         }
 
-        let Some(mut comm) = self.comms.borrow_mut().remove(comm_id) else {
-            log::warn!("Received close for unknown registered comm {comm_id}");
-            return;
-        };
-        comm.handler.handle_close(&comm.ctx);
+        if let Some(mut comm) = self.take_comm(comm_id) {
+            comm.handler.handle_close(&comm.ctx);
+        }
     }
 
     /// Register a backend-initiated comm on the R thread.
@@ -148,11 +143,9 @@ impl Console {
 
         let ids: Vec<String> = self.comms.borrow().keys().cloned().collect();
         for id in ids {
-            let Some(mut comm) = self.comms.borrow_mut().remove(&id) else {
-                continue;
-            };
-            comm.handler.handle_environment(event, &comm.ctx);
-            self.comms.borrow_mut().insert(id, comm);
+            self.with_comm_mut(&id, |comm| {
+                comm.handler.handle_environment(event, &comm.ctx);
+            });
         }
         self.drain_closed();
     }
@@ -167,11 +160,16 @@ impl Console {
     }
 
     /// Take the UI comm out, call `f`, put it back.
+    ///
+    /// Only called after `is_ui_comm()` returned `true`. If the UI comm is
+    /// unexpectedly absent, it means reentrant dispatch is occurring.
     fn with_ui_comm_mut(&self, f: impl FnOnce(&mut ConsoleComm)) {
-        if let Some(mut ui) = self.take_ui_comm() {
-            f(&mut ui);
-            self.set_ui_comm(ui);
-        }
+        let Some(mut ui) = self.take_ui_comm() else {
+            log::warn!("UI comm is absent during dispatch (reentrant call?)");
+            return;
+        };
+        f(&mut ui);
+        self.set_ui_comm(ui);
     }
 
     fn take_ui_comm(&self) -> Option<ConsoleComm> {
@@ -184,6 +182,20 @@ impl Console {
 
     // -- Comms map helpers ------------------------------------------------
 
+    /// Take a comm out, call `f`, put it back.
+    fn with_comm_mut(&self, comm_id: &str, f: impl FnOnce(&mut ConsoleComm)) {
+        let Some(mut comm) = self.take_comm(comm_id) else {
+            log::warn!("Received message for unknown registered comm {comm_id}");
+            return;
+        };
+        f(&mut comm);
+        self.comms.borrow_mut().insert(comm.comm_id.clone(), comm);
+    }
+
+    fn take_comm(&self, comm_id: &str) -> Option<ConsoleComm> {
+        self.comms.borrow_mut().remove(comm_id)
+    }
+
     fn drain_closed(&self) {
         let closed_ids: Vec<String> = self
             .comms
@@ -194,7 +206,7 @@ impl Console {
             .collect();
 
         for comm_id in closed_ids {
-            if let Some(comm) = self.comms.borrow_mut().remove(&comm_id) {
+            if let Some(comm) = self.take_comm(&comm_id) {
                 self.comm_notify_closed(&comm_id, &comm);
             }
         }
