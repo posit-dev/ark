@@ -1,0 +1,124 @@
+use std::io::Cursor;
+use std::path::Path;
+
+use flate2::read::GzDecoder;
+use tar::Archive;
+
+/// Assumes `destination` exists and is file locked by the caller
+pub(crate) fn cache_cran(package: &str, version: &str, destination: &Path) -> anyhow::Result<bool> {
+    let response = download(package, version)?;
+
+    // "Not on CRAN" isn't an error
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+
+    // But anything else is
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Failed to download {package} {version}: HTTP {status}",
+            status = response.status()
+        ));
+    }
+
+    let destination = destination.join("R");
+    std::fs::create_dir(&destination)?;
+
+    extract(package, response, destination.as_path())?;
+
+    Ok(true)
+}
+
+fn download(package: &str, version: &str) -> anyhow::Result<reqwest::blocking::Response> {
+    // Try released version
+    let url = format!("https://cran.r-project.org/src/contrib/{package}_{version}.tar.gz");
+    let response = reqwest::blocking::get(&url)?;
+
+    if response.status() != reqwest::StatusCode::NOT_FOUND {
+        // Found it
+        return Ok(response);
+    }
+
+    // Try archive
+    let url = format!(
+        "https://cran.r-project.org/src/contrib/Archive/{package}/{package}_{version}.tar.gz"
+    );
+    let response = reqwest::blocking::get(&url)?;
+
+    // Return `response` whether or not we found something
+    Ok(response)
+}
+
+fn extract(
+    package: &str,
+    response: reqwest::blocking::Response,
+    destination: &Path,
+) -> anyhow::Result<()> {
+    let bytes = response.bytes()?;
+    let cursor = Cursor::new(bytes);
+    let gz = GzDecoder::new(cursor);
+    let mut archive = Archive::new(gz);
+
+    // Looking for files under `R/`
+    let prefix = format!("{package}/R/");
+
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+
+        let path = entry.path()?;
+        let path = path.to_string_lossy();
+
+        if !path.starts_with(&prefix) {
+            continue;
+        }
+
+        let Some(relative) = path.strip_prefix(&prefix) else {
+            continue;
+        };
+
+        if !relative.ends_with(".R") && !relative.ends_with(".r") {
+            continue;
+        }
+
+        let absolute = destination.join(relative);
+
+        // Write to disk
+        entry.unpack(&absolute)?;
+        crate::fs::set_readonly(&absolute)?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use crate::cran::cache_cran;
+
+    /// Requires internet access
+    #[test]
+    fn test_cran_r_files_exist_and_are_readonly() {
+        let destination = TempDir::new().unwrap();
+
+        let ok = cache_cran("vctrs", "0.7.2", destination.path()).unwrap();
+        assert!(ok);
+
+        let r_dir = destination.path().join("R");
+        assert!(r_dir.exists());
+
+        for entry in std::fs::read_dir(&r_dir).unwrap() {
+            let entry = entry.unwrap();
+            let metadata = entry.metadata().unwrap();
+            assert!(metadata.permissions().readonly());
+        }
+    }
+
+    #[test]
+    fn test_cache_cran_not_found() {
+        let destination = TempDir::new().unwrap();
+
+        let ok = cache_cran("definitely_not_a_package", "0.0.0", destination.path()).unwrap();
+        assert!(!ok);
+    }
+}
