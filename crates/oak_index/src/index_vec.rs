@@ -9,6 +9,7 @@ pub trait Idx: Copy + fmt::Debug + Eq {
 
 /// A `Vec<V>` indexed by a strongly-typed newtype `I` instead of `usize`,
 /// so that indices from different vectors can't be mixed up.
+#[derive(Clone)]
 pub struct IndexVec<I: Idx, V> {
     raw: Vec<V>,
     _phantom: PhantomData<I>,
@@ -58,15 +59,6 @@ impl<I: Idx, V> FromIterator<V> for IndexVec<I, V> {
     fn from_iter<T: IntoIterator<Item = V>>(iter: T) -> Self {
         Self {
             raw: iter.into_iter().collect(),
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<I: Idx, V: Clone> Clone for IndexVec<I, V> {
-    fn clone(&self) -> Self {
-        Self {
-            raw: self.raw.clone(),
             _phantom: PhantomData,
         }
     }

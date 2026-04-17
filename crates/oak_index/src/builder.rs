@@ -73,6 +73,9 @@ impl SemanticIndexBuilder {
             descendants: ScopeId::from(1)..ScopeId::from(1),
         });
 
+        // All `ScopeId`-indexed vecs must be pushed in lockstep so they stay
+        // the same length. The `push_scope()` method is in charge of
+        // guaranteeing that invariant after construction.
         symbol_tables.push(SymbolTableBuilder::new());
         definitions.push(IndexVec::new());
         uses.push(IndexVec::new());
@@ -188,9 +191,8 @@ impl SemanticIndexBuilder {
     // found (mirroring R's assignment to the global environment).
     fn resolve_super_target(&self, name: &str) -> ScopeId {
         let file_scope = ScopeId::from(0);
-        let mut scope = match self.scopes[self.current_scope].parent {
-            Some(parent) => parent,
-            None => return file_scope,
+        let Some(mut scope) = self.scopes[self.current_scope].parent else {
+            return file_scope;
         };
 
         loop {
@@ -203,10 +205,10 @@ impl SemanticIndexBuilder {
                     return scope;
                 }
             }
-            scope = match self.scopes[scope].parent {
-                Some(parent) => parent,
-                None => return file_scope,
+            let Some(parent) = self.scopes[scope].parent else {
+                return file_scope;
             };
+            scope = parent;
         }
     }
 
