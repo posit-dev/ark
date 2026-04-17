@@ -138,6 +138,41 @@ fn test_resolve_unknown_package_skipped() {
 }
 
 #[test]
+fn test_resolve_package_shadowing() {
+    // Both dplyr and stats export `filter`. dplyr was loaded later so it
+    // appears earlier in the scope and shadows stats's version.
+    let library = test_library(vec![
+        ("stats", vec!["filter", "median"]),
+        ("dplyr", vec!["filter", "mutate"]),
+    ]);
+
+    let scope = vec![
+        BindingSource::PackageExports("dplyr".to_string()),
+        BindingSource::PackageExports("stats".to_string()),
+    ];
+
+    // dplyr's `filter` wins
+    let result = resolve_external_name(&library, &scope, "filter");
+    assert_eq!(
+        result,
+        Some(ExternalDefinition::Package {
+            package: "dplyr".to_string(),
+            name: "filter".to_string(),
+        })
+    );
+
+    // `median` only in stats, falls through
+    let result = resolve_external_name(&library, &scope, "median");
+    assert_eq!(
+        result,
+        Some(ExternalDefinition::Package {
+            package: "stats".to_string(),
+            name: "median".to_string(),
+        })
+    );
+}
+
+#[test]
 fn test_resolve_first_match_wins() {
     let library = test_library(vec![("stats", vec!["filter"])]);
 
