@@ -231,7 +231,7 @@ pub struct Console {
 
     /// The UI comm, stored separately from `comms` so that `ui_comm()` can
     /// borrow it independently of the comms map (which is behind a `RefCell`).
-    ui_comm: Option<ConsoleComm>,
+    ui_comm: RefCell<Option<ConsoleComm>>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
