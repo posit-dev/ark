@@ -77,6 +77,13 @@ impl Description {
             fields,
         })
     }
+
+    /// Parse the `Collate` field, if present, returning the whitespace-separated
+    /// file names in the order specified.
+    pub fn collate(&self) -> Option<Vec<String>> {
+        let collate = self.fields.get("Collate")?;
+        Some(collate.split_whitespace().map(|s| s.to_string()).collect())
+    }
 }
 
 /// Parse a DCF (Debian Control File) format string into a key-value map.

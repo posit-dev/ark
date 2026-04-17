@@ -8,18 +8,20 @@ use crate::package_description::Description;
 /// file list is used. Otherwise files are sorted in C locale order
 /// (byte-wise, same as R's default).
 pub fn collation_order(description: &Description, files: &[String]) -> Vec<String> {
-    if let Some(collate) = description.fields.get("Collate") {
-        let available: HashSet<&str> = files.iter().map(|s| s.as_str()).collect();
-        collate
-            .split_whitespace()
-            .filter(|name| available.contains(name))
-            .map(|name| name.to_string())
-            .collect()
-    } else {
-        let mut sorted = files.to_vec();
-        sorted.sort();
-        sorted
-    }
+    description
+        .collate()
+        .map(|collate| {
+            let available: HashSet<&str> = files.iter().map(|s| s.as_str()).collect();
+            collate
+                .into_iter()
+                .filter(|name| available.contains(name.as_str()))
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            let mut sorted = files.to_vec();
+            sorted.sort();
+            sorted
+        })
 }
 
 #[cfg(test)]
