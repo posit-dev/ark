@@ -46,9 +46,9 @@ use crate::lsp::backend::LspResult;
 use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
-use crate::lsp::definitions::goto_definition;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::folding_range::folding_range;
+use crate::lsp::goto_definition::goto_definition;
 use crate::lsp::help_topic::help_topic;
 use crate::lsp::help_topic::HelpTopicParams;
 use crate::lsp::help_topic::HelpTopicResponse;
@@ -277,7 +277,7 @@ pub(crate) fn handle_goto_definition(
 ) -> LspResult<Option<GotoDefinitionResponse>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
-    Ok(goto_definition(document, params).log_err().flatten())
+    Ok(goto_definition(document, params, state).log_err().flatten())
 }
 
 #[tracing::instrument(level = "info", skip_all)]
