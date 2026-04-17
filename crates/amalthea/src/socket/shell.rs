@@ -378,22 +378,7 @@ impl Shell {
             .shell_handler
             .start_execute_request(originator, &req.content);
 
-        // Select-loop: drain comm events while waiting for the execute reply.
-        let result = loop {
-            let mut sel = Select::new();
-            let resp_idx = sel.recv(&response_rx);
-            sel.recv(&self.comm_event_rx);
-
-            let ready = sel.ready();
-
-            while let Ok(event) = self.comm_event_rx.try_recv() {
-                self.process_comm_event(event);
-            }
-
-            if ready == resp_idx {
-                break response_rx.recv().unwrap();
-            }
-        };
+        let result = self.drain_comm_events_until(&response_rx);
 
         let result = match result {
             Ok(reply) => req.send_reply(reply, &self.socket),
@@ -491,12 +476,14 @@ impl Shell {
         result
     }
 
-    /// Drain comm events while waiting for a completion signal.
-    /// Same pattern as the select-loop in `handle_execute_request`.
-    fn drain_comm_events_until(&mut self, done_rx: &Receiver<()>) {
+    /// Drain comm events while waiting for a value on `rx`.
+    /// Used by execute requests, comm_msg, comm_close, and comm_open to
+    /// process comm events (e.g. barriers from `comm_open_backend`) while
+    /// the R thread is working.
+    fn drain_comm_events_until<T>(&mut self, rx: &Receiver<T>) -> T {
         loop {
             let mut sel = Select::new();
-            let done_idx = sel.recv(done_rx);
+            let rx_idx = sel.recv(rx);
             sel.recv(&self.comm_event_rx);
 
             let ready = sel.ready();
@@ -505,9 +492,8 @@ impl Shell {
                 self.process_comm_event(event);
             }
 
-            if ready == done_idx {
-                done_rx.recv().unwrap();
-                return;
+            if ready == rx_idx {
+                return rx.recv().unwrap();
             }
         }
     }
