@@ -81,6 +81,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+    use crate::package_namespace::Import;
 
     // Helper to create a temporary package directory with DESCRIPTION and NAMESPACE
     fn create_temp_package(
@@ -136,6 +137,9 @@ importFrom(pkg, baz)
 
         // Namespace is parsed
         assert_eq!(pkg.namespace.exports, vec!["bar", "foo"]);
-        assert_eq!(pkg.namespace.imports, vec!["baz"]);
+        assert_eq!(pkg.namespace.imports, vec![Import {
+            name: "baz".to_string(),
+            package: "pkg".to_string()
+        }]);
     }
 }

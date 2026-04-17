@@ -170,7 +170,7 @@ pub(crate) fn generate_diagnostics(
     if let Some(SourceRoot::Package(root)) = &state.root {
         // Add symbols from `importFrom()` directives
         for import in &root.namespace.imports {
-            context.workspace_symbols.insert(import.clone());
+            context.workspace_symbols.insert(import.name.clone());
         }
 
         // Add symbols from `import()` directives

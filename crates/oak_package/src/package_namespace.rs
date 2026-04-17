@@ -11,10 +11,17 @@ use oak_core::syntax_ext::RIdentifierExt;
 pub struct Namespace {
     /// Names of objects exported with `export()`
     pub exports: Vec<String>,
-    /// Names of objects imported with `importFrom()`
-    pub imports: Vec<String>,
+    /// Symbols imported with `importFrom()`, with their source package.
+    pub imports: Vec<Import>,
     /// Names of packages bulk-imported with `import()`
     pub package_imports: Vec<String>,
+}
+
+/// A single `importFrom()` directive: one symbol imported from a package.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Import {
+    pub name: String,
+    pub package: String,
 }
 
 impl Namespace {
@@ -53,8 +60,7 @@ impl Namespace {
                     collect_arg_identifiers(args.items().iter(), &mut exports);
                 },
                 "importFrom" => {
-                    // First arg is the package name, rest are imported names
-                    collect_arg_identifiers(args.items().iter().skip(1), &mut imports);
+                    collect_imports(args.items().iter(), &mut imports);
                 },
                 "import" => {
                     collect_arg_identifiers(args.items().iter(), &mut package_imports);
@@ -67,8 +73,8 @@ impl Namespace {
         // this but for now just be defensive.
         exports.sort();
         exports.dedup();
-        imports.sort();
-        imports.dedup();
+        imports.sort_by(|a, b| a.name.cmp(&b.name));
+        imports.dedup_by(|a, b| a.name == b.name);
         package_imports.sort();
         package_imports.dedup();
 
@@ -80,8 +86,32 @@ impl Namespace {
     }
 
     /// TODO: Take a `Library` and incorporate bulk imports
-    pub(crate) fn _resolve_imports(&self) -> &Vec<String> {
+    pub(crate) fn _resolve_imports(&self) -> &Vec<Import> {
         &self.imports
+    }
+}
+
+/// Collect `importFrom(pkg, a, b, c)` into `Import` entries. The first
+/// argument is the package name, the rest are imported symbols.
+fn collect_imports(args: impl Iterator<Item = SyntaxResult<RArgument>>, out: &mut Vec<Import>) {
+    let mut args = args;
+    let Some(Ok(first_arg)) = args.next() else {
+        return;
+    };
+    let Some(AnyRExpression::RIdentifier(pkg_ident)) = first_arg.value() else {
+        return;
+    };
+    let pkg_name = pkg_ident.name_text();
+
+    for item in args {
+        let Ok(arg) = item else { continue };
+        let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
+            continue;
+        };
+        out.push(Import {
+            name: ident.name_text(),
+            package: pkg_name.clone(),
+        });
     }
 }
 
@@ -123,7 +153,16 @@ mod tests {
             importsFrom(utils, tail) # typo
         "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.imports, vec!["head", "median"]);
+        assert_eq!(parsed.imports, vec![
+            Import {
+                name: "head".to_string(),
+                package: "utils".to_string()
+            },
+            Import {
+                name: "median".to_string(),
+                package: "stats".to_string()
+            },
+        ]);
         assert!(parsed.exports.is_empty());
     }
 
@@ -138,7 +177,16 @@ mod tests {
         "#;
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.exports, vec!["bar", "foo"]);
-        assert_eq!(parsed.imports, vec!["head", "median"]);
+        assert_eq!(parsed.imports, vec![
+            Import {
+                name: "head".to_string(),
+                package: "utils".to_string()
+            },
+            Import {
+                name: "median".to_string(),
+                package: "stats".to_string()
+            },
+        ]);
     }
 
     #[test]
@@ -153,7 +201,10 @@ mod tests {
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.package_imports, vec!["rlang", "utils"]);
         assert_eq!(parsed.exports, vec!["foo"]);
-        assert_eq!(parsed.imports, vec!["median"]);
+        assert_eq!(parsed.imports, vec![Import {
+            name: "median".to_string(),
+            package: "stats".to_string()
+        }]);
     }
 
     #[test]
@@ -164,7 +215,20 @@ mod tests {
                 importFrom(pkg, a, b, c)
             "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.imports, vec!["a", "b", "c"]);
+        assert_eq!(parsed.imports, vec![
+            Import {
+                name: "a".to_string(),
+                package: "pkg".to_string()
+            },
+            Import {
+                name: "b".to_string(),
+                package: "pkg".to_string()
+            },
+            Import {
+                name: "c".to_string(),
+                package: "pkg".to_string()
+            },
+        ]);
         assert_eq!(parsed.package_imports, vec!["bar", "foo"]);
         assert_eq!(parsed.exports, vec!["baz", "qux"]);
     }
