@@ -19,36 +19,36 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::ui::UI_COMM_NAME;
 
+// All methods take `&self`. Handler dispatch uses a take/remove pattern:
+// we take the comm out of its `RefCell` before calling the handler, so no
+// `borrow_mut()` guard is held during the call. This prevents panics if the
+// handler reenters the `RefCell` (e.g. via `comm_open_backend`).
 impl Console {
-    pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
-        if let Some(ref mut ui) = *self.ui_comm.get_mut() {
-            if ui.comm_id == comm_id {
+    pub(super) fn comm_handle_msg(&self, comm_id: &str, msg: CommMsg) {
+        if self.is_ui_comm(comm_id) {
+            self.with_ui_comm_mut(|ui| {
                 ui.handler.handle_msg(msg, &ui.ctx);
-                return;
-            }
+            });
+            return;
         }
 
-        let Some(comm) = self.comms.get_mut().get_mut(comm_id) else {
+        let Some(mut comm) = self.comms.borrow_mut().remove(comm_id) else {
             log::warn!("Received message for unknown registered comm {comm_id}");
             return;
         };
         comm.handler.handle_msg(msg, &comm.ctx);
+        self.comms.borrow_mut().insert(comm.comm_id.clone(), comm);
         self.drain_closed();
     }
 
-    pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
-        if self
-            .ui_comm
-            .get_mut()
-            .as_ref()
-            .is_some_and(|ui| ui.comm_id == comm_id)
-        {
-            let mut ui = self.ui_comm.get_mut().take().unwrap();
+    pub(super) fn comm_handle_close(&self, comm_id: &str) {
+        if self.is_ui_comm(comm_id) {
+            let mut ui = self.take_ui_comm().unwrap();
             ui.handler.handle_close(&ui.ctx);
             return;
         }
 
-        let Some(mut comm) = self.comm_remove(comm_id) else {
+        let Some(mut comm) = self.comms.borrow_mut().remove(comm_id) else {
             log::warn!("Received close for unknown registered comm {comm_id}");
             return;
         };
@@ -121,12 +121,11 @@ impl Console {
         handler.handle_open(&ctx);
 
         if comm_name == UI_COMM_NAME {
-            let mut ui_comm = self.ui_comm.borrow_mut();
-            if let Some(mut old) = ui_comm.take() {
+            if let Some(mut old) = self.take_ui_comm() {
                 log::info!("Replacing an existing UI comm.");
                 old.handler.handle_close(&old.ctx);
             }
-            *ui_comm = Some(ConsoleComm {
+            self.set_ui_comm(ConsoleComm {
                 comm_id,
                 handler,
                 ctx,
@@ -142,40 +141,65 @@ impl Console {
         }
     }
 
-    pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
-        if let Some(ref mut ui) = *self.ui_comm.get_mut() {
+    pub(super) fn comm_notify_environment_changed(&self, event: &EnvironmentChanged) {
+        self.with_ui_comm_mut(|ui| {
             ui.handler.handle_environment(event, &ui.ctx);
-        }
+        });
 
-        for (_, comm) in self.comms.get_mut().iter_mut() {
+        let ids: Vec<String> = self.comms.borrow().keys().cloned().collect();
+        for id in ids {
+            let Some(mut comm) = self.comms.borrow_mut().remove(&id) else {
+                continue;
+            };
             comm.handler.handle_environment(event, &comm.ctx);
+            self.comms.borrow_mut().insert(id, comm);
         }
         self.drain_closed();
     }
 
-    /// Remove a comm from the map.
-    fn comm_remove(&mut self, comm_id: &str) -> Option<ConsoleComm> {
-        self.comms.get_mut().remove(comm_id)
+    // -- UI comm helpers --------------------------------------------------
+
+    fn is_ui_comm(&self, comm_id: &str) -> bool {
+        self.ui_comm
+            .borrow()
+            .as_ref()
+            .is_some_and(|ui| ui.comm_id == comm_id)
     }
 
-    /// Remove all comms whose handler requested closing via `ctx.close_on_exit()`.
-    fn drain_closed(&mut self) {
+    /// Take the UI comm out, call `f`, put it back.
+    fn with_ui_comm_mut(&self, f: impl FnOnce(&mut ConsoleComm)) {
+        if let Some(mut ui) = self.take_ui_comm() {
+            f(&mut ui);
+            self.set_ui_comm(ui);
+        }
+    }
+
+    fn take_ui_comm(&self) -> Option<ConsoleComm> {
+        self.ui_comm.borrow_mut().take()
+    }
+
+    fn set_ui_comm(&self, ui: ConsoleComm) {
+        *self.ui_comm.borrow_mut() = Some(ui);
+    }
+
+    // -- Comms map helpers ------------------------------------------------
+
+    fn drain_closed(&self) {
         let closed_ids: Vec<String> = self
             .comms
-            .get_mut()
+            .borrow()
             .iter()
             .filter(|(_, comm)| comm.ctx.is_closed())
             .map(|(id, _)| id.clone())
             .collect();
 
         for comm_id in closed_ids {
-            if let Some(comm) = self.comm_remove(&comm_id) {
+            if let Some(comm) = self.comms.borrow_mut().remove(&comm_id) {
                 self.comm_notify_closed(&comm_id, &comm);
             }
         }
     }
 
-    /// Backend-initiated close cleanup: notify frontend via amalthea.
     fn comm_notify_closed(&self, comm_id: &str, comm: &ConsoleComm) {
         comm.ctx.outgoing_tx.send(CommMsg::Close).log_err();
         comm.ctx
