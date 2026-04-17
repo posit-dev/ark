@@ -55,8 +55,7 @@ struct SemanticIndexBuilder {
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
     current_scope: ScopeId,
-    current_pre_scan: PreScanScope,
-    pre_scan_stack: Vec<PreScanScope>,
+    pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
 }
 
@@ -67,6 +66,7 @@ impl SemanticIndexBuilder {
         let mut definitions = IndexVec::new();
         let mut uses = IndexVec::new();
         let mut use_def_maps = IndexVec::new();
+        let mut pre_scans = IndexVec::new();
 
         // The descendants range starts empty (`n+1..n+1`). `pop_scope` later
         // fills in `descendants.end` with the current arena length. Everything
@@ -85,6 +85,7 @@ impl SemanticIndexBuilder {
         definitions.push(IndexVec::new());
         uses.push(IndexVec::new());
         use_def_maps.push(UseDefMapBuilder::new());
+        pre_scans.push(PreScanScope::new());
 
         Self {
             scopes,
@@ -93,8 +94,7 @@ impl SemanticIndexBuilder {
             uses,
             use_def_maps,
             current_scope: file,
-            current_pre_scan: PreScanScope::new(),
-            pre_scan_stack: Vec::new(),
+            pre_scans,
             enclosing_snapshots: FxHashMap::default(),
         }
     }
@@ -119,9 +119,7 @@ impl SemanticIndexBuilder {
         self.definitions.push(IndexVec::new());
         self.uses.push(IndexVec::new());
         self.use_def_maps.push(UseDefMapBuilder::new());
-
-        let parent_pre_scan = std::mem::replace(&mut self.current_pre_scan, PreScanScope::new());
-        self.pre_scan_stack.push(parent_pre_scan);
+        self.pre_scans.push(PreScanScope::new());
 
         id
     }
@@ -133,11 +131,6 @@ impl SemanticIndexBuilder {
         self.current_scope = match self.scopes[id].parent {
             Some(parent) => parent,
             None => panic!("`pop_scope()` called on the file scope"),
-        };
-
-        self.current_pre_scan = match self.pre_scan_stack.pop() {
-            Some(pre_scan) => pre_scan,
-            None => panic!("`pop_scope()` called with empty pre-scan stack"),
         };
     }
 
@@ -239,9 +232,6 @@ impl SemanticIndexBuilder {
         let Some(mut current_scope) = self.scopes[self.current_scope].parent else {
             return;
         };
-        let Some(mut stack_idx) = self.pre_scan_stack.len().checked_sub(1) else {
-            return;
-        };
 
         loop {
             let found_by_flag = self.symbol_tables[current_scope]
@@ -253,7 +243,7 @@ impl SemanticIndexBuilder {
                         .contains(SymbolFlags::IS_BOUND)
                 });
 
-            let found_by_prescan = self.pre_scan_stack[stack_idx].has_name(name);
+            let found_by_prescan = self.pre_scans[current_scope].has_name(name);
 
             if found_by_flag || found_by_prescan {
                 // Intern with empty flags: we just need a stable `SymbolId` for
@@ -280,11 +270,7 @@ impl SemanticIndexBuilder {
             let Some(parent) = self.scopes[current_scope].parent else {
                 return;
             };
-            let Some(next_idx) = stack_idx.checked_sub(1) else {
-                return;
-            };
             current_scope = parent;
-            stack_idx = next_idx;
         }
     }
 
@@ -555,14 +541,14 @@ impl SemanticIndexBuilder {
                         let target = if right { bin.right() } else { bin.left() };
                         if let Ok(target) = target {
                             if let Some((name, range)) = assignment_target_name(&target) {
-                                self.current_pre_scan.add(name, range);
+                                self.pre_scans[self.current_scope].add(name, range);
                             }
                         }
                     }
                 },
                 AnyRExpression::RForStatement(stmt) => {
                     if let Ok(variable) = stmt.variable() {
-                        self.current_pre_scan.add(
+                        self.pre_scans[self.current_scope].add(
                             identifier_text(&variable),
                             variable.syntax().text_trimmed_range(),
                         );
