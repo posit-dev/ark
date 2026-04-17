@@ -722,6 +722,49 @@ fn test_super_assignment_nested_recorded_in_inner_scope() {
 }
 
 #[test]
+fn test_super_assignment_nested_skips_super_bound_scope() {
+    // Both `f` and `g` use `<<-`. `f`'s `x <<- 1` marks `x` as
+    // IS_SUPER_BOUND in `f` and targets the file scope. `g`'s `x <<- 2`
+    // walks up from `f`, sees only IS_SUPER_BOUND (not IS_BOUND), skips it,
+    // and also targets the file scope.
+    let index = index("x <- 0\nf <- function() { x <<- 1; g <- function() { x <<- 2 } }");
+    let file = ScopeId::from(0);
+    let outer = ScopeId::from(1);
+    let inner = ScopeId::from(2);
+
+    // File scope: `x` has IS_BOUND (from `x <- 0` plus both `<<-` targets)
+    let x_file = index.symbols(file).get("x").unwrap();
+    assert_eq!(x_file.flags(), SymbolFlags::IS_BOUND);
+
+    let x_file_defs: Vec<_> = index
+        .definitions(file)
+        .iter()
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
+        .collect();
+    assert_eq!(x_file_defs.len(), 3);
+    assert!(matches!(
+        x_file_defs[0].1.kind(),
+        DefinitionKind::Assignment(_)
+    ));
+    assert!(matches!(
+        x_file_defs[1].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+    assert!(matches!(
+        x_file_defs[2].1.kind(),
+        DefinitionKind::SuperAssignment(_)
+    ));
+
+    // Outer function: `x` has IS_SUPER_BOUND only (no local `<-`)
+    let x_outer = index.symbols(outer).get("x").unwrap();
+    assert_eq!(x_outer.flags(), SymbolFlags::IS_SUPER_BOUND);
+
+    // Inner function: `x` has IS_SUPER_BOUND
+    let x_inner = index.symbols(inner).get("x").unwrap();
+    assert_eq!(x_inner.flags(), SymbolFlags::IS_SUPER_BOUND);
+}
+
+#[test]
 fn test_super_assignment_coexists_with_use_in_ancestors() {
     // `<<-` in inner function walks up from outer, finds `x` bound in file
     // scope (from `x <- 1`), so it targets the file scope -- not the outer
