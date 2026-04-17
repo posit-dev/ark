@@ -706,9 +706,9 @@ fn test_plot_default_size_without_metadata() {
 /// the R thread blocked on the barrier in `CommEvent::Opened`. Now Shell
 /// drains comm events while waiting for the handler to complete.
 ///
-/// The plot goes through the Jupyter `display_data` path (not the Positron
-/// `comm_open` path) because the UI comm is temporarily taken out during
-/// its own dispatch, so `should_use_dynamic_plots` sees no UI comm.
+/// The UI comm remains visible during its own dispatch (via nested
+/// `RefCell` on the handler), so the plot goes through the Positron
+/// `comm_open` path as usual.
 #[test]
 fn test_plot_during_frontend_ready() {
     let frontend = DummyArkFrontend::lock();
@@ -733,9 +733,8 @@ fn test_plot_during_frontend_ready() {
     frontend.send_shell_comm_msg(String::from(&comm_id), data);
     frontend.recv_iopub_busy();
 
-    // The plot arrives as display_data (Jupyter path) because the UI comm
-    // is invisible during its own dispatch.
-    frontend.recv_iopub_display_data();
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
 
     frontend.recv_iopub_idle();
 }
