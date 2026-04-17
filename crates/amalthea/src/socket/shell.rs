@@ -185,7 +185,7 @@ impl Shell {
     /// Process a comm lifecycle event from `comm_event_rx`.
     fn process_comm_event(&mut self, event: CommEvent) {
         match event {
-            CommEvent::Opened(comm_socket, data) => {
+            CommEvent::Opened(comm_socket, data, done_tx) => {
                 // For backend-initiated comms, notify the frontend via IOPub
                 if comm_socket.initiator == CommInitiator::BackEnd {
                     self.iopub_tx
@@ -202,14 +202,14 @@ impl Shell {
                 // Add the comm to our list of open comms
                 self.open_comms.push(comm_socket);
 
+                if let Some(done_tx) = done_tx {
+                    done_tx.send(()).log_err();
+                }
+
                 log::info!(
                     "Comm channel opened (backend); there are now {} open comms",
                     self.open_comms.len()
                 );
-            },
-
-            CommEvent::Barrier(done_tx) => {
-                done_tx.send(()).log_err();
             },
 
             CommEvent::Message(comm_id, msg) => {
@@ -372,9 +372,10 @@ impl Shell {
     /// Handle an execute request. Unlike other requests that use the generic
     /// `handle_request`, this method select-loops on both the execute response
     /// and `comm_event_rx`. This allows Shell to process comm events (e.g.
-    /// `CommEvent::Barrier` from `comm_open_backend`) while the R thread is
-    /// still executing, preventing a deadlock where the R thread waits for
-    /// Shell to drain comm events while Shell waits for the execute response.
+    /// the barrier in `CommEvent::Opened` from `comm_open_backend`) while the
+    /// R thread is still executing, preventing a deadlock where the R thread
+    /// waits for Shell to drain comm events while Shell waits for the execute
+    /// response.
     fn handle_execute_request(&mut self, req: JupyterMessage<ExecuteRequest>) -> crate::Result<()> {
         self.iopub_tx
             .send(status(req.clone(), ExecutionState::Busy))

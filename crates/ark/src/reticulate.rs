@@ -66,6 +66,7 @@ impl ReticulateService {
                 "input": input,
                 "reticulate_id": (*RETICULATE_ID).clone(),
             }),
+            None,
         );
         service.comm_event_tx.send(event).log_err();
 
