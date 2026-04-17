@@ -704,7 +704,7 @@ fn test_plot_default_size_without_metadata() {
 /// Test that a plot created during a `frontend_ready` comm handler works.
 ///
 /// Previously this deadlocked because Shell blocked on the comm_msg while
-/// the R thread blocked on the `CommEvent::Barrier`. Now Shell drains comm
+/// the R thread blocked on the barrier in `CommEvent::Opened`. Now Shell drains comm
 /// events while waiting for the handler to complete.
 ///
 /// The plot goes through the Jupyter `display_data` path (not the Positron

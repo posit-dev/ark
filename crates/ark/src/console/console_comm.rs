@@ -86,14 +86,12 @@ impl Console {
                 ctx,
             });
 
-        self.comm_event_tx
-            .send(CommEvent::Opened(comm, open_metadata))?;
-
-        // Block until Shell has processed the Opened event, ensuring the
-        // `comm_open` message is on IOPub before we return. Any updates
-        // the caller sends after this point are guaranteed to follow it.
+        // Block until Shell has processed the open, ensuring the `comm_open`
+        // message is on IOPub before we return. Any updates the caller sends
+        // after this point are guaranteed to follow it.
         let (done_tx, done_rx) = crossbeam::channel::bounded(0);
-        self.comm_event_tx.send(CommEvent::Barrier(done_tx))?;
+        self.comm_event_tx
+            .send(CommEvent::Opened(comm, open_metadata, Some(done_tx)))?;
         done_rx.recv()?;
 
         Ok(comm_id)
