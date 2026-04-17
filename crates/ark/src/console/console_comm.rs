@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
+use std::cell::RefCell;
+
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
@@ -19,34 +21,45 @@ use crate::comm_handler::EnvironmentChanged;
 use crate::console::Console;
 use crate::ui::UI_COMM_NAME;
 
-// All methods take `&self`. Handler dispatch uses a take/remove pattern:
-// we take the comm out of its `RefCell` before calling the handler, so no
-// `borrow_mut()` guard is held during the call. This prevents panics if the
-// handler reenters the `RefCell` (e.g. via `comm_open_backend`).
+// All methods take `&self`.
+//
+// Regular comms use a take/remove pattern: we take the comm out of the
+// `comms` HashMap before calling the handler, so no `borrow_mut()` guard
+// is held during the call. This prevents panics if the handler reenters
+// the HashMap. For instance, a data explorer handler calls
+// `comm_open_backend` to open a child explorer for a column, which
+// needs to `borrow_mut()` the same HashMap to insert.
+//
+// The UI comm uses a different strategy: the handler is in its own
+// `RefCell` inside the `ConsoleComm`, and we borrow the outer
+// `ui_comm: RefCell<Option<ConsoleComm>>` with a shared `&` ref during
+// dispatch. This keeps the `CommHandlerContext` (and thus the outgoing channel)
+// visible to reentrant code that calls `ui_comm()`, e.g. R hooks that send
+// fire-and-forget events via `try_ui_comm()?.send_event()`.
 impl Console {
     pub(super) fn comm_handle_msg(&self, comm_id: &str, msg: CommMsg) {
         if self.is_ui_comm(comm_id) {
-            self.with_ui_comm_mut(|ui| {
-                ui.handler.handle_msg(msg, &ui.ctx);
+            self.with_ui_handler_mut(|handler, ctx| {
+                handler.handle_msg(msg, ctx);
             });
             return;
         }
 
         self.with_comm_mut(comm_id, |comm| {
-            comm.handler.handle_msg(msg, &comm.ctx);
+            comm.handler.get_mut().handle_msg(msg, &comm.ctx);
         });
         self.drain_closed();
     }
 
     pub(super) fn comm_handle_close(&self, comm_id: &str) {
         if self.is_ui_comm(comm_id) {
-            let mut ui = self.take_ui_comm().unwrap();
-            ui.handler.handle_close(&ui.ctx);
+            let ui = self.take_ui_comm().unwrap();
+            ui.handler.into_inner().handle_close(&ui.ctx);
             return;
         }
 
-        if let Some(mut comm) = self.take_comm(comm_id) {
-            comm.handler.handle_close(&comm.ctx);
+        if let Some(comm) = self.take_comm(comm_id) {
+            comm.handler.into_inner().handle_close(&comm.ctx);
         }
     }
 
@@ -82,7 +95,7 @@ impl Console {
             .borrow_mut()
             .insert(comm_id.clone(), ConsoleComm {
                 comm_id: comm_id.clone(),
-                handler,
+                handler: RefCell::new(handler),
                 ctx,
             });
 
@@ -114,13 +127,13 @@ impl Console {
         handler.handle_open(&ctx);
 
         if comm_name == UI_COMM_NAME {
-            if let Some(mut old) = self.take_ui_comm() {
+            if let Some(old) = self.take_ui_comm() {
                 log::info!("Replacing an existing UI comm.");
-                old.handler.handle_close(&old.ctx);
+                old.handler.into_inner().handle_close(&old.ctx);
             }
             self.set_ui_comm(ConsoleComm {
                 comm_id,
-                handler,
+                handler: RefCell::new(handler),
                 ctx,
             });
         } else {
@@ -128,21 +141,21 @@ impl Console {
                 .borrow_mut()
                 .insert(comm_id.clone(), ConsoleComm {
                     comm_id,
-                    handler,
+                    handler: RefCell::new(handler),
                     ctx,
                 });
         }
     }
 
     pub(super) fn comm_notify_environment_changed(&self, event: &EnvironmentChanged) {
-        self.with_ui_comm_mut(|ui| {
-            ui.handler.handle_environment(event, &ui.ctx);
+        self.with_ui_handler_mut(|handler, ctx| {
+            handler.handle_environment(event, ctx);
         });
 
         let ids: Vec<String> = self.comms.borrow().keys().cloned().collect();
         for id in ids {
             self.with_comm_mut(&id, |comm| {
-                comm.handler.handle_environment(event, &comm.ctx);
+                comm.handler.get_mut().handle_environment(event, &comm.ctx);
             });
         }
         self.drain_closed();
@@ -157,17 +170,20 @@ impl Console {
             .is_some_and(|ui| ui.comm_id == comm_id)
     }
 
-    /// Take the UI comm out, call `f`, put it back.
+    /// Borrow the UI comm with `&`, then borrow the handler with `&mut`.
     ///
-    /// Only called after `is_ui_comm()` returned `true`. If the UI comm is
-    /// unexpectedly absent, it means reentrant dispatch is occurring.
-    fn with_ui_comm_mut(&self, f: impl FnOnce(&mut ConsoleComm)) {
-        let Some(mut ui) = self.take_ui_comm() else {
+    /// Because the outer `RefCell` is only borrowed by shared ref, `ui_comm()`
+    /// remains functional during handler dispatch and R code that calls
+    /// back into Rust (e.g. `navigateToFile` from a `frontend_ready`
+    /// hook) can still send events on the UI comm.
+    fn with_ui_handler_mut(&self, f: impl FnOnce(&mut Box<dyn CommHandler>, &CommHandlerContext)) {
+        let guard = self.ui_comm.borrow();
+        let Some(ui) = guard.as_ref() else {
             log::warn!("UI comm is absent during dispatch (reentrant call?)");
             return;
         };
-        f(&mut ui);
-        self.set_ui_comm(ui);
+        let mut handler = ui.handler.borrow_mut();
+        f(&mut handler, &ui.ctx);
     }
 
     fn take_ui_comm(&self) -> Option<ConsoleComm> {
