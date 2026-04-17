@@ -4,14 +4,13 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
-use std::cell::RefCell;
-
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::event::CommEvent;
 use amalthea::socket::comm::CommInitiator;
 use amalthea::socket::comm::CommOutgoingTx;
 use amalthea::socket::comm::CommSocket;
 use stdext::result::ResultExt;
+use stdext::DebugRefCell;
 use uuid::Uuid;
 
 use crate::comm_handler::CommHandler;
@@ -31,8 +30,8 @@ use crate::ui::UI_COMM_NAME;
 // needs to `borrow_mut()` the same HashMap to insert.
 //
 // The UI comm uses a different strategy: the handler is in its own
-// `RefCell` inside the `ConsoleComm`, and we borrow the outer
-// `ui_comm: RefCell<Option<ConsoleComm>>` with a shared `&` ref during
+// `DebugRefCell` inside the `ConsoleComm`, and we borrow the outer
+// `ui_comm: DebugRefCell<Option<ConsoleComm>>` with a shared `&` ref during
 // dispatch. This keeps the `CommHandlerContext` (and thus the outgoing channel)
 // visible to reentrant code that calls `ui_comm()`, e.g. R hooks that send
 // fire-and-forget events via `try_ui_comm()?.send_event()`.
@@ -95,7 +94,7 @@ impl Console {
             .borrow_mut()
             .insert(comm_id.clone(), ConsoleComm {
                 comm_id: comm_id.clone(),
-                handler: RefCell::new(handler),
+                handler: DebugRefCell::new(handler),
                 ctx,
             });
 
@@ -133,7 +132,7 @@ impl Console {
             }
             self.set_ui_comm(ConsoleComm {
                 comm_id,
-                handler: RefCell::new(handler),
+                handler: DebugRefCell::new(handler),
                 ctx,
             });
         } else {
@@ -141,7 +140,7 @@ impl Console {
                 .borrow_mut()
                 .insert(comm_id.clone(), ConsoleComm {
                     comm_id,
-                    handler: RefCell::new(handler),
+                    handler: DebugRefCell::new(handler),
                     ctx,
                 });
         }

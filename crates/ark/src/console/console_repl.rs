@@ -13,6 +13,8 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use stdext::DebugRefCell;
+
 use super::*;
 use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
@@ -626,7 +628,7 @@ impl Console {
             comm_msg_originator: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm: RefCell::new(None),
+            ui_comm: DebugRefCell::new(None),
             last_error: None,
             help_event_tx: None,
             help_port: None,
@@ -657,10 +659,10 @@ impl Console {
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
-            read_console_env_stack: RefCell::new(Vec::new()),
+            read_console_env_stack: DebugRefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
-            comms: RefCell::new(HashMap::new()),
+            comms: DebugRefCell::new(HashMap::new()),
             device_context,
         }
     }

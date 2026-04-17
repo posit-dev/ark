@@ -7,7 +7,7 @@
 
 //! Help, LSP, UI comm, and frontend method integration for the R console.
 
-use std::cell::Ref;
+use stdext::cell::DebugRef;
 
 use super::*;
 use crate::data_explorer::r_data_explorer::DataExplorerMode;
@@ -231,7 +231,7 @@ impl Console {
 ///
 /// Existence of this value guarantees the comm is connected.
 pub(crate) struct UiCommRef<'a> {
-    guard: Ref<'a, Option<ConsoleComm>>,
+    guard: DebugRef<'a, Option<ConsoleComm>>,
     originator: Option<&'a Originator>,
     stdin_request_tx: &'a Sender<StdInRequest>,
 }

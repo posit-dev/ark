@@ -6,7 +6,6 @@
 //
 
 use std::cell::Cell;
-use std::cell::RefCell;
 use std::fmt::Debug;
 
 use amalthea::comm::base_comm::json_rpc_error;
@@ -18,6 +17,7 @@ use crossbeam::channel::Sender;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use stdext::result::ResultExt;
+use stdext::DebugRefCell;
 
 /// Context provided to `CommHandler` methods, giving access to the outgoing
 /// channel and close-request mechanism.
@@ -102,7 +102,7 @@ pub enum EnvironmentChanged {
 /// A registered comm in the Console's comm table.
 pub(crate) struct ConsoleComm {
     pub(crate) comm_id: String,
-    pub(crate) handler: RefCell<Box<dyn CommHandler>>,
+    pub(crate) handler: DebugRefCell<Box<dyn CommHandler>>,
     pub(crate) ctx: CommHandlerContext,
 }
 
