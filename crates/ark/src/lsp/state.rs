@@ -3,11 +3,16 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::anyhow;
+use biome_rowan::TextRange;
 use oak_core::file::list_r_files;
 use oak_ide::FileScope;
+use oak_index::external::directive_layers;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::BindingSource;
+use oak_index::semantic_index::SemanticIndex;
+use oak_index::semantic_index_with_source_resolver;
+use oak_index::SourceResolution;
 use oak_package::collation::collation_order;
 use oak_package::library::Library;
 use stdext::result::ResultExt;
@@ -89,15 +94,39 @@ impl WorldState {
         }
     }
 
-    /// Create a scope chain for a particular file, taking into account the
-    /// current project type. For packages, this creates a scope containing
-    /// imports and top-level definitions in other files, respecting the
-    /// collation order.
-    pub(crate) fn file_scope(&self, file: &Url) -> FileScope {
-        let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            return FileScope::search_path(default_search_path());
-        };
+    /// Look up a document by URL: returns an open document if available,
+    /// otherwise reads from disk.
+    ///
+    /// TODO: Replace with a proper VFS so non-opened workspace documents
+    /// are cached rather than re-read on every query.
+    fn workspace_document(&self, uri: &Url) -> Option<Document> {
+        if let Some(doc) = self.documents.get(uri) {
+            return Some(doc.clone());
+        }
+        let path = uri.to_file_path().log_err()?;
+        let contents = std::fs::read_to_string(&path).log_err()?;
+        Some(Document::new(&contents, None))
+    }
 
+    /// Create the semantic index and scope chain for a particular file.
+    ///
+    /// For scripts, the index is built with a source resolver so that
+    /// `source()` directives carry the sourced file's exports.
+    /// For packages, cross-file visibility comes from NAMESPACE imports and
+    /// collation ordering.
+    pub(crate) fn file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
+        match self.root {
+            Some(SourceRoot::Package(ref pkg)) => self.package_file_analysis(file, doc, pkg),
+            _ => self.script_file_analysis(file, doc),
+        }
+    }
+
+    fn package_file_analysis(
+        &self,
+        file: &Url,
+        doc: &Document,
+        pkg: &oak_package::package::Package,
+    ) -> (SemanticIndex, FileScope) {
         let root_layers = package_root_layers(&pkg.namespace);
 
         // Collect R source filenames from open documents and disk. Open
@@ -149,16 +178,8 @@ impl WorldState {
             let Some(uri) = Url::from_file_path(&path).log_err() else {
                 continue;
             };
-
-            // Use the open document if available, otherwise read from disk.
-            // TODO: Store non-opened workspace documents in VFS.
-            let doc = if let Some(open) = self.documents.get(&uri) {
-                open
-            } else {
-                let Ok(contents) = std::fs::read_to_string(&path) else {
-                    continue;
-                };
-                &Document::new(&contents, None)
+            let Some(doc) = self.workspace_document(&uri) else {
+                continue;
             };
 
             let layers = file_layers(uri, &doc.semantic_index());
@@ -173,7 +194,98 @@ impl WorldState {
         lazy.extend(root_layers);
         lazy.push(BindingSource::PackageExports("base".to_string()));
 
-        FileScope::package(top_level, lazy)
+        (doc.semantic_index(), FileScope::package(top_level, lazy))
+    }
+
+    fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, FileScope) {
+        // Resolve `source()` paths relative to the workspace root,
+        // matching RStudio's behaviour of setting the working directory
+        // to the project root. Fall back to the file's own directory
+        // when no workspace folder is open.
+        let file_dir = file
+            .to_file_path()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let source_root = self
+            .workspace
+            .folders
+            .first()
+            .and_then(|url| url.to_file_path().ok())
+            .or(file_dir);
+
+        let mut stack = HashSet::new();
+        stack.insert(file.clone());
+
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
+            let dir = source_root.as_ref()?;
+            self.resolve_source(dir, path, &mut stack)
+        });
+
+        let directives = directive_layers(index.file_directives());
+        (
+            index,
+            FileScope::search_path(directives, default_search_path()),
+        )
+    }
+
+    /// Resolve a `source()` call into a [`SourceResolution`] containing the
+    /// sourced file's exported definitions and `library()` package attachments.
+    ///
+    /// `stack` tracks files currently being resolved (grey set) to break
+    /// cycles. A file is added when resolution starts and removed when it
+    /// finishes, so shared dependencies (diamond patterns) are resolved
+    /// independently for each parent.
+    fn resolve_source(
+        &self,
+        base_dir: &Path,
+        path: &str,
+        stack: &mut HashSet<Url>,
+    ) -> Option<SourceResolution> {
+        let resolved = base_dir.join(path);
+        let url = Url::from_file_path(&resolved).log_err()?;
+
+        if !stack.insert(url.clone()) {
+            return None;
+        }
+
+        let sourced_doc = self.workspace_document(&url)?;
+
+        // Build the sourced file's index with a nested resolver so that
+        // transitive `source()` calls are also resolved. The base
+        // directory stays the same (workspace root) throughout the chain.
+        let index = semantic_index_with_source_resolver(&sourced_doc.parse.tree(), |nested_path| {
+            self.resolve_source(base_dir, nested_path, stack)
+        });
+
+        let mut definitions: Vec<(String, Url, TextRange)> = index
+            .file_all_definitions(&url)
+            .into_iter()
+            .map(|(name, file, range)| (name.to_string(), file, range))
+            .collect();
+
+        let mut packages = Vec::new();
+        for d in index.file_directives() {
+            match d.kind() {
+                oak_index::semantic_index::DirectiveKind::Attach(pkg) => {
+                    packages.push(pkg.clone());
+                },
+                oak_index::semantic_index::DirectiveKind::Source {
+                    file: source_file,
+                    exports,
+                } => {
+                    for (name, range) in exports {
+                        definitions.push((name.clone(), source_file.clone(), *range));
+                    }
+                },
+            }
+        }
+
+        stack.remove(&url);
+
+        Some(SourceResolution {
+            definitions,
+            packages,
+        })
     }
 }
 

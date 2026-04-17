@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
 use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use oak_package::library::Library;
 use oak_package::package_namespace::Namespace;
 use url::Url;
 
+use crate::semantic_index::Directive;
 use crate::semantic_index::DirectiveKind;
+use crate::semantic_index::ScopeId;
 use crate::semantic_index::SemanticIndex;
 
 /// A layer in the scope chain. Layers are ordered most-local-first; resolution
@@ -107,6 +110,9 @@ pub fn resolve_in_package(
 /// Compute the binding-source layers that a single file contributes to the
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
 /// one `PackageExports` layer per `library()`/`require()` directive.
+///
+/// Offsets are discarded since all of a predecessor file's layers are
+/// unconditionally visible.
 pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
     let mut layers = Vec::new();
 
@@ -117,15 +123,34 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
     }
 
     layers.push(BindingSource::FileExports { file, exports });
+    let dir_layers = directive_layers(index.file_directives());
+    layers.extend(dir_layers.into_iter().map(|(_, _, l)| l));
 
-    for directive in index.file_directives() {
+    layers
+}
+
+/// Convert directives into scope-chain layers, each paired with the offset
+/// of the directive that produced it.
+pub fn directive_layers(directives: &[Directive]) -> Vec<(TextSize, ScopeId, BindingSource)> {
+    let mut layers = Vec::new();
+    for directive in directives {
+        let offset = directive.offset();
         match directive.kind() {
             DirectiveKind::Attach(pkg) => {
-                layers.push(BindingSource::PackageExports(pkg.clone()));
+                layers.push((
+                    offset,
+                    directive.scope(),
+                    BindingSource::PackageExports(pkg.clone()),
+                ));
+            },
+            DirectiveKind::Source { file, exports } => {
+                layers.push((offset, directive.scope(), BindingSource::FileExports {
+                    file: file.clone(),
+                    exports: exports.clone(),
+                }));
             },
         }
     }
-
     layers
 }
 

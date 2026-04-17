@@ -4,6 +4,7 @@ use oak_index::external::resolve_external_name;
 use oak_index::external::resolve_in_package;
 use oak_index::external::BindingSource;
 use oak_index::external::ExternalDefinition;
+use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
@@ -60,7 +61,7 @@ pub fn goto_definition(
         },
         Identifier::Use { scope_id, use_id } => {
             let scope_chain = scope.at(index, offset);
-            resolve_use(scope_id, use_id, file, index, scope_chain, library)
+            resolve_use(scope_id, use_id, file, index, &scope_chain, library)
         },
         Identifier::NamespaceAccess {
             ref package,
@@ -90,8 +91,12 @@ fn resolve_use(
         defs.iter()
             .map(|&def_id| {
                 let def = &index.definitions(scope)[def_id];
+                let target_file = match def.kind() {
+                    DefinitionKind::Sourced { file: source_file } => source_file.clone(),
+                    _ => file.clone(),
+                };
                 NavigationTarget {
-                    file: file.clone(),
+                    file: target_file,
                     name: symbol_name.to_string(),
                     full_range: def.range(),
                     focus_range: def.range(),

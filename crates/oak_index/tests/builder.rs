@@ -1,6 +1,8 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxKind;
+use biome_rowan::TextRange;
+use biome_rowan::TextSize;
 use oak_index::semantic_index;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::DefinitionKind;
@@ -10,6 +12,9 @@ use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index::SymbolFlags;
 use oak_index::semantic_index::UseId;
+use oak_index::semantic_index_with_source_resolver;
+use oak_index::SourceResolution;
+use url::Url;
 
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
@@ -1360,9 +1365,14 @@ fn test_directive_no_arguments_ignored() {
 }
 
 #[test]
-fn test_directive_not_at_file_scope() {
+fn test_directive_library_in_function_scope() {
+    // library() in a function body now records a scoped directive
     let index = index("f <- function() { library(dplyr) }");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    )]);
+    let directives = index.file_directives();
+    assert_ne!(directives[0].scope(), ScopeId::from(0));
 }
 
 #[test]
@@ -1377,4 +1387,385 @@ fn test_directive_preserves_offset() {
     let directives = index.file_directives();
     assert_eq!(directives.len(), 1);
     assert_eq!(directives[0].offset(), biome_rowan::TextSize::from(7));
+}
+
+// --- source() directives ---
+
+#[test]
+fn test_directive_source_no_resolver() {
+    // Without a resolver, source() produces no directives
+    let index = index("source(\"helpers.R\")");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_single_quoted_no_resolver() {
+    let index = index("source('utils/helpers.R')");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_identifier_ignored() {
+    let index = index("source(my_file)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_non_static_argument_ignored() {
+    let index = index("source(paste0(\"path/\", name))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_named_argument_ignored() {
+    let index = index("source(file = \"helpers.R\")");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_local_true_without_resolver() {
+    // `source("helpers.R", local = TRUE)` is recognized but no resolver, so no directives
+    let index = index("source(\"helpers.R\", local = TRUE)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_no_arguments_ignored() {
+    let index = index("source()");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_nested_without_resolver() {
+    // Nested `source()` is recognized but no resolver, so no directives
+    let index = index("f <- function() { source(\"helpers.R\") }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_source_no_resolver_no_directives() {
+    let index = index("x <- 1\nsource(\"helpers.R\")");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 0);
+}
+
+#[test]
+fn test_directive_source_mixed_with_library() {
+    let index = index("library(dplyr)\nsource(\"helpers.R\")\nlibrary(tidyr)");
+    assert_eq!(directive_kinds(&index), [
+        &DirectiveKind::Attach("dplyr".into()),
+        &DirectiveKind::Attach("tidyr".into()),
+    ]);
+}
+
+// --- declare() directives ---
+
+#[test]
+fn test_directive_declare_source_no_resolver() {
+    let index = index("declare(source(\"helpers.R\"))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_declare_source_single_quotes_no_resolver() {
+    let index = index("declare(source('utils.R'))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_tilde_declare_source_no_resolver() {
+    let index = index("~declare(source(\"helpers.R\"))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_fixme_directive_declare_library_transparent() {
+    // `declare()` is transparent: the inner `library(dplyr)` is still
+    // picked up as a directive.
+    // FIXME: We should declare `declare()` as a quoting function.
+    let index = index("declare(library(dplyr))");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    )]);
+}
+
+#[test]
+fn test_directive_declare_not_at_file_scope() {
+    let index = index("f <- function() { declare(source(\"helpers.R\")) }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_tilde_declare_not_at_file_scope() {
+    let index = index("f <- function() { ~declare(source(\"helpers.R\")) }");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_declare_mixed_with_bare() {
+    let index = index("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    ),]);
+}
+
+#[test]
+fn test_directive_declare_source_no_resolver_no_directives() {
+    let index = index("x <- 1\ndeclare(source(\"helpers.R\"))");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 0);
+}
+
+#[test]
+fn test_directive_tilde_declare_source_no_resolver_no_directives() {
+    let index = index("x <- 1\n~declare(source(\"helpers.R\"))");
+    let directives = index.file_directives();
+    assert_eq!(directives.len(), 0);
+}
+
+#[test]
+fn test_directive_declare_non_call_arg_ignored() {
+    let index = index("declare(42)");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+#[test]
+fn test_directive_declare_identifier_source_arg_ignored() {
+    let index = index("declare(source(my_file))");
+    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+}
+
+// --- source() with resolver ---
+
+fn index_with_resolver(
+    source: &str,
+    resolver: impl FnMut(&str) -> Option<SourceResolution>,
+) -> SemanticIndex {
+    let parsed = parse(source, RParserOptions::default());
+    if parsed.has_error() {
+        panic!("source has syntax errors: {source}");
+    }
+    semantic_index_with_source_resolver(&parsed.tree(), resolver)
+}
+
+fn helper_resolution() -> SourceResolution {
+    SourceResolution {
+        definitions: vec![(
+            "helper".into(),
+            Url::parse("file:///test/helpers.R").unwrap(),
+            TextRange::new(TextSize::from(0), TextSize::from(6)),
+        )],
+        packages: vec![],
+    }
+}
+
+#[test]
+fn test_source_resolver_injects_definitions() {
+    // At file scope, source() injects Sourced definitions into the use-def map.
+    let code = "source(\"helpers.R\")\nhelper\n";
+    let index = index_with_resolver(code, |_| Some(helper_resolution()));
+    let file = ScopeId::from(0);
+
+    // Use 0 is `source`, use 1 is `helper`
+    let map = index.use_def_map(file);
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert!(!bindings.definitions().is_empty());
+
+    let def_id = bindings.definitions()[0];
+    let def = &index.definitions(file)[def_id];
+    let DefinitionKind::Sourced { file: ref url } = def.kind() else {
+        panic!("expected Sourced definition, got {:?}", def.kind());
+    };
+    assert_eq!(url.as_str(), "file:///test/helpers.R");
+
+    // file_exports() excludes sourced definitions
+    let exports = index.file_exports();
+    assert!(!exports.iter().any(|(name, _)| *name == "helper"));
+
+    // file_all_definitions() includes sourced definitions
+    let own_url = Url::parse("file:///test/main.R").unwrap();
+    let all_defs = index.file_all_definitions(&own_url);
+    let sourced = all_defs
+        .iter()
+        .find(|(name, _, _)| *name == "helper")
+        .unwrap();
+    assert_eq!(sourced.1.as_str(), "file:///test/helpers.R");
+}
+
+#[test]
+fn test_source_resolver_offset_visibility() {
+    let code = "helper\nsource(\"helpers.R\")\nhelper\n";
+    let index = index_with_resolver(code, |_| Some(helper_resolution()));
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // First `helper` (before source call) is unbound
+    let first = map.bindings_at_use(UseId::from(0));
+    assert!(first.may_be_unbound());
+
+    // Second `helper` (after source call) resolves to the sourced definition
+    // Uses: helper(0), source(1), helper(2)
+    let second = map.bindings_at_use(UseId::from(2));
+    assert!(!second.definitions().is_empty());
+    let def_id = second.definitions()[0];
+    let def = &index.definitions(file)[def_id];
+    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+}
+
+#[test]
+fn test_source_resolver_in_function_scope() {
+    let code = "f <- function() {\n  source(\"helpers.R\")\n  helper\n}\nhelper\n";
+    let index = index_with_resolver(code, |_| Some(helper_resolution()));
+    let fun = ScopeId::from(1);
+    let file = ScopeId::from(0);
+
+    let fun_map = index.use_def_map(fun);
+    let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert!(inner_bindings.definitions().is_empty());
+    assert!(inner_bindings.may_be_unbound());
+
+    let file_map = index.use_def_map(file);
+    let outer_bindings = file_map.bindings_at_use(UseId::from(0));
+    assert!(outer_bindings.definitions().is_empty());
+    assert!(outer_bindings.may_be_unbound());
+
+    let source_directive = index
+        .file_directives()
+        .iter()
+        .find(|d| matches!(d.kind(), DirectiveKind::Source { .. }));
+    assert!(source_directive.is_some());
+    assert_eq!(source_directive.unwrap().scope(), ScopeId::from(1));
+}
+
+#[test]
+fn test_source_resolver_packages_become_directives() {
+    let code = "source(\"helpers.R\")\n";
+    let index = index_with_resolver(code, |_| {
+        Some(SourceResolution {
+            definitions: vec![],
+            packages: vec!["dplyr".into()],
+        })
+    });
+
+    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
+        "dplyr".into()
+    )]);
+}
+
+#[test]
+fn test_source_resolver_later_shadows_earlier() {
+    // At file scope, both source() calls inject Sourced definitions
+    // into the use-def map. The later one shadows the earlier.
+    let code = "source(\"a.R\")\nsource(\"b.R\")\nfoo\n";
+    let parsed = parse(code, RParserOptions::default());
+
+    let a_url = Url::parse("file:///test/a.R").unwrap();
+    let b_url = Url::parse("file:///test/b.R").unwrap();
+    let a_url_clone = a_url.clone();
+    let b_url_clone = b_url.clone();
+
+    let index = semantic_index_with_source_resolver(&parsed.tree(), move |path| {
+        let (url, range) = match path {
+            "a.R" => (
+                a_url_clone.clone(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            ),
+            "b.R" => (
+                b_url_clone.clone(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            ),
+            _ => return None,
+        };
+        Some(SourceResolution {
+            definitions: vec![("foo".to_string(), url, range)],
+            packages: Vec::new(),
+        })
+    });
+
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: source(0), source(1), foo(2)
+    let bindings = map.bindings_at_use(UseId::from(2));
+    assert_eq!(bindings.definitions().len(), 1);
+
+    let def_id = bindings.definitions()[0];
+    let def = &index.definitions(file)[def_id];
+    let DefinitionKind::Sourced { file: ref url } = def.kind() else {
+        panic!("expected Sourced definition, got {:?}", def.kind());
+    };
+    assert_eq!(*url, b_url);
+}
+
+#[test]
+fn test_source_resolver_local_true_in_function_scope() {
+    // `local = TRUE` injects Sourced definitions into the function
+    // scope's use-def map, not into directives.
+    let code = "f <- function() {\n  source(\"helpers.R\", local = TRUE)\n  helper\n}\nhelper\n";
+    let index = index_with_resolver(code, |_| Some(helper_resolution()));
+    let fun = ScopeId::from(1);
+    let file = ScopeId::from(0);
+
+    let fun_map = index.use_def_map(fun);
+    // Function scope uses: source(0), helper(1)
+    let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert_eq!(inner_bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[inner_bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+
+    // File scope: `helper` does not resolve
+    let file_map = index.use_def_map(file);
+    let outer_bindings = file_map.bindings_at_use(UseId::from(0));
+    assert!(outer_bindings.definitions().is_empty());
+}
+
+#[test]
+fn test_source_resolver_local_true_shadows_local_def() {
+    // `source(local = TRUE)` injects into the use-def map and
+    // shadows a prior local binding.
+    let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\", local = TRUE)\n  foo\n}\n";
+    let index = index_with_resolver(code, |_| {
+        Some(SourceResolution {
+            definitions: vec![(
+                "foo".into(),
+                Url::parse("file:///test/helpers.R").unwrap(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            )],
+            packages: vec![],
+        })
+    });
+    let fun = ScopeId::from(1);
+
+    let fun_map = index.use_def_map(fun);
+    // Function scope uses: source(0), foo(1)
+    let bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+}
+
+#[test]
+fn test_source_resolver_local_false_does_not_shadow_local_def() {
+    // `source(local = FALSE)` (the default) in a function scope does not
+    // shadow a prior local binding: the sourced definition becomes a
+    // directive scoped to the function, leaving the local one intact.
+    let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
+    let index = index_with_resolver(code, |_| {
+        Some(SourceResolution {
+            definitions: vec![(
+                "foo".into(),
+                Url::parse("file:///test/helpers.R").unwrap(),
+                TextRange::new(TextSize::from(0), TextSize::from(3)),
+            )],
+            packages: vec![],
+        })
+    });
+    let fun = ScopeId::from(1);
+
+    let fun_map = index.use_def_map(fun);
+    // Function scope uses: source(0), foo(1)
+    let bindings = fun_map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Assignment(_)));
 }
