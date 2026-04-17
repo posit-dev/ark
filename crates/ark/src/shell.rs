@@ -31,6 +31,7 @@ use async_trait::async_trait;
 use bus::BusReader;
 use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
+use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
 use harp::environment::R_ENVS;
 use harp::line_ending::convert_line_endings;
@@ -262,18 +263,18 @@ impl ShellHandler for Shell {
         comm_name: &str,
         msg: CommMsg,
         originator: Originator,
-    ) -> amalthea::Result<CommHandled> {
+    ) -> amalthea::Result<(CommHandled, Option<Receiver<()>>)> {
         match comm_name {
             DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
-                self.dispatch_kernel_request(|done_tx| KernelRequest::CommMsg {
+                let done_rx = self.start_kernel_request(|done_tx| KernelRequest::CommMsg {
                     comm_id: comm_id.to_string(),
                     msg,
                     originator: Box::new(originator),
                     done_tx,
                 })?;
-                Ok(CommHandled::Handled)
+                Ok((CommHandled::Handled, Some(done_rx)))
             },
-            _ => Ok(CommHandled::NotHandled),
+            _ => Ok((CommHandled::NotHandled, None)),
         }
     }
 
@@ -281,34 +282,33 @@ impl ShellHandler for Shell {
         &mut self,
         comm_id: &str,
         comm_name: &str,
-    ) -> amalthea::Result<CommHandled> {
+    ) -> amalthea::Result<(CommHandled, Option<Receiver<()>>)> {
         match comm_name {
             DATA_EXPLORER_COMM_NAME | PLOT_COMM_NAME | UI_COMM_NAME => {
-                self.dispatch_kernel_request(|done_tx| KernelRequest::CommClose {
+                let done_rx = self.start_kernel_request(|done_tx| KernelRequest::CommClose {
                     comm_id: comm_id.to_string(),
                     done_tx,
                 })?;
-                Ok(CommHandled::Handled)
+                Ok((CommHandled::Handled, Some(done_rx)))
             },
-            _ => Ok(CommHandled::NotHandled),
+            _ => Ok((CommHandled::NotHandled, None)),
         }
     }
 }
 
 impl Shell {
-    /// Send a `KernelRequest` to the R thread and block until it's processed.
-    fn dispatch_kernel_request(
+    /// Send a `KernelRequest` to the R thread and return a completion receiver.
+    /// The caller (Shell) select-loops on this receiver and `comm_event_rx`
+    /// to drain comm events while the request is processed.
+    fn start_kernel_request(
         &self,
         build: impl FnOnce(Sender<()>) -> KernelRequest,
-    ) -> amalthea::Result<()> {
+    ) -> amalthea::Result<Receiver<()>> {
         let (done_tx, done_rx) = bounded(0);
         self.kernel_request_tx
             .send(build(done_tx))
             .map_err(|err| amalthea::Error::SendError(err.to_string()))?;
-        done_rx
-            .recv()
-            .map_err(|err| amalthea::Error::ReceiveError(err.to_string()))?;
-        Ok(())
+        Ok(done_rx)
     }
 }
 

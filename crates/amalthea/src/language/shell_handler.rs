@@ -26,10 +26,10 @@ use crate::wire::kernel_info_request::KernelInfoRequest;
 use crate::wire::originator::Originator;
 
 /// Result of a `handle_comm_msg` or `handle_comm_close` call on the
-/// `ShellHandler`. `Handled` means the kernel processed the message
-/// synchronously (blocking Shell until done). `NotHandled` means amalthea
-/// should fall back to the historical `incoming_tx` path. This fallback is
-/// temporary until all comms are migrated to the blocking path.
+/// `ShellHandler`. `Handled` means the kernel dispatched the message
+/// (possibly asynchronously via a completion receiver). `NotHandled` means
+/// amalthea should fall back to the historical `incoming_tx` path. This
+/// fallback is temporary until all comms are migrated to the new path.
 pub enum CommHandled {
     Handled,
     NotHandled,
@@ -97,10 +97,15 @@ pub trait ShellHandler: Send {
         data: serde_json::Value,
     ) -> crate::Result<bool>;
 
-    /// Handle an incoming comm message (RPC or data). Return
-    /// `CommHandled::Handled` if the message was processed, or
-    /// `CommHandled::NotHandled` to fall back to the existing
-    /// `incoming_tx` path.
+    /// Handle an incoming comm message (RPC or data).
+    ///
+    /// Returns `(CommHandled::Handled, Some(receiver))` if the message was
+    /// dispatched to the R thread. Shell will select-loop on the receiver
+    /// and `comm_event_rx` to drain comm events (e.g. barriers from
+    /// `comm_open_backend`) while the handler runs.
+    ///
+    /// Returns `(CommHandled::NotHandled, None)` to fall back to the
+    /// existing `incoming_tx` path.
     ///
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name (e.g. `"positron.dataExplorer"`)
@@ -113,13 +118,14 @@ pub trait ShellHandler: Send {
         _comm_name: &str,
         _msg: CommMsg,
         _originator: Originator,
-    ) -> crate::Result<CommHandled> {
-        Ok(CommHandled::NotHandled)
+    ) -> crate::Result<(CommHandled, Option<Receiver<()>>)> {
+        Ok((CommHandled::NotHandled, None))
     }
 
-    /// Handle a comm close. Return `CommHandled::Handled` if the close
-    /// was processed, or `CommHandled::NotHandled` to fall back to the
-    /// existing `incoming_tx` path.
+    /// Handle a comm close.
+    ///
+    /// Same pattern as `handle_comm_msg`: returns a completion receiver
+    /// so Shell can drain comm events while the handler runs.
     ///
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name
@@ -127,7 +133,7 @@ pub trait ShellHandler: Send {
         &mut self,
         _comm_id: &str,
         _comm_name: &str,
-    ) -> crate::Result<CommHandled> {
-        Ok(CommHandled::NotHandled)
+    ) -> crate::Result<(CommHandled, Option<Receiver<()>>)> {
+        Ok((CommHandled::NotHandled, None))
     }
 }

@@ -1,3 +1,4 @@
+use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
@@ -698,6 +699,52 @@ fn test_plot_default_size_without_metadata() {
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+}
+
+/// Test that a plot created during a `frontend_ready` comm handler works.
+///
+/// Previously this deadlocked because Shell blocked on the comm_msg while
+/// the R thread blocked on the `CommEvent::Barrier`. Now Shell drains comm
+/// events while waiting for the handler to complete.
+///
+/// The plot goes through the Jupyter `display_data` path (not the Positron
+/// `comm_open` path) because the UI comm is temporarily taken out during
+/// its own dispatch, so `should_use_dynamic_plots` sees no UI comm.
+#[test]
+fn test_plot_during_frontend_ready() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    // Register a session_init hook that creates a plot.
+    frontend.send_execute_request(
+        "setHook('positron.session_init', function(start_type) plot(1:10))",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Trigger the hook via frontend_ready. The hook creates a plot.
+    let data = serde_json::json!({
+        "method": "frontend_ready",
+        "params": { "start_type": "new" },
+        "id": "frontend-ready-rpc"
+    });
+    frontend.send_shell_comm_msg(String::from(&comm_id), data);
+    frontend.recv_iopub_busy();
+
+    // The plot arrives as display_data (Jupyter path) because the UI comm
+    // is invisible during its own dispatch.
+    frontend.recv_iopub_display_data();
+
+    // Receive the frontend_ready reply
+    let reply = frontend.recv_iopub_comm_msg();
+    assert_eq!(reply.comm_id, comm_id);
+    let reply = serde_json::from_value::<UiBackendReply>(reply.data).unwrap();
+    assert_eq!(reply, UiBackendReply::FrontendReadyReply());
+    frontend.recv_iopub_idle();
 }
 
 /// Test that a plot created without an active execution context (e.g. from
