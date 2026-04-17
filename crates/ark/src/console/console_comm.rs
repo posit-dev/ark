@@ -21,7 +21,7 @@ use crate::ui::UI_COMM_NAME;
 
 impl Console {
     pub(super) fn comm_handle_msg(&mut self, comm_id: &str, msg: CommMsg) {
-        if let Some(ref mut ui) = self.ui_comm {
+        if let Some(ref mut ui) = *self.ui_comm.get_mut() {
             if ui.comm_id == comm_id {
                 ui.handler.handle_msg(msg, &ui.ctx);
                 return;
@@ -39,10 +39,11 @@ impl Console {
     pub(super) fn comm_handle_close(&mut self, comm_id: &str) {
         if self
             .ui_comm
+            .get_mut()
             .as_ref()
             .is_some_and(|ui| ui.comm_id == comm_id)
         {
-            let mut ui = self.ui_comm.take().unwrap();
+            let mut ui = self.ui_comm.get_mut().take().unwrap();
             ui.handler.handle_close(&ui.ctx);
             return;
         }
@@ -110,7 +111,7 @@ impl Console {
     /// comm. The `CommSocket` already exists in amalthea's open_comms list, so
     /// we only need to register the handler and call `handle_open`.
     pub(super) fn comm_open_frontend(
-        &mut self,
+        &self,
         comm_id: String,
         comm_name: &str,
         outgoing_tx: CommOutgoingTx,
@@ -120,26 +121,29 @@ impl Console {
         handler.handle_open(&ctx);
 
         if comm_name == UI_COMM_NAME {
-            if let Some(mut old) = self.ui_comm.take() {
+            let mut ui_comm = self.ui_comm.borrow_mut();
+            if let Some(mut old) = ui_comm.take() {
                 log::info!("Replacing an existing UI comm.");
                 old.handler.handle_close(&old.ctx);
             }
-            self.ui_comm = Some(ConsoleComm {
+            *ui_comm = Some(ConsoleComm {
                 comm_id,
                 handler,
                 ctx,
             });
         } else {
-            self.comms.get_mut().insert(comm_id.clone(), ConsoleComm {
-                comm_id,
-                handler,
-                ctx,
-            });
+            self.comms
+                .borrow_mut()
+                .insert(comm_id.clone(), ConsoleComm {
+                    comm_id,
+                    handler,
+                    ctx,
+                });
         }
     }
 
     pub(super) fn comm_notify_environment_changed(&mut self, event: &EnvironmentChanged) {
-        if let Some(ref mut ui) = self.ui_comm {
+        if let Some(ref mut ui) = *self.ui_comm.get_mut() {
             ui.handler.handle_environment(event, &ui.ctx);
         }
 
