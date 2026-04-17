@@ -269,19 +269,19 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(
-        &self,
+    fn handle_comm_open(
+        &mut self,
         req: Comm,
         comm: CommSocket,
         _data: serde_json::Value,
-    ) -> amalthea::Result<bool> {
+    ) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
         // Used to test error replies
         match req {
             Comm::Other(name) if name == "unknown" => {
                 return Err(amalthea::Error::Anyhow(anyhow!("unknown comm target")));
             },
             _ => {},
-        }
+        };
 
         // Open a test comm channel; this test comm channel is used for every
         // comm open request (regardless of the target name). It just echoes back any
@@ -317,6 +317,6 @@ impl ShellHandler for Shell {
                 },
             }
         });
-        Ok(true)
+        Ok((true, None))
     }
 }
