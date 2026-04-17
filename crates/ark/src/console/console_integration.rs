@@ -20,29 +20,21 @@ impl Console {
         self.session_mode
     }
 
-    pub(crate) fn has_ui_comm(&self) -> bool {
-        self.ui_comm.borrow().is_some()
-    }
-
-    pub(crate) fn with_ui_comm<R>(&self, f: impl FnOnce(UiCommRef<'_>) -> R) -> Option<R> {
-        let ui = self.ui_comm.borrow();
-        let ui = ui.as_ref()?;
-        Some(f(UiCommRef {
-            comm: ui,
+    pub(crate) fn ui_comm(&self) -> Option<UiCommRef<'_>> {
+        let comm = self.ui_comm.as_ref()?;
+        Some(UiCommRef {
+            comm,
             originator: self
                 .active_request
                 .as_ref()
                 .map(|r| &r.originator)
                 .or(self.comm_msg_originator.as_ref()),
             stdin_request_tx: &self.stdin_request_tx,
-        }))
+        })
     }
 
-    pub(crate) fn try_with_ui_comm<R>(
-        &self,
-        f: impl FnOnce(UiCommRef<'_>) -> R,
-    ) -> anyhow::Result<R> {
-        self.with_ui_comm(f)
+    pub(crate) fn try_ui_comm(&self) -> anyhow::Result<UiCommRef<'_>> {
+        self.ui_comm()
             .ok_or_else(|| anyhow!("UI comm is not connected"))
     }
 }

@@ -26,7 +26,7 @@ use crate::console::Console;
 pub unsafe extern "C-unwind" fn ps_ui_show_message(message: SEXP) -> anyhow::Result<SEXP> {
     let message: String = RObject::view(message).try_into()?;
 
-    Console::get().try_with_ui_comm(|ui| ui.show_message(message))?;
+    Console::get().try_ui_comm()?.show_message(message);
 
     Ok(R_NilValue)
 }
@@ -43,7 +43,7 @@ pub unsafe extern "C-unwind" fn ps_ui_open_workspace(
 
     let event = UiFrontendEvent::OpenWorkspace(params);
 
-    Console::get().try_with_ui_comm(|ui| ui.send_event(&event))?;
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(R_NilValue)
 }
@@ -68,7 +68,7 @@ pub unsafe extern "C-unwind" fn ps_ui_navigate_to_file(
 
     let event = UiFrontendEvent::OpenEditor(params);
 
-    Console::get().try_with_ui_comm(|ui| ui.send_event(&event))?;
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(R_NilValue)
 }
@@ -80,7 +80,7 @@ pub unsafe extern "C-unwind" fn ps_ui_set_selection_ranges(ranges: SEXP) -> anyh
 
     let event = UiFrontendEvent::SetEditorSelections(params);
 
-    Console::get().try_with_ui_comm(|ui| ui.send_event(&event))?;
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(R_NilValue)
 }
@@ -92,7 +92,7 @@ pub fn send_show_url_event(url: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::ShowUrl(params);
 
-    Console::get().try_with_ui_comm(|ui| ui.send_event(&event))?;
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(())
 }
@@ -110,7 +110,7 @@ pub fn send_open_with_system_event(path: &str) -> anyhow::Result<()> {
     };
     let event = UiFrontendEvent::OpenWithSystem(params);
 
-    Console::get().try_with_ui_comm(|ui| ui.send_event(&event))?;
+    Console::get().try_ui_comm()?.send_event(&event);
 
     Ok(())
 }

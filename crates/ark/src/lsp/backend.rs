@@ -109,7 +109,9 @@ fn report_crash() {
     // NOTE: This is a legit use of interrupt-time task. No R access here, and
     // we need to go through Console since it owns the UI comm.
     r_task(|| {
-        Console::get().with_ui_comm(|ui| ui.show_message(String::from(user_message)));
+        if let Some(ui) = Console::get().ui_comm() {
+            ui.show_message(String::from(user_message));
+        }
     });
 }
 

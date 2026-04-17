@@ -616,7 +616,7 @@ impl Console {
             comm_msg_originator: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm: RefCell::new(None),
+            ui_comm: None,
             last_error: None,
             help_event_tx: None,
             help_port: None,
@@ -2319,7 +2319,9 @@ impl Console {
         let busy = which != 0;
 
         // Send updated state to the frontend over the UI comm
-        self.with_ui_comm(|ui| ui.busy(busy));
+        if let Some(ui) = self.ui_comm() {
+            ui.busy(busy);
+        }
     }
 
     /// Invoked by R to show a message to the user.
@@ -2327,8 +2329,8 @@ impl Console {
         let message = unsafe { CStr::from_ptr(buf) };
         let message = message.to_str().unwrap().to_string();
 
-        if self.has_ui_comm() {
-            self.with_ui_comm(|ui| ui.show_message(message));
+        if let Some(ui) = self.ui_comm() {
+            ui.show_message(message);
         } else {
             // Should we emit the message in the Console?
             log::info!("`show_message`: {message}")
