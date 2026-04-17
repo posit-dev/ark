@@ -11,6 +11,7 @@
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
 use std::path::Path;
+use std::rc::Rc;
 
 use super::*;
 use crate::dap::dap_notebook;
@@ -611,7 +612,7 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
-        let device_context = DeviceContext::new(iopub_tx.clone());
+        let device_context = Rc::new(DeviceContext::new(iopub_tx.clone()));
 
         Self {
             r_home,
@@ -775,6 +776,10 @@ impl Console {
 
     pub(crate) fn device_context(&self) -> &DeviceContext {
         &self.device_context
+    }
+
+    pub(crate) fn device_context_rc(&self) -> Rc<DeviceContext> {
+        Rc::clone(&self.device_context)
     }
 
     /// Run a closure while capturing console output.

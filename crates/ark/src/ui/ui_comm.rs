@@ -51,7 +51,7 @@ pub struct UiComm {
 }
 
 impl CommHandler for UiComm {
-    fn handle_open(&mut self, ctx: &CommHandlerContext, _console: &Console) {
+    fn handle_open(&mut self, ctx: &CommHandlerContext) {
         // Set initial console width from the comm_open data, if provided.
         if let Some(width) = self.comm_open_data.console_width {
             if let Err(err) = RFunction::from(".ps.rpc.setConsoleWidth")
@@ -70,7 +70,7 @@ impl CommHandler for UiComm {
         self.refresh(&input_prompt, &continuation_prompt, ctx);
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, _console: &Console) {
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
         let this = &*self;
         handle_comm_message(
             &ctx.outgoing_tx,
@@ -81,12 +81,7 @@ impl CommHandler for UiComm {
         );
     }
 
-    fn handle_environment(
-        &mut self,
-        event: &EnvironmentChanged,
-        ctx: &CommHandlerContext,
-        _console: &Console,
-    ) {
+    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
         let EnvironmentChanged::Execution {
             input_prompt,
             continuation_prompt,
@@ -323,7 +318,7 @@ mod tests {
                 }))
                 .unwrap(),
             };
-            handler.handle_msg(msg, &ctx, Console::get());
+            handler.handle_msg(msg, &ctx);
 
             // Assert that the console width changed
             let new_width: i32 = harp::get_option("width").try_into().unwrap();
@@ -339,7 +334,7 @@ mod tests {
                 }))
                 .unwrap(),
             };
-            handler.handle_msg(msg, &ctx, Console::get());
+            handler.handle_msg(msg, &ctx);
 
             old_width
         });
@@ -385,7 +380,7 @@ mod tests {
                 }))
                 .unwrap(),
             };
-            handler.handle_msg(msg, &ctx, Console::get());
+            handler.handle_msg(msg, &ctx);
         });
 
         let response = iopub_rx.recv_comm_msg();

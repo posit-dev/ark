@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -343,5 +344,5 @@ pub struct Console {
     comms: RefCell<HashMap<String, ConsoleComm>>,
 
     /// Graphics device state (plot recording, rendering, comm management).
-    device_context: DeviceContext,
+    device_context: Rc<DeviceContext>,
 }
