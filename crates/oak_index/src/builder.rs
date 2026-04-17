@@ -31,7 +31,6 @@ use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
-use crate::semantic_index::SymbolId;
 use crate::semantic_index::SymbolTableBuilder;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
@@ -226,11 +225,15 @@ impl SemanticIndexBuilder {
         // Associate free variables with the enclosing snapshot where the
         // variable is defined
         if self.use_def_maps[self.current_scope].is_may_be_unbound(symbol_id) {
-            self.register_enclosing_snapshot(name, symbol_id);
+            let use_key = EnclosingSnapshotKey {
+                nested_scope: self.current_scope,
+                nested_symbol: symbol_id,
+            };
+            self.register_enclosing_snapshot(name, use_key);
         }
     }
 
-    fn register_enclosing_snapshot(&mut self, name: &str, nested_symbol_id: SymbolId) {
+    fn register_enclosing_snapshot(&mut self, name: &str, use_key: EnclosingSnapshotKey) {
         // We're looking for a parent definition for this scope's free variable
         // so start from parent
         let Some(mut current_scope) = self.scopes[self.current_scope].parent else {
@@ -261,11 +264,7 @@ impl SemanticIndexBuilder {
                 let enclosing_symbol_id =
                     self.symbol_tables[current_scope].intern(name, SymbolFlags::empty());
 
-                let key = EnclosingSnapshotKey {
-                    nested_scope: self.current_scope,
-                    nested_symbol: nested_symbol_id,
-                };
-                if self.enclosing_snapshots.contains_key(&key) {
+                if self.enclosing_snapshots.contains_key(&use_key) {
                     return;
                 }
 
@@ -273,7 +272,7 @@ impl SemanticIndexBuilder {
                 let snapshot_id = self.use_def_maps[current_scope]
                     .register_enclosing_snapshot(enclosing_symbol_id);
                 self.enclosing_snapshots
-                    .insert(key, (current_scope, snapshot_id));
+                    .insert(use_key, (current_scope, snapshot_id));
 
                 return;
             }
