@@ -84,6 +84,26 @@ pub fn resolve_external_name(
     None
 }
 
+/// Resolve a name in a specific package's exported symbols.
+pub fn resolve_in_package(
+    library: &Library,
+    package: &str,
+    name: &str,
+) -> Option<ExternalDefinition> {
+    let pkg = library.get(package)?;
+    if pkg
+        .exported_symbols
+        .binary_search(&name.to_string())
+        .is_ok()
+    {
+        return Some(ExternalDefinition::Package {
+            package: package.to_string(),
+            name: name.to_string(),
+        });
+    }
+    None
+}
+
 /// Compute the binding-source layers that a single file contributes to the
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
 /// one `PackageExports` layer per `library()`/`require()` directive.
