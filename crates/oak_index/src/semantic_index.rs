@@ -7,6 +7,7 @@ use rustc_hash::FxHashMap;
 
 use crate::index_vec::define_index;
 use crate::index_vec::IndexVec;
+use crate::range::Ranged;
 use crate::use_def_map::Bindings;
 use crate::use_def_map::UseDefMap;
 
@@ -146,26 +147,6 @@ impl SemanticIndex {
         }
     }
 
-    /// Find the definition site at `offset`, if any.
-    pub fn definition_at_offset(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId)> {
-        let (scope_id, _) = self.scope_at(offset);
-        let def_id = self
-            .definitions(scope_id)
-            .iter()
-            .find_map(|(id, d)| d.range().contains(offset).then_some(id));
-        Some((scope_id, def_id?))
-    }
-
-    /// Find the use site at `offset`, if any.
-    pub fn use_at_offset(&self, offset: TextSize) -> Option<(ScopeId, UseId)> {
-        let (scope_id, _) = self.scope_at(offset);
-        let use_id = self
-            .uses(scope_id)
-            .iter()
-            .find_map(|(id, u)| u.range().contains(offset).then_some(id));
-        Some((scope_id, use_id?))
-    }
-
     /// Iterate direct child scopes of `scope`.
     pub fn child_scopes(&self, scope: ScopeId) -> ChildScopesIter<'_> {
         let descendants = &self.scopes[scope].descendants;
@@ -285,6 +266,12 @@ impl Scope {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+}
+
+impl Ranged for Scope {
+    fn range(&self) -> TextRange {
+        self.range()
     }
 }
 
@@ -502,6 +489,12 @@ impl Definition {
     }
 }
 
+impl Ranged for Definition {
+    fn range(&self) -> TextRange {
+        self.range()
+    }
+}
+
 // A site where a symbol is referenced by name. In ty, use sites are tracked
 // via `ScopedUseId` indices in a per-scope `AstIds` structure (mapping AST
 // node positions to use IDs). Our flat list serves the same purpose: the
@@ -520,6 +513,12 @@ impl Use {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+}
+
+impl Ranged for Use {
+    fn range(&self) -> TextRange {
+        self.range()
     }
 }
 

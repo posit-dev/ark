@@ -3,6 +3,7 @@ use oak_index::external::resolve_external_name;
 use oak_index::external::ExternalDefinition;
 use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
+use oak_index::semantic_index::Use;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
 use oak_index::UseId;
@@ -35,9 +36,10 @@ pub fn goto_definition(
     scope: &ExternalScope,
     library: &Library,
 ) -> Vec<NavigationTarget> {
+    let (scope_id, _) = index.scope_at(offset);
+
     // Definition site: navigate to itself.
-    if let Some((scope_id, def_id)) = index.definition_at_offset(offset) {
-        let def = &index.definitions(scope_id)[def_id];
+    if let Some((_def_id, def)) = index.definitions(scope_id).contains(offset) {
         let name = index.symbols(scope_id).symbol(def.symbol()).name();
 
         return vec![NavigationTarget {
@@ -49,8 +51,10 @@ pub fn goto_definition(
     }
 
     // Use site: resolve through use-def map, enclosing scopes, external.
-    if let Some((scope_id, use_id)) = index.use_at_offset(offset) {
-        return resolve_use(index, scope_id, use_id, file, offset, scope, library);
+    if let Some((use_id, use_site)) = index.uses(scope_id).contains(offset) {
+        return resolve_use(
+            index, scope_id, use_id, use_site, file, offset, scope, library,
+        );
     }
 
     Vec::new()
@@ -60,6 +64,7 @@ fn resolve_use(
     index: &SemanticIndex,
     scope_id: ScopeId,
     use_id: UseId,
+    use_site: &Use,
     file: &Url,
     offset: TextSize,
     scope: &ExternalScope,
@@ -68,7 +73,6 @@ fn resolve_use(
     let use_def_map = index.use_def_map(scope_id);
     let bindings = use_def_map.bindings_at_use(use_id);
 
-    let use_site = &index.uses(scope_id)[use_id];
     let symbol_name = index.symbols(scope_id).symbol(use_site.symbol()).name();
 
     let definitions = bindings.definitions();
