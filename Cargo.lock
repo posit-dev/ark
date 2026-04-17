@@ -2281,6 +2281,7 @@ dependencies = [
  "log",
  "oak_core",
  "regex",
+ "stdext",
  "tempfile",
 ]
 

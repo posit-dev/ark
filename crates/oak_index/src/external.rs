@@ -70,11 +70,7 @@ pub fn resolve_external_name(
                 let Some(pkg) = library.get(pkg_name) else {
                     continue;
                 };
-                if pkg
-                    .exported_symbols
-                    .binary_search(&name.to_string())
-                    .is_ok()
-                {
+                if pkg.exported_symbols.contains_str(name) {
                     return Some(ExternalDefinition::Package {
                         package: pkg_name.clone(),
                         name: name.to_string(),
