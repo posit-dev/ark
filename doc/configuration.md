@@ -4,6 +4,12 @@ This guide details Ark's configuration.
 
 # Ark options
 
+## `ark.error_entrace`
+
+A boolean, with a default value of `TRUE`.
+
+If `TRUE`, errors will be entraced by `rlang::entrace()` if rlang is installed. This often results in more informative backtraces.
+
 ## `ark.ragg`
 
 A boolean, with a default of `TRUE`.
@@ -41,12 +47,6 @@ If `TRUE`, virtual documents will be generated for packages without source refer
 A boolean, with a default value of `FALSE`.
 
 If `TRUE`, the special `.Last.value` will be shown in Positron's Variables pane.
-
-## `positron.error_entrace`
-
-A boolean, with a default value of `TRUE`.
-
-If `TRUE`, errors will be entraced by `rlang::entrace()` if rlang is installed. This often results in more informative backtraces.
 
 # R options
 

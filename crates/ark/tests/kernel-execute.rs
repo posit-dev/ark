@@ -33,7 +33,7 @@ fn test_execute_request_incomplete() {
 
     let frontend = DummyArkFrontend::lock();
 
-    frontend.execute_request_invisibly("options(positron.error_entrace = FALSE)");
+    frontend.execute_request_invisibly("options(ark.error_entrace = FALSE)");
 
     frontend.execute_request_error("1 +", |error_msg| {
         assert_eq!(error_msg, "Error:\nCan't parse incomplete input");
