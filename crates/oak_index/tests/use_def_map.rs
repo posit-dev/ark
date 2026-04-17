@@ -428,11 +428,11 @@ x            # use 0 -> {def 1} (repeat always executes)
 
 // --- Loop-carried definitions ---
 //
-// Uses at the top of a loop body can see definitions from the bottom of the
-// body (from a previous iteration). The builder synthesizes `LoopHeader`
-// placeholders before visiting the body, then populates them with the real
-// definitions that are live at the end of the body. The placeholders never
-// appear in `bindings_at_use` results.
+// Uses at the top of a loop body can see definitions from the bottom
+// (from a previous iteration). The builder pre-allocates placeholder
+// definitions from the pre-scan before walking the body. The
+// placeholder shares its `DefinitionId` with the real definition, so
+// uses at the top see the same ID that the actual assignment produces.
 
 #[test]
 fn test_while_loop_carried_def() {
@@ -932,4 +932,434 @@ print(x)     # use 2 (cond), use 3 (print), use 4 (x) -> {def 0, def 1}
         DefinitionId::from(1)
     ]);
     assert_not!(second_x.may_be_unbound());
+}
+
+// --- Cross-scope resolution ---
+
+#[test]
+fn test_cross_scope_simple_free_variable() {
+    let index = index(
+        "\
+x <- 1
+f <- function() x
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // `x` in the function is free, resolves to file scope
+    let (enclosing_scope, bindings) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_def_after_function() {
+    let index = index(
+        "\
+f <- function() x
+x <- 1
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // `x` is defined after `f` in the file scope. The pre-scan finds it.
+    // The snapshot is initialized at f's definition point (x unbound)
+    // then updated when x <- 1 is encountered.
+    let (enclosing_scope, bindings) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
+    assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_multiple_defs() {
+    let index = index(
+        "\
+x <- 1
+f <- function() x
+x <- 2
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // Lazy snapshot: union of all defs from definition point onward.
+    // Initialized with {x <- 1}, updated with {x <- 2}.
+    let (_, bindings) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(2)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_locally_bound_not_free() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    x <- 2
+    x
+}
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // `x` is locally bound in the function, not free
+    assert!(index.enclosing_bindings(fun, UseId::from(0)).is_none());
+}
+
+#[test]
+fn test_cross_scope_parameter_not_free() {
+    let index = index(
+        "\
+x <- 1
+f <- function(x) x
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // `x` is a parameter, not free
+    assert!(index.enclosing_bindings(fun, UseId::from(0)).is_none());
+}
+
+#[test]
+fn test_cross_scope_nested_functions() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    g <- function() x
+}
+",
+    );
+    // g is scope 2 (f is scope 1)
+    let g_scope = ScopeId::from(2);
+
+    // x is free in g. f (scope 1) has no binding for x, so the lookup
+    // skips f entirely and resolves to the file scope (scope 0).
+    let (enclosing_scope, bindings) = index.enclosing_bindings(g_scope, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_resolves_to_intermediate() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    x <- 2
+    g <- function() x
+}
+",
+    );
+    let g_scope = ScopeId::from(2);
+
+    // x is free in g. Both the file scope (scope 0) and f (scope 1) bind x,
+    // but f is the nearest enclosing scope with a binding, so it wins.
+    let (enclosing_scope, bindings) = index.enclosing_bindings(g_scope, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(1));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_conditional_def_in_enclosing() {
+    let index = index(
+        "\
+if (cond) x <- 1
+f <- function() x
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // x is conditionally defined. The snapshot captures the state at f's
+    // definition point: {x <- 1, may_be_unbound: true}
+    let (_, bindings) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_super_assignment_updates_snapshot() {
+    let index = index(
+        "\
+x <- 1
+f <- function() x
+g <- function() { x <<- 2 }
+",
+    );
+    let f_scope = ScopeId::from(1);
+
+    // The <<- from g adds a def to the file scope. The watcher on x
+    // should update f's snapshot to include this def.
+    let (_, bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(2)
+    ]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_unbound_globally() {
+    let index = index(
+        "\
+f <- function() x
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // x is not defined anywhere in the file. No enclosing snapshot.
+    assert!(index.enclosing_bindings(fun, UseId::from(0)).is_none());
+}
+
+#[test]
+fn test_cross_scope_conditional_local_def_with_enclosing() {
+    let index = index(
+        "\
+x <- 1
+f <- function(cond) {
+    if (cond) x <- 2
+    x
+}
+",
+    );
+    let fun = ScopeId::from(1);
+    let map = index.use_def_map(fun);
+
+    // The use of `x` has a conditional local definition AND may_be_unbound.
+    // In R, the unbound path falls through to the enclosing scope's x <- 1.
+    // use 0 = `cond` (parameter reference in if condition)
+    // use 1 = `x` (the use we're testing)
+    let local = map.bindings_at_use(UseId::from(1));
+    assert_eq!(local.definitions(), &[DefinitionId::from(1)]);
+    assert!(local.may_be_unbound());
+
+    // The enclosing snapshot should also be registered, capturing x <- 1.
+    let (enclosing_scope, bindings) = index.enclosing_bindings(fun, UseId::from(1)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(0));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(0)]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_conditional_local_def_in_loop() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    for (i in 1:10) x <- 2
+    x
+}
+",
+    );
+    let fun = ScopeId::from(1);
+    let map = index.use_def_map(fun);
+
+    // x is defined in the for body (conditional: body may not execute).
+    // The use after the for loop has may_be_unbound: true.
+    let local = map.bindings_at_use(UseId::from(0));
+    assert!(local.may_be_unbound());
+
+    // Enclosing snapshot registered for the fallthrough path.
+    let (enclosing_scope, _) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(0));
+}
+
+#[test]
+fn test_cross_scope_unconditional_local_def_no_snapshot() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    x <- 2
+    x
+}
+",
+    );
+    let fun = ScopeId::from(1);
+    let map = index.use_def_map(fun);
+
+    // x is unconditionally defined locally. No fallthrough possible.
+    let local = map.bindings_at_use(UseId::from(0));
+    assert_eq!(local.definitions(), &[DefinitionId::from(0)]);
+    assert_not!(local.may_be_unbound());
+
+    // No enclosing snapshot needed.
+    assert!(index.enclosing_bindings(fun, UseId::from(0)).is_none());
+}
+
+#[test]
+fn test_cross_scope_multiple_free_variables() {
+    let index = index(
+        "\
+x <- 1
+y <- 2
+f <- function() {
+    x
+    y
+}
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // Two independent free variables, each gets its own snapshot
+    let (scope_x, bindings_x) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(scope_x, ScopeId::from(0));
+    assert_eq!(bindings_x.definitions(), &[DefinitionId::from(0)]);
+
+    let (scope_y, bindings_y) = index.enclosing_bindings(fun, UseId::from(1)).unwrap();
+    assert_eq!(scope_y, ScopeId::from(0));
+    assert_eq!(bindings_y.definitions(), &[DefinitionId::from(1)]);
+}
+
+#[test]
+fn test_cross_scope_same_free_var_used_twice() {
+    let index = index(
+        "\
+x <- 1
+f <- function() {
+    x
+    x
+}
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // Both uses of `x` are free and resolve to the same enclosing snapshot
+    let (scope1, bindings1) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    let (scope2, bindings2) = index.enclosing_bindings(fun, UseId::from(1)).unwrap();
+    assert_eq!(scope1, scope2);
+    assert_eq!(bindings1, bindings2);
+}
+
+#[test]
+fn test_cross_scope_free_var_in_function_inside_loop() {
+    let index = index(
+        "\
+x <- 1
+for (i in 1:10) {
+    f <- function() x
+}
+x <- 2
+",
+    );
+    // The function scope: for doesn't create a scope, so f's function
+    // is the only child scope.
+    let fun = ScopeId::from(1);
+
+    // x is free in f, resolves to file scope. The lazy snapshot
+    // captures both x <- 1 (from initialization) and x <- 2 (from
+    // watcher update).
+    let (enclosing_scope, bindings) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(0));
+    assert_eq!(bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(3)
+    ]);
+}
+
+#[test]
+fn test_cross_scope_repeated_use_reuses_snapshot() {
+    let index = index(
+        "\
+if (cond) x <- 1
+f <- function() {
+    x
+    x
+}
+",
+    );
+    let fun = ScopeId::from(1);
+    let map = index.use_def_map(fun);
+
+    // Both uses of `x` are free and resolve to the same enclosing
+    // snapshot. The first use triggers registration, the second reuses
+    // the existing entry (dedup via EnclosingSnapshotKey).
+    let local0 = map.bindings_at_use(UseId::from(0));
+    assert!(local0.definitions().is_empty());
+    assert!(local0.may_be_unbound());
+
+    let (scope0, bindings0) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    let (scope1, bindings1) = index.enclosing_bindings(fun, UseId::from(1)).unwrap();
+    assert_eq!(scope0, scope1);
+    assert_eq!(bindings0, bindings1);
+    assert_eq!(bindings0.definitions(), &[DefinitionId::from(0)]);
+    assert!(bindings0.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_nested_conditional_fallthrough() {
+    let index = index(
+        "\
+x <- 1
+f <- function(cond) {
+    if (cond) x <- 2
+    g <- function() x
+}
+",
+    );
+    // g is scope 2 (f is scope 1)
+    let g_scope = ScopeId::from(2);
+
+    // x is free in g. Both the file scope (scope 0, unconditional x <- 1) and
+    // f (scope 1, conditional x <- 2) bind x. f is the nearest enclosing
+    // scope with a binding, so it wins. The snapshot captures f's state at
+    // g's definition point: {x <- 2, may_be_unbound: true}.
+    let (enclosing_scope, bindings) = index.enclosing_bindings(g_scope, UseId::from(0)).unwrap();
+    assert_eq!(enclosing_scope, ScopeId::from(1));
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
+    assert!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_snapshot_excludes_shadowed_defs() {
+    let index = index(
+        "\
+x <- 0
+x <- 1
+f <- function() x
+",
+    );
+    let fun = ScopeId::from(1);
+
+    // x <- 0 was shadowed by x <- 1 before f was defined.
+    // The snapshot should contain only x <- 1, not both.
+    let (_, bindings) = index.enclosing_bindings(fun, UseId::from(0)).unwrap();
+    assert_eq!(bindings.definitions(), &[DefinitionId::from(1)]);
+    assert_not!(bindings.may_be_unbound());
+}
+
+#[test]
+fn test_cross_scope_different_definition_points() {
+    let index = index(
+        "\
+x <- 1
+f <- function() x
+x <- 2
+g <- function() x
+",
+    );
+
+    // f is defined after x <- 1. Its snapshot is initialized with {x <- 1},
+    // then the watcher adds x <- 2: snapshot {x <- 1, x <- 2}.
+    let f_scope = ScopeId::from(1);
+    let (_, f_bindings) = index.enclosing_bindings(f_scope, UseId::from(0)).unwrap();
+    assert_eq!(f_bindings.definitions(), &[
+        DefinitionId::from(0),
+        DefinitionId::from(2)
+    ]);
+    assert_not!(f_bindings.may_be_unbound());
+
+    // g is defined after x <- 2, which shadowed x <- 1. Its snapshot is
+    // initialized with {x <- 2} only. No subsequent definitions, so it
+    // stays {x <- 2}.
+    let g_scope = ScopeId::from(2);
+    let (_, g_bindings) = index.enclosing_bindings(g_scope, UseId::from(0)).unwrap();
+    assert_eq!(g_bindings.definitions(), &[DefinitionId::from(2)]);
+    assert_not!(g_bindings.may_be_unbound());
 }
