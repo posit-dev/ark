@@ -226,9 +226,9 @@ pub struct Console {
     tasks_idle_any_rx: Receiver<QueuedRTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// The UI comm, stored separately from `comms` so that `ui_comm()` can
-    /// borrow it independently of the comms map (which is behind a `RefCell`).
-    ui_comm: Option<ConsoleComm>,
+    /// The UI comm, stored separately from `comms` so that `with_ui_comm()`
+    /// can borrow it independently of the comms map.
+    ui_comm: RefCell<Option<ConsoleComm>>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.

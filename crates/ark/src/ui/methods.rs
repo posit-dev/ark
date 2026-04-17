@@ -25,9 +25,9 @@ use crate::ui::events::ps_ui_robj_as_ranges;
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_last_active_editor_context() -> anyhow::Result<SEXP> {
-    let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::LastActiveEditorContext)?;
+    let out = Console::get().try_with_ui_comm(|ui| {
+        ui.call_frontend_method(UiFrontendRequest::LastActiveEditorContext)
+    })??;
     Ok(out.sexp)
 }
 
@@ -45,17 +45,16 @@ pub unsafe extern "C-unwind" fn ps_ui_modify_editor_selections(
     }
     let params = ModifyEditorSelectionsParams { selections, values };
 
-    let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::ModifyEditorSelections(params))?;
+    let out = Console::get().try_with_ui_comm(|ui| {
+        ui.call_frontend_method(UiFrontendRequest::ModifyEditorSelections(params))
+    })??;
     Ok(out.sexp)
 }
 
 #[harp::register]
 pub unsafe extern "C-unwind" fn ps_ui_workspace_folder() -> anyhow::Result<SEXP> {
     let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::WorkspaceFolder)?;
+        .try_with_ui_comm(|ui| ui.call_frontend_method(UiFrontendRequest::WorkspaceFolder))??;
     Ok(out.sexp)
 }
 
@@ -70,8 +69,7 @@ pub unsafe extern "C-unwind" fn ps_ui_show_dialog(
     };
 
     let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::ShowDialog(params))?;
+        .try_with_ui_comm(|ui| ui.call_frontend_method(UiFrontendRequest::ShowDialog(params)))??;
     Ok(out.sexp)
 }
 
@@ -97,9 +95,9 @@ pub unsafe extern "C-unwind" fn ps_ui_show_question(
         },
     };
 
-    let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::ShowQuestion(params))?;
+    let out = Console::get().try_with_ui_comm(|ui| {
+        ui.call_frontend_method(UiFrontendRequest::ShowQuestion(params))
+    })??;
     Ok(out.sexp)
 }
 
@@ -130,8 +128,7 @@ pub extern "C-unwind" fn ps_ui_show_prompt(
     };
 
     let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::ShowPrompt(params))?;
+        .try_with_ui_comm(|ui| ui.call_frontend_method(UiFrontendRequest::ShowPrompt(params)))??;
     Ok(out.sexp)
 }
 
@@ -141,9 +138,9 @@ pub unsafe extern "C-unwind" fn ps_ui_ask_for_password(prompt: SEXP) -> anyhow::
         prompt: RObject::view(prompt).try_into()?,
     };
 
-    let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::AskForPassword(params))?;
+    let out = Console::get().try_with_ui_comm(|ui| {
+        ui.call_frontend_method(UiFrontendRequest::AskForPassword(params))
+    })??;
     Ok(out.sexp)
 }
 
@@ -158,8 +155,7 @@ pub unsafe extern "C-unwind" fn ps_ui_new_document(
     };
 
     let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::NewDocument(params))?;
+        .try_with_ui_comm(|ui| ui.call_frontend_method(UiFrontendRequest::NewDocument(params)))??;
     Ok(out.sexp)
 }
 
@@ -169,9 +165,9 @@ pub unsafe extern "C-unwind" fn ps_ui_execute_command(command: SEXP) -> anyhow::
         command: RObject::view(command).try_into()?,
     };
 
-    let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::ExecuteCommand(params))?;
+    let out = Console::get().try_with_ui_comm(|ui| {
+        ui.call_frontend_method(UiFrontendRequest::ExecuteCommand(params))
+    })??;
     Ok(out.sexp)
 }
 
@@ -188,8 +184,7 @@ pub unsafe extern "C-unwind" fn ps_ui_execute_code(
     };
 
     let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::ExecuteCode(params))?;
+        .try_with_ui_comm(|ui| ui.call_frontend_method(UiFrontendRequest::ExecuteCode(params)))??;
     Ok(out.sexp)
 }
 
@@ -201,9 +196,9 @@ pub unsafe extern "C-unwind" fn ps_ui_evaluate_when_clause(
         when_clause: RObject::view(when_clause).try_into()?,
     };
 
-    let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::EvaluateWhenClause(params))?;
+    let out = Console::get().try_with_ui_comm(|ui| {
+        ui.call_frontend_method(UiFrontendRequest::EvaluateWhenClause(params))
+    })??;
     Ok(out.sexp)
 }
 
@@ -214,7 +209,6 @@ pub unsafe extern "C-unwind" fn ps_ui_debug_sleep(ms: SEXP) -> anyhow::Result<SE
     };
 
     let out = Console::get()
-        .try_ui_comm()?
-        .call_frontend_method(UiFrontendRequest::DebugSleep(params))?;
+        .try_with_ui_comm(|ui| ui.call_frontend_method(UiFrontendRequest::DebugSleep(params)))??;
     Ok(out.sexp)
 }
