@@ -1,4 +1,3 @@
-use amalthea::comm::ui_comm::UiBackendReply;
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
 use amalthea::wire::execute_request::ExecuteRequestPositron;
 use amalthea::wire::execute_request::JupyterPositronLocation;
@@ -704,8 +703,8 @@ fn test_plot_default_size_without_metadata() {
 /// Test that a plot created during a `frontend_ready` comm handler works.
 ///
 /// Previously this deadlocked because Shell blocked on the comm_msg while
-/// the R thread blocked on the barrier in `CommEvent::Opened`. Now Shell drains comm
-/// events while waiting for the handler to complete.
+/// the R thread blocked on the barrier in `CommEvent::Opened`. Now Shell
+/// drains comm events while waiting for the handler to complete.
 ///
 /// The plot goes through the Jupyter `display_data` path (not the Positron
 /// `comm_open` path) because the UI comm is temporarily taken out during
@@ -726,11 +725,10 @@ fn test_plot_during_frontend_ready() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 
-    // Trigger the hook via frontend_ready. The hook creates a plot.
+    // Trigger the hook via frontend_ready (an event, not an RPC — no `id` field).
     let data = serde_json::json!({
         "method": "frontend_ready",
         "params": { "start_type": "new" },
-        "id": "frontend-ready-rpc"
     });
     frontend.send_shell_comm_msg(String::from(&comm_id), data);
     frontend.recv_iopub_busy();
@@ -739,11 +737,6 @@ fn test_plot_during_frontend_ready() {
     // is invisible during its own dispatch.
     frontend.recv_iopub_display_data();
 
-    // Receive the frontend_ready reply
-    let reply = frontend.recv_iopub_comm_msg();
-    assert_eq!(reply.comm_id, comm_id);
-    let reply = serde_json::from_value::<UiBackendReply>(reply.data).unwrap();
-    assert_eq!(reply, UiBackendReply::FrontendReadyReply());
     frontend.recv_iopub_idle();
 }
 
