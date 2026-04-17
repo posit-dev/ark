@@ -14,6 +14,7 @@ use oak_index::external::ExternalDefinition;
 use oak_package::library::Library;
 use oak_package::package::Package;
 use oak_package::package_description::Description;
+use oak_package::package_namespace::Import;
 use oak_package::package_namespace::Namespace;
 use url::Url;
 
@@ -422,8 +423,14 @@ fn test_root_layers_empty_namespace() {
 fn test_root_layers_includes_importfrom() {
     let ns = Namespace {
         imports: vec![
-            ("median".to_string(), "stats".to_string()),
-            ("head".to_string(), "utils".to_string()),
+            Import {
+                name: "median".to_string(),
+                package: "stats".to_string(),
+            },
+            Import {
+                name: "head".to_string(),
+                package: "utils".to_string(),
+            },
         ],
         ..Default::default()
     };
@@ -438,7 +445,10 @@ fn test_root_layers_includes_importfrom() {
 #[test]
 fn test_root_layers_importfrom_before_package_exports() {
     let ns = Namespace {
-        imports: vec![("filter".to_string(), "stats".to_string())],
+        imports: vec![Import {
+            name: "filter".to_string(),
+            package: "stats".to_string(),
+        }],
         package_imports: vec!["dplyr".to_string()],
         ..Default::default()
     };

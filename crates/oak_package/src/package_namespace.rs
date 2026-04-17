@@ -11,11 +11,17 @@ use oak_core::syntax_ext::RIdentifierExt;
 pub struct Namespace {
     /// Names of objects exported with `export()`
     pub exports: Vec<String>,
-    /// Names of objects imported with `importFrom()`, with their source package.
-    /// Each entry is `(name, package)`.
-    pub imports: Vec<(String, String)>,
+    /// Symbols imported with `importFrom()`, with their source package.
+    pub imports: Vec<Import>,
     /// Names of packages bulk-imported with `import()`
     pub package_imports: Vec<String>,
+}
+
+/// A single `importFrom()` directive: one symbol imported from a package.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Import {
+    pub name: String,
+    pub package: String,
 }
 
 impl Namespace {
@@ -68,7 +74,10 @@ impl Namespace {
                         let Some(AnyRExpression::RIdentifier(ident)) = arg.value() else {
                             continue;
                         };
-                        imports.push((ident.name_text(), pkg_name.clone()));
+                        imports.push(Import {
+                            name: ident.name_text(),
+                            package: pkg_name.clone(),
+                        });
                     }
                 },
                 "import" => {
@@ -82,8 +91,8 @@ impl Namespace {
         // this but for now just be defensive.
         exports.sort();
         exports.dedup();
-        imports.sort_by(|a, b| a.0.cmp(&b.0));
-        imports.dedup_by(|a, b| a.0 == b.0);
+        imports.sort_by(|a, b| a.name.cmp(&b.name));
+        imports.dedup_by(|a, b| a.name == b.name);
         package_imports.sort();
         package_imports.dedup();
 
@@ -95,7 +104,7 @@ impl Namespace {
     }
 
     /// TODO: Take a `Library` and incorporate bulk imports
-    pub(crate) fn _resolve_imports(&self) -> &Vec<(String, String)> {
+    pub(crate) fn _resolve_imports(&self) -> &Vec<Import> {
         &self.imports
     }
 }
@@ -139,8 +148,14 @@ mod tests {
         "#;
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.imports, vec![
-            ("head".to_string(), "utils".to_string()),
-            ("median".to_string(), "stats".to_string()),
+            Import {
+                name: "head".to_string(),
+                package: "utils".to_string()
+            },
+            Import {
+                name: "median".to_string(),
+                package: "stats".to_string()
+            },
         ]);
         assert!(parsed.exports.is_empty());
     }
@@ -157,8 +172,14 @@ mod tests {
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.exports, vec!["bar", "foo"]);
         assert_eq!(parsed.imports, vec![
-            ("head".to_string(), "utils".to_string()),
-            ("median".to_string(), "stats".to_string()),
+            Import {
+                name: "head".to_string(),
+                package: "utils".to_string()
+            },
+            Import {
+                name: "median".to_string(),
+                package: "stats".to_string()
+            },
         ]);
     }
 
@@ -174,10 +195,10 @@ mod tests {
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.package_imports, vec!["rlang", "utils"]);
         assert_eq!(parsed.exports, vec!["foo"]);
-        assert_eq!(parsed.imports, vec![(
-            "median".to_string(),
-            "stats".to_string()
-        )]);
+        assert_eq!(parsed.imports, vec![Import {
+            name: "median".to_string(),
+            package: "stats".to_string()
+        }]);
     }
 
     #[test]
@@ -189,9 +210,18 @@ mod tests {
             "#;
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.imports, vec![
-            ("a".to_string(), "pkg".to_string()),
-            ("b".to_string(), "pkg".to_string()),
-            ("c".to_string(), "pkg".to_string()),
+            Import {
+                name: "a".to_string(),
+                package: "pkg".to_string()
+            },
+            Import {
+                name: "b".to_string(),
+                package: "pkg".to_string()
+            },
+            Import {
+                name: "c".to_string(),
+                package: "pkg".to_string()
+            },
         ]);
         assert_eq!(parsed.package_imports, vec!["bar", "foo"]);
         assert_eq!(parsed.exports, vec!["baz", "qux"]);

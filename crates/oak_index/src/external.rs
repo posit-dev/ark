@@ -121,7 +121,7 @@ pub fn package_root_layers(namespace: &Namespace) -> Vec<BindingSource> {
         let map = namespace
             .imports
             .iter()
-            .map(|(name, pkg)| (name.clone(), pkg.clone()))
+            .map(|imp| (imp.name.clone(), imp.package.clone()))
             .collect();
         layers.push(BindingSource::PackageImports(map));
     }

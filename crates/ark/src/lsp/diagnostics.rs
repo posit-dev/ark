@@ -169,8 +169,8 @@ pub(crate) fn generate_diagnostics(
     // If this is a package, add imported symbols to workspace
     if let Some(SourceRoot::Package(root)) = &state.root {
         // Add symbols from `importFrom()` directives
-        for (name, _pkg) in &root.namespace.imports {
-            context.workspace_symbols.insert(name.clone());
+        for import in &root.namespace.imports {
+            context.workspace_symbols.insert(import.name.clone());
         }
 
         // Add symbols from `import()` directives
