@@ -113,6 +113,9 @@ struct PlotContext {
 /// bridge so that the Rust-facing hook methods receive `&mut self` explicitly,
 /// containing the `Console::get()` unsoundness in one place.
 pub(crate) struct DeviceContext {
+    /// Whether we are running in Console, Notebook, or Background mode.
+    session_mode: SessionMode,
+
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
     iopub_tx: Sender<IOPubMessage>,
@@ -195,8 +198,9 @@ impl std::fmt::Debug for DeviceContext {
 }
 
 impl DeviceContext {
-    pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
+    pub fn new(iopub_tx: Sender<IOPubMessage>, session_mode: SessionMode) -> Self {
         Self {
+            session_mode,
             iopub_tx,
             has_changes: Cell::new(false),
             is_new_page: Cell::new(true),
@@ -289,7 +293,7 @@ impl DeviceContext {
     /// comm is connected (i.e. we are connected to Positron) and if we are in
     /// [SessionMode::Console] mode.
     fn should_use_dynamic_plots(&self, console: &Console) -> bool {
-        console.ui_comm().is_some() && console.session_mode() == SessionMode::Console
+        self.session_mode == SessionMode::Console && console.ui_comm().is_some()
     }
 
     /// Deactivation hook
