@@ -111,7 +111,7 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
 
 /// Build the root layers for a package from its NAMESPACE.
 ///
-/// These go at the bottom of every file's scope chain. Currently includes
+/// These go at the back of every file's scope chain. Currently includes
 /// `PackageExports` layers from `import()` directives. `importFrom()`
 /// names are not yet included because the NAMESPACE parser doesn't
 /// preserve which package each name came from.

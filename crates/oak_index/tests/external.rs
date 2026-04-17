@@ -369,11 +369,11 @@ fn test_chained_scope_predecessor_files() {
     scope.extend(file_layers(file_url("a.R"), &index_a));
 
     // Resolve from predecessor file b
+    // Predecessor file export from b.R
     let result = resolve_external_name(&library, &scope, "helper_b");
-    assert!(matches!(
-        result,
-        Some(ExternalDefinition::ProjectFile { .. })
-    ));
+    assert_matches!(result, Some(ExternalDefinition::ProjectFile { file, .. }) => {
+        assert_eq!(file, file_url("b.R"));
+    });
 
     // Resolve from predecessor file a
     let result = resolve_external_name(&library, &scope, "helper_a");
@@ -428,6 +428,21 @@ fn test_root_layers_ignores_importfrom() {
     assert!(layers.is_empty());
 }
 
+#[test]
+fn test_root_layers_importfrom_before_package_exports() {
+    let ns = Namespace {
+        imports: vec![("filter".to_string(), "stats".to_string())],
+        package_imports: vec!["dplyr".to_string()],
+        ..Default::default()
+    };
+    let layers = package_root_layers(&ns);
+    assert_eq!(layers.len(), 2);
+    assert_matches!(&layers[0], BindingSource::PackageImports(_));
+    assert_matches!(&layers[1], BindingSource::PackageExports(pkg) => {
+        assert_eq!(pkg, "dplyr");
+    });
+}
+
 // --- scope chain assembly ---
 
 #[test]
@@ -452,10 +467,14 @@ fn test_scope_chain_combines_predecessors_and_root() {
 
     // Predecessor file export
     let result = resolve_external_name(&library, &scope, "helper_b");
-    assert!(matches!(
+    assert_eq!(
         result,
-        Some(ExternalDefinition::ProjectFile { .. })
-    ));
+        Some(ExternalDefinition::ProjectFile {
+            file: file_url("b.R"),
+            name: "helper_b".to_string(),
+            range: range(15, 23),
+        })
+    );
 
     // Predecessor library() directive
     let result = resolve_external_name(&library, &scope, "filter");
@@ -502,4 +521,21 @@ fn test_scope_chain_predecessors_shadow_root() {
         result,
         Some(ExternalDefinition::ProjectFile { .. })
     ));
+}
+
+#[test]
+fn test_scope_chain_later_predecessor_shadows_earlier() {
+    // b.R is loaded after a.R, so b.R's layers come first in the scope
+    // and its `helper` should shadow a.R's `helper`.
+    let index_a = index_source("helper <- 1");
+    let index_b = index_source("helper <- 2");
+
+    let mut scope = Vec::new();
+    scope.extend(file_layers(file_url("b.R"), &index_b));
+    scope.extend(file_layers(file_url("a.R"), &index_a));
+
+    let result = resolve_external_name(&empty_library(), &scope, "helper");
+    assert_matches!(result, Some(ExternalDefinition::ProjectFile { file, .. }) => {
+        assert_eq!(file, file_url("b.R"));
+    });
 }
