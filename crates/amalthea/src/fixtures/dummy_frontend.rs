@@ -14,6 +14,7 @@ use crate::registration_file::RegistrationFile;
 use crate::session::Session;
 use crate::socket::Socket;
 use crate::wire::comm_msg::CommWireMsg;
+use crate::wire::debug_request::DebugRequest;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_request::ExecuteRequestPositron;
@@ -245,6 +246,56 @@ impl DummyFrontend {
             stop_on_error: false,
             positron: options.positron,
         })
+    }
+
+    /// Send an execute request with custom metadata (e.g. `cellId` for notebook debugging).
+    pub fn send_execute_request_with_metadata(
+        &self,
+        code: &str,
+        options: ExecuteRequestOptions,
+        metadata: serde_json::Value,
+    ) -> String {
+        let content = ExecuteRequest {
+            code: String::from(code),
+            silent: false,
+            store_history: true,
+            user_expressions: serde_json::Value::Null,
+            allow_stdin: options.allow_stdin,
+            stop_on_error: false,
+            positron: options.positron,
+        };
+        let mut message = JupyterMessage::create(content, None, &self.session);
+        message.metadata = metadata;
+        let id = message.header.msg_id.clone();
+        message.send(&self.shell_socket).unwrap();
+        id
+    }
+
+    /// Send a DAP request wrapped in a Jupyter `debug_request` on the control channel.
+    pub fn send_debug_request(&self, dap_request: serde_json::Value) -> String {
+        self.send_control(DebugRequest {
+            content: dap_request,
+        })
+    }
+
+    /// Receive a `debug_reply` from the control channel.
+    #[track_caller]
+    pub fn recv_debug_reply(&self) -> serde_json::Value {
+        let msg = Self::recv(&self.control_socket);
+        match msg {
+            Message::DebugReply(msg) => msg.content.content,
+            other => panic!("Expected DebugReply, got {other:?}"),
+        }
+    }
+
+    /// Receive a `debug_event` from the IOPub channel.
+    #[track_caller]
+    pub fn recv_iopub_debug_event(&self) -> serde_json::Value {
+        let msg = Self::recv(&self.iopub_socket);
+        match msg {
+            Message::DebugEvent(msg) => msg.content.content,
+            other => panic!("Expected DebugEvent, got {other:?}"),
+        }
     }
 
     /// Sends a Jupyter message on the Stdin socket

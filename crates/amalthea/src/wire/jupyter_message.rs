@@ -7,6 +7,8 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use serde_json::json;
+use serde_json::Value;
 
 use super::display_data::DisplayData;
 use super::handshake_reply::HandshakeReply;
@@ -68,6 +70,9 @@ pub struct JupyterMessage<T> {
     /// The header of the message from which this message originated. Optional;
     /// not all messages have a parent.
     pub parent_header: Option<JupyterHeader>,
+
+    /// Additional metadata
+    pub metadata: Value,
 
     /// The body (payload) of the message
     pub content: T,
@@ -375,6 +380,7 @@ where
                 session.username.clone(),
             ),
             parent_header: parent,
+            metadata: json!({}),
             content,
         }
     }
@@ -393,6 +399,7 @@ where
                 session.username.clone(),
             ),
             parent_header: Some(originator.header),
+            metadata: json!({}),
             content,
         }
     }
@@ -455,6 +462,7 @@ where
                 session.username.clone(),
             ),
             parent_header: Some(self.header.clone()),
+            metadata: json!({}),
             content,
         }
     }
@@ -477,6 +485,7 @@ where
                 session.username.clone(),
             ),
             parent_header: Some(self.header.clone()),
+            metadata: json!({}),
             content: ErrorReply {
                 status: Status::Error,
                 exception,

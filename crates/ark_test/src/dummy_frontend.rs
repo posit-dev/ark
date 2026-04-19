@@ -673,6 +673,17 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive a `debug_event` from IOPub.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_debug_event(&self) -> serde_json::Value {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::DebugEvent(data) => data.content.content,
+            other => panic!("Expected DebugEvent, got {:?}", other),
+        }
+    }
+
     /// Receive from IOPub and assert CommClose message for the given comm ID.
     /// Automatically skips any Stream messages.
     #[track_caller]

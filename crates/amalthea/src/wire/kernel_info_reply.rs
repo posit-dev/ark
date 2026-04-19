@@ -38,4 +38,8 @@ pub struct KernelInfoReply {
 
     /// A list of help links
     pub help_links: Vec<HelpLink>,
+
+    /// Optional list of supported features (e.g. "debugger", "kernel subshells")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_features: Vec<String>,
 }

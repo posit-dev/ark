@@ -1,0 +1,529 @@
+//
+// dap_notebook.rs
+//
+// Copyright (C) 2026 Posit Software, PBC. All rights reserved.
+//
+//
+
+use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use ark_test::DummyArkFrontendNotebook;
+
+#[test]
+fn test_notebook_debug_info() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "debugInfo",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["body"]["isStarted"], true);
+    assert_eq!(reply["body"]["hashMethod"], "Murmur2");
+    assert_eq!(reply["body"]["hashSeed"], 0);
+    let prefix = reply["body"]["tmpFilePrefix"].as_str().unwrap();
+    assert!(prefix.contains("ark-debug-"));
+    assert_eq!(reply["body"]["tmpFileSuffix"], ".r");
+}
+
+#[test]
+fn test_notebook_dump_cell() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "x <- 1\nprint(x)";
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], true);
+    let source_path = reply["body"]["sourcePath"].as_str().unwrap();
+    assert!(source_path.contains("ark-debug-"));
+    assert!(source_path.ends_with(".r"));
+
+    // File should actually exist on disk with the cell contents
+    assert!(std::path::Path::new(source_path).exists());
+    assert_eq!(std::fs::read_to_string(source_path).unwrap(), code);
+}
+
+#[test]
+fn test_notebook_dump_cell_deterministic() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "x <- 42\ny <- x + 1";
+
+    // Dump the same cell code twice
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let reply1 = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let reply2 = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Same code should produce the same source path (Murmur2 hash)
+    assert_eq!(
+        reply1["body"]["sourcePath"].as_str().unwrap(),
+        reply2["body"]["sourcePath"].as_str().unwrap()
+    );
+}
+
+#[test]
+fn test_notebook_dump_cell_different_code() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": "cell_a" }
+    }));
+    frontend.recv_iopub_busy();
+    let reply1 = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "dumpCell",
+        "arguments": { "code": "cell_b" }
+    }));
+    frontend.recv_iopub_busy();
+    let reply2 = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Different code should produce different paths
+    assert_ne!(
+        reply1["body"]["sourcePath"].as_str().unwrap(),
+        reply2["body"]["sourcePath"].as_str().unwrap()
+    );
+}
+
+#[test]
+fn test_notebook_configuration_done() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "configurationDone",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["command"], "configurationDone");
+}
+
+#[test]
+fn test_notebook_dump_cell_then_set_breakpoints() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "x <- 1\ny <- 2\nz <- x + y";
+
+    // Dump the cell to a temp file
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    let source_path = dump_reply["body"]["sourcePath"].as_str().unwrap();
+
+    // Set breakpoints on the dumped file
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": source_path },
+            "breakpoints": [{ "line": 2 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    let bp_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(bp_reply["success"], true);
+    let breakpoints = bp_reply["body"]["breakpoints"].as_array().unwrap();
+    assert_eq!(breakpoints.len(), 1);
+    assert_eq!(breakpoints[0]["line"], 2);
+}
+
+#[test]
+fn test_notebook_set_multiple_breakpoints() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "a <- 1\nb <- 2\nc <- 3\nd <- 4";
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    let source_path = dump_reply["body"]["sourcePath"].as_str().unwrap();
+
+    // Set breakpoints on lines 2 and 4
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": source_path },
+            "breakpoints": [{ "line": 2 }, { "line": 4 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    let bp_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(bp_reply["success"], true);
+    let breakpoints = bp_reply["body"]["breakpoints"].as_array().unwrap();
+    assert_eq!(breakpoints.len(), 2);
+    assert_eq!(breakpoints[0]["line"], 2);
+    assert_eq!(breakpoints[1]["line"], 4);
+}
+
+#[test]
+fn test_notebook_clear_breakpoints() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "x <- 1\ny <- 2";
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    let source_path = dump_reply["body"]["sourcePath"].as_str().unwrap();
+
+    // Set a breakpoint
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": source_path },
+            "breakpoints": [{ "line": 2 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Clear breakpoints by sending an empty list
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": source_path },
+            "breakpoints": []
+        }
+    }));
+    frontend.recv_iopub_busy();
+    let bp_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(bp_reply["success"], true);
+    let breakpoints = bp_reply["body"]["breakpoints"].as_array().unwrap();
+    assert!(breakpoints.is_empty());
+}
+
+#[test]
+fn test_notebook_execute_with_cell_id() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Execute a cell with `cellId` in metadata (regression: shouldn't crash)
+    frontend.send_execute_request_with_metadata(
+        "42",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "test-cell-1" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
+fn test_notebook_execute_multiline_with_cell_id() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "x <- 10\ny <- 20\nx + y";
+    frontend.send_execute_request_with_metadata(
+        code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "test-cell-2" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 30");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
+fn test_notebook_initialize_via_jupyter_debug() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "initialize",
+        "arguments": {
+            "clientID": "test",
+            "adapterID": "test",
+            "pathFormat": "path",
+            "linesStartAt1": true,
+            "columnsStartAt1": true,
+            "supportsRunInTerminalRequest": false
+        }
+    }));
+    frontend.recv_iopub_busy();
+
+    // `initialize` produces an `Initialized` event on IOPub
+    let event = frontend.recv_iopub_debug_event();
+    assert_eq!(event["type"], "event");
+    assert_eq!(event["event"], "initialized");
+
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], true);
+    assert_eq!(reply["command"], "initialize");
+
+    // Capabilities should be present
+    assert!(reply["body"]["supportsRestartRequest"].as_bool().unwrap());
+}
+
+#[test]
+fn test_notebook_unknown_dap_command() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Sending a command with invalid structure should get an error response
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "nonexistentCommand",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(reply["success"], false);
+}
+
+#[test]
+fn test_notebook_breakpoint_stops_execution() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let fn_code = "fn <- function() {\n  x <- 1\n  x <- 2\n  x <- 3\n  x\n}";
+
+    // Dump cell and set a breakpoint at line 3 (x <- 2)
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": fn_code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 3 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Attach sets is_connected = true so breakpoints fire
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    // attach produces a Thread started event
+    let event = frontend.recv_iopub_debug_event();
+    assert_eq!(event["event"], "thread");
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Define the function (breakpoints get injected into the body)
+    frontend.send_execute_request_with_metadata(
+        fn_code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-def" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Breakpoint gets verified when the function body is parsed
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+    assert_eq!(bp_event["body"]["breakpoint"]["verified"], true);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call the function — should hit breakpoint and kernel stays busy
+    frontend.send_execute_request_with_metadata(
+        "fn()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-call" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // Stopped event arrives on IOPub (kernel paused at breakpoint)
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    // Shell reply hasn't arrived — kernel is still busy
+    assert!(!frontend.shell_socket.poll_incoming(200).unwrap());
+
+    // Send "continue" via the debug channel
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 4,
+        "command": "continue",
+        "arguments": { "threadId": -1 }
+    }));
+    frontend.recv_debug_reply();
+
+    // Shell reply arrives now — kernel unblocked after continue
+    frontend.recv_shell_execute_reply();
+
+    // Drain remaining IOPub messages (debug events, busy/idle from control, etc.)
+    while frontend
+        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
+        .is_some()
+    {}
+
+    // Disconnect to reset is_connected for other tests
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 5,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    while frontend
+        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
+        .is_some()
+    {}
+}
+
+#[test]
+fn test_notebook_breakpoints_inert_without_attach() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let fn_code = "fn2 <- function() {\n  x <- 1\n  x <- 2\n  x <- 3\n  invisible(x)\n}";
+
+    // Dump cell and set a breakpoint — but do NOT attach
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": fn_code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 3 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Define the function (breakpoints are injected but won't fire)
+    frontend.send_execute_request_with_metadata(
+        fn_code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-def-inert" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Breakpoint gets verified when the function body is parsed
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+    assert_eq!(bp_event["body"]["breakpoint"]["verified"], true);
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call the function — should complete normally (breakpoint is inert)
+    frontend.send_execute_request_with_metadata(
+        "fn2()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-call-inert" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // No Stopped event — execution completes without stopping
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}

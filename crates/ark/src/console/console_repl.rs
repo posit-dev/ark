@@ -11,6 +11,7 @@
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
 use super::*;
+use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
@@ -887,6 +888,11 @@ impl Console {
             }
         }
 
+        // In notebook mode, don't complete the request while debugging.
+        // The kernel must stay busy until the debug session ends.
+        let can_complete_active_request =
+            !(self.session_mode == SessionMode::Notebook && self.debug_is_debugging);
+
         if let Some(exception) = self.take_exception() {
             // We might get an input request if `readline()` or `menu()` is
             // called in `options(error = )`. We respond to this with an error
@@ -906,18 +912,20 @@ impl Console {
             self.pending_inputs = None;
 
             // Reply to active request with error, then fall through to event loop
-            self.handle_active_request(
-                &info.input_prompt,
-                &continuation_prompt,
-                ConsoleValue::Error(exception),
-            );
+            if can_complete_active_request {
+                self.handle_active_request(
+                    &info.input_prompt,
+                    &continuation_prompt,
+                    ConsoleValue::Error(exception),
+                );
+            }
         } else if matches!(info.kind, PromptKind::InputRequest) {
             // Request input from the frontend and return it to R
             return self.handle_input_request(&info, buf, buflen);
         } else if let Some(input) = self.pop_pending() {
             // Evaluate pending expression if there is any remaining
             return self.handle_pending_input(input, buf, buflen);
-        } else {
+        } else if can_complete_active_request {
             // Otherwise reply to active request with accumulated result, then
             // fall through to event loop
             let result = self.take_result();
@@ -1313,8 +1321,16 @@ impl Console {
             panic!("Unexpected `execute_request` while waiting for `input_reply`.");
         }
 
+        let mut cell_id = None;
+
         let input = match req {
             RRequest::ExecuteCode(exec_req, originator, reply_tx) => {
+                cell_id = originator
+                    .metadata
+                    .get("cellId")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
                 // Extract input from request
                 let (input, exec_count) = { self.init_execute_request(&exec_req) };
 
@@ -1367,6 +1383,23 @@ impl Console {
                 let mut dap_guard = self.debug_dap.lock().unwrap();
 
                 let uri_id = loc.as_ref().map(UrlId::from_code_location);
+
+                // For notebook cells (`cellId` present in metadata), synthesize
+                // a `CodeLocation` pointing to the temp file that `dumpCell`
+                // wrote. This gives `annotate_input()` the file URI it needs
+                // for the `#line` directive and breakpoint injection.
+                let (uri_id, loc) = if cell_id.is_some() {
+                    match dap_notebook::notebook_code_location(&code) {
+                        Some(notebook_loc) => {
+                            let id = UrlId::from_url(notebook_loc.uri.clone());
+                            (Some(id), Some(notebook_loc))
+                        },
+                        None => (uri_id, loc),
+                    }
+                } else {
+                    (uri_id, loc)
+                };
+
                 let breakpoints = uri_id
                     .as_ref()
                     .and_then(|uri_id| dap_guard.breakpoints.get_mut(uri_id))

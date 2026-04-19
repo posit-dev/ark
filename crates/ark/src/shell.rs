@@ -147,11 +147,12 @@ impl ShellHandler for Shell {
         Ok(KernelInfoReply {
             status: Status::Ok,
             banner: kernel_info.banner.clone(),
-            debugger: false,
+            debugger: true,
             help_links: Vec::new(),
             language_info: info,
             implementation: String::from("ark"),
             implementation_version: String::from(env!("CARGO_PKG_VERSION")),
+            supported_features: vec![String::from("debugger")],
         })
     }
 

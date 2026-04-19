@@ -108,6 +108,7 @@ impl ShellHandler for Shell {
             debugger: false,
             help_links: Vec::new(),
             language_info: info,
+            supported_features: vec![],
         })
     }
 

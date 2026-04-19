@@ -5,7 +5,11 @@
  *
  */
 
+use std::sync::Arc;
+use std::sync::Mutex;
+
 use amalthea::language::control_handler::ControlHandler;
+use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::debug_reply::DebugReply;
 use amalthea::wire::debug_request::DebugRequest;
 use amalthea::wire::exception::Exception;
@@ -16,16 +20,30 @@ use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
 
+use crate::console::SessionMode;
+use crate::dap::dap_jupyter_handler::DapJupyterHandler;
+use crate::dap::Dap;
 use crate::request::RRequest;
 
 pub struct Control {
     r_request_tx: Sender<RRequest>,
+    dap_handler: DapJupyterHandler,
 }
 
 impl Control {
-    pub fn new(sender: Sender<RRequest>) -> Self {
+    pub fn new(
+        r_request_tx: Sender<RRequest>,
+        dap: Arc<Mutex<Dap>>,
+        iopub_tx: Sender<IOPubMessage>,
+        session_mode: SessionMode,
+    ) -> Self {
+        if matches!(session_mode, SessionMode::Notebook) {
+            dap.lock().unwrap().set_iopub_tx(iopub_tx.clone());
+        }
+        let dap_handler = DapJupyterHandler::new(dap, r_request_tx.clone(), iopub_tx);
         Self {
-            r_request_tx: sender,
+            r_request_tx,
+            dap_handler,
         }
     }
 }
@@ -69,28 +87,7 @@ impl ControlHandler for Control {
     }
 
     fn handle_debug_request(&self, msg: &DebugRequest) -> Result<DebugReply, Exception> {
-        log::info!("Received debug request: {msg:?}");
-
-        // TODO: Route to the DAP command handling logic.
-        // For now, return a DAP error response indicating debugging
-        // is not yet supported via the Jupyter debug channel.
-        let seq = msg.content.get("seq").and_then(|v| v.as_i64()).unwrap_or(0);
-        let command = msg
-            .content
-            .get("command")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let response = serde_json::json!({
-            "seq": 0,
-            "type": "response",
-            "request_seq": seq,
-            "success": false,
-            "command": command,
-            "message": "Notebook debugging is not yet supported",
-        });
-
+        let response = self.dap_handler.handle(&msg.content);
         Ok(DebugReply { content: response })
     }
 }

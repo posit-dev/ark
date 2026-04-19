@@ -38,10 +38,10 @@ use super::dap_state::Breakpoint;
 use super::dap_state::BreakpointState;
 use super::dap_state::Dap;
 use super::dap_state::DapBackendEvent;
+use super::dap_state::THREAD_ID;
 use crate::console::Console;
 use crate::console::FrameInfo;
 use crate::console::FrameSource;
-use crate::dap::dap_state::DapExceptionEvent;
 use crate::dap::dap_variables::object_variables;
 use crate::dap::dap_variables::RVariable;
 use crate::r_task;
@@ -50,8 +50,6 @@ use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
 use crate::url::UrlId;
-
-const THREAD_ID: i64 = -1;
 
 /// Sentinel expression sent by the frontend to notify the kernel that the user
 /// selected a different stack frame in the debugger UI. Subsequent console
@@ -155,6 +153,11 @@ impl DapHandler {
                 self.handle_step(args, DebugRequest::StepOut, ResponseBody::StepOut)
             },
             Command::Pause(args) => self.handle_pause(args),
+            Command::ConfigurationDone => Ok(DapHandlerOutput {
+                body: ResponseBody::ConfigurationDone,
+                dap_events: vec![],
+                console_events: vec![],
+            }),
             _ => {
                 log::warn!("DAP: Unknown request: {cmd:?}");
                 return DapOutput::error(req, "Ark DAP: Unknown request");
@@ -436,6 +439,8 @@ impl DapHandler {
     }
 
     fn handle_attach(&self, _args: AttachRequestArguments) -> anyhow::Result<DapHandlerOutput> {
+        self.state.lock().unwrap().is_connected = true;
+
         Ok(DapHandlerOutput {
             body: ResponseBody::Attach,
             dap_events: vec![Event::Thread(ThreadEventBody {
@@ -447,8 +452,11 @@ impl DapHandler {
     }
 
     fn handle_disconnect(&self, _args: DisconnectArguments) -> anyhow::Result<DapHandlerOutput> {
-        // Only send `Q` if currently in a debugging session.
-        let is_debugging = { self.state.lock().unwrap().is_debugging };
+        let mut state = self.state.lock().unwrap();
+        let is_debugging = state.is_debugging;
+        state.is_connected = false;
+        drop(state);
+
         let console_events = if is_debugging {
             vec![DapConsoleEvent::DebugCommand(DebugRequest::Quit)]
         } else {
@@ -781,64 +789,7 @@ fn listen_dap_events<W: Write>(
 
                 log::trace!("DAP: Got event from backend: {:?}", event);
 
-                let event = match event {
-                    DapBackendEvent::Continued => {
-                        Event::Continued(ContinuedEventBody {
-                            thread_id: THREAD_ID,
-                            all_threads_continued: Some(true)
-                        })
-                    },
-
-                    DapBackendEvent::Stopped => {
-                        Event::Stopped(StoppedEventBody {
-                            reason: StoppedEventReason::Step,
-                            description: None,
-                            thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(false),
-                            text: None,
-                            all_threads_stopped: Some(true),
-                            hit_breakpoint_ids: None,
-                        })
-                    },
-
-                    DapBackendEvent::Exception(DapExceptionEvent { class, message }) => {
-                        let text = format!("<{class}>\n{message}");
-                        Event::Stopped(StoppedEventBody {
-                            reason: StoppedEventReason::Exception,
-                            description: Some(message),
-                            thread_id: Some(THREAD_ID),
-                            preserve_focus_hint: Some(false),
-                            text: Some(text),
-                            all_threads_stopped: Some(true),
-                            hit_breakpoint_ids: None,
-                        })
-                    },
-
-                    DapBackendEvent::Invalidated => {
-                        Event::Invalidated(InvalidatedEventBody {
-                            areas: Some(vec![types::InvalidatedAreas::Variables]),
-                            thread_id: Some(THREAD_ID),
-                            stack_frame_id: None,
-                        })
-                    },
-
-                    DapBackendEvent::Terminated => {
-                        Event::Terminated(None)
-                    },
-
-                    DapBackendEvent::BreakpointState { id, line, verified, message } => {
-                        Event::Breakpoint(BreakpointEventBody {
-                            reason: BreakpointEventReason::Changed,
-                            breakpoint: dap::types::Breakpoint {
-                                id: Some(id),
-                                line: Some(Breakpoint::to_dap_line(line)),
-                                verified,
-                                message,
-                                ..Default::default()
-                            },
-                        })
-                    },
-                };
+                let event = event.into_dap_event();
 
                 let mut output = output.lock().unwrap();
                 if let Err(err) = output.send_event(event) {
