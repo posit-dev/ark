@@ -58,6 +58,573 @@ const THREAD_ID: i64 = -1;
 /// evaluations will run in that frame's environment.
 const SELECTED_FRAME_EXPRESSION: &str = ".positron_selected_frame";
 
+/// Side effect requested by a DAP handler that the transport layer must
+/// deliver in a transport-specific way.
+pub enum DapSideEffect {
+    /// Send a debug step/quit command to R.
+    DebugCommand(DebugRequest),
+    /// Interrupt R for a pause.
+    Interrupt,
+    /// Request a session restart.
+    Restart,
+}
+
+/// The result of handling a single DAP request. The transport layer
+/// (TCP or Jupyter) is responsible for delivering the response, events,
+/// and side effects through the appropriate channel.
+pub struct DapOutput {
+    pub response: Response,
+    pub events: Vec<Event>,
+    pub side_effects: Vec<DapSideEffect>,
+}
+
+impl DapOutput {
+    pub fn response(response: Response) -> Self {
+        Self {
+            response,
+            events: vec![],
+            side_effects: vec![],
+        }
+    }
+}
+
+/// Transport-agnostic handler for DAP requests. Translates each request
+/// into a [`DapOutput`] containing the protocol response, any DAP events,
+/// and console events that the transport layer is responsible for delivering.
+pub struct DapHandler {
+    pub(crate) state: Arc<Mutex<Dap>>,
+    pub(crate) r_request_tx: Sender<RRequest>,
+}
+
+impl DapHandler {
+    pub fn new(state: Arc<Mutex<Dap>>, r_request_tx: Sender<RRequest>) -> Self {
+        Self {
+            state,
+            r_request_tx,
+        }
+    }
+
+    /// Dispatch a parsed DAP request to the appropriate handler.
+    ///
+    /// `Evaluate` is intentionally not handled here because it requires
+    /// transport-specific async response delivery.
+    pub fn dispatch(&self, req: Request) -> DapOutput {
+        let cmd = req.command.clone();
+
+        match cmd {
+            Command::Initialize(args) => self.handle_initialize(req, args),
+            Command::Attach(args) => self.handle_attach(req, args),
+            Command::Disconnect(args) => self.handle_disconnect(req, args),
+            Command::Restart(args) => self.handle_restart(req, args),
+            Command::Threads => self.handle_threads(req),
+            Command::SetBreakpoints(args) => self.handle_set_breakpoints(req, args),
+            Command::SetExceptionBreakpoints(args) => {
+                self.handle_set_exception_breakpoints(req, args)
+            },
+            Command::StackTrace(args) => self.handle_stacktrace(req, args),
+            Command::Source(args) => self.handle_source(req, args),
+            Command::Scopes(args) => self.handle_scopes(req, args),
+            Command::Variables(args) => self.handle_variables(req, args),
+            Command::Continue(args) => {
+                let resp = ResponseBody::Continue(ContinueResponse {
+                    all_threads_continued: Some(true),
+                });
+                self.handle_step(req, args, DebugRequest::Continue, resp)
+            },
+            Command::Next(args) => {
+                self.handle_step(req, args, DebugRequest::Next, ResponseBody::Next)
+            },
+            Command::StepIn(args) => {
+                self.handle_step(req, args, DebugRequest::StepIn, ResponseBody::StepIn)
+            },
+            Command::StepOut(args) => {
+                self.handle_step(req, args, DebugRequest::StepOut, ResponseBody::StepOut)
+            },
+            Command::Pause(args) => self.handle_pause(req, args),
+            _ => {
+                log::warn!("DAP: Unknown request");
+                DapOutput::response(req.error("Ark DAP: Unknown request"))
+            },
+        }
+    }
+
+    fn handle_initialize(&self, req: Request, _args: InitializeArguments) -> DapOutput {
+        let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
+            supports_restart_request: Some(true),
+            supports_exception_info_request: Some(false),
+            exception_breakpoint_filters: Some(vec![
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("error"),
+                    label: String::from("Errors"),
+                    description: Some(String::from("Break on uncaught R errors")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("warning"),
+                    label: String::from("Warnings"),
+                    description: Some(String::from("Break on R warnings")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+                types::ExceptionBreakpointsFilter {
+                    filter: String::from("interrupt"),
+                    label: String::from("Interrupts"),
+                    description: Some(String::from("Break when execution is interrupted")),
+                    default: Some(false),
+                    supports_condition: Some(false),
+                    condition_description: None,
+                },
+            ]),
+            supports_evaluate_for_hovers: Some(true),
+            supports_conditional_breakpoints: Some(true),
+            supports_hit_conditional_breakpoints: Some(true),
+            supports_log_points: Some(true),
+            ..Default::default()
+        }));
+        DapOutput {
+            response: rsp,
+            events: vec![Event::Initialized],
+            side_effects: vec![],
+        }
+    }
+
+    // Handle SetBreakpoints requests from the frontend.
+    //
+    // Breakpoint state survives DAP server disconnections via document hashing.
+    // Disconnections happen when the user uses the disconnect command (the
+    // frontend automatically reconnects) or when the console session goes to
+    // the background (the LSP is also disabled, so we don't receive document
+    // change notifications). When we come back online, we compare the document
+    // content against our stored hash to detect if breakpoints are now stale.
+    //
+    // Key implementation details:
+    // - We use `original_line` for lookup since the frontend doesn't know about
+    //   our line adjustments and always sends back the original line numbers.
+    // - When a user unchecks a breakpoint, it appears as a deletion (omitted
+    //   from the request). We preserve verified breakpoints as Disabled so we
+    //   can restore their state when re-enabled without requiring re-sourcing.
+    fn handle_set_breakpoints(&self, req: Request, args: SetBreakpointsArguments) -> DapOutput {
+        let Some(path) = args.source.path.as_ref() else {
+            // We don't currently have virtual documents managed via source references
+            log::warn!("Missing a path to set breakpoints for.");
+            return DapOutput::response(req.error("Missing a path to set breakpoints for"));
+        };
+
+        // We currently only support "path" URIs as Positron never sends URIs.
+        // In principle the DAP frontend can negotiate whether it sends URIs or
+        // file paths via the `pathFormat` field of the `Initialize` request.
+        let uri = match UrlId::from_file_path(path) {
+            Ok(uri) => uri,
+            Err(err) => {
+                log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
+                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints: vec![],
+                }));
+                return DapOutput::response(rsp);
+            },
+        };
+
+        // Read document content to compute hash. We currently assume UTF-8 even
+        // though the frontend supports files with different encodings (but
+        // UTF-8 is the default).
+        let doc_content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(err) => {
+                // TODO: What do we do with breakpoints in virtual documents?
+                log::warn!("Failed to read file '{path}': {err:?}");
+
+                let breakpoints = args
+                    .breakpoints
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|bp| dap::types::Breakpoint {
+                        id: Some(self.state.lock().unwrap().next_breakpoint_id()),
+                        verified: false,
+                        line: Some(bp.line),
+                        message: Some(String::from("Can't read file '{path}'")),
+                        ..Default::default()
+                    })
+                    .collect();
+
+                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+                    breakpoints,
+                }));
+                return DapOutput::response(rsp);
+            },
+        };
+
+        let args_breakpoints = args.breakpoints.unwrap_or_default();
+
+        let mut state = self.state.lock().unwrap();
+        let old_breakpoints = state.breakpoints.get(&uri).cloned();
+
+        // Breakpoints are associated with this hash. If the document has
+        // changed after a reconnection, the breakpoints are no longer valid.
+        let doc_hash = blake3::hash(doc_content.as_bytes());
+        let doc_changed = match &old_breakpoints {
+            Some((existing_hash, _)) => existing_hash != &doc_hash,
+            None => true,
+        };
+
+        let new_breakpoints = if doc_changed {
+            log::trace!("DAP: Document changed for {uri}, discarding old breakpoints");
+
+            // Replace all existing breakpoints by new, unverified ones
+            args_breakpoints
+                .iter()
+                .map(|bp| {
+                    let line = Breakpoint::from_dap_line(bp.line);
+                    Breakpoint {
+                        id: state.next_breakpoint_id(),
+                        line,
+                        original_line: line,
+                        state: BreakpointState::Unverified,
+                        injected: false,
+                        condition: bp.condition.clone(),
+                        log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
+                    }
+                })
+                .collect()
+        } else {
+            log::trace!("DAP: Document unchanged for {uri}, preserving breakpoint states");
+
+            // Unwrap Safety: `doc_changed` is false, so `old_breakpoints` is Some
+            let (_, old_breakpoints) = old_breakpoints.unwrap();
+            // Use original_line for lookup since that's what the frontend sends back
+            let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
+                .into_iter()
+                .map(|bp| (bp.original_line, bp))
+                .collect();
+
+            let mut breakpoints: Vec<Breakpoint> = Vec::new();
+
+            for bp in &args_breakpoints {
+                let line = Breakpoint::from_dap_line(bp.line);
+
+                if let Some(old_bp) = old_by_line.remove(&line) {
+                    // Breakpoint already exists at this line
+                    let (new_state, injected) = match old_bp.state {
+                        // This breakpoint used to be verified, was disabled, and is now back
+                        // online. Restore to Verified immediately.
+                        BreakpointState::Disabled => (BreakpointState::Verified, old_bp.injected),
+                        // Invalid breakpoints are reset to Unverified so they can be
+                        // re-validated on next source.
+                        BreakpointState::Invalid(_) => (BreakpointState::Unverified, false),
+                        // We preserve other states (verified or unverified)
+                        other => (other, old_bp.injected),
+                    };
+
+                    breakpoints.push(Breakpoint {
+                        id: old_bp.id,
+                        // Preserve the actual (anchored) line from previous verification
+                        line: old_bp.line,
+                        original_line: line,
+                        state: new_state,
+                        injected,
+                        condition: bp.condition.clone(),
+                        log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
+                    });
+                } else {
+                    // New breakpoints always start as Unverified, until they get evaluated once
+                    breakpoints.push(Breakpoint {
+                        id: state.next_breakpoint_id(),
+                        line,
+                        original_line: line,
+                        state: BreakpointState::Unverified,
+                        injected: false,
+                        condition: bp.condition.clone(),
+                        log_message: bp.log_message.clone(),
+                        hit_condition: bp.hit_condition.clone(),
+                        hit_count: 0,
+                    });
+                }
+            }
+
+            // Remaining verified breakpoints need to be preserved in memory
+            // when deleted. That's because when user unchecks a breakpoint on
+            // the frontend, the breakpoint is actually deleted (i.e. omitted)
+            // by a `SetBreakpoints()` request. When the user reenables the
+            // breakpoint, we have to restore the verification state.
+            // Unverified/Invalid breakpoints on the other hand are simply
+            // dropped since there's no verified state that needs to be
+            // preserved.
+            for (original_line, old_bp) in old_by_line {
+                if matches!(old_bp.state, BreakpointState::Verified) {
+                    breakpoints.push(Breakpoint {
+                        id: old_bp.id,
+                        line: old_bp.line,
+                        original_line,
+                        state: BreakpointState::Disabled,
+                        injected: true,
+                        condition: old_bp.condition.clone(),
+                        log_message: old_bp.log_message.clone(),
+                        hit_condition: old_bp.hit_condition,
+                        hit_count: 0,
+                    });
+                }
+            }
+
+            breakpoints
+        };
+
+        log::trace!(
+            "DAP: URI {uri} now has {} breakpoints:\n{:#?}",
+            new_breakpoints.len(),
+            new_breakpoints
+        );
+
+        let response_breakpoints: Vec<dap::types::Breakpoint> = new_breakpoints
+            .iter()
+            .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
+            .map(|bp| {
+                let message = match &bp.state {
+                    BreakpointState::Invalid(reason) => Some(reason.message().to_string()),
+                    _ => None,
+                };
+                dap::types::Breakpoint {
+                    id: Some(bp.id),
+                    verified: matches!(bp.state, BreakpointState::Verified),
+                    line: Some(Breakpoint::to_dap_line(bp.line)),
+                    message,
+                    ..Default::default()
+                }
+            })
+            .collect();
+
+        state.breakpoints.insert(uri, (doc_hash, new_breakpoints));
+
+        drop(state);
+
+        let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
+            breakpoints: response_breakpoints,
+        }));
+
+        DapOutput::response(rsp)
+    }
+
+    fn handle_attach(&self, req: Request, _args: AttachRequestArguments) -> DapOutput {
+        let rsp = req.success(ResponseBody::Attach);
+        DapOutput {
+            response: rsp,
+            events: vec![Event::Thread(ThreadEventBody {
+                reason: ThreadEventReason::Started,
+                thread_id: THREAD_ID,
+            })],
+            side_effects: vec![],
+        }
+    }
+
+    fn handle_disconnect(&self, req: Request, _args: DisconnectArguments) -> DapOutput {
+        // Only send `Q` if currently in a debugging session.
+        let is_debugging = { self.state.lock().unwrap().is_debugging };
+        let side_effects = if is_debugging {
+            vec![DapSideEffect::DebugCommand(DebugRequest::Quit)]
+        } else {
+            vec![]
+        };
+
+        DapOutput {
+            response: req.success(ResponseBody::Disconnect),
+            events: vec![],
+            side_effects,
+        }
+    }
+
+    fn handle_restart<T>(&self, req: Request, _args: T) -> DapOutput {
+        DapOutput {
+            response: req.success(ResponseBody::Restart),
+            events: vec![],
+            side_effects: vec![DapSideEffect::Restart],
+        }
+    }
+
+    // All servers must respond to `Threads` requests, possibly with
+    // a dummy thread as is the case here
+    fn handle_threads(&self, req: Request) -> DapOutput {
+        let rsp = req.success(ResponseBody::Threads(ThreadsResponse {
+            threads: vec![Thread {
+                id: THREAD_ID,
+                name: String::from("R console"),
+            }],
+        }));
+        DapOutput::response(rsp)
+    }
+
+    fn handle_set_exception_breakpoints(
+        &self,
+        req: Request,
+        args: SetExceptionBreakpointsArguments,
+    ) -> DapOutput {
+        {
+            let mut state = self.state.lock().unwrap();
+            state.exception_breakpoint_filters = args.filters;
+        }
+        let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
+            SetExceptionBreakpointsResponse {
+                // This field is only useful for reporting problems with
+                // individual filters. Since we always accept all filters,
+                // `None` is fine here.
+                breakpoints: None,
+            },
+        ));
+        DapOutput::response(rsp)
+    }
+
+    fn handle_stacktrace(&self, req: Request, args: StackTraceArguments) -> DapOutput {
+        let stack = {
+            let state = self.state.lock().unwrap();
+            let fallback_sources = &state.fallback_sources;
+            match &state.stack {
+                Some(stack) => stack
+                    .iter()
+                    .map(|frame| into_dap_frame(frame, fallback_sources))
+                    .collect(),
+                _ => vec![],
+            }
+        };
+
+        // Slice the stack as requested
+        let n_usize = stack.len();
+
+        let start_frame = args.start_frame.unwrap_or(0);
+        let Ok(start) = usize::try_from(start_frame) else {
+            let rsp = req.error(&format!("Invalid start_frame: {start_frame}"));
+            return DapOutput::response(rsp);
+        };
+        let start = std::cmp::min(start, n_usize);
+
+        let end = if let Some(levels) = args.levels {
+            let Ok(levels) = usize::try_from(levels) else {
+                let rsp = req.error(&format!("Invalid levels: {levels}"));
+                return DapOutput::response(rsp);
+            };
+            std::cmp::min(start.saturating_add(levels), n_usize)
+        } else {
+            n_usize
+        };
+
+        let Ok(total_frames) = i64::try_from(n_usize) else {
+            let rsp = req.error(&format!("Stack frame count overflows i64: {n_usize}"));
+            return DapOutput::response(rsp);
+        };
+        let stack = stack[start..end].to_vec();
+
+        let rsp = req.success(ResponseBody::StackTrace(StackTraceResponse {
+            stack_frames: stack,
+            total_frames: Some(total_frames),
+        }));
+
+        DapOutput::response(rsp)
+    }
+
+    fn handle_source(&self, req: Request, _args: SourceArguments) -> DapOutput {
+        let message = "Unsupported `source` request: {req:?}";
+        log::error!("{message}");
+        DapOutput::response(req.error(message))
+    }
+
+    fn handle_scopes(&self, req: Request, args: ScopesArguments) -> DapOutput {
+        let state = self.state.lock().unwrap();
+        let frame_id_to_variables_reference = &state.frame_id_to_variables_reference;
+
+        // Entirely possible that the requested `frame_id` doesn't have any
+        // variables (like the top most frame where the call was made). We send
+        // back `0` in those cases, which is an indication of "no variables".
+        let variables_reference = frame_id_to_variables_reference
+            .get(&args.frame_id)
+            .copied()
+            .unwrap_or(0);
+
+        // Only 1 overarching scope for now
+        let scopes = vec![Scope {
+            name: String::from("Locals"),
+            presentation_hint: Some(ScopePresentationhint::Locals),
+            variables_reference,
+            named_variables: None,
+            indexed_variables: None,
+            expensive: false,
+            source: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+        }];
+
+        let rsp = req.success(ResponseBody::Scopes(ScopesResponse { scopes }));
+
+        drop(state);
+        DapOutput::response(rsp)
+    }
+
+    fn handle_variables(&self, req: Request, args: VariablesArguments) -> DapOutput {
+        let variables_reference = args.variables_reference;
+        let variables = self.collect_r_variables(variables_reference);
+        let variables = self.make_variables(variables);
+        let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
+        DapOutput::response(rsp)
+    }
+
+    fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
+        // Wait until we're in the `r_task()` to lock
+        // See https://github.com/posit-dev/positron/issues/5024
+        let state = self.state.clone();
+
+        let variables = r_task(move || {
+            let state = state.lock().unwrap();
+            let variables_reference_to_r_object = &state.variables_reference_to_r_object;
+
+            let Some(object) = variables_reference_to_r_object.get(&variables_reference) else {
+                log::error!(
+                    "Failed to locate R object for `variables_reference` {variables_reference}."
+                );
+                return Vec::new();
+            };
+
+            let object = object.get();
+            object_variables(object.sexp)
+        });
+
+        variables
+    }
+
+    fn make_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
+        self.state.lock().unwrap().make_variables(variables)
+    }
+
+    fn handle_step<A>(
+        &self,
+        req: Request,
+        _args: A,
+        cmd: DebugRequest,
+        resp: ResponseBody,
+    ) -> DapOutput {
+        DapOutput {
+            response: req.success(resp),
+            events: vec![],
+            side_effects: vec![DapSideEffect::DebugCommand(cmd)],
+        }
+    }
+
+    fn handle_pause(&self, req: Request, _args: PauseArguments) -> DapOutput {
+        self.state.lock().unwrap().is_interrupting_for_debugger = true;
+
+        log::info!("DAP: Received request to pause R, sending interrupt");
+
+        DapOutput {
+            response: req.success(ResponseBody::Pause),
+            events: vec![],
+            side_effects: vec![DapSideEffect::Interrupt],
+        }
+    }
+}
+
 // TODO: Handle comm close to shut down the DAP server thread.
 //
 // The DAP comm is allowed to persist across TCP sessions. This supports session
@@ -274,8 +841,7 @@ fn listen_dap_events<W: Write>(
 pub struct DapServer<R: Read, W: Write> {
     server: Server<R, W>,
     pub output: Arc<Mutex<ServerOutput<W>>>,
-    state: Arc<Mutex<Dap>>,
-    r_request_tx: Sender<RRequest>,
+    pub(crate) handler: DapHandler,
     comm_tx: Option<CommOutgoingTx>,
     responses_tx: Sender<Response>,
 }
@@ -291,11 +857,11 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Self {
         let server = Server::new(reader, writer);
         let output = server.output.clone();
+        let handler = DapHandler::new(state, r_request_tx);
         Self {
             server,
             output,
-            state,
-            r_request_tx,
+            handler,
             comm_tx: Some(comm_tx),
             responses_tx,
         }
@@ -313,52 +879,73 @@ impl<R: Read, W: Write> DapServer<R, W> {
         };
         log::trace!("DAP: Got request: {:#?}", req);
 
-        let cmd = req.command.clone();
+        // Evaluate is async: the response is sent later via `responses_tx`.
+        // It is the only command that needs transport-specific handling.
+        if matches!(&req.command, Command::Evaluate(_)) {
+            let Command::Evaluate(args) = req.command.clone() else {
+                unreachable!()
+            };
+            if let Err(err) = self.handle_evaluate(req, args) {
+                log::warn!("DAP: Handler failed, closing connection: {err:?}");
+                return false;
+            }
+            return true;
+        }
 
-        let result = match cmd {
-            Command::Initialize(args) => self.handle_initialize(req, args),
-            Command::Attach(args) => self.handle_attach(req, args),
-            Command::Disconnect(args) => self.handle_disconnect(req, args),
-            Command::Restart(args) => self.handle_restart(req, args),
-            Command::Threads => self.handle_threads(req),
-            Command::SetBreakpoints(args) => self.handle_set_breakpoints(req, args),
-            Command::SetExceptionBreakpoints(args) => {
-                self.handle_set_exception_breakpoints(req, args)
-            },
-            Command::StackTrace(args) => self.handle_stacktrace(req, args),
-            Command::Source(args) => self.handle_source(req, args),
-            Command::Scopes(args) => self.handle_scopes(req, args),
-            Command::Variables(args) => self.handle_variables(req, args),
-            Command::Evaluate(args) => self.handle_evaluate(req, args),
-            Command::Continue(args) => {
-                let resp = ResponseBody::Continue(ContinueResponse {
-                    all_threads_continued: Some(true),
-                });
-                self.handle_step(req, args, DebugRequest::Continue, resp)
-            },
-            Command::Next(args) => {
-                self.handle_step(req, args, DebugRequest::Next, ResponseBody::Next)
-            },
-            Command::StepIn(args) => {
-                self.handle_step(req, args, DebugRequest::StepIn, ResponseBody::StepIn)
-            },
-            Command::StepOut(args) => {
-                self.handle_step(req, args, DebugRequest::StepOut, ResponseBody::StepOut)
-            },
-            Command::Pause(args) => self.handle_pause(req, args),
-            _ => {
-                log::warn!("DAP: Unknown request");
-                let rsp = req.error("Ark DAP: Unknown request");
-                self.respond(rsp)
-            },
-        };
+        let output = self.handler.dispatch(req);
+        self.deliver(output)
+    }
 
-        if let Err(err) = result {
-            log::warn!("DAP: Handler failed, closing connection: {err:?}");
+    fn deliver(&mut self, output: DapOutput) -> bool {
+        if let Err(err) = self.respond(output.response) {
+            log::warn!("DAP: Failed to send response: {err:?}");
             return false;
         }
 
+        for event in output.events {
+            if let Err(err) = self.send_event(event) {
+                log::warn!("DAP: Failed to send event: {err:?}");
+                return false;
+            }
+        }
+
+        for effect in output.side_effects {
+            self.handle_side_effect(effect);
+        }
+
         true
+    }
+
+    fn handle_side_effect(&mut self, effect: DapSideEffect) {
+        match effect {
+            DapSideEffect::DebugCommand(cmd) => {
+                if let Some(tx) = &self.comm_tx {
+                    // If we have a comm channel (always the case as of this
+                    // writing) we are connected to Positron or similar. Send
+                    // control events so that the IDE can execute these as if they
+                    // were sent by the user. This ensures prompts are updated.
+                    let msg = amalthea::comm_rpc_message!(
+                        "execute",
+                        command = debug_request_command(cmd)
+                    );
+                    tx.send(msg).log_err();
+                } else {
+                    self.handler
+                        .r_request_tx
+                        .send(RRequest::DebugCommand(cmd))
+                        .log_err();
+                }
+            },
+            DapSideEffect::Interrupt => {
+                crate::sys::control::handle_interrupt_request();
+            },
+            DapSideEffect::Restart => {
+                if let Some(tx) = &self.comm_tx {
+                    let msg = amalthea::comm_rpc_message!("restart");
+                    tx.send(msg).log_err();
+                }
+            },
+        }
     }
 
     fn respond(&mut self, rsp: Response) -> Result<(), ServerError> {
@@ -371,448 +958,6 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.send_event(event)
     }
 
-    fn handle_initialize(
-        &mut self,
-        req: Request,
-        _args: InitializeArguments,
-    ) -> Result<(), ServerError> {
-        let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
-            supports_restart_request: Some(true),
-            supports_exception_info_request: Some(false),
-            exception_breakpoint_filters: Some(vec![
-                types::ExceptionBreakpointsFilter {
-                    filter: String::from("error"),
-                    label: String::from("Errors"),
-                    description: Some(String::from("Break on uncaught R errors")),
-                    default: Some(false),
-                    supports_condition: Some(false),
-                    condition_description: None,
-                },
-                types::ExceptionBreakpointsFilter {
-                    filter: String::from("warning"),
-                    label: String::from("Warnings"),
-                    description: Some(String::from("Break on R warnings")),
-                    default: Some(false),
-                    supports_condition: Some(false),
-                    condition_description: None,
-                },
-                types::ExceptionBreakpointsFilter {
-                    filter: String::from("interrupt"),
-                    label: String::from("Interrupts"),
-                    description: Some(String::from("Break when execution is interrupted")),
-                    default: Some(false),
-                    supports_condition: Some(false),
-                    condition_description: None,
-                },
-            ]),
-            supports_evaluate_for_hovers: Some(true),
-            supports_conditional_breakpoints: Some(true),
-            supports_hit_conditional_breakpoints: Some(true),
-            supports_log_points: Some(true),
-            ..Default::default()
-        }));
-        self.respond(rsp)?;
-        self.send_event(Event::Initialized)
-    }
-
-    // Handle SetBreakpoints requests from the frontend.
-    //
-    // Breakpoint state survives DAP server disconnections via document hashing.
-    // Disconnections happen when the user uses the disconnect command (the
-    // frontend automatically reconnects) or when the console session goes to
-    // the background (the LSP is also disabled, so we don't receive document
-    // change notifications). When we come back online, we compare the document
-    // content against our stored hash to detect if breakpoints are now stale.
-    //
-    // Key implementation details:
-    // - We use `original_line` for lookup since the frontend doesn't know about
-    //   our line adjustments and always sends back the original line numbers.
-    // - When a user unchecks a breakpoint, it appears as a deletion (omitted
-    //   from the request). We preserve verified breakpoints as Disabled so we
-    //   can restore their state when re-enabled without requiring re-sourcing.
-    fn handle_set_breakpoints(
-        &mut self,
-        req: Request,
-        args: SetBreakpointsArguments,
-    ) -> Result<(), ServerError> {
-        let Some(path) = args.source.path.as_ref() else {
-            // We don't currently have virtual documents managed via source references
-            log::warn!("Missing a path to set breakpoints for.");
-            return self.respond(req.error("Missing a path to set breakpoints for"));
-        };
-
-        // We currently only support "path" URIs as Positron never sends URIs.
-        // In principle the DAP frontend can negotiate whether it sends URIs or
-        // file paths via the `pathFormat` field of the `Initialize` request.
-        let uri = match UrlId::from_file_path(path) {
-            Ok(uri) => uri,
-            Err(err) => {
-                log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
-                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                    breakpoints: vec![],
-                }));
-                return self.respond(rsp);
-            },
-        };
-
-        // Read document content to compute hash. We currently assume UTF-8 even
-        // though the frontend supports files with different encodings (but
-        // UTF-8 is the default).
-        let doc_content = match std::fs::read_to_string(path) {
-            Ok(content) => content,
-            Err(err) => {
-                // TODO: What do we do with breakpoints in virtual documents?
-                log::warn!("Failed to read file '{path}': {err:?}");
-
-                let breakpoints = args
-                    .breakpoints
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|bp| dap::types::Breakpoint {
-                        id: Some(self.state.lock().unwrap().next_breakpoint_id()),
-                        verified: false,
-                        line: Some(bp.line),
-                        message: Some(String::from("Can't read file '{path}'")),
-                        ..Default::default()
-                    })
-                    .collect();
-
-                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                    breakpoints,
-                }));
-                return self.respond(rsp);
-            },
-        };
-
-        let args_breakpoints = args.breakpoints.unwrap_or_default();
-
-        let mut state = self.state.lock().unwrap();
-        let old_breakpoints = state.breakpoints.get(&uri).cloned();
-
-        // Breakpoints are associated with this hash. If the document has
-        // changed after a reconnection, the breakpoints are no longer valid.
-        let doc_hash = blake3::hash(doc_content.as_bytes());
-        let doc_changed = match &old_breakpoints {
-            Some((existing_hash, _)) => existing_hash != &doc_hash,
-            None => true,
-        };
-
-        let new_breakpoints = if doc_changed {
-            log::trace!("DAP: Document changed for {uri}, discarding old breakpoints");
-
-            // Replace all existing breakpoints by new, unverified ones
-            args_breakpoints
-                .iter()
-                .map(|bp| {
-                    let line = Breakpoint::from_dap_line(bp.line);
-                    Breakpoint {
-                        id: state.next_breakpoint_id(),
-                        line,
-                        original_line: line,
-                        state: BreakpointState::Unverified,
-                        injected: false,
-                        condition: bp.condition.clone(),
-                        log_message: bp.log_message.clone(),
-                        hit_condition: bp.hit_condition.clone(),
-                        hit_count: 0,
-                    }
-                })
-                .collect()
-        } else {
-            log::trace!("DAP: Document unchanged for {uri}, preserving breakpoint states");
-
-            // Unwrap Safety: `doc_changed` is false, so `old_breakpoints` is Some
-            let (_, old_breakpoints) = old_breakpoints.unwrap();
-            // Use original_line for lookup since that's what the frontend sends back
-            let mut old_by_line: HashMap<u32, Breakpoint> = old_breakpoints
-                .into_iter()
-                .map(|bp| (bp.original_line, bp))
-                .collect();
-
-            let mut breakpoints: Vec<Breakpoint> = Vec::new();
-
-            for bp in &args_breakpoints {
-                let line = Breakpoint::from_dap_line(bp.line);
-
-                if let Some(old_bp) = old_by_line.remove(&line) {
-                    // Breakpoint already exists at this line
-                    let (new_state, injected) = match old_bp.state {
-                        // This breakpoint used to be verified, was disabled, and is now back
-                        // online. Restore to Verified immediately.
-                        BreakpointState::Disabled => (BreakpointState::Verified, old_bp.injected),
-                        // Invalid breakpoints are reset to Unverified so they can be
-                        // re-validated on next source.
-                        BreakpointState::Invalid(_) => (BreakpointState::Unverified, false),
-                        // We preserve other states (verified or unverified)
-                        other => (other, old_bp.injected),
-                    };
-
-                    breakpoints.push(Breakpoint {
-                        id: old_bp.id,
-                        // Preserve the actual (anchored) line from previous verification
-                        line: old_bp.line,
-                        original_line: line,
-                        state: new_state,
-                        injected,
-                        condition: bp.condition.clone(),
-                        log_message: bp.log_message.clone(),
-                        hit_condition: bp.hit_condition.clone(),
-                        hit_count: 0,
-                    });
-                } else {
-                    // New breakpoints always start as Unverified, until they get evaluated once
-                    breakpoints.push(Breakpoint {
-                        id: state.next_breakpoint_id(),
-                        line,
-                        original_line: line,
-                        state: BreakpointState::Unverified,
-                        injected: false,
-                        condition: bp.condition.clone(),
-                        log_message: bp.log_message.clone(),
-                        hit_condition: bp.hit_condition.clone(),
-                        hit_count: 0,
-                    });
-                }
-            }
-
-            // Remaining verified breakpoints need to be preserved in memory
-            // when deleted. That's because when user unchecks a breakpoint on
-            // the frontend, the breakpoint is actually deleted (i.e. omitted)
-            // by a `SetBreakpoints()` request. When the user reenables the
-            // breakpoint, we have to restore the verification state.
-            // Unverified/Invalid breakpoints on the other hand are simply
-            // dropped since there's no verified state that needs to be
-            // preserved.
-            for (original_line, old_bp) in old_by_line {
-                if matches!(old_bp.state, BreakpointState::Verified) {
-                    breakpoints.push(Breakpoint {
-                        id: old_bp.id,
-                        line: old_bp.line,
-                        original_line,
-                        state: BreakpointState::Disabled,
-                        injected: true,
-                        condition: old_bp.condition.clone(),
-                        log_message: old_bp.log_message.clone(),
-                        hit_condition: old_bp.hit_condition,
-                        hit_count: 0,
-                    });
-                }
-            }
-
-            breakpoints
-        };
-
-        log::trace!(
-            "DAP: URI {uri} now has {} breakpoints:\n{:#?}",
-            new_breakpoints.len(),
-            new_breakpoints
-        );
-
-        let response_breakpoints: Vec<dap::types::Breakpoint> = new_breakpoints
-            .iter()
-            .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
-            .map(|bp| {
-                let message = match &bp.state {
-                    BreakpointState::Invalid(reason) => Some(reason.message().to_string()),
-                    _ => None,
-                };
-                dap::types::Breakpoint {
-                    id: Some(bp.id),
-                    verified: matches!(bp.state, BreakpointState::Verified),
-                    line: Some(Breakpoint::to_dap_line(bp.line)),
-                    message,
-                    ..Default::default()
-                }
-            })
-            .collect();
-
-        state.breakpoints.insert(uri, (doc_hash, new_breakpoints));
-
-        drop(state);
-
-        let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-            breakpoints: response_breakpoints,
-        }));
-
-        self.respond(rsp)
-    }
-
-    fn handle_attach(
-        &mut self,
-        req: Request,
-        _args: AttachRequestArguments,
-    ) -> Result<(), ServerError> {
-        let rsp = req.success(ResponseBody::Attach);
-        self.respond(rsp)?;
-
-        self.send_event(Event::Thread(ThreadEventBody {
-            reason: ThreadEventReason::Started,
-            thread_id: THREAD_ID,
-        }))
-    }
-
-    fn handle_disconnect(
-        &mut self,
-        req: Request,
-        _args: DisconnectArguments,
-    ) -> Result<(), ServerError> {
-        // Only send `Q` if currently in a debugging session.
-        let is_debugging = { self.state.lock().unwrap().is_debugging };
-        if is_debugging {
-            self.send_command(DebugRequest::Quit);
-        }
-
-        let rsp = req.success(ResponseBody::Disconnect);
-        self.respond(rsp)
-    }
-
-    fn handle_restart<T>(&mut self, req: Request, _args: T) -> Result<(), ServerError> {
-        // If connected to Positron, forward the restart command to the
-        // frontend. Otherwise ignore it.
-        if let Some(tx) = &self.comm_tx {
-            let msg = amalthea::comm_rpc_message!("restart");
-            tx.send(msg).log_err();
-        }
-
-        let rsp = req.success(ResponseBody::Restart);
-        self.respond(rsp)
-    }
-
-    // All servers must respond to `Threads` requests, possibly with
-    // a dummy thread as is the case here
-    fn handle_threads(&mut self, req: Request) -> Result<(), ServerError> {
-        let rsp = req.success(ResponseBody::Threads(ThreadsResponse {
-            threads: vec![Thread {
-                id: THREAD_ID,
-                name: String::from("R console"),
-            }],
-        }));
-        self.respond(rsp)
-    }
-
-    fn handle_set_exception_breakpoints(
-        &mut self,
-        req: Request,
-        args: SetExceptionBreakpointsArguments,
-    ) -> Result<(), ServerError> {
-        {
-            let mut state = self.state.lock().unwrap();
-            state.exception_breakpoint_filters = args.filters;
-        }
-        let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
-            SetExceptionBreakpointsResponse {
-                // This field is only useful for reporting problems with
-                // individual filters. Since we always accept all filters,
-                // `None` is fine here.
-                breakpoints: None,
-            },
-        ));
-        self.respond(rsp)
-    }
-
-    fn handle_stacktrace(
-        &mut self,
-        req: Request,
-        args: StackTraceArguments,
-    ) -> Result<(), ServerError> {
-        let stack = {
-            let state = self.state.lock().unwrap();
-            let fallback_sources = &state.fallback_sources;
-            match &state.stack {
-                Some(stack) => stack
-                    .iter()
-                    .map(|frame| into_dap_frame(frame, fallback_sources))
-                    .collect(),
-                _ => vec![],
-            }
-        };
-
-        // Slice the stack as requested
-        let n_usize = stack.len();
-
-        let start_frame = args.start_frame.unwrap_or(0);
-        let Ok(start) = usize::try_from(start_frame) else {
-            let rsp = req.error(&format!("Invalid start_frame: {start_frame}"));
-            return self.respond(rsp);
-        };
-        let start = std::cmp::min(start, n_usize);
-
-        let end = if let Some(levels) = args.levels {
-            let Ok(levels) = usize::try_from(levels) else {
-                let rsp = req.error(&format!("Invalid levels: {levels}"));
-                return self.respond(rsp);
-            };
-            std::cmp::min(start.saturating_add(levels), n_usize)
-        } else {
-            n_usize
-        };
-
-        let Ok(total_frames) = i64::try_from(n_usize) else {
-            let rsp = req.error(&format!("Stack frame count overflows i64: {n_usize}"));
-            return self.respond(rsp);
-        };
-        let stack = stack[start..end].to_vec();
-
-        let rsp = req.success(ResponseBody::StackTrace(StackTraceResponse {
-            stack_frames: stack,
-            total_frames: Some(total_frames),
-        }));
-
-        self.respond(rsp)
-    }
-
-    fn handle_source(&mut self, req: Request, _args: SourceArguments) -> Result<(), ServerError> {
-        let message = "Unsupported `source` request: {req:?}";
-        log::error!("{message}");
-        let rsp = req.error(message);
-        self.respond(rsp)
-    }
-
-    fn handle_scopes(&mut self, req: Request, args: ScopesArguments) -> Result<(), ServerError> {
-        let state = self.state.lock().unwrap();
-        let frame_id_to_variables_reference = &state.frame_id_to_variables_reference;
-
-        // Entirely possible that the requested `frame_id` doesn't have any
-        // variables (like the top most frame where the call was made). We send
-        // back `0` in those cases, which is an indication of "no variables".
-        let variables_reference = frame_id_to_variables_reference
-            .get(&args.frame_id)
-            .copied()
-            .unwrap_or(0);
-
-        // Only 1 overarching scope for now
-        let scopes = vec![Scope {
-            name: String::from("Locals"),
-            presentation_hint: Some(ScopePresentationhint::Locals),
-            variables_reference,
-            named_variables: None,
-            indexed_variables: None,
-            expensive: false,
-            source: None,
-            line: None,
-            column: None,
-            end_line: None,
-            end_column: None,
-        }];
-
-        let rsp = req.success(ResponseBody::Scopes(ScopesResponse { scopes }));
-
-        drop(state);
-        self.respond(rsp)
-    }
-
-    fn handle_variables(
-        &mut self,
-        req: Request,
-        args: VariablesArguments,
-    ) -> Result<(), ServerError> {
-        let variables_reference = args.variables_reference;
-        let variables = self.collect_r_variables(variables_reference);
-        let variables = self.make_variables(variables);
-        let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
-        self.respond(rsp)
-    }
-
     fn handle_evaluate(
         &mut self,
         req: Request,
@@ -820,7 +965,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     ) -> Result<(), ServerError> {
         let expression = args.expression;
         let frame_id = args.frame_id;
-        let state = self.state.clone();
+        let state = self.handler.state.clone();
         let responses_tx = self.responses_tx.clone();
 
         log::trace!("DAP: Spawning idle task for evaluate");
@@ -863,70 +1008,6 @@ impl<R: Read, W: Write> DapServer<R, W> {
         }));
 
         Ok(())
-    }
-
-    fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
-        // Wait until we're in the `r_task()` to lock
-        // See https://github.com/posit-dev/positron/issues/5024
-        let state = self.state.clone();
-
-        let variables = r_task(move || {
-            let state = state.lock().unwrap();
-            let variables_reference_to_r_object = &state.variables_reference_to_r_object;
-
-            let Some(object) = variables_reference_to_r_object.get(&variables_reference) else {
-                log::error!(
-                    "Failed to locate R object for `variables_reference` {variables_reference}."
-                );
-                return Vec::new();
-            };
-
-            let object = object.get();
-            object_variables(object.sexp)
-        });
-
-        variables
-    }
-
-    fn make_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
-        self.state.lock().unwrap().make_variables(variables)
-    }
-
-    fn handle_step<A>(
-        &mut self,
-        req: Request,
-        _args: A,
-        cmd: DebugRequest,
-        resp: ResponseBody,
-    ) -> Result<(), ServerError> {
-        self.send_command(cmd);
-        let rsp = req.success(resp);
-        self.respond(rsp)
-    }
-
-    fn handle_pause(&mut self, req: Request, _args: PauseArguments) -> Result<(), ServerError> {
-        self.state.lock().unwrap().is_interrupting_for_debugger = true;
-
-        log::info!("DAP: Received request to pause R, sending interrupt");
-        crate::sys::control::handle_interrupt_request();
-
-        let rsp = req.success(ResponseBody::Pause);
-        self.respond(rsp)
-    }
-
-    fn send_command(&mut self, cmd: DebugRequest) {
-        if let Some(tx) = &self.comm_tx {
-            // If we have a comm channel (always the case as of this
-            // writing) we are connected to Positron or similar. Send
-            // control events so that the IDE can execute these as if they
-            // were sent by the user. This ensures prompts are updated.
-            let msg = amalthea::comm_rpc_message!("execute", command = debug_request_command(cmd));
-
-            tx.send(msg).log_err();
-        } else {
-            // Otherwise, send command to R's `ReadConsole()` frontend method
-            self.r_request_tx.send(RRequest::DebugCommand(cmd)).unwrap();
-        }
     }
 }
 
