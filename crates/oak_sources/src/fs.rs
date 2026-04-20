@@ -14,13 +14,19 @@ pub(crate) fn sources_dir() -> anyhow::Result<PathBuf> {
 }
 
 /// Set a file's on disk permissions to read only
-pub(crate) fn set_readonly<P>(path: P) -> io::Result<()>
-where
-    P: AsRef<Path>,
-{
+pub(crate) fn set_readonly<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let mut permissions = std::fs::metadata(&path)?.permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(path, permissions)
+}
+
+pub(crate) fn copy_as_readonly<P: AsRef<Path>, Q: AsRef<Path>>(
+    from: P,
+    to: Q,
+) -> anyhow::Result<()> {
+    std::fs::copy(from.as_ref(), to.as_ref())?;
+    crate::fs::set_readonly(to.as_ref())?;
+    Ok(())
 }
 
 pub(crate) fn remove_dir_all_or_warn(path: &Path) {

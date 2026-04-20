@@ -284,16 +284,12 @@ impl PackageSourcesCache {
             return Ok(false);
         }
 
-        let namespace_destination_path = destination_path.join("NAMESPACE");
-        std::fs::copy(namespace_path, &namespace_destination_path)?;
-        crate::fs::set_readonly(&namespace_destination_path)?;
-
-        let description_destination_path = destination_path.join("DESCRIPTION");
-        std::fs::copy(description_path, &description_destination_path)?;
-        crate::fs::set_readonly(&description_destination_path)?;
+        crate::fs::copy_as_readonly(description_path, destination_path.join("DESCRIPTION"))?;
+        crate::fs::copy_as_readonly(namespace_path, destination_path.join("NAMESPACE"))?;
 
         // Last! Only write `.metadata` if all other writes succeed. It is our completion sentinal.
         self.write_metadata(package, libpath, description_hash, destination_path)?;
+
         Ok(true)
     }
 
