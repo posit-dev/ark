@@ -54,6 +54,13 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// is written last and is the sole completion sentinel. An entry without it
 /// is considered garbage and will be wiped by the next writer for that key.
 ///
+/// The combination of `libpath-{hash}` and `description-{hash}` are enough to make a
+/// unique key. The same R package could be installed in multiple libraries (even for the
+/// same R version), so libpath matters and is also recorded in `.metadata` as one of the
+/// signals that allows us to clean up a stale source folder. And the DESCRIPTION hash is
+/// unique due to the `Built` field, which includes a timestamp of when the package was
+/// built (either by CRAN or the user).
+///
 /// # Locking
 ///
 /// The cache root `.lock` can be locked as shared or exclusive:
