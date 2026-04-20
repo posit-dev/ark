@@ -61,6 +61,10 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// unique due to the `Built` field, which includes a timestamp of when the package was
 /// built (either by CRAN or the user).
 ///
+/// The `{package}` and `{version}` components of the key are not required to make it
+/// unique, but make for a nicer reading experience when goto-definition opens one of
+/// these files in your editor.
+///
 /// # Locking
 ///
 /// The cache root `.lock` can be locked as shared or exclusive:
