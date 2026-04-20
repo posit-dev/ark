@@ -2,7 +2,7 @@ mod cran;
 mod fs;
 mod srcref;
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs::read_to_string;
 use std::path::Path;
 use std::path::PathBuf;
@@ -32,7 +32,7 @@ const METADATA_FILENAME: &str = ".metadata";
 /// the DESCRIPTION `Build:` timestamp being different).
 const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 
-/// A two-level cache (on disk + in memory) of extracted R package sources.
+/// A cache of extracted R package sources
 ///
 /// # On disk layout
 ///
@@ -87,14 +87,6 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// This cache design is somewhat similar to cargo's model, except cargo doesn't hold
 /// long running shared locks since each cargo command is pretty short lived.
 ///
-/// # In memory cache
-///
-/// [`get`] resolves the key and caches the resulting `Sources(PathBuf)` or `NoSources` in
-/// memory. This is mostly to avoid re-attempting to generate sources for packages that we
-/// know already have `NoSources`. Results for packages that weren't installed at all are
-/// not cached, so later installs within the same session can still attempt a source
-/// generation.
-///
 /// # Cleanup
 ///
 /// Cache cleanup is attempted once per session but is only possible if there are no other
@@ -123,19 +115,15 @@ pub struct PackageSourcesCache {
     /// Shared lock on the root `.lock`, held for the life of this cache.
     ///
     /// Blocks any other process from acquiring the root exclusive lock (the only
-    /// thing that can delete entries). That way, any PathBuf we hand out remains
+    /// thing that can delete entries). That way, any `PathBuf` we hand out remains
     /// valid for the life of this cache (as long as `PackageSourcesCache` itself
     /// is not dropped!).
     _root_lock: FileLock,
 
-    /// In memory cache to avoid repeated lookups, particularly for packages we've already
-    /// determined have no sources.
-    cache: HashMap<String, Status>,
-}
-
-enum Status {
-    NoSources,
-    Sources(PathBuf),
+    /// Set of packages which are installed, but we failed to populate their sources (from
+    /// CRAN or srcrefs). If we request sources for one of these packages a second time,
+    /// we don't attempt expensive source generation again.
+    source_unavailable: HashSet<String>,
 }
 
 /// Completion sentinel for a cache entry, written last. Also used to determine if we can
@@ -154,11 +142,11 @@ impl PackageSourcesCache {
         cache_root.create_dir()?;
 
         // Try to clean the cache. Only works if no other processes hold a shared root lock.
-        if let Some(cache_root_lockfile) = cache_root.try_open_rw_exclusive_create(LOCK_FILENAME)? {
-            if let Err(err) = Self::clean(&cache_root_lockfile) {
+        if let Some(root_lock) = cache_root.try_open_rw_exclusive_create(LOCK_FILENAME)? {
+            if let Err(err) = Self::clean(&root_lock) {
                 log::warn!("Failed to clean sources cache: {err:?}");
             }
-            drop(cache_root_lockfile);
+            drop(root_lock);
         }
 
         // Take shared lock for the lifetime of the cache so any paths we hand out stay valid
@@ -169,7 +157,7 @@ impl PackageSourcesCache {
             r_libpaths,
             cache_root,
             _root_lock: root_lock,
-            cache: HashMap::new(),
+            source_unavailable: HashSet::new(),
         })
     }
 
@@ -198,8 +186,8 @@ impl PackageSourcesCache {
             }
         }
         let Some(libpath) = libpath else {
-            // Not even installed. We don't record anything about this package in
-            // the in memory cache in case the user installs it later in the session.
+            // Not even installed. We don't record this package in `source_unavailable` in
+            // case the user installs it later in the session.
             return Ok(None);
         };
 
@@ -221,12 +209,10 @@ impl PackageSourcesCache {
         let key =
             format!("{package}_{version}_libpath-{libpath_hash}_description-{description_hash}");
 
-        // In memory cache check
-        if let Some(status) = self.cache.get(&key) {
-            match status {
-                Status::NoSources => return Ok(None),
-                Status::Sources(sources) => return Ok(Some(sources.clone())),
-            }
+        // If we've already tried to generate sources for this installed package but
+        // failed, then refuse to attempt expensive source generation again
+        if self.source_unavailable.contains(&key) {
+            return Ok(None);
         }
 
         let destination = self.cache_root.join(&key);
@@ -235,8 +221,6 @@ impl PackageSourcesCache {
 
         // Read path: completion sentinel present, already exists on disk
         if destination_path.join(METADATA_FILENAME).exists() {
-            self.cache
-                .insert(key.clone(), Status::Sources(destination_path.to_path_buf()));
             return Ok(Some(destination_path.to_path_buf()));
         }
 
@@ -247,8 +231,6 @@ impl PackageSourcesCache {
         // Re-check: another writer may have populated the key while we waited for an
         // exclusive lock
         if destination_path.join(METADATA_FILENAME).exists() {
-            self.cache
-                .insert(key.clone(), Status::Sources(destination_path.to_path_buf()));
             return Ok(Some(destination_path.to_path_buf()));
         }
 
@@ -266,11 +248,10 @@ impl PackageSourcesCache {
             &description_hash,
             destination_path,
         )? {
-            self.cache
-                .insert(key.clone(), Status::Sources(destination_path.to_path_buf()));
             Ok(Some(destination_path.to_path_buf()))
         } else {
-            self.cache.insert(key, Status::NoSources);
+            // Never try source generation for this key again
+            self.source_unavailable.insert(key);
             Ok(None)
         }
     }
@@ -378,8 +359,8 @@ impl PackageSourcesCache {
     /// Walks all cache entries and evicts ones that are provably stale.
     ///
     /// Caller must hold the root exclusive lock.
-    fn clean(cache_root_lockfile: &file_lock::FileLock) -> anyhow::Result<()> {
-        let root = cache_root_lockfile.parent();
+    fn clean(root_lock: &file_lock::FileLock) -> anyhow::Result<()> {
+        let root = root_lock.parent();
         let now = Utc::now();
 
         for entry in std::fs::read_dir(root)? {
