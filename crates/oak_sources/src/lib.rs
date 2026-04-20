@@ -84,6 +84,9 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// parallel, while guaranteeing that they cannot interfere with each other or a cleanup
 /// run.
 ///
+/// This cache design is somewhat similar to cargo's model, except cargo doesn't hold
+/// long running shared locks since each cargo command is pretty short lived.
+///
 /// # In memory cache
 ///
 /// [`get`] resolves the key and caches the resulting `Sources(PathBuf)` or `NoSources` in
