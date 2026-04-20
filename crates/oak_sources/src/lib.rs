@@ -107,8 +107,8 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// [`get`]: PackageSourcesCache::get
 /// [`clean`]: PackageSourcesCache::clean
 pub struct PackageSourcesCache {
-    /// Path to `Rscript`
-    r_script_path: PathBuf,
+    /// Path to `R` binary
+    r: PathBuf,
 
     /// Set of R library paths
     r_libpaths: Vec<PathBuf>,
@@ -141,7 +141,7 @@ struct Metadata {
 }
 
 impl PackageSourcesCache {
-    pub fn new(r_script_path: PathBuf, r_libpaths: Vec<PathBuf>) -> anyhow::Result<Self> {
+    pub fn new(r: PathBuf, r_libpaths: Vec<PathBuf>) -> anyhow::Result<Self> {
         let cache_root = file_lock::Filesystem::new(crate::fs::sources_dir()?);
         cache_root.create_dir()?;
 
@@ -157,7 +157,7 @@ impl PackageSourcesCache {
         let root_lock = cache_root.open_ro_shared_create(LOCK_FILENAME)?;
 
         Ok(Self {
-            r_script_path,
+            r,
             r_libpaths,
             cache_root,
             _root_lock: root_lock,
@@ -300,7 +300,7 @@ impl PackageSourcesCache {
             package,
             version,
             destination_path,
-            &self.r_script_path,
+            &self.r,
             &self.r_libpaths,
         ) {
             Ok(true) => {

@@ -11,7 +11,7 @@ pub(crate) fn cache_srcref(
     package: &str,
     version: &str,
     destination: &Path,
-    r_script_path: &Path,
+    r: &Path,
     r_libpaths: &[PathBuf],
 ) -> anyhow::Result<bool> {
     let args = &[package, version];
@@ -25,8 +25,7 @@ pub(crate) fn cache_srcref(
         .join(if cfg!(windows) { ";" } else { ":" });
     let env = &[("R_LIBS", libpaths.as_str())];
 
-    let script = write_script(SCRIPT)?;
-    let output = oak_r_process::run_script(r_script_path, script.path(), args, env)?;
+    let output = oak_r_process::run_text(r, SCRIPT, args, env)?;
 
     let code = output.status.code().unwrap_or(1);
 
@@ -61,18 +60,6 @@ pub(crate) fn cache_srcref(
     }
 
     Ok(true)
-}
-
-/// Writes a script string to a temporary file for execution by `Rscript`.
-fn write_script(script: &str) -> anyhow::Result<tempfile::NamedTempFile> {
-    use std::io::Write;
-    let mut file = tempfile::Builder::new()
-        .suffix(".R")
-        .tempfile()
-        .map_err(|err| anyhow::anyhow!("Failed to create temporary script file: {err}"))?;
-    file.write_all(script.as_bytes())
-        .map_err(|err| anyhow::anyhow!("Failed to write temporary script file: {err}"))?;
-    Ok(file)
 }
 
 /// Parses the concatenated srcref output into individual files.
@@ -198,7 +185,7 @@ fn_a <- function() {
         assert_eq!(parse_line_directive("#line 1 missing-quotes"), None);
     }
 
-    /// Requires Rscript on PATH and internet access
+    /// Requires R on the PATH and internet access
     ///
     /// Installs source version of {generics} from CRAN into a temporary library, then
     /// extracts the R source files via srcref metadata. We use {generics} because it
@@ -207,34 +194,33 @@ fn_a <- function() {
     fn test_srcref_extraction() {
         use std::process::Command;
 
-        // Find Rscript on PATH.
+        // Find R on PATH.
         // On Windows, `which` (from Git) returns POSIX paths that `Command::new()` can't
         // resolve. Use `where` which returns native paths.
         let output = Command::new(if cfg!(windows) { "where" } else { "which" })
-            .arg("Rscript")
+            .arg("R")
             .output()
-            .unwrap_or_else(|err| panic!("Failed to find Rscript: {err}"));
+            .unwrap_or_else(|err| panic!("Failed to find R: {err}"));
         assert!(output.status.success());
 
         // Parse (`where` on Windows can return multiple matches, take the first)
-        let r_script_path = PathBuf::from(
+        let r = PathBuf::from(
             String::from_utf8(output.stdout)
-                .expect("Non-UTF8 Rscript path")
+                .expect("Non-UTF8 R path")
                 .trim()
                 .lines()
                 .next()
-                .expect("Rscript should exist"),
+                .expect("R should exist"),
         );
 
-        // Get base libpaths from this Rscript
-        let output = Command::new(&r_script_path)
-            .args([
-                "--vanilla",
-                "-e",
-                r#"cat(normalizePath(.libPaths()), sep = "\n")"#,
-            ])
-            .output()
-            .expect("Failed to get .libPaths()");
+        // Get base libpaths from R
+        let output = oak_r_process::run_text(
+            &r,
+            r#"cat(normalizePath(.libPaths()), sep = "\n")"#,
+            &[],
+            &[],
+        )
+        .expect("Failed to get .libPaths()");
         assert!(output.status.success(), "Failed to query .libPaths()");
 
         let r_libpaths_original: Vec<PathBuf> = String::from_utf8(output.stdout)
@@ -253,29 +239,27 @@ fn_a <- function() {
             r_libpaths.path().display().to_string().replace('\\', "/");
 
         // Install generics from CRAN source with srcrefs preserved
-        let status = Command::new(&r_script_path)
-            .args([
-                "--vanilla",
-                "-e",
-                &format!(
+        let output = oak_r_process::run_text(
+            &r,
+            &format!(
                     r#"install.packages("generics", lib = "{r_libpaths_for_interpolation}", repos = "https://cran.r-project.org", type = "source", INSTALL_opts = "--with-keep.source")"#,
                 ),
-            ])
-            .output()
-            .expect("Failed to run install.packages()");
-        assert!(status.status.success());
+            &[],
+            &[],
+        )
+        .expect("Failed to run install.packages()");
+        assert!(output.status.success());
 
         // Query the installed generics version
-        let output = Command::new(&r_script_path)
-            .args([
-                "--vanilla",
-                "-e",
-                &format!(
+        let output = oak_r_process::run_text(
+            &r,
+            &format!(
                     r#"cat(as.character(packageVersion("generics", lib.loc = "{r_libpaths_for_interpolation}")))"#,
                 ),
-            ])
-            .output()
-            .expect("Failed to get generics version");
+            &[],
+            &[],
+        )
+        .expect("Failed to get generics version");
         assert!(output.status.success());
 
         let version = String::from_utf8(output.stdout)
@@ -290,14 +274,7 @@ fn_a <- function() {
         // Cache destination
         let destination = tempfile::TempDir::new().unwrap();
 
-        let ok = cache_srcref(
-            "generics",
-            &version,
-            destination.path(),
-            &r_script_path,
-            &all_libpaths,
-        )
-        .unwrap();
+        let ok = cache_srcref("generics", &version, destination.path(), &r, &all_libpaths).unwrap();
         assert!(ok);
 
         // Verify R source files were written
