@@ -69,11 +69,11 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 ///
 /// The cache root `.lock` can be locked as shared or exclusive:
 ///
-/// - **Shared root lock** is held for the lifetime of this `PackageSourcesCache`. The
-///   invariant is that if you hold a shared root lock, you can read from or append new
-///   entries to the cache, but never delete from it. Multiple sessions can hold this
-///   simultaneously. The main purpose is to prevent cleanup from running so that any
-///   PathBuf handed out by [`get`] stays valid while this lock is held.
+/// - **Shared root lock** is held for the lifetime of this `PackageCache`. The invariant
+///   is that if you hold a shared root lock, you can read from or append new entries to
+///   the cache, but never delete from it. Multiple sessions can hold this simultaneously.
+///   The main purpose is to prevent cleanup from running so that any PathBuf handed out
+///   by [`get`] stays valid while this lock is held.
 ///
 /// - **Exclusive root lock** is only attempted to be taken at startup to run [`clean`].
 ///   Skipped if any other session already holds a shared root lock, which is fine, we
@@ -104,9 +104,9 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// - Deleting if the package it originated from no longer exists
 /// - Deleting if the DESCRIPTION it originated from has changed
 ///
-/// [`get`]: PackageSourcesCache::get
-/// [`clean`]: PackageSourcesCache::clean
-pub struct PackageSourcesCache {
+/// [`get`]: PackageCache::get
+/// [`clean`]: PackageCache::clean
+pub struct PackageCache {
     /// Path to `R` binary
     r: PathBuf,
 
@@ -118,10 +118,9 @@ pub struct PackageSourcesCache {
 
     /// Shared lock on the root `.lock`, held for the life of this cache.
     ///
-    /// Blocks any other process from acquiring the root exclusive lock (the only
-    /// thing that can delete entries). That way, any `PathBuf` we hand out remains
-    /// valid for the life of this cache (as long as `PackageSourcesCache` itself
-    /// is not dropped!).
+    /// Blocks any other process from acquiring the root exclusive lock (the only thing
+    /// that can delete entries). That way, any `PathBuf` we hand out remains valid for
+    /// the life of this cache (as long as `PackageCache` itself is not dropped!).
     _root_lock: FileLock,
 
     /// Set of packages which are installed, but we failed to populate their sources (from
@@ -140,7 +139,7 @@ struct Metadata {
     generated_at: DateTime<Utc>,
 }
 
-impl PackageSourcesCache {
+impl PackageCache {
     pub fn new(r: PathBuf, r_libpaths: Vec<PathBuf>) -> anyhow::Result<Self> {
         let cache_root = file_lock::Filesystem::new(crate::fs::sources_dir()?);
         cache_root.create_dir()?;
