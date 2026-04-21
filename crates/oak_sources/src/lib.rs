@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs::read_to_string;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::RwLock;
 
 use chrono::DateTime;
 use chrono::TimeDelta;
@@ -126,7 +127,7 @@ pub struct PackageCache {
     /// Set of packages which are installed, but we failed to populate their sources (from
     /// CRAN or srcrefs). If we request sources for one of these packages a second time,
     /// we don't attempt expensive source generation again.
-    source_unavailable: HashSet<String>,
+    source_unavailable: RwLock<HashSet<String>>,
 }
 
 /// Completion sentinel for a cache entry, written last. Also used to determine if we can
@@ -160,7 +161,7 @@ impl PackageCache {
             r_libpaths,
             cache_root,
             _root_lock: root_lock,
-            source_unavailable: HashSet::new(),
+            source_unavailable: RwLock::new(HashSet::new()),
         })
     }
 
@@ -168,7 +169,7 @@ impl PackageCache {
     ///
     /// May spawn an R subprocess or download from CRAN (in a blocking manner) to
     /// generate the sources, so keep that in mind when calling this.
-    pub fn get(&mut self, package: &str) -> Option<PathBuf> {
+    pub fn get(&self, package: &str) -> Option<PathBuf> {
         match self.get_impl(package) {
             Ok(Some(sources)) => Some(sources),
             Ok(None) => None,
@@ -179,7 +180,7 @@ impl PackageCache {
         }
     }
 
-    fn get_impl(&mut self, package: &str) -> anyhow::Result<Option<PathBuf>> {
+    fn get_impl(&self, package: &str) -> anyhow::Result<Option<PathBuf>> {
         // Find install path of the package
         let mut libpath = None;
         for r_libpath in &self.r_libpaths {
@@ -214,7 +215,11 @@ impl PackageCache {
 
         // If we've already tried to generate sources for this installed package but
         // failed, then refuse to attempt expensive source generation again
-        if self.source_unavailable.contains(&key) {
+        if self
+            .source_unavailable
+            .read()
+            .is_ok_and(|set| set.contains(&key))
+        {
             return Ok(None);
         }
 
@@ -254,7 +259,10 @@ impl PackageCache {
             Ok(Some(destination_path.to_path_buf()))
         } else {
             // Never try source generation for this key again
-            self.source_unavailable.insert(key);
+            self.source_unavailable
+                .write()
+                .ok()
+                .map(|mut set| set.insert(key));
             Ok(None)
         }
     }
