@@ -1582,9 +1582,9 @@ fn test_source_resolver_injects_definitions() {
     let exports = index.file_exports();
     assert!(!exports.iter().any(|(name, _)| *name == "helper"));
 
-    // file_all_definitions() includes sourced definitions
+    // file_source_exports() includes sourced definitions
     let own_url = Url::parse("file:///test/main.R").unwrap();
-    let all_defs = index.file_all_definitions(&own_url);
+    let all_defs = index.file_source_exports(&own_url);
     let sourced = all_defs
         .iter()
         .find(|(name, _, _)| *name == "helper")
