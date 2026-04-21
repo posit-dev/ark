@@ -38,6 +38,13 @@ jobs:
         with:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
+          # Putting Rtools related tooling on the PATH causes Rust crate
+          # compilation to pick up Rtools's `link.exe` and mingw32 related
+          # tooling, in particular it can cause aws-lc-sys compilation to fail
+          # on ARM Windows, where it uses clang-cl and has to compile in a bunch
+          # of C code.
+          # https://github.com/aws/aws-lc-rs/blob/main/book/src/requirements/windows.md
+          windows-path-include-rtools: false
 
       - name: Install R Packages Required For Tests
         uses: r-lib/actions/setup-r-dependencies@v2

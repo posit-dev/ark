@@ -198,6 +198,8 @@ If changes are needed in these files, that must happen in the separate Positron 
 
 - Always prefer importing with `use` instead of qualifying with `::`, unless specifically requested in these instructions or by the user, or you see existing `::` usages in the file you're editing.
 
+- Prefer file level or `mod tests` level `use` statements over function level `use` statements.
+
 - When two code paths do analogous things, make them structurally parallel so the symmetry is visible.
 
 - Don't let comments drift from the code. If behaviour changes, update nearby comments. If a file is renamed, update its header comment.

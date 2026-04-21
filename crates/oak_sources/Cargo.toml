@@ -1,0 +1,27 @@
+[package]
+name = "oak_sources"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+etcetera.workspace = true
+flate2.workspace = true
+hex.workspace = true
+log.workspace = true
+oak_fs.workspace = true
+oak_package.workspace = true
+oak_r_process.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

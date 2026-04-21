@@ -1646,6 +1646,7 @@ foo
                 name: "mockpkg".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                repository: None,
                 fields: Dcf::new(),
             };
             let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
@@ -1742,6 +1743,7 @@ foo
                 name: "pkg1".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                repository: None,
                 fields: Dcf::new(),
             };
             let package1 =
@@ -1757,6 +1759,7 @@ foo
                 name: "pkg2".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                repository: None,
                 fields: Dcf::new(),
             };
             let package2 =
@@ -1814,6 +1817,7 @@ foo
                 name: "pkg".to_string(),
                 version: "1.0.0".to_string(),
                 depends: vec![],
+                repository: None,
                 fields: Dcf::new(),
             };
             let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
