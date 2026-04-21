@@ -6,6 +6,7 @@ use std::collections::HashSet;
 use std::fs::read_to_string;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::RwLock;
 
 use chrono::DateTime;
@@ -25,6 +26,9 @@ const LOCK_FILENAME: &str = ".lock";
 
 /// Name of the completion sentinel written last in each cache entry.
 const METADATA_FILENAME: &str = ".metadata";
+
+/// Number of threads used for the prefetch pool
+const NUMBER_OF_PREFETCH_THREADS: usize = 4;
 
 /// Minimum age before `clean()` will evict a stale entry.
 ///
@@ -106,8 +110,23 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 /// - Deleting if the DESCRIPTION it originated from has changed
 ///
 /// [`get`]: PackageCache::get
-/// [`clean`]: PackageCache::clean
+/// [`clean`]: PackageCacheInner::clean
 pub struct PackageCache {
+    inner: Arc<PackageCacheInner>,
+
+    /// Small threadpool used for background prefetching
+    pool: threadpool::ThreadPool,
+
+    /// Shared lock on the root `.lock`, held for the life of this cache.
+    ///
+    /// Blocks any other process from acquiring the root exclusive lock (the only thing
+    /// that can delete entries). That way, any `PathBuf` we hand out remains valid for
+    /// the life of this cache (as long as `PackageCache` itself is not dropped!).
+    _root_lock: FileLock,
+}
+
+/// Data shared across prefetch threads
+struct PackageCacheInner {
     /// Path to `R` binary
     r: PathBuf,
 
@@ -116,13 +135,6 @@ pub struct PackageCache {
 
     /// On disk cache directory root
     cache_root: file_lock::Filesystem,
-
-    /// Shared lock on the root `.lock`, held for the life of this cache.
-    ///
-    /// Blocks any other process from acquiring the root exclusive lock (the only thing
-    /// that can delete entries). That way, any `PathBuf` we hand out remains valid for
-    /// the life of this cache (as long as `PackageCache` itself is not dropped!).
-    _root_lock: FileLock,
 
     /// Set of packages which are installed, but we failed to populate their sources (from
     /// CRAN or srcrefs). If we request sources for one of these packages a second time,
@@ -147,7 +159,7 @@ impl PackageCache {
 
         // Try to clean the cache. Only works if no other processes hold a shared root lock.
         if let Some(root_lock) = cache_root.try_open_rw_exclusive_create(LOCK_FILENAME)? {
-            if let Err(err) = Self::clean(&root_lock) {
+            if let Err(err) = PackageCacheInner::clean(root_lock.parent()) {
                 log::warn!("Failed to clean sources cache: {err:?}");
             }
             drop(root_lock);
@@ -157,19 +169,46 @@ impl PackageCache {
         let root_lock = cache_root.open_ro_shared_create(LOCK_FILENAME)?;
 
         Ok(Self {
-            r,
-            r_libpaths,
-            cache_root,
+            inner: Arc::new(PackageCacheInner {
+                r,
+                r_libpaths,
+                cache_root,
+                source_unavailable: RwLock::new(HashSet::new()),
+            }),
+            pool: threadpool::ThreadPool::new(NUMBER_OF_PREFETCH_THREADS),
             _root_lock: root_lock,
-            source_unavailable: RwLock::new(HashSet::new()),
         })
+    }
+
+    /// Populate the cache for `package` in the background
+    ///
+    /// This method is fire-and-forget. Callers anticipate that at some time in the future
+    /// they are likely to require sources for this package, but don't gain access to
+    /// them now.
+    ///
+    /// It is perfectly safe to call this followed by a `get()` at some time shortly
+    /// after, even if the prefetch hasn't finished yet.
+    pub fn prefetch(&self, package: &str) {
+        self.pool.execute({
+            let inner = Arc::clone(&self.inner);
+            let package = package.to_string();
+            move || {
+                inner.get(&package);
+            }
+        });
     }
 
     /// Get a package's cached source folder
     ///
-    /// May spawn an R subprocess or download from CRAN (in a blocking manner) to
-    /// generate the sources, so keep that in mind when calling this.
+    /// Blocks and may spawn an R subprocess or download from CRAN (in a blocking manner)
+    /// to generate the sources.
     pub fn get(&self, package: &str) -> Option<PathBuf> {
+        self.inner.get(package)
+    }
+}
+
+impl PackageCacheInner {
+    fn get(&self, package: &str) -> Option<PathBuf> {
         match self.get_impl(package) {
             Ok(Some(sources)) => Some(sources),
             Ok(None) => None,
@@ -370,8 +409,7 @@ impl PackageCache {
     /// Walks all cache entries and evicts ones that are provably stale.
     ///
     /// Caller must hold the root exclusive lock.
-    fn clean(root_lock: &file_lock::FileLock) -> anyhow::Result<()> {
-        let root = root_lock.parent();
+    fn clean(root: &Path) -> anyhow::Result<()> {
         let now = Utc::now();
 
         for entry in std::fs::read_dir(root)? {
