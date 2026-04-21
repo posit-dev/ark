@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::process::Output;
@@ -52,8 +53,6 @@ pub fn run_text(
 }
 
 fn write_tempfile(text: &str) -> anyhow::Result<tempfile::NamedTempFile> {
-    use std::io::Write;
-
     let mut file = tempfile::Builder::new()
         .suffix(".R")
         .tempfile()
