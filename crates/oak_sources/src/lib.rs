@@ -127,6 +127,11 @@ pub struct PackageCache {
     /// Set of packages which are installed, but we failed to populate their sources (from
     /// CRAN or srcrefs). If we request sources for one of these packages a second time,
     /// we don't attempt expensive source generation again.
+    ///
+    /// Inside an [RwLock] so that [PackageCache::get()] avoids being `mut`, allowing a
+    /// caller to wrap a [PackageCache] in an [std::sync::Arc] and call
+    /// [PackageCache::get()] in the background on a thread, acting as a form of
+    /// "prefetching".
     source_unavailable: RwLock<HashSet<String>>,
 }
 
