@@ -175,7 +175,7 @@ impl PackageCache {
     /// May spawn an R subprocess or download from CRAN (in a blocking manner) to
     /// generate the sources, so keep that in mind when calling this.
     pub fn get(&self, package: &str) -> Option<PathBuf> {
-        match self.get_impl(package) {
+        match self.get_result(package) {
             Ok(Some(sources)) => Some(sources),
             Ok(None) => None,
             Err(err) => {
@@ -185,7 +185,7 @@ impl PackageCache {
         }
     }
 
-    fn get_impl(&self, package: &str) -> anyhow::Result<Option<PathBuf>> {
+    fn get_result(&self, package: &str) -> anyhow::Result<Option<PathBuf>> {
         // Find install path of the package
         let mut libpath = None;
         for r_libpath in &self.r_libpaths {
