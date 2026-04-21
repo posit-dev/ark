@@ -346,6 +346,13 @@ impl PackageCache {
             }
         }
 
+        // TODO: Also consider Bioconductor as a source, which seem to have a `biocViews`
+        // field in their DESCRIPTION according to some renv docs. We will also need a
+        // Bioconductor version to download for. pkgcache has some R code that helps
+        // with this kind of thing.
+        // https://github.com/rstudio/renv/blob/c689571a0a6ce83a2f82a93b396f3a1ba87b0282/vignettes/package-sources.Rmd#L34-L50
+        // https://github.com/r-lib/pkgcache/blob/05d430e907064c5dea822ff82d4257f0b5668070/R/bioc.R
+
         Ok(false)
     }
 
