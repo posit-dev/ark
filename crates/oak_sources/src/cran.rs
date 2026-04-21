@@ -30,9 +30,11 @@ pub(crate) fn cache_cran(package: &str, version: &str, destination: &Path) -> an
 }
 
 fn download(package: &str, version: &str) -> anyhow::Result<reqwest::blocking::Response> {
+    let mirrors = ["https://cran.r-project.org", "https://cran.rstudio.com"];
+
     // Try released version
-    let url = format!("https://cran.r-project.org/src/contrib/{package}_{version}.tar.gz");
-    let response = reqwest::blocking::get(&url)?;
+    let response =
+        download_with_mirrors(&format!("src/contrib/{package}_{version}.tar.gz"), &mirrors)?;
 
     if response.status() != reqwest::StatusCode::NOT_FOUND {
         // Found it
@@ -40,13 +42,43 @@ fn download(package: &str, version: &str) -> anyhow::Result<reqwest::blocking::R
     }
 
     // Try archive
-    let url = format!(
-        "https://cran.r-project.org/src/contrib/Archive/{package}/{package}_{version}.tar.gz"
-    );
-    let response = reqwest::blocking::get(&url)?;
+    let response = download_with_mirrors(
+        &format!("src/contrib/Archive/{package}/{package}_{version}.tar.gz"),
+        &mirrors,
+    )?;
 
     // Return `response` whether or not we found something
     Ok(response)
+}
+
+fn download_with_mirrors(
+    suffix: &str,
+    mirrors: &[&str],
+) -> anyhow::Result<reqwest::blocking::Response> {
+    if mirrors.is_empty() {
+        panic!("`mirrors` can't be empty.");
+    }
+
+    let mut out = None;
+
+    for mirror in mirrors {
+        let url = format!("{mirror}/{suffix}");
+        let response = reqwest::blocking::get(&url)?;
+        let status = response.status();
+
+        out = Some(response);
+
+        if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+            // Try next mirror, this one is temporarily unavailable
+            continue;
+        } else {
+            // We got an actual response of some kind from this mirror, return it
+            break;
+        }
+    }
+
+    // Safety: We guarantee that there is at least 1 mirror
+    Ok(out.unwrap())
 }
 
 fn extract(
