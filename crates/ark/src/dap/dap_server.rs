@@ -204,6 +204,7 @@ impl DapHandler {
             supports_conditional_breakpoints: Some(true),
             supports_hit_conditional_breakpoints: Some(true),
             supports_log_points: Some(true),
+            supports_configuration_done_request: Some(true),
             ..Default::default()
         });
         Ok(DapHandlerOutput {

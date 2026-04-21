@@ -446,7 +446,9 @@ fn test_notebook_breakpoint_stops_execution() {
     // Shell reply arrives now — kernel unblocked after continue
     frontend.recv_shell_execute_reply();
 
-    // Drain remaining IOPub messages (debug events, busy/idle from control, etc.)
+    // IOPub messages from the control thread (busy/idle for the debug_request)
+    // and the R thread (debug_event Continued, execute_request idle) arrive in
+    // unpredictable order since they originate from different threads.
     while frontend
         .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
         .is_some()
@@ -460,6 +462,110 @@ fn test_notebook_breakpoint_stops_execution() {
         "arguments": { "restart": false }
     }));
     frontend.recv_debug_reply();
+    // Same race as above between control-thread and R-thread IOPub messages.
+    while frontend
+        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
+        .is_some()
+    {}
+}
+
+#[test]
+fn test_notebook_interrupt_at_breakpoint_exits_debugger() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let fn_code = "fn3 <- function() {\n  x <- 1\n  x <- 2\n  x <- 3\n  x\n}";
+
+    // Dump cell and set a breakpoint at line 3 (x <- 2)
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": fn_code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+    let source_path = dump_reply["body"]["sourcePath"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": &source_path },
+            "breakpoints": [{ "line": 3 }]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Attach so breakpoints fire
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "attach",
+        "arguments": { "request": "attach", "type": "notebook" }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_debug_event(); // thread started
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Define the function
+    frontend.send_execute_request_with_metadata(
+        fn_code,
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-def-int" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let bp_event = frontend.recv_iopub_debug_event();
+    assert_eq!(bp_event["event"], "breakpoint");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call the function — hits breakpoint, kernel stays busy
+    frontend.send_execute_request_with_metadata(
+        "fn3()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-call-int" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let stopped = frontend.recv_iopub_debug_event();
+    assert_eq!(stopped["event"], "stopped");
+
+    // Shell reply hasn't arrived — kernel is paused
+    assert!(!frontend.shell_socket.poll_incoming(200).unwrap());
+
+    // Send interrupt — in notebook mode this should exit the debugger
+    frontend.send_interrupt_request();
+    frontend.recv_control_interrupt_reply();
+
+    // Shell reply arrives — kernel unblocked by the Q command
+    frontend.recv_shell_execute_reply();
+
+    // IOPub messages from the control thread (interrupt busy/idle) and
+    // R thread (debug_event Continued, execute_request idle) race.
+    while frontend
+        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
+        .is_some()
+    {}
+
+    // Disconnect
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 4,
+        "command": "disconnect",
+        "arguments": { "restart": false }
+    }));
+    frontend.recv_debug_reply();
+    // Same race as above.
     while frontend
         .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
         .is_some()

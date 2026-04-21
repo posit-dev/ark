@@ -20,6 +20,7 @@ use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_request::ExecuteRequestPositron;
 use crate::wire::handshake_reply::HandshakeReply;
 use crate::wire::input_reply::InputReply;
+use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -236,6 +237,10 @@ impl DummyFrontend {
         self.send_control(ShutdownRequest { restart })
     }
 
+    pub fn send_interrupt_request(&self) -> String {
+        self.send_control(InterruptRequest {})
+    }
+
     pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
         self.send_shell(ExecuteRequest {
             code: String::from(code),
@@ -361,6 +366,15 @@ impl DummyFrontend {
         assert_matches!(message, Message::ShutdownReply(message) => {
             message.content
         })
+    }
+
+    /// Receive from Control and assert `InterruptReply` message.
+    #[track_caller]
+    pub fn recv_control_interrupt_reply(&self) {
+        let message = self.recv_control();
+        assert_matches!(message, Message::InterruptReply(message) => {
+            assert_eq!(message.content.status, Status::Ok);
+        });
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.

@@ -19,6 +19,7 @@ use amalthea::wire::shutdown_reply::ShutdownReply;
 use amalthea::wire::shutdown_request::ShutdownRequest;
 use async_trait::async_trait;
 use crossbeam::channel::Sender;
+use stdext::result::ResultExt;
 
 use crate::console::SessionMode;
 use crate::dap::dap_jupyter_handler::DapJupyterHandler;
@@ -27,6 +28,8 @@ use crate::request::RRequest;
 
 pub struct Control {
     r_request_tx: Sender<RRequest>,
+    dap: Arc<Mutex<Dap>>,
+    session_mode: SessionMode,
     dap_handler: DapJupyterHandler,
 }
 
@@ -40,9 +43,11 @@ impl Control {
         if matches!(session_mode, SessionMode::Notebook) {
             dap.lock().unwrap().set_iopub_tx(iopub_tx.clone());
         }
-        let dap_handler = DapJupyterHandler::new(dap, r_request_tx.clone(), iopub_tx);
+        let dap_handler = DapJupyterHandler::new(dap.clone(), r_request_tx.clone(), iopub_tx);
         Self {
             r_request_tx,
+            dap,
+            session_mode,
             dap_handler,
         }
     }
@@ -82,7 +87,21 @@ impl ControlHandler for Control {
 
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         log::info!("Received interrupt request");
-        crate::sys::control::handle_interrupt_request();
+
+        // In notebook mode, if the kernel is paused at a breakpoint the R
+        // thread is blocked in the event loop (not running R code), so a
+        // SIGINT would have no effect. Send a "Q" debug command instead to
+        // exit the browser and unblock execution.
+        if matches!(self.session_mode, SessionMode::Notebook) &&
+            self.dap.lock().unwrap().is_debugging
+        {
+            self.r_request_tx
+                .send(RRequest::DebugCommand(crate::request::DebugRequest::Quit))
+                .log_err();
+        } else {
+            crate::sys::control::handle_interrupt_request();
+        }
+
         Ok(InterruptReply { status: Status::Ok })
     }
 
