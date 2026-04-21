@@ -26,9 +26,12 @@ const TMP_FILE_SUFFIX: &str = ".r";
 /// `std::env::temp_dir()` to return `/tmp` instead of the per-session
 /// `/var/folders/.../T/` directory.
 static TMP_FILE_PREFIX: LazyLock<String> = LazyLock::new(|| {
-    let tmp_dir = std::env::temp_dir();
+    let mut tmp_dir = std::env::temp_dir();
     let pid = std::process::id();
-    format!("{}/ark-debug-{pid}/", tmp_dir.display())
+    tmp_dir.push(format!("ark-debug-{pid}"));
+    // Trailing separator so the prefix can be concatenated directly with
+    // the hash and suffix (e.g. `{prefix}{hash}.r`).
+    format!("{}/", tmp_dir.display())
 });
 
 /// The temporary file prefix used for notebook debug source files.
