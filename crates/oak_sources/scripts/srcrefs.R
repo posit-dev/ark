@@ -1,5 +1,8 @@
 # Extract source code from an installed R package using srcref metadata.
 #
+# See also `lobstr::src()`:
+# https://github.com/r-lib/lobstr/blob/85dd18d43e4612f98b05bb93019a7b12fb0bbf6b/R/src.R#L205
+#
 # Arguments (via commandArgs):
 #   1. package - Package name
 #   2. version - Expected package version
