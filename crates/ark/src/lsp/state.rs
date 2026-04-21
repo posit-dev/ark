@@ -260,28 +260,17 @@ impl WorldState {
             self.resolve_source(base_dir, nested_path, stack)
         });
 
-        let mut definitions: Vec<(String, Url, TextRange)> = index
-            .file_all_definitions(&url)
+        let definitions: Vec<(String, Url, TextRange)> = index
+            .file_source_exports(&url)
             .into_iter()
             .map(|(name, file, range)| (name.to_string(), file, range))
             .collect();
 
-        let mut packages = Vec::new();
-        for d in index.file_directives() {
-            match d.kind() {
-                oak_index::semantic_index::DirectiveKind::Attach(pkg) => {
-                    packages.push(pkg.clone());
-                },
-                oak_index::semantic_index::DirectiveKind::Source {
-                    file: source_file,
-                    exports,
-                } => {
-                    for (name, range) in exports {
-                        definitions.push((name.clone(), source_file.clone(), *range));
-                    }
-                },
-            }
-        }
+        let packages: Vec<String> = index
+            .file_attached_packages()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
 
         stack.remove(&url);
 

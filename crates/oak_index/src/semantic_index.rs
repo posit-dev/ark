@@ -130,16 +130,15 @@ impl SemanticIndex {
             .collect()
     }
 
-    /// All definitions visible at file scope, including sourced ones.
-    ///
-    /// Each entry carries the file URL where the definition lives and
-    /// the range within that file. For own definitions, `file_url` is
-    /// passed through; for `Sourced` definitions, the URL comes from
-    /// the `DefinitionKind`.
-    pub fn file_all_definitions(&self, file_url: &Url) -> Vec<(&str, Url, TextRange)> {
+    /// All definitions that a `source()` caller would see from this file:
+    /// own file-scope definitions, `Sourced` definitions injected into the
+    /// use-def map, and exports from `Source` directives (transitive
+    /// `source()` calls with `local = FALSE` in nested scopes).
+    pub fn file_source_exports(&self, file_url: &Url) -> Vec<(&str, Url, TextRange)> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
-        self.definitions[file_scope]
+
+        let mut defs: Vec<(&str, Url, TextRange)> = self.definitions[file_scope]
             .iter()
             .map(|(_id, def)| {
                 let name = symbols.symbol(def.symbol()).name();
@@ -148,6 +147,27 @@ impl SemanticIndex {
                     _ => file_url.clone(),
                 };
                 (name, url, def.range())
+            })
+            .collect();
+
+        for directive in &self.directives {
+            if let DirectiveKind::Source { file, exports } = &directive.kind {
+                for (name, range) in exports {
+                    defs.push((name.as_str(), file.clone(), *range));
+                }
+            }
+        }
+
+        defs
+    }
+
+    /// Package names from `library()` / `require()` directives in this file.
+    pub fn file_attached_packages(&self) -> Vec<&str> {
+        self.directives
+            .iter()
+            .filter_map(|d| match &d.kind {
+                DirectiveKind::Attach(pkg) => Some(pkg.as_str()),
+                _ => None,
             })
             .collect()
     }
