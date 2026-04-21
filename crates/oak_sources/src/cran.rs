@@ -2,7 +2,6 @@ use std::io::Cursor;
 use std::path::Path;
 
 use flate2::read::GzDecoder;
-use tar::Archive;
 
 /// Assumes `destination` exists and is file locked by the caller
 pub(crate) fn cache_cran(package: &str, version: &str, destination: &Path) -> anyhow::Result<bool> {
@@ -86,10 +85,13 @@ fn extract(
     response: reqwest::blocking::Response,
     destination: &Path,
 ) -> anyhow::Result<()> {
+    // Pass response bytes of the `.tar.gz` into a gzip decoder, wrapped in a tar archive
+    // reader, this abstracts away all the details, so we can just iterate over the
+    // entries
     let bytes = response.bytes()?;
     let cursor = Cursor::new(bytes);
     let gz = GzDecoder::new(cursor);
-    let mut archive = Archive::new(gz);
+    let mut archive = tar::Archive::new(gz);
 
     // Looking for files under `R/`
     let prefix = format!("{package}/R/");
