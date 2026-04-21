@@ -352,6 +352,50 @@ impl Message {
         msg.send(socket)?;
         Ok(())
     }
+
+    pub fn parent_header(&self) -> Option<&JupyterHeader> {
+        match self {
+            Self::KernelInfoReply(msg) => msg.parent_header.as_ref(),
+            Self::KernelInfoRequest(msg) => msg.parent_header.as_ref(),
+            Self::CompleteReply(msg) => msg.parent_header.as_ref(),
+            Self::CompleteRequest(msg) => msg.parent_header.as_ref(),
+            Self::ExecuteReply(msg) => msg.parent_header.as_ref(),
+            Self::ExecuteReplyException(msg) => msg.parent_header.as_ref(),
+            Self::ExecuteRequest(msg) => msg.parent_header.as_ref(),
+            Self::InspectReply(msg) => msg.parent_header.as_ref(),
+            Self::InspectRequest(msg) => msg.parent_header.as_ref(),
+            Self::IsCompleteReply(msg) => msg.parent_header.as_ref(),
+            Self::IsCompleteRequest(msg) => msg.parent_header.as_ref(),
+            Self::HistoryReply(msg) => msg.parent_header.as_ref(),
+            Self::HistoryRequest(msg) => msg.parent_header.as_ref(),
+            Self::CommInfoReply(msg) => msg.parent_header.as_ref(),
+            Self::CommInfoRequest(msg) => msg.parent_header.as_ref(),
+            Self::CommRequest(msg) => msg.parent_header.as_ref(),
+            Self::CommReply(msg) => msg.parent_header.as_ref(),
+            Self::InputReply(msg) => msg.parent_header.as_ref(),
+            Self::InputRequest(msg) => msg.parent_header.as_ref(),
+            Self::DebugReply(msg) => msg.parent_header.as_ref(),
+            Self::DebugRequest(msg) => msg.parent_header.as_ref(),
+            Self::InterruptReply(msg) => msg.parent_header.as_ref(),
+            Self::InterruptRequest(msg) => msg.parent_header.as_ref(),
+            Self::ShutdownReply(msg) => msg.parent_header.as_ref(),
+            Self::ShutdownRequest(msg) => msg.parent_header.as_ref(),
+            Self::HandshakeRequest(msg) => msg.parent_header.as_ref(),
+            Self::HandshakeReply(msg) => msg.parent_header.as_ref(),
+            Self::DebugEvent(msg) => msg.parent_header.as_ref(),
+            Self::Status(msg) => msg.parent_header.as_ref(),
+            Self::ExecuteResult(msg) => msg.parent_header.as_ref(),
+            Self::ExecuteError(msg) => msg.parent_header.as_ref(),
+            Self::ExecuteInput(msg) => msg.parent_header.as_ref(),
+            Self::Stream(msg) => msg.parent_header.as_ref(),
+            Self::DisplayData(msg) => msg.parent_header.as_ref(),
+            Self::UpdateDisplayData(msg) => msg.parent_header.as_ref(),
+            Self::Welcome(msg) => msg.parent_header.as_ref(),
+            Self::CommMsg(msg) => msg.parent_header.as_ref(),
+            Self::CommOpen(msg) => msg.parent_header.as_ref(),
+            Self::CommClose(msg) => msg.parent_header.as_ref(),
+        }
+    }
 }
 
 impl<T> JupyterMessage<T>

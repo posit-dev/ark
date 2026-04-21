@@ -145,6 +145,80 @@ pub struct DummyArkFrontendDefaultRepos {
     inner: DummyArkFrontend,
 }
 
+/// Expected IOPub message type for use with `recv_iopub_interleaved`.
+///
+/// Variants without a suffix match any message of that type. The `_control`
+/// and `_shell` suffixed variants additionally check that the message's parent
+/// header `msg_type` originated from the corresponding channel.
+#[derive(Debug, Clone)]
+pub enum IopubExpectation {
+    /// Any `Status(Busy)` message.
+    Busy,
+    /// `Status(Busy)` whose parent is a control-channel message
+    /// (`debug_request` or `interrupt_request`).
+    BusyControl,
+    /// Any `Status(Idle)` message.
+    Idle,
+    /// `Status(Idle)` whose parent is a control-channel message.
+    IdleControl,
+    /// `Status(Idle)` whose parent is a shell-channel message
+    /// (`execute_request`).
+    IdleShell,
+    /// A `DebugEvent` message.
+    DebugEvent,
+    /// An `ExecuteInput` message.
+    ExecuteInput,
+    /// An `ExecuteResult` message.
+    ExecuteResult,
+}
+
+fn matches_expectation(msg: &Message, expected: &IopubExpectation) -> bool {
+    use amalthea::wire::status::ExecutionState;
+
+    let parent_msg_type = msg.parent_header().map(|h| h.msg_type.as_str());
+
+    let is_control_parent = matches!(
+        parent_msg_type,
+        Some("debug_request") | Some("interrupt_request") | Some("shutdown_request")
+    );
+    let is_shell_parent = matches!(
+        parent_msg_type,
+        Some("execute_request") | Some("comm_open") | Some("comm_msg")
+    );
+
+    match expected {
+        IopubExpectation::Busy => matches!(
+            msg,
+            Message::Status(data) if data.content.execution_state == ExecutionState::Busy
+        ),
+        IopubExpectation::BusyControl => {
+            matches!(
+                msg,
+                Message::Status(data) if data.content.execution_state == ExecutionState::Busy
+            ) && is_control_parent
+        },
+        IopubExpectation::Idle => matches!(
+            msg,
+            Message::Status(data) if data.content.execution_state == ExecutionState::Idle
+        ),
+        IopubExpectation::IdleControl => {
+            matches!(
+                msg,
+                Message::Status(data) if data.content.execution_state == ExecutionState::Idle
+            ) && is_control_parent
+        },
+        IopubExpectation::IdleShell => {
+            matches!(
+                msg,
+                Message::Status(data) if data.content.execution_state == ExecutionState::Idle
+            ) && is_shell_parent
+        },
+        IopubExpectation::DebugEvent => matches!(msg, Message::DebugEvent(_)),
+        IopubExpectation::ExecuteInput => matches!(msg, Message::ExecuteInput(_)),
+        IopubExpectation::ExecuteResult => matches!(msg, Message::ExecuteResult(_)),
+    }
+}
+
 impl DummyArkFrontend {
     pub fn lock() -> Self {
         Self {
@@ -1552,6 +1626,99 @@ impl DummyArkFrontend {
         assert_eq!(self.recv_shell_execute_reply(), input.execution_count);
 
         out
+    }
+
+    /// Receive IOPub messages produced by multiple threads racing on the
+    /// IOPub channel. Each inner slice is an ordered sequence of expected
+    /// messages from one thread. Messages from different sequences may
+    /// interleave freely, but within each sequence the order is strict.
+    ///
+    /// Returns the collected messages in the order they were received.
+    ///
+    /// Streams and variables comm messages are auto-buffered (same as
+    /// `recv_iopub_next`). Stream buffers are cleared at the end without
+    /// requiring explicit assertions, since the interleaved window typically
+    /// spans multiple busy/idle cycles.
+    #[track_caller]
+    pub fn recv_iopub_interleaved(&self, sequences: &[&[IopubExpectation]]) -> Vec<Message> {
+        let mut cursors: Vec<usize> = vec![0; sequences.len()];
+        let mut collected: Vec<Message> = Vec::new();
+
+        let total_expected: usize = sequences.iter().map(|s| s.len()).sum();
+
+        while collected.len() < total_expected {
+            let msg = match self.recv_iopub_with_timeout(RECV_TIMEOUT) {
+                Some(msg) => msg,
+                None => {
+                    let mut status = String::new();
+                    for (i, seq) in sequences.iter().enumerate() {
+                        let cursor = cursors[i];
+                        if cursor < seq.len() {
+                            status.push_str(&format!(
+                                "\n  sequence {i}: waiting for {:?} ({cursor}/{})",
+                                seq[cursor],
+                                seq.len()
+                            ));
+                        } else {
+                            status.push_str(&format!(
+                                "\n  sequence {i}: complete ({}/{})",
+                                seq.len(),
+                                seq.len()
+                            ));
+                        }
+                    }
+                    panic!(
+                        "recv_iopub_interleaved: timed out after receiving {}/{total_expected} messages{status}",
+                        collected.len()
+                    );
+                },
+            };
+
+            if self.try_buffer_msg(&msg) {
+                continue;
+            }
+
+            trace_iopub_msg(&msg);
+
+            let mut matched = false;
+            for (i, seq) in sequences.iter().enumerate() {
+                let cursor = cursors[i];
+                if cursor < seq.len() && matches_expectation(&msg, &seq[cursor]) {
+                    cursors[i] += 1;
+                    matched = true;
+                    break;
+                }
+            }
+
+            if !matched {
+                let mut status = String::new();
+                for (i, seq) in sequences.iter().enumerate() {
+                    let cursor = cursors[i];
+                    if cursor < seq.len() {
+                        status.push_str(&format!(
+                            "\n  sequence {i}: expecting {:?} ({cursor}/{})",
+                            seq[cursor],
+                            seq.len()
+                        ));
+                    } else {
+                        status.push_str(&format!(
+                            "\n  sequence {i}: complete ({}/{})",
+                            seq.len(),
+                            seq.len()
+                        ));
+                    }
+                }
+                panic!(
+                    "recv_iopub_interleaved: unexpected message: {msg:?}\nSequence state:{status}"
+                );
+            }
+
+            collected.push(msg);
+        }
+
+        self.flush_streams_at_boundary();
+
+        collected
     }
 }
 

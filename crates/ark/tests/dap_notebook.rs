@@ -6,7 +6,20 @@
 //
 
 use amalthea::fixtures::dummy_frontend::ExecuteRequestOptions;
+use amalthea::wire::jupyter_message::Message;
 use ark_test::DummyArkFrontendNotebook;
+use ark_test::IopubExpectation;
+
+fn find_debug_event<'a>(msgs: &'a [Message], event: &str) -> &'a serde_json::Value {
+    msgs.iter()
+        .find_map(|m| match m {
+            Message::DebugEvent(data) if data.content.content["event"] == event => {
+                Some(&data.content.content)
+            },
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("No DebugEvent with event={event:?} found"))
+}
 
 #[test]
 fn test_notebook_debug_info() {
@@ -449,10 +462,17 @@ fn test_notebook_breakpoint_stops_execution() {
     // IOPub messages from the control thread (busy/idle for the debug_request)
     // and the R thread (debug_event Continued, execute_request idle) arrive in
     // unpredictable order since they originate from different threads.
-    while frontend
-        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
-        .is_some()
-    {}
+    let msgs = frontend.recv_iopub_interleaved(&[
+        // Control thread: debug_request busy/idle
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        // R thread: continued event, execute result, then execution idle
+        &[
+            IopubExpectation::DebugEvent,
+            IopubExpectation::ExecuteResult,
+            IopubExpectation::IdleShell,
+        ],
+    ]);
+    find_debug_event(&msgs, "continued");
 
     // Disconnect to reset is_connected for other tests
     frontend.send_debug_request(serde_json::json!({
@@ -462,11 +482,9 @@ fn test_notebook_breakpoint_stops_execution() {
         "arguments": { "restart": false }
     }));
     frontend.recv_debug_reply();
-    // Same race as above between control-thread and R-thread IOPub messages.
-    while frontend
-        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
-        .is_some()
-    {}
+    // Only the control thread sends IOPub messages here (no R-thread side effects)
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
 }
 
 #[test]
@@ -552,10 +570,13 @@ fn test_notebook_interrupt_at_breakpoint_exits_debugger() {
 
     // IOPub messages from the control thread (interrupt busy/idle) and
     // R thread (debug_event Continued, execute_request idle) race.
-    while frontend
-        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
-        .is_some()
-    {}
+    let msgs = frontend.recv_iopub_interleaved(&[
+        // Control thread: interrupt_request busy/idle
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        // R thread: continued event, then execution idle
+        &[IopubExpectation::DebugEvent, IopubExpectation::IdleShell],
+    ]);
+    find_debug_event(&msgs, "continued");
 
     // Disconnect
     frontend.send_debug_request(serde_json::json!({
@@ -565,11 +586,9 @@ fn test_notebook_interrupt_at_breakpoint_exits_debugger() {
         "arguments": { "restart": false }
     }));
     frontend.recv_debug_reply();
-    // Same race as above.
-    while frontend
-        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
-        .is_some()
-    {}
+    // Only the control thread sends IOPub messages here (no R-thread side effects)
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
 }
 
 #[test]
@@ -681,10 +700,12 @@ fn test_notebook_unexpected_browser_interrupt_via_stdin() {
 
     // IOPub messages from the control thread (interrupt busy/idle) and
     // R thread (execute_request idle) race.
-    while frontend
-        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
-        .is_some()
-    {}
+    frontend.recv_iopub_interleaved(&[
+        // Control thread: interrupt_request busy/idle
+        &[IopubExpectation::BusyControl, IopubExpectation::IdleControl],
+        // R thread: execution idle
+        &[IopubExpectation::IdleShell],
+    ]);
 
     // Execution completes — the interrupt exited the browser
     frontend.recv_shell_execute_reply();
