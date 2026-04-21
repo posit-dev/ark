@@ -88,19 +88,20 @@ impl ControlHandler for Control {
     async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         log::info!("Received interrupt request");
 
-        // In notebook mode, if the kernel is paused at a breakpoint the R
-        // thread is blocked in the event loop (not running R code), so a
-        // SIGINT would have no effect. Send a "Q" debug command instead to
-        // exit the browser and unblock execution.
-        if matches!(self.session_mode, SessionMode::Notebook) &&
-            self.dap.lock().unwrap().is_debugging
-        {
-            self.r_request_tx
-                .send(RRequest::DebugCommand(crate::request::DebugRequest::Quit))
-                .log_err();
-        } else {
-            crate::sys::control::handle_interrupt_request();
+        // When an interrupt is sent while debugging in notebook mode, we quit
+        // the debugger. The difference is justified by how the Console stays
+        // busy while debugging, showing a spinning wheel to the user. Quitting
+        // debugging on interrupt is natural UX in that context.
+        if matches!(self.session_mode, SessionMode::Notebook) {
+            let dap = self.dap.lock().unwrap();
+            if dap.is_debugging || dap.is_stopped_at_browser {
+                drop(dap);
+                self.r_request_tx
+                    .send(RRequest::DebugCommand(crate::request::DebugRequest::Quit))
+                    .log_err();
+            }
         }
+        crate::sys::control::handle_interrupt_request();
 
         Ok(InterruptReply { status: Status::Ok })
     }

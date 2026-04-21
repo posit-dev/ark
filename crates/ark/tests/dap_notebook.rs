@@ -573,6 +573,124 @@ fn test_notebook_interrupt_at_breakpoint_exits_debugger() {
 }
 
 #[test]
+fn test_notebook_unexpected_browser_routes_to_stdin() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Execute code that calls browser() directly — no debug session active.
+    // `browser(); 42` is split into two pending expressions. After quitting
+    // the browser, the second expression `42` is evaluated and produces a result.
+    frontend.send_execute_request_with_metadata(
+        "browser(); 42",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-browser-stdin" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // The browser prompt is routed to stdin since no debug session is connected
+    let prompt = frontend.recv_stdin_input_request();
+    assert!(
+        prompt.contains("Browse"),
+        "Expected Browse prompt, got: {prompt}"
+    );
+
+    // User types "Q" to quit the browser
+    frontend.send_stdin_input_reply(String::from("Q"));
+
+    // The remaining expression `42` produces a result
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
+fn test_notebook_unexpected_browser_continue_via_stdin() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Define a function with browser() inside — no debug session active
+    frontend.send_execute_request_with_metadata(
+        "fn_stdin <- function() {\n  x <- 1\n  browser()\n  x <- 42\n  x\n}",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-browser-def" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call the function — browser() fires, routed to stdin
+    frontend.send_execute_request_with_metadata(
+        "fn_stdin()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-browser-call" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert!(
+        prompt.contains("Browse"),
+        "Expected Browse prompt, got: {prompt}"
+    );
+
+    // User types "c" to continue — function runs to completion
+    frontend.send_stdin_input_reply(String::from("c"));
+
+    // Function returns 42
+    assert_eq!(frontend.recv_iopub_execute_result(), "[1] 42");
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
+fn test_notebook_unexpected_browser_interrupt_via_stdin() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    // Define a function that enters browser() — no debug session active
+    frontend.send_execute_request_with_metadata(
+        "fn_stdin_int <- function() {\n  browser()\n  42\n}",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-browser-int-def" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Call the function — browser() fires, routed to stdin
+    frontend.send_execute_request_with_metadata(
+        "fn_stdin_int()",
+        ExecuteRequestOptions::default(),
+        serde_json::json!({ "cellId": "cell-browser-int-call" }),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert!(
+        prompt.contains("Browse"),
+        "Expected Browse prompt, got: {prompt}"
+    );
+
+    // Shell reply hasn't arrived — kernel is waiting for stdin input
+    assert!(!frontend.shell_socket.poll_incoming(200).unwrap());
+
+    // Send interrupt — should exit the browser via Q
+    frontend.send_interrupt_request();
+    frontend.recv_control_interrupt_reply();
+
+    // IOPub messages from the control thread (interrupt busy/idle) and
+    // R thread (execute_request idle) race.
+    while frontend
+        .recv_iopub_with_timeout(std::time::Duration::from_millis(200))
+        .is_some()
+    {}
+
+    // Execution completes — the interrupt exited the browser
+    frontend.recv_shell_execute_reply();
+}
+
+#[test]
 fn test_notebook_breakpoints_inert_without_attach() {
     let frontend = DummyArkFrontendNotebook::lock();
 

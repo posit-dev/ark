@@ -273,6 +273,12 @@ pub struct Dap {
     /// Whether an interrupt was sent to drop into the debugger
     pub(crate) is_interrupting_for_debugger: bool,
 
+    /// Whether R is stopped at a browser prompt in notebook mode
+    /// (either a debug session breakpoint or an unexpected browser()
+    /// routed to stdin). Used by the interrupt handler to decide
+    /// whether to send a "Q" command.
+    pub(crate) is_stopped_at_browser: bool,
+
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<CommOutgoingTx>,
 
@@ -311,6 +317,7 @@ impl Dap {
             r_request_tx,
             shared_self: None,
             is_interrupting_for_debugger: false,
+            is_stopped_at_browser: false,
         };
 
         let shared = Arc::new(Mutex::new(state));
@@ -865,6 +872,7 @@ mod tests {
             comm_tx: None,
             iopub_tx: None,
             iopub_seq: 0,
+            is_stopped_at_browser: false,
             r_request_tx,
             shared_self: None,
         };
@@ -978,6 +986,7 @@ mod tests {
             comm_tx: None,
             iopub_tx: None,
             iopub_seq: 0,
+            is_stopped_at_browser: false,
             r_request_tx,
             shared_self: None,
         };

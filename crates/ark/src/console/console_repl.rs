@@ -869,6 +869,18 @@ impl Console {
                 return result;
             }
 
+            // In notebook mode, unexpected browser() or debug() calls (i.e.
+            // without an active debug session) are routed to stdin so the user
+            // can type debug commands in an input box rather than hanging.
+            if self.session_mode == SessionMode::Notebook &&
+                !self.debug_dap.lock().unwrap().is_connected
+            {
+                self.debug_dap.lock().unwrap().is_stopped_at_browser = true;
+                let result = self.handle_input_request(&info, buf, buflen);
+                self.debug_dap.lock().unwrap().is_stopped_at_browser = false;
+                return result;
+            }
+
             // Similarly, if we have pending inputs, we're about to immediately
             // continue with the next expression. Don't emit debug notifications
             // for these intermediate browser prompts.
@@ -987,7 +999,16 @@ impl Console {
         // `execute_request` on Shell.
         let (r_request_index, stdin_reply_index) = match wait_for {
             WaitFor::ExecuteRequest => (Some(select.recv(&r_request_rx)), None),
-            WaitFor::InputReply => (None, Some(select.recv(&stdin_reply_rx))),
+            WaitFor::InputReply => {
+                // In notebook mode, also listen for debug commands (e.g. Quit
+                // from the interrupt handler) while waiting for stdin input.
+                let r_request_index = if self.session_mode == SessionMode::Notebook {
+                    Some(select.recv(&r_request_rx))
+                } else {
+                    None
+                };
+                (r_request_index, Some(select.recv(&stdin_reply_rx)))
+            },
         };
 
         let kernel_request_index = select.recv(&kernel_request_rx);
@@ -1011,15 +1032,15 @@ impl Console {
             };
 
         loop {
-            // If an interrupt was signaled and we are in a user
-            // request prompt, e.g. `readline()`, we need to propagate
-            // the interrupt to the R stack. This needs to happen before
-            // `process_idle_events()`, particularly on Windows, because it
-            // calls `R_ProcessEvents()`, which checks and resets
-            // `UserBreak`, but won't actually fire the interrupt b/c
-            // we have them disabled, so it would end up swallowing the
-            // user interrupt request.
-            if matches!(info.kind, PromptKind::InputRequest) && interrupts_pending() {
+            // If an interrupt was signaled and we are waiting for user
+            // input (readline, or browser-as-stdin in notebook mode), we
+            // need to propagate the interrupt to the R stack. This needs
+            // to happen before `process_idle_events()`, particularly on
+            // Windows, because it calls `R_ProcessEvents()`, which checks
+            // and resets `UserBreak`, but won't actually fire the
+            // interrupt b/c we have them disabled, so it would end up
+            // swallowing the user interrupt request.
+            if matches!(wait_for, WaitFor::InputReply) && interrupts_pending() {
                 return ConsoleResult::Interrupt;
             }
 
@@ -1057,6 +1078,17 @@ impl Console {
                         // The channel is disconnected and empty
                         return ConsoleResult::Disconnected;
                     };
+
+                    // During stdin-browser (notebook mode, waiting for input
+                    // at a browser prompt), the interrupt handler sends
+                    // DebugCommand(Quit) to exit the browser cleanly.
+                    if matches!(wait_for, WaitFor::InputReply) {
+                        if let RRequest::DebugCommand(ref cmd) = req {
+                            let input = crate::request::debug_request_command(cmd.clone());
+                            Self::on_console_input(buf, buflen, input).unwrap();
+                            return ConsoleResult::NewInput;
+                        }
+                    }
 
                     if let Some(input) = self.handle_execute_request(req, info, buf, buflen) {
                         return input;
