@@ -122,7 +122,7 @@ pub struct PackageCache {
     /// Blocks any other process from acquiring the root exclusive lock (the only thing
     /// that can delete entries). That way, any `PathBuf` we hand out remains valid for
     /// the life of this cache (as long as `PackageCache` itself is not dropped!).
-    _root_lock: FileLock,
+    cache_root_lock: FileLock,
 
     /// Set of packages which are installed, but we failed to populate their sources (from
     /// CRAN or srcrefs). If we request sources for one of these packages a second time,
@@ -151,21 +151,21 @@ impl PackageCache {
         cache_root.create_dir()?;
 
         // Try to clean the cache. Only works if no other processes hold a shared root lock.
-        if let Some(root_lock) = cache_root.try_open_rw_exclusive_create(LOCK_FILENAME)? {
-            if let Err(err) = Self::clean(&root_lock) {
+        if let Some(cache_root_lock) = cache_root.try_open_rw_exclusive_create(LOCK_FILENAME)? {
+            if let Err(err) = Self::clean(&cache_root_lock) {
                 log::warn!("Failed to clean sources cache: {err:?}");
             }
-            drop(root_lock);
+            drop(cache_root_lock);
         }
 
         // Take shared lock for the lifetime of the cache so any paths we hand out stay valid
-        let root_lock = cache_root.open_ro_shared_create(LOCK_FILENAME)?;
+        let cache_root_lock = cache_root.open_ro_shared_create(LOCK_FILENAME)?;
 
         Ok(Self {
             r,
             r_libpaths,
             cache_root,
-            _root_lock: root_lock,
+            cache_root_lock,
             source_unavailable: RwLock::new(HashSet::new()),
         })
     }
@@ -218,18 +218,14 @@ impl PackageCache {
         let key =
             format!("{package}_{version}_libpath-{libpath_hash}_description-{description_hash}");
 
-        let destination = self.cache_root.join(&key);
-        // Safety: We hold the root lock
-        let destination_path = destination.as_path_unlocked();
-
         // Read path: completion sentinel present, already exists on disk
-        if destination_path.join(METADATA_FILENAME).exists() {
-            return Ok(Some(destination_path.to_path_buf()));
+        let destination = self.cache_root_lock.parent().join(&key);
+        if destination.join(METADATA_FILENAME).exists() {
+            return Ok(Some(destination));
         }
 
-        // Write path: before generating sources, check if we've already tried to generate
-        // sources for this installed package but failed. If so, refuse to attempt
-        // expensive source generation again
+        // Check if we've already tried to generate sources for this installed package but
+        // failed. If so, refuse to attempt expensive source generation again.
         if self
             .source_unavailable
             .read()
@@ -238,14 +234,15 @@ impl PackageCache {
             return Ok(None);
         }
 
-        // Take per-key exclusive lock
+        // Write path: take per-key exclusive lock
+        let destination = self.cache_root.join(&key);
         destination.create_dir()?;
         let destination_lock = destination.open_rw_exclusive_create(LOCK_FILENAME)?;
 
         // Re-check: another writer may have populated the key while we waited for an
         // exclusive lock
-        if destination_path.join(METADATA_FILENAME).exists() {
-            return Ok(Some(destination_path.to_path_buf()));
+        if destination_lock.parent().join(METADATA_FILENAME).exists() {
+            return Ok(Some(destination_lock.parent().to_path_buf()));
         }
 
         // Wipe any partial content from a prior writer that may have crashed before
@@ -260,9 +257,9 @@ impl PackageCache {
             &description_path,
             &description,
             &description_hash,
-            destination_path,
+            &destination_lock,
         )? {
-            Ok(Some(destination_path.to_path_buf()))
+            Ok(Some(destination_lock.parent().to_path_buf()))
         } else {
             // Never try source generation for this key again
             self.source_unavailable
@@ -274,9 +271,6 @@ impl PackageCache {
     }
 
     /// Writes `DESCRIPTION`, `NAMESPACE`, and `R/` to the cache entry, if possible
-    ///
-    /// Can assume that `destination_path` exists and we have exclusive access to via the
-    /// lock.
     fn try_populate(
         &self,
         package: &str,
@@ -286,17 +280,20 @@ impl PackageCache {
         description_path: &Path,
         description: &Description,
         description_hash: &str,
-        destination_path: &Path,
+        destination_lock: &FileLock,
     ) -> anyhow::Result<bool> {
-        if !self.write_r_files(package, version, description, destination_path)? {
+        if !self.write_r_files(package, version, description, destination_lock)? {
             return Ok(false);
         }
 
-        crate::fs::copy_as_readonly(description_path, destination_path.join("DESCRIPTION"))?;
-        crate::fs::copy_as_readonly(namespace_path, destination_path.join("NAMESPACE"))?;
+        crate::fs::copy_as_readonly(
+            description_path,
+            destination_lock.parent().join("DESCRIPTION"),
+        )?;
+        crate::fs::copy_as_readonly(namespace_path, destination_lock.parent().join("NAMESPACE"))?;
 
         // Last! Only write `.metadata` if all other writes succeed. It is our completion sentinal.
-        self.write_metadata(package, libpath, description_hash, destination_path)?;
+        self.write_metadata(package, libpath, description_hash, destination_lock)?;
 
         Ok(true)
     }
@@ -306,13 +303,13 @@ impl PackageCache {
         package: &str,
         version: &str,
         description: &Description,
-        destination_path: &Path,
+        destination_lock: &FileLock,
     ) -> anyhow::Result<bool> {
         // Try caching from srcref
         match crate::srcref::cache_srcref(
             package,
             version,
-            destination_path,
+            destination_lock,
             &self.r,
             &self.r_libpaths,
         ) {
@@ -331,7 +328,7 @@ impl PackageCache {
 
         // Try caching from CRAN
         if matches!(description.repository, Some(Repository::CRAN)) {
-            match crate::cran::cache_cran(package, version, destination_path) {
+            match crate::cran::cache_cran(package, version, destination_lock) {
                 Ok(true) => {
                     log::trace!("Cached {package} {version} from CRAN download.");
                     return Ok(true);
@@ -367,7 +364,7 @@ impl PackageCache {
         package: &str,
         libpath: &Path,
         description_hash: &str,
-        destination_path: &Path,
+        destination_lock: &FileLock,
     ) -> anyhow::Result<()> {
         let metadata = Metadata {
             package: package.to_string(),
@@ -376,18 +373,18 @@ impl PackageCache {
             generated_at: Utc::now(),
         };
         let contents = serde_json::to_vec_pretty(&metadata)?;
-        std::fs::write(destination_path.join(METADATA_FILENAME), contents)?;
+        std::fs::write(destination_lock.parent().join(METADATA_FILENAME), contents)?;
         Ok(())
     }
 
     /// Walks all cache entries and evicts ones that are provably stale.
     ///
     /// Caller must hold the root exclusive lock.
-    fn clean(root_lock: &file_lock::FileLock) -> anyhow::Result<()> {
-        let root = root_lock.parent();
+    fn clean(cache_root_lock: &file_lock::FileLock) -> anyhow::Result<()> {
+        let cache_root = cache_root_lock.parent();
         let now = Utc::now();
 
-        for entry in std::fs::read_dir(root)? {
+        for entry in std::fs::read_dir(cache_root)? {
             let entry = entry?;
             let path = entry.path();
 

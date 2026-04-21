@@ -2,9 +2,15 @@ use std::io::Cursor;
 use std::path::Path;
 
 use flate2::read::GzDecoder;
+use oak_fs::file_lock::FileLock;
 
-/// Assumes `destination` exists and is file locked by the caller
-pub(crate) fn cache_cran(package: &str, version: &str, destination: &Path) -> anyhow::Result<bool> {
+/// Downloads an R package's source files from CRAN if possible and adds them to the cache
+/// at the parent folder containing `destination_lock`
+pub(crate) fn cache_cran(
+    package: &str,
+    version: &str,
+    destination_lock: &FileLock,
+) -> anyhow::Result<bool> {
     let response = download(package, version)?;
 
     // "Not on CRAN" isn't an error
@@ -20,7 +26,7 @@ pub(crate) fn cache_cran(package: &str, version: &str, destination: &Path) -> an
         ));
     }
 
-    let destination = destination.join("R");
+    let destination = destination_lock.parent().join("R");
     std::fs::create_dir(&destination)?;
 
     extract(package, response, destination.as_path())?;
@@ -126,6 +132,7 @@ fn extract(
 
 #[cfg(test)]
 mod tests {
+    use oak_fs::file_lock::Filesystem;
     use tempfile::TempDir;
 
     use crate::cran::cache_cran;
@@ -133,12 +140,14 @@ mod tests {
     /// Requires internet access
     #[test]
     fn test_cran_r_files_exist_and_are_readonly() {
-        let destination = TempDir::new().unwrap();
+        let destination_tempdir = TempDir::new().unwrap();
+        let destination = Filesystem::new(destination_tempdir.path().to_path_buf());
+        let destination_lock = destination.open_rw_exclusive_create(".lock").unwrap();
 
-        let ok = cache_cran("vctrs", "0.7.2", destination.path()).unwrap();
+        let ok = cache_cran("vctrs", "0.7.2", &destination_lock).unwrap();
         assert!(ok);
 
-        let r_dir = destination.path().join("R");
+        let r_dir = destination_lock.parent().join("R");
         assert!(r_dir.exists());
 
         for entry in std::fs::read_dir(&r_dir).unwrap() {
@@ -150,9 +159,11 @@ mod tests {
 
     #[test]
     fn test_cache_cran_not_found() {
-        let destination = TempDir::new().unwrap();
+        let destination_tempdir = TempDir::new().unwrap();
+        let destination = Filesystem::new(destination_tempdir.path().to_path_buf());
+        let destination_lock = destination.open_rw_exclusive_create(".lock").unwrap();
 
-        let ok = cache_cran("definitely_not_a_package", "0.0.0", destination.path()).unwrap();
+        let ok = cache_cran("definitely_not_a_package", "0.0.0", &destination_lock).unwrap();
         assert!(!ok);
     }
 }

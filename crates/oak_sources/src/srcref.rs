@@ -1,16 +1,18 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use oak_fs::file_lock::FileLock;
+
 const SCRIPT: &str = include_str!("../scripts/srcrefs.R");
 
 /// Extracts an R package's source files from srcref metadata if possible and adds
-/// them to the cache at `destination`
+/// them to the cache at the parent folder containing `destination_lock`
 ///
 /// Launches a sidecar R session to read the srcrefs from the installed package.
 pub(crate) fn cache_srcref(
     package: &str,
     version: &str,
-    destination: &Path,
+    destination_lock: &FileLock,
     r: &Path,
     r_libpaths: &[PathBuf],
 ) -> anyhow::Result<bool> {
@@ -50,7 +52,7 @@ pub(crate) fn cache_srcref(
 
     let files = parse_output(&stdout);
 
-    let destination = destination.join("R");
+    let destination = destination_lock.parent().join("R");
     std::fs::create_dir(&destination)?;
 
     for (name, contents) in files {
@@ -118,6 +120,8 @@ fn parse_line_directive(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use oak_fs::file_lock::Filesystem;
+
     use super::*;
 
     #[test]
@@ -272,13 +276,15 @@ fn_a <- function() {
         all_libpaths.extend(r_libpaths_original);
 
         // Cache destination
-        let destination = tempfile::TempDir::new().unwrap();
+        let destination_tempdir = tempfile::TempDir::new().unwrap();
+        let destination = Filesystem::new(destination_tempdir.path().to_path_buf());
+        let destination_lock = destination.open_rw_exclusive_create(".lock").unwrap();
 
-        let ok = cache_srcref("generics", &version, destination.path(), &r, &all_libpaths).unwrap();
+        let ok = cache_srcref("generics", &version, &destination_lock, &r, &all_libpaths).unwrap();
         assert!(ok);
 
         // Verify R source files were written
-        let r_dir = destination.path().join("R");
+        let r_dir = destination_lock.parent().join("R");
         assert!(r_dir.exists());
 
         let entries: Vec<_> = std::fs::read_dir(&r_dir)
