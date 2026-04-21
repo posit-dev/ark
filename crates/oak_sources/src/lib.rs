@@ -252,16 +252,6 @@ impl PackageCacheInner {
         let key =
             format!("{package}_{version}_libpath-{libpath_hash}_description-{description_hash}");
 
-        // If we've already tried to generate sources for this installed package but
-        // failed, then refuse to attempt expensive source generation again
-        if self
-            .source_unavailable
-            .read()
-            .is_ok_and(|set| set.contains(&key))
-        {
-            return Ok(None);
-        }
-
         let destination = self.cache_root.join(&key);
         // Safety: We hold the root lock
         let destination_path = destination.as_path_unlocked();
@@ -271,7 +261,18 @@ impl PackageCacheInner {
             return Ok(Some(destination_path.to_path_buf()));
         }
 
-        // Write path: take per-key exclusive lock
+        // Write path: before generating sources, check if we've already tried to generate
+        // sources for this installed package but failed. If so, refuse to attempt
+        // expensive source generation again
+        if self
+            .source_unavailable
+            .read()
+            .is_ok_and(|set| set.contains(&key))
+        {
+            return Ok(None);
+        }
+
+        // Take per-key exclusive lock
         destination.create_dir()?;
         let destination_lock = destination.open_rw_exclusive_create(LOCK_FILENAME)?;
 
