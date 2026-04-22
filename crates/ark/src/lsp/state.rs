@@ -105,17 +105,16 @@ impl WorldState {
         // layers), but we also need to discover files that only exist on disk
         // (not yet opened).
         let r_dir = pkg.path.join("R");
-        let r_dir_url = Url::from_directory_path(&r_dir).ok();
-
         let mut filenames = HashSet::new();
 
         // Discover open documents
-        if let Some(ref dir_url) = r_dir_url {
-            for uri in self.documents.keys() {
-                if uri.as_str().starts_with(dir_url.as_str()) {
-                    if let Some(name) = uri.path().rsplit('/').next() {
-                        filenames.insert(name.to_string());
-                    }
+        for uri in self.documents.keys() {
+            let Some(path) = uri.to_file_path().ok() else {
+                continue;
+            };
+            if path.starts_with(&r_dir) {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    filenames.insert(name.to_string());
                 }
             }
         }
@@ -127,10 +126,17 @@ impl WorldState {
             }
         }
 
+        // This silently discards files not listed in the Collation field. TODO:
+        // We should lint when that is the case, mirroring how R CMD INSTALL
+        // errors out.
         let filenames: Vec<String> = filenames.into_iter().collect();
         let ordered = collation_order(&pkg.description, &filenames);
 
-        let filename = file.path().rsplit('/').next().unwrap_or_default();
+        let filename = file
+            .to_file_path()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+        let filename = filename.as_deref().unwrap_or_default();
 
         // Iterate in reverse collation order so later files (which shadow
         // earlier ones) come first in the chain. Split at the current file

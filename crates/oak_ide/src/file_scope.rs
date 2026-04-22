@@ -56,7 +56,7 @@ impl FileScope {
     }
 
     /// The full scope for lazy contexts. Useful for features that don't
-    /// have a cursor position (e.g. completions, workspace symbols).
+    /// have a cursor position (e.g. workspace symbols).
     pub fn lazy(&self) -> &[BindingSource] {
         match self {
             Self::Package { lazy, .. } => lazy,
