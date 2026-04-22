@@ -9,6 +9,7 @@ use std::net::TcpListener;
 
 use actix_web::get;
 use actix_web::http::header::ContentType;
+use actix_web::http::uri::PathAndQuery;
 use actix_web::web;
 use actix_web::App;
 use actix_web::HttpRequest;
@@ -16,7 +17,6 @@ use actix_web::HttpResponse;
 use actix_web::HttpServer;
 use harp::exec::RFunction;
 use harp::exec::RFunctionExt;
-use http::uri::PathAndQuery;
 use mime_guess::from_path;
 use reqwest::Client;
 use reqwest_middleware::ClientBuilder;

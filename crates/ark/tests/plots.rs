@@ -6,7 +6,7 @@ use amalthea::wire::execute_request::JupyterPositronRange;
 use ark_test::comm::RECV_TIMEOUT;
 use ark_test::DummyArkFrontend;
 use ark_test::SourceFile;
-use base64::Engine;
+use base64::prelude::*;
 
 /// Default DPI for the current OS, matching the constant in graphics_device.rs.
 fn default_dpi() -> f64 {
@@ -21,9 +21,9 @@ fn default_dpi() -> f64 {
 fn png_dimensions(base64_data: &str) -> (u32, u32) {
     // The base64 data may contain newlines or use non-padded encoding
     let cleaned: String = base64_data.chars().filter(|c| !c.is_whitespace()).collect();
-    let bytes = base64::engine::general_purpose::STANDARD
+    let bytes = BASE64_STANDARD
         .decode(&cleaned)
-        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(&cleaned))
+        .or_else(|_| BASE64_STANDARD_NO_PAD.decode(&cleaned))
         .expect("Failed to decode base64 PNG data");
     // Validate PNG signature and minimum size for IHDR
     let png_signature: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
