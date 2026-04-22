@@ -5,7 +5,6 @@
  *
  */
 
-use generic_array::GenericArray;
 use hmac::Hmac;
 use log::trace;
 use serde::de::DeserializeOwned;
@@ -162,7 +161,7 @@ impl WireMessage {
             hmac_validator.update(buf);
         }
         // Verify the signature
-        if let Err(err) = hmac_validator.verify(GenericArray::from_slice(&decoded)) {
+        if let Err(err) = hmac_validator.verify_slice(&decoded) {
             return Err(Error::BadSignature(decoded, err));
         }
 

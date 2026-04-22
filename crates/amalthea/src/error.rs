@@ -29,7 +29,7 @@ pub enum Error {
     JsonSerializeSpecFailed(serde_json::Error),
     CreateSpecFailed(std::io::Error),
     WriteSpecFailed(std::io::Error),
-    HmacKeyInvalid(String, crypto_common::InvalidLength),
+    HmacKeyInvalid(String, hmac::digest::InvalidLength),
     CreateSocketFailed(String, zmq::Error),
     SocketBindError(String, String, zmq::Error),
     SocketConnectError(String, String, zmq::Error),

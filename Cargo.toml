@@ -44,7 +44,6 @@ cc = "1.1.22"
 cfg-if = "1.0.0"
 chrono = "0.4.44"
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
-crypto-common = "0.1.6"
 ctor = "0.1.26"
 dap = { branch = "main", git = "https://github.com/sztomi/dap-rs" }
 dashmap = "5.4.0"
@@ -55,11 +54,10 @@ env_logger = "0.10.0"
 etcetera = "0.11.0"
 flate2 = "1.1.1"
 futures = "0.3.30"
-generic-array = "0.14.6"
 harp = { path = "crates/harp" }
 harp-macros = { path = "crates/harp/harp-macros" }
 hex = "0.4.3"
-hmac = "0.12.1"
+hmac = "0.13.0"
 home = "0.5.5"
 http = "0.2.9"
 insta = "1.39.0"
@@ -95,7 +93,7 @@ serde = { version = "1.0.183", features = ["derive"] }
 serde_json = { version = "1.0.94", features = ["preserve_order"] }
 serde_repr = "0.1.17"
 serde_with = "3.0.0"
-sha2 = "0.10.6"
+sha2 = "0.11.0"
 smallvec = "1.13.2"
 stdext = { path = "crates/stdext" }
 streaming-iterator = "0.1.9"
