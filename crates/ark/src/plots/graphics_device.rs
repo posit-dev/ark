@@ -703,7 +703,9 @@ impl DeviceContext {
             display_id: id.to_string(),
             data: None,
         };
-        let transient = serde_json::to_value(transient).unwrap();
+        let Some(transient) = serde_json::to_value(transient).log_err() else {
+            return;
+        };
 
         log::info!("Sending display data to IOPub.");
 
@@ -777,7 +779,10 @@ impl DeviceContext {
             },
         };
 
-        let value = serde_json::to_value(PlotFrontendEvent::Update(update_params)).unwrap();
+        let Some(value) = serde_json::to_value(PlotFrontendEvent::Update(update_params)).log_err()
+        else {
+            return;
+        };
 
         let outgoing_tx = CommOutgoingTx::new(comm_id, self.iopub_tx.clone());
         outgoing_tx
@@ -847,7 +852,7 @@ impl DeviceContext {
         });
 
         let mut map = serde_json::Map::new();
-        map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
+        map.insert("image/png".to_string(), serde_json::to_value(data)?);
 
         Ok(serde_json::Value::Object(map))
     }

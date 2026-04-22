@@ -51,8 +51,7 @@ impl Console {
     }
 
     pub(super) fn comm_handle_close(&self, comm_id: &str) {
-        if self.is_ui_comm(comm_id) {
-            let ui = self.take_ui_comm().unwrap();
+        if let Some(ui) = self.take_ui_comm_if(comm_id) {
             ui.handler.into_inner().handle_close(&ui.ctx);
             return;
         }
@@ -187,6 +186,17 @@ impl Console {
 
     fn take_ui_comm(&self) -> Option<ConsoleComm> {
         self.ui_comm.borrow_mut().take()
+    }
+
+    /// Take the UI comm only if its `comm_id` matches. Checks and takes
+    /// in a single `borrow_mut()` so there is no TOCTOU gap.
+    fn take_ui_comm_if(&self, comm_id: &str) -> Option<ConsoleComm> {
+        let mut guard = self.ui_comm.borrow_mut();
+        if guard.as_ref().is_some_and(|ui| ui.comm_id == comm_id) {
+            guard.take()
+        } else {
+            None
+        }
     }
 
     fn set_ui_comm(&self, ui: ConsoleComm) {
