@@ -7,7 +7,7 @@ use oak_index::semantic_index::SemanticIndex;
 
 /// The external scope chain for a file, determined by its project context.
 #[derive(Debug)]
-pub enum FileScope {
+pub enum ExternalScope {
     /// File inside an R package. The scope chain includes layers from other
     /// package files (ordered by collation, later files shadow earlier ones)
     /// and from NAMESPACE imports (`importFrom`, `import`), with base
@@ -35,7 +35,7 @@ pub enum FileScope {
     },
 }
 
-impl Default for FileScope {
+impl Default for ExternalScope {
     fn default() -> Self {
         Self::SearchPath {
             base: Vec::new(),
@@ -45,7 +45,7 @@ impl Default for FileScope {
     }
 }
 
-impl FileScope {
+impl ExternalScope {
     pub fn package(top_level: Vec<ScopeLayer>, lazy: Vec<ScopeLayer>) -> Self {
         Self::Package { top_level, lazy }
     }

@@ -2,7 +2,7 @@ mod file_scope;
 mod goto_definition;
 
 use biome_rowan::TextRange;
-pub use file_scope::FileScope;
+pub use file_scope::ExternalScope;
 pub use goto_definition::goto_definition;
 use url::Url;
 

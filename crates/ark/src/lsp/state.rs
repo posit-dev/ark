@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::anyhow;
 use biome_rowan::TextSize;
 use oak_core::file::list_r_files;
-use oak_ide::FileScope;
+use oak_ide::ExternalScope;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::ScopeLayer;
@@ -95,10 +95,10 @@ impl WorldState {
     /// current project type. For packages, this creates a scope containing
     /// imports and top-level definitions in other files, respecting the
     /// collation order.
-    pub(crate) fn file_scope(&self, file: &Url) -> FileScope {
+    pub(crate) fn file_scope(&self, file: &Url) -> ExternalScope {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
             let directives = self.directive_layers(file);
-            return FileScope::search_path(directives, default_search_path());
+            return ExternalScope::search_path(directives, default_search_path());
         };
 
         let root_layers = package_root_layers(&pkg.namespace);
@@ -182,7 +182,7 @@ impl WorldState {
         lazy.extend(root_layers);
         lazy.push(ScopeLayer::PackageExports("base".to_string()));
 
-        FileScope::package(top_level, lazy)
+        ExternalScope::package(top_level, lazy)
     }
 
     fn directive_layers(&self, file: &Url) -> Vec<(TextSize, ScopeLayer)> {
