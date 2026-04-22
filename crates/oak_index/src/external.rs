@@ -11,7 +11,7 @@ use crate::semantic_index::SemanticIndex;
 /// A layer in the scope chain. Layers are ordered most-local-first; resolution
 /// iterates front-to-back, first match wins.
 #[derive(Debug, Clone)]
-pub enum BindingSource {
+pub enum ScopeLayer {
     /// Bindings from a project file's top-level definitions.
     /// When a name is defined multiple times, the last definition wins.
     FileExports {
@@ -43,12 +43,12 @@ pub enum ExternalDefinition {
 /// Walk the scope chain front-to-back, returning the first match.
 pub fn resolve_external_name(
     library: &Library,
-    scope: &[BindingSource],
+    scope: &[ScopeLayer],
     name: &str,
 ) -> Option<ExternalDefinition> {
     for source in scope {
         match source {
-            BindingSource::FileExports { file, exports } => {
+            ScopeLayer::FileExports { file, exports } => {
                 if let Some(range) = exports.get(name) {
                     return Some(ExternalDefinition::ProjectFile {
                         file: file.clone(),
@@ -58,7 +58,7 @@ pub fn resolve_external_name(
                 }
             },
 
-            BindingSource::PackageImports(names) => {
+            ScopeLayer::PackageImports(names) => {
                 if let Some(pkg) = names.get(name) {
                     return Some(ExternalDefinition::Package {
                         package: pkg.clone(),
@@ -67,7 +67,7 @@ pub fn resolve_external_name(
                 }
             },
 
-            BindingSource::PackageExports(pkg_name) => {
+            ScopeLayer::PackageExports(pkg_name) => {
                 let Some(pkg) = library.get(pkg_name) else {
                     continue;
                 };
@@ -84,10 +84,10 @@ pub fn resolve_external_name(
     None
 }
 
-/// Compute the binding-source layers that a single file contributes to the
+/// Compute the scope layers that a single file contributes to the
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
 /// one `PackageExports` layer per `library()`/`require()` directive.
-pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
+pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
     // Last definition of each name wins
@@ -96,12 +96,12 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
         exports.insert(name.to_string(), range);
     }
 
-    layers.push(BindingSource::FileExports { file, exports });
+    layers.push(ScopeLayer::FileExports { file, exports });
 
     for directive in index.file_directives() {
         match directive.kind() {
             DirectiveKind::Attach(pkg) => {
-                layers.push(BindingSource::PackageExports(pkg.clone()));
+                layers.push(ScopeLayer::PackageExports(pkg.clone()));
             },
         }
     }
@@ -114,7 +114,8 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<BindingSource> {
 /// These go at the back of every file's scope chain:
 /// - `PackageImports` from `importFrom()` directives (name → package)
 /// - `PackageExports` from `import()` directives
-pub fn package_root_layers(namespace: &Namespace) -> Vec<BindingSource> {
+/// - `PackageExports` for `base` (always implicitly available)
+pub fn package_root_layers(namespace: &Namespace) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
     if !namespace.imports.is_empty() {
@@ -123,12 +124,14 @@ pub fn package_root_layers(namespace: &Namespace) -> Vec<BindingSource> {
             .iter()
             .map(|imp| (imp.name.clone(), imp.package.clone()))
             .collect();
-        layers.push(BindingSource::PackageImports(map));
+        layers.push(ScopeLayer::PackageImports(map));
     }
 
     for pkg in &namespace.package_imports {
-        layers.push(BindingSource::PackageExports(pkg.clone()));
+        layers.push(ScopeLayer::PackageExports(pkg.clone()));
     }
+
+    layers.push(ScopeLayer::PackageExports("base".to_string()));
 
     layers
 }

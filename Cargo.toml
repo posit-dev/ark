@@ -73,6 +73,7 @@ nix = { version = "0.26.2", features = ["signal"] }
 notify = "6.0.0"
 oak_core = { path = "crates/oak_core" }
 oak_fs = { path = "crates/oak_fs" }
+oak_ide = { path = "crates/oak_ide" }
 oak_index = { path = "crates/oak_index" }
 oak_package = { path = "crates/oak_package" }
 oak_r_process = { path = "crates/oak_r_process" }

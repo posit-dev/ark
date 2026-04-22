@@ -1,0 +1,28 @@
+[package]
+name = "oak_ide"
+version = "0.1.0"
+description = """
+IDE features for R: goto-definition, completions, hover, etc.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+biome_rowan.workspace = true
+log.workspace = true
+oak_index.workspace = true
+oak_package.workspace = true
+stdext.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+aether_parser.workspace = true
+assert_matches.workspace = true
+oak_index.workspace = true
+oak_package = { workspace = true, features = ["testing"] }

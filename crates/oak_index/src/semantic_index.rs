@@ -3,6 +3,7 @@ use std::ops::Range;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
+use oak_core::range::Ranged;
 use rustc_hash::FxHashMap;
 
 use crate::index_vec::define_index;
@@ -132,7 +133,7 @@ impl SemanticIndex {
     }
 
     /// Find the innermost scope containing `offset`.
-    pub fn scope_at(&self, offset: biome_rowan::TextSize) -> ScopeId {
+    pub fn scope_at(&self, offset: biome_rowan::TextSize) -> (ScopeId, &Scope) {
         // Start at the file scope
         let mut current = ScopeId::from(0);
         'outer: loop {
@@ -142,7 +143,7 @@ impl SemanticIndex {
                     continue 'outer;
                 }
             }
-            return current;
+            return (current, &self.scopes[current]);
         }
     }
 
@@ -196,12 +197,11 @@ impl SemanticIndex {
     pub fn enclosing_bindings(
         &self,
         scope: ScopeId,
-        use_id: UseId,
+        symbol: SymbolId,
     ) -> Option<(ScopeId, &Bindings)> {
-        let use_site = &self.uses[scope][use_id];
         let key = EnclosingSnapshotKey {
             nested_scope: scope,
-            nested_symbol: use_site.symbol(),
+            nested_symbol: symbol,
         };
         let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
         let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);
@@ -265,6 +265,12 @@ impl Scope {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+}
+
+impl Ranged for Scope {
+    fn range(&self) -> TextRange {
+        self.range()
     }
 }
 
@@ -482,6 +488,12 @@ impl Definition {
     }
 }
 
+impl Ranged for Definition {
+    fn range(&self) -> TextRange {
+        self.range()
+    }
+}
+
 // A site where a symbol is referenced by name. In ty, use sites are tracked
 // via `ScopedUseId` indices in a per-scope `AstIds` structure (mapping AST
 // node positions to use IDs). Our flat list serves the same purpose: the
@@ -500,6 +512,12 @@ impl Use {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+}
+
+impl Ranged for Use {
+    fn range(&self) -> TextRange {
+        self.range()
     }
 }
 

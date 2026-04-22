@@ -1,7 +1,7 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxKind;
-use oak_index::builder::build;
+use oak_index::semantic_index;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::DirectiveKind;
@@ -18,7 +18,7 @@ fn index(source: &str) -> SemanticIndex {
         panic!("source has syntax errors: {source}");
     }
 
-    build(&parsed.tree())
+    semantic_index(&parsed.tree())
 }
 
 fn directive_kinds(index: &SemanticIndex) -> Vec<&DirectiveKind> {
@@ -250,12 +250,13 @@ fn test_scope_at() {
     let fun = ScopeId::from(1);
 
     // Offset 0 is in `x` -- file scope
-    assert_eq!(idx.scope_at(biome_rowan::TextSize::from(0)), file);
+    assert_eq!(idx.scope_at(biome_rowan::TextSize::from(0)).0, file);
 
     // Offset inside the function body
     let body_offset = source.find(") y").unwrap() + 2;
     assert_eq!(
-        idx.scope_at(biome_rowan::TextSize::from(body_offset as u32)),
+        idx.scope_at(biome_rowan::TextSize::from(body_offset as u32))
+            .0,
         fun
     );
 }
