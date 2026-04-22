@@ -685,6 +685,28 @@ impl Console {
         Console::get_mut()
     }
 
+    /// Run a closure with `&Console`, catching panics at the boundary.
+    ///
+    /// Intended for use in `#[ark::register]` entry points and C callbacks
+    /// where a panic would unwind through R's C call stack. Panics are
+    /// caught and converted to `anyhow::Error`, which `harp::register`'s
+    /// `r_unwrap()` then surfaces as a clean R error.
+    pub fn with<T>(f: impl FnOnce(&Console) -> anyhow::Result<T>) -> anyhow::Result<T> {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(Console::get()))) {
+            Ok(result) => result,
+            Err(panic) => {
+                let msg = match panic.downcast_ref::<&str>() {
+                    Some(s) => s.to_string(),
+                    None => match panic.downcast_ref::<String>() {
+                        Some(s) => s.clone(),
+                        None => String::from("(unknown payload)"),
+                    },
+                };
+                Err(anyhow!("Panic in Console callback: {msg}"))
+            },
+        }
+    }
+
     /// Install a minimal stopgap `Console` in the thread-local for unit tests
     /// that need a `&Console` (e.g. to pass to `CommHandler` methods) but
     /// don't go through the full `Console::start()` path.

@@ -1091,7 +1091,8 @@ pub(crate) fn compute_plot_overrides(
     )
 }
 
-/// Activation callback
+/// Run a closure with `&Console` and `&DeviceContext`, catching any panic at
+/// the FFI boundary. Graphics device callbacks are invoked from R
 ///
 /// Only used for logging
 ///
@@ -1256,13 +1257,12 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 /// that intermediate plot since we are still on the same plot page with the same plot
 /// `id`.
 #[tracing::instrument(level = "trace", skip_all)]
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::Result<SEXP> {
+#[ark::register]
+fn ps_graphics_before_plot_new(console: &Console, _name: SEXP) -> anyhow::Result<SEXP> {
     log::trace!("Entering ps_graphics_before_plot_new");
 
     // Process changes related to the last plot before opening a new page.
     // Particularly important if we make multiple plots in a single chunk.
-    let console = Console::get();
     console.device_context().process_changes(console);
 
     Ok(harp::r_null())
@@ -1273,8 +1273,8 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
 /// Returns a named list with fields: name, kind, execution_id, code, origin_uri.
 /// Returns NULL if no metadata is found for the given ID.
 #[tracing::instrument(level = "trace", skip_all)]
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result<SEXP> {
+#[ark::register]
+fn ps_graphics_get_metadata(console: &Console, id: SEXP) -> anyhow::Result<SEXP> {
     let id_str: String = RObject::view(id).try_into()?;
     let plot_id = PlotId(id_str);
 
@@ -1283,7 +1283,7 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
     // error handlers that re-enter `plot_contexts.borrow_mut()`, which would
     // panic if the shared borrow were still held.
     let metadata = {
-        let contexts = Console::get().device_context().plot_contexts.borrow();
+        let contexts = console.device_context().plot_contexts.borrow();
         contexts.get(&plot_id).map(|ctx| ctx.metadata.clone())
     };
 
@@ -1317,26 +1317,26 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
 
 /// Return the current plot ID. Used by tests to verify that layout panels
 /// share the same page (same ID) and that overflow creates a new page.
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_current_plot_id() -> anyhow::Result<SEXP> {
-    let id = Console::get().device_context().id();
+#[ark::register]
+fn ps_graphics_current_plot_id(console: &Console) -> anyhow::Result<SEXP> {
+    let id = console.device_context().id();
     Ok(RObject::from(&id).sexp)
 }
 
 /// Push a source file URI onto the source context stack.
 /// Called from the `source()` hook when entering a sourced file.
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_push_source_context(uri: SEXP) -> anyhow::Result<SEXP> {
+#[ark::register]
+fn ps_graphics_push_source_context(console: &Console, uri: SEXP) -> anyhow::Result<SEXP> {
     let uri_str: String = RObject::view(uri).try_into()?;
-    Console::get().device_context().push_source_context(uri_str);
+    console.device_context().push_source_context(uri_str);
     Ok(harp::r_null())
 }
 
 /// Pop a source file URI from the source context stack.
 /// Called from the `source()` hook when leaving a sourced file.
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<SEXP> {
-    Console::get().device_context().pop_source_context();
+#[ark::register]
+fn ps_graphics_pop_source_context(console: &Console) -> anyhow::Result<SEXP> {
+    console.device_context().pop_source_context();
     Ok(harp::r_null())
 }
 
