@@ -9,7 +9,7 @@ use oak_ide::goto_definition;
 use oak_ide::FileScope;
 use oak_ide::NavigationTarget;
 use oak_index::external::file_layers;
-use oak_index::external::BindingSource;
+use oak_index::external::ScopeLayer;
 use oak_index::semantic_index;
 use oak_index::semantic_index::SemanticIndex;
 use oak_package::library::Library;
@@ -234,7 +234,7 @@ fn test_external_package() {
     let idx = parse_source(source);
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
-    let scope_chain = vec![BindingSource::PackageExports("dplyr".to_string())];
+    let scope_chain = vec![ScopeLayer::PackageExports("dplyr".to_string())];
 
     let targets = goto_definition(
         offset(0),
@@ -258,7 +258,7 @@ fn test_external_import_from() {
 
     let mut imports = HashMap::new();
     imports.insert("tibble".to_string(), "tibble".to_string());
-    let scope_chain = vec![BindingSource::PackageImports(imports)];
+    let scope_chain = vec![ScopeLayer::PackageImports(imports)];
 
     let targets = goto_definition(
         offset(0),
@@ -370,7 +370,7 @@ fn test_local_shadows_external() {
     let idx = parse_source(source);
     let library = test_library(vec![("pkg", vec!["foo"])]);
 
-    let scope_chain = vec![BindingSource::PackageExports("pkg".to_string())];
+    let scope_chain = vec![ScopeLayer::PackageExports("pkg".to_string())];
 
     let use_offset = source.rfind("foo").unwrap() as u32;
     let targets = goto_definition(

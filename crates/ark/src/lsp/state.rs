@@ -8,7 +8,7 @@ use oak_core::file::list_r_files;
 use oak_ide::FileScope;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
-use oak_index::external::BindingSource;
+use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::DirectiveKind;
 use oak_package::collation::collation_order;
 use oak_package::library::Library;
@@ -178,14 +178,14 @@ impl WorldState {
         }
 
         top_level.extend(root_layers.clone());
-        top_level.push(BindingSource::PackageExports("base".to_string()));
+        top_level.push(ScopeLayer::PackageExports("base".to_string()));
         lazy.extend(root_layers);
-        lazy.push(BindingSource::PackageExports("base".to_string()));
+        lazy.push(ScopeLayer::PackageExports("base".to_string()));
 
         FileScope::package(top_level, lazy)
     }
 
-    fn directive_layers(&self, file: &Url) -> Vec<(TextSize, BindingSource)> {
+    fn directive_layers(&self, file: &Url) -> Vec<(TextSize, ScopeLayer)> {
         let Some(doc) = self.documents.get(file) else {
             return Vec::new();
         };
@@ -194,9 +194,7 @@ impl WorldState {
             .file_directives()
             .iter()
             .map(|d| match d.kind() {
-                DirectiveKind::Attach(pkg) => {
-                    (d.offset(), BindingSource::PackageExports(pkg.clone()))
-                },
+                DirectiveKind::Attach(pkg) => (d.offset(), ScopeLayer::PackageExports(pkg.clone())),
             })
             .collect()
     }
@@ -204,7 +202,7 @@ impl WorldState {
 
 /// The default R search path for scripts: the default packages that R
 /// attaches on startup, in search order (last attached = searched first).
-fn default_search_path() -> Vec<BindingSource> {
+fn default_search_path() -> Vec<ScopeLayer> {
     // R's default packages, in reverse attachment order (most recently
     // attached first). These are always on the search path unless
     // overridden by `R_DEFAULT_PACKAGES`.
@@ -219,7 +217,7 @@ fn default_search_path() -> Vec<BindingSource> {
     ];
     default_packages
         .into_iter()
-        .map(|pkg| BindingSource::PackageExports(pkg.to_string()))
+        .map(|pkg| ScopeLayer::PackageExports(pkg.to_string()))
         .collect()
 }
 
@@ -264,7 +262,7 @@ pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
 #[cfg(test)]
 mod tests {
     use biome_rowan::TextSize;
-    use oak_index::external::BindingSource;
+    use oak_index::external::ScopeLayer;
     use stdext::assert_not;
 
     use super::*;
@@ -277,10 +275,10 @@ mod tests {
         state
     }
 
-    fn has_package(layers: &[BindingSource], name: &str) -> bool {
+    fn has_package(layers: &[ScopeLayer], name: &str) -> bool {
         layers
             .iter()
-            .any(|l| matches!(l, BindingSource::PackageExports(p) if p == name))
+            .any(|l| matches!(l, ScopeLayer::PackageExports(p) if p == name))
     }
 
     #[test]

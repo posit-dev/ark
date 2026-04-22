@@ -8,8 +8,8 @@ use biome_rowan::TextSize;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::resolve_external_name;
-use oak_index::external::BindingSource;
 use oak_index::external::ExternalDefinition;
+use oak_index::external::ScopeLayer;
 use oak_index::semantic_index;
 use oak_package::library::Library;
 use oak_package::package::Package;
@@ -47,8 +47,8 @@ fn file_url(name: &str) -> Url {
     Url::parse(&format!("file:///project/R/{name}")).unwrap()
 }
 
-fn file_exports(file: &str, entries: Vec<(&str, TextRange)>) -> BindingSource {
-    BindingSource::FileExports {
+fn file_exports(file: &str, entries: Vec<(&str, TextRange)>) -> ScopeLayer {
+    ScopeLayer::FileExports {
         file: file_url(file),
         exports: entries
             .into_iter()
@@ -57,8 +57,8 @@ fn file_exports(file: &str, entries: Vec<(&str, TextRange)>) -> BindingSource {
     }
 }
 
-fn package_imports(entries: Vec<(&str, &str)>) -> BindingSource {
-    BindingSource::PackageImports(
+fn package_imports(entries: Vec<(&str, &str)>) -> ScopeLayer {
+    ScopeLayer::PackageImports(
         entries
             .into_iter()
             .map(|(n, p)| (n.to_string(), p.to_string()))
@@ -109,7 +109,7 @@ fn test_resolve_imported_names() {
 fn test_resolve_package_exports() {
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
-    let scope = vec![BindingSource::PackageExports("dplyr".to_string())];
+    let scope = vec![ScopeLayer::PackageExports("dplyr".to_string())];
 
     let result = resolve_external_name(&library, &scope, "filter");
     assert_eq!(
@@ -125,7 +125,7 @@ fn test_resolve_package_exports() {
 fn test_resolve_package_exports_miss() {
     let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
 
-    let scope = vec![BindingSource::PackageExports("dplyr".to_string())];
+    let scope = vec![ScopeLayer::PackageExports("dplyr".to_string())];
 
     let result = resolve_external_name(&library, &scope, "summarise");
     assert_eq!(result, None);
@@ -133,7 +133,7 @@ fn test_resolve_package_exports_miss() {
 
 #[test]
 fn test_resolve_unknown_package_skipped() {
-    let scope = vec![BindingSource::PackageExports("nonexistent".to_string())];
+    let scope = vec![ScopeLayer::PackageExports("nonexistent".to_string())];
 
     let result = resolve_external_name(&empty_library(), &scope, "foo");
     assert_eq!(result, None);
@@ -149,8 +149,8 @@ fn test_resolve_package_shadowing() {
     ]);
 
     let scope = vec![
-        BindingSource::PackageExports("dplyr".to_string()),
-        BindingSource::PackageExports("stats".to_string()),
+        ScopeLayer::PackageExports("dplyr".to_string()),
+        ScopeLayer::PackageExports("stats".to_string()),
     ];
 
     // dplyr's `filter` wins
@@ -180,7 +180,7 @@ fn test_resolve_first_match_wins() {
 
     let scope = vec![
         file_exports("utils.R", vec![("filter", range(0, 6))]),
-        BindingSource::PackageExports("stats".to_string()),
+        ScopeLayer::PackageExports("stats".to_string()),
     ];
 
     // File export should win over package export
@@ -201,7 +201,7 @@ fn test_resolve_falls_through_to_later_layer() {
 
     let scope = vec![
         file_exports("utils.R", vec![("helper", range(0, 6))]),
-        BindingSource::PackageExports("dplyr".to_string()),
+        ScopeLayer::PackageExports("dplyr".to_string()),
     ];
 
     // "filter" is not in file exports, falls through to package
@@ -221,7 +221,7 @@ fn test_resolve_imported_names_shadow_package_exports() {
 
     let scope = vec![
         package_imports(vec![("filter", "stats")]),
-        BindingSource::PackageExports("dplyr".to_string()),
+        ScopeLayer::PackageExports("dplyr".to_string()),
     ];
 
     let result = resolve_external_name(&library, &scope, "filter");
@@ -272,7 +272,7 @@ fn test_file_layers_exports_only() {
     let layers = file_layers(file_url("foo.R"), &index);
 
     assert_eq!(layers.len(), 1);
-    assert_matches!(&layers[0], BindingSource::FileExports { file, exports } => {
+    assert_matches!(&layers[0], ScopeLayer::FileExports { file, exports } => {
         assert_eq!(file, &file_url("foo.R"));
         assert!(exports.contains_key("x"));
         assert!(exports.contains_key("y"));
@@ -288,14 +288,14 @@ fn test_file_layers_with_library_directives() {
     // FileExports + 2 PackageExports
     assert_eq!(layers.len(), 3);
 
-    assert_matches!(&layers[0], BindingSource::FileExports { exports, .. } => {
+    assert_matches!(&layers[0], ScopeLayer::FileExports { exports, .. } => {
         assert_eq!(exports.len(), 1);
         assert!(exports.contains_key("x"));
     });
-    assert_matches!(&layers[1], BindingSource::PackageExports(pkg) => {
+    assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "dplyr");
     });
-    assert_matches!(&layers[2], BindingSource::PackageExports(pkg) => {
+    assert_matches!(&layers[2], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "tidyr");
     });
 }
@@ -306,7 +306,7 @@ fn test_file_layers_last_def_wins() {
     let index = index_source("x <- 1\nx <- 2");
     let layers = file_layers(file_url("foo.R"), &index);
 
-    assert_matches!(&layers[0], BindingSource::FileExports { exports, .. } => {
+    assert_matches!(&layers[0], ScopeLayer::FileExports { exports, .. } => {
         assert_eq!(exports.len(), 1);
         let range = exports.get("x").unwrap();
         assert_eq!(range.start(), TextSize::from(7));
@@ -319,7 +319,7 @@ fn test_file_layers_empty_file() {
     let layers = file_layers(file_url("empty.R"), &index);
 
     assert_eq!(layers.len(), 1);
-    assert_matches!(&layers[0], BindingSource::FileExports { exports, .. } => {
+    assert_matches!(&layers[0], ScopeLayer::FileExports { exports, .. } => {
         assert!(exports.is_empty());
     });
 }
@@ -404,10 +404,10 @@ fn test_root_layers_from_namespace_imports() {
     };
     let layers = package_root_layers(&ns);
     assert_eq!(layers.len(), 2);
-    assert_matches!(&layers[0], BindingSource::PackageExports(pkg) => {
+    assert_matches!(&layers[0], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "rlang");
     });
-    assert_matches!(&layers[1], BindingSource::PackageExports(pkg) => {
+    assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "cli");
     });
 }
@@ -436,7 +436,7 @@ fn test_root_layers_includes_importfrom() {
     };
     let layers = package_root_layers(&ns);
     assert_eq!(layers.len(), 1);
-    assert_matches!(&layers[0], BindingSource::PackageImports(map) => {
+    assert_matches!(&layers[0], ScopeLayer::PackageImports(map) => {
         assert_eq!(map.get("median").unwrap(), "stats");
         assert_eq!(map.get("head").unwrap(), "utils");
     });
@@ -454,8 +454,8 @@ fn test_root_layers_importfrom_before_package_exports() {
     };
     let layers = package_root_layers(&ns);
     assert_eq!(layers.len(), 2);
-    assert_matches!(&layers[0], BindingSource::PackageImports(_));
-    assert_matches!(&layers[1], BindingSource::PackageExports(pkg) => {
+    assert_matches!(&layers[0], ScopeLayer::PackageImports(_));
+    assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "dplyr");
     });
 }

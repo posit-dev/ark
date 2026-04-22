@@ -1,7 +1,7 @@
 use biome_rowan::TextSize;
 use oak_index::external::resolve_external_name;
-use oak_index::external::BindingSource;
 use oak_index::external::ExternalDefinition;
+use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
@@ -119,7 +119,7 @@ fn resolve_use(
 
 fn resolve_external(
     library: &Library,
-    scope_chain: &[BindingSource],
+    scope_chain: &[ScopeLayer],
     symbol_name: &str,
 ) -> Vec<NavigationTarget> {
     let Some(external) = resolve_external_name(library, scope_chain, symbol_name) else {
