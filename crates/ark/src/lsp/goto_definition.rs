@@ -2,6 +2,7 @@ use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::anyhow;
 use oak_ide::NavigationTarget;
+use stdext::result::ResultExt;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
@@ -36,10 +37,14 @@ pub(crate) fn goto_definition(
         return Ok(None);
     }
 
-    let links = targets
+    let links: Vec<_> = targets
         .into_iter()
-        .map(|target| nav_target_to_link(target, state))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+        .filter_map(|target| nav_target_to_link(target, state).log_err())
+        .collect();
+
+    if links.is_empty() {
+        return Ok(None);
+    }
 
     Ok(Some(GotoDefinitionResponse::Link(links)))
 }
