@@ -113,6 +113,11 @@ struct PlotContext {
 /// R's callback registration layer. A future refactor could wrap the C-to-Rust
 /// bridge so that the Rust-facing hook methods receive `&mut self` explicitly,
 /// containing the `Console::get()` unsoundness in one place.
+///
+/// NOTE: Never hold a `RefCell` borrow while calling into R (`RObject::from`,
+/// `RFunction::call`, `libr::Rf_*`, etc.). Any R call can in principle re-enter
+/// Rust (e.g. via finalizers during GC), so keeping borrows short avoids
+/// `RefCell` panics.
 pub(crate) struct DeviceContext {
     /// Whether we are running in Console, Notebook, or Background mode.
     session_mode: SessionMode,
@@ -546,7 +551,7 @@ impl DeviceContext {
 
         // If the currently active plot is closed, advance to a new Positron page
         // See https://github.com/posit-dev/positron/issues/6702.
-        if *self.id.borrow() == *id {
+        if self.id() == *id {
             self.new_positron_page();
         }
     }
@@ -1273,37 +1278,41 @@ unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result
     let id_str: String = RObject::view(id).try_into()?;
     let plot_id = PlotId(id_str);
 
-    let contexts = Console::get().device_context().plot_contexts.borrow();
-    match contexts.get(&plot_id) {
-        Some(ctx) => {
-            let info = &ctx.metadata;
-            let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
+    // Clone metadata out of the borrow before calling into R. R allocations
+    // (`RObject::from()`, `Rf_setAttrib()`, etc.) can trigger finalizers or
+    // error handlers that re-enter `plot_contexts.borrow_mut()`, which would
+    // panic if the shared borrow were still held.
+    let metadata = {
+        let contexts = Console::get().device_context().plot_contexts.borrow();
+        contexts.get(&plot_id).map(|ctx| ctx.metadata.clone())
+    };
 
-            // Create a list with the metadata values
-            let values: Vec<RObject> = vec![
-                RObject::from(info.name.as_str()),
-                RObject::from(info.kind.as_str()),
-                RObject::from(info.execution_id.as_str()),
-                RObject::from(info.code.as_str()),
-                RObject::from(origin_uri),
-            ];
-            let list = RObject::try_from(values)?;
+    let Some(info) = metadata else {
+        return Ok(harp::r_null());
+    };
 
-            // Set the names attribute
-            let names: Vec<String> = vec![
-                "name".to_string(),
-                "kind".to_string(),
-                "execution_id".to_string(),
-                "code".to_string(),
-                "origin_uri".to_string(),
-            ];
-            let names = RObject::from(names);
-            libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+    let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
 
-            Ok(list.sexp)
-        },
-        None => Ok(harp::r_null()),
-    }
+    let values: Vec<RObject> = vec![
+        RObject::from(info.name.as_str()),
+        RObject::from(info.kind.as_str()),
+        RObject::from(info.execution_id.as_str()),
+        RObject::from(info.code.as_str()),
+        RObject::from(origin_uri),
+    ];
+    let list = RObject::try_from(values)?;
+
+    let names: Vec<String> = vec![
+        "name".to_string(),
+        "kind".to_string(),
+        "execution_id".to_string(),
+        "code".to_string(),
+        "origin_uri".to_string(),
+    ];
+    let names = RObject::from(names);
+    libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+
+    Ok(list.sexp)
 }
 
 /// Return the current plot ID. Used by tests to verify that layout panels
