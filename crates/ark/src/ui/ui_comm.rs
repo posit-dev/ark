@@ -70,7 +70,7 @@ impl CommHandler for UiComm {
         self.refresh(&input_prompt, &continuation_prompt, ctx);
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, _console: &Console) {
         let this = &*self;
         handle_comm_message(
             &ctx.outgoing_tx,
@@ -81,7 +81,12 @@ impl CommHandler for UiComm {
         );
     }
 
-    fn handle_environment(&mut self, event: &EnvironmentChanged, ctx: &CommHandlerContext) {
+    fn handle_environment(
+        &mut self,
+        event: &EnvironmentChanged,
+        ctx: &CommHandlerContext,
+        _console: &Console,
+    ) {
         let EnvironmentChanged::Execution {
             input_prompt,
             continuation_prompt,
