@@ -23,5 +23,5 @@ fn main() {
     let resource = Path::new("resources")
         .join("manifest")
         .join("harp-manifest.rc");
-    embed_resource::compile_for_everything(resource, embed_resource::NONE);
+    embed_resource::compile_for_everything(resource, embed_resource::NONE).unwrap();
 }

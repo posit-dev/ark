@@ -118,7 +118,7 @@ pub fn open_r_shared_library(path: &Path) -> Result<libloading::Library, libload
     // https://github.com/posit-dev/amalthea/pull/205
     let flags = RTLD_LAZY | RTLD_GLOBAL;
 
-    let library = unsafe { Library::open(Some(&path), flags) };
+    let library = unsafe { Library::open(Some(path), flags) };
 
     // Map from the OS specific `Library` into the cross platform `Library`
 
