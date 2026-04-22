@@ -197,12 +197,11 @@ impl SemanticIndex {
     pub fn enclosing_bindings(
         &self,
         scope: ScopeId,
-        use_id: UseId,
+        symbol: SymbolId,
     ) -> Option<(ScopeId, &Bindings)> {
-        let use_site = &self.uses[scope][use_id];
         let key = EnclosingSnapshotKey {
             nested_scope: scope,
-            nested_symbol: use_site.symbol(),
+            nested_symbol: symbol,
         };
         let &(enclosing_scope, snapshot_id) = self.enclosing_snapshots.get(&key)?;
         let bindings = self.use_def_maps[enclosing_scope].enclosing_snapshot(snapshot_id);

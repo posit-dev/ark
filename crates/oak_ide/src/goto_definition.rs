@@ -106,7 +106,8 @@ fn resolve_use(
 
     // No local definitions. If we're in a nested scope, check enclosing
     // bindings (the symbol might be defined in an outer function scope).
-    if let Some((enclosing_scope, enclosing_bindings)) = index.enclosing_bindings(scope_id, use_id)
+    if let Some((enclosing_scope, enclosing_bindings)) =
+        index.enclosing_bindings(scope_id, use_site.symbol())
     {
         let enclosing_defs = enclosing_bindings.definitions();
         if !enclosing_defs.is_empty() {
