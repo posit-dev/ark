@@ -720,23 +720,22 @@ fn test_plot_during_frontend_ready() {
 fn test_plot_without_execution_context_has_empty_metadata() {
     let frontend = DummyArkFrontend::lock();
 
-    // Register a task callback that creates a plot. Task callbacks fire
-    // after each top-level R evaluation completes, at which point the
-    // execution context has already been cleared by `on_did_execute_request`.
-    // The callback removes itself after one invocation (returns FALSE).
-    //
-    // The task callback fires immediately after this evaluation completes
-    // (but still within the busy/idle window), so the display_data for the
-    // plot arrives before idle.
+    // Spawn an idle task that creates a plot. Idle tasks run during the
+    // event loop between execute requests, so no execution context is
+    // active when the plot is produced.
     frontend.send_execute_request(
-        r#"invisible(addTaskCallback(function(...) { plot(1:10); FALSE }))"#,
+        r#"invisible(.Call("ps_test_spawn_eval_idle_task", "plot(1:10)"))"#,
         ExecuteRequestOptions::default(),
     );
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    let display_id = frontend.recv_iopub_display_data_id();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+
+    // After the request completes, R re-enters the idle loop. The test
+    // thread is blocked here (not sending new requests), so `select`
+    // picks up the idle task and the display_data arrives promptly.
+    let display_id = frontend.recv_iopub_display_data_id();
 
     // Query metadata using the display_id from the plot
     let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
@@ -748,7 +747,7 @@ fn test_plot_without_execution_context_has_empty_metadata() {
     frontend.recv_shell_execute_reply();
 
     // execution_id and code should be empty since the plot was created
-    // outside of an execute request's execution context
+    // outside of any execute request
     assert!(result.contains("$execution_id\n[1] \"\""));
     assert!(result.contains("$code\n[1] \"\""));
 }
