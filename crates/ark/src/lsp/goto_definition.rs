@@ -31,7 +31,7 @@ pub(crate) fn goto_definition(
         &uri,
         &root,
         &index,
-        &state.file_scope(&uri),
+        &state.external_scope(&uri),
         &state.library,
     );
 

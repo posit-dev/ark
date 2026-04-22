@@ -94,7 +94,7 @@ impl WorldState {
     /// current project type. For packages, this creates a scope containing
     /// imports and top-level definitions in other files, respecting the
     /// collation order.
-    pub(crate) fn file_scope(&self, file: &Url) -> ExternalScope {
+    pub(crate) fn external_scope(&self, file: &Url) -> ExternalScope {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
             let directives = self.directive_layers(file);
             return ExternalScope::search_path(directives, default_search_path());
@@ -268,7 +268,7 @@ mod tests {
         let uri = test_path("script.R");
         let state = make_state(&uri, &doc);
 
-        let scope = state.file_scope(&uri);
+        let scope = state.external_scope(&uri);
         let index = doc.semantic_index();
 
         let before = scope.at(&index, TextSize::from(0));
@@ -290,7 +290,7 @@ mod tests {
         let uri = test_path("script.R");
         let state = make_state(&uri, &doc);
 
-        let scope = state.file_scope(&uri);
+        let scope = state.external_scope(&uri);
         let index = doc.semantic_index();
 
         let in_function = scope.at(&index, TextSize::from(code.find("inform").unwrap() as u32));
@@ -304,7 +304,7 @@ mod tests {
         let uri = test_path("script.R");
         let state = make_state(&uri, &doc);
 
-        let scope = state.file_scope(&uri);
+        let scope = state.external_scope(&uri);
         let layers = scope.lazy();
         assert_not!(has_package(layers, "rlang"));
     }
