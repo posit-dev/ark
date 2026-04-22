@@ -45,7 +45,11 @@ impl Identifier {
             return Some(Identifier::Use { scope_id, use_id });
         }
 
-        classify_namespace(root, offset)
+        if let Some(namespace_access) = classify_namespace(root, offset) {
+            return Some(namespace_access);
+        }
+
+        None
     }
 }
 

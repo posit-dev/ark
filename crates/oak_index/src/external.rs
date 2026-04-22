@@ -68,14 +68,8 @@ pub fn resolve_external_name(
             },
 
             ScopeLayer::PackageExports(pkg_name) => {
-                let Some(pkg) = library.get(pkg_name) else {
-                    continue;
-                };
-                if pkg.exported_symbols.contains_str(name) {
-                    return Some(ExternalDefinition::Package {
-                        package: pkg_name.clone(),
-                        name: name.to_string(),
-                    });
+                if let Some(def) = resolve_in_package(library, pkg_name, name) {
+                    return Some(def);
                 }
             },
         }
@@ -91,11 +85,7 @@ pub fn resolve_in_package(
     name: &str,
 ) -> Option<ExternalDefinition> {
     let pkg = library.get(package)?;
-    if pkg
-        .exported_symbols
-        .binary_search(&name.to_string())
-        .is_ok()
-    {
+    if pkg.exported_symbols.contains_str(name) {
         return Some(ExternalDefinition::Package {
             package: package.to_string(),
             name: name.to_string(),
