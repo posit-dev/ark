@@ -3,11 +3,13 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use anyhow::anyhow;
+use biome_rowan::TextSize;
 use oak_core::file::list_r_files;
 use oak_ide::FileScope;
 use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::BindingSource;
+use oak_index::semantic_index::DirectiveKind;
 use oak_package::collation::collation_order;
 use oak_package::library::Library;
 use stdext::result::ResultExt;
@@ -95,7 +97,8 @@ impl WorldState {
     /// collation order.
     pub(crate) fn file_scope(&self, file: &Url) -> FileScope {
         let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            return FileScope::search_path(default_search_path());
+            let directives = self.directive_layers(file);
+            return FileScope::search_path(directives, default_search_path());
         };
 
         let root_layers = package_root_layers(&pkg.namespace);
@@ -181,6 +184,22 @@ impl WorldState {
 
         FileScope::package(top_level, lazy)
     }
+
+    fn directive_layers(&self, file: &Url) -> Vec<(TextSize, BindingSource)> {
+        let Some(doc) = self.documents.get(file) else {
+            return Vec::new();
+        };
+        let index = doc.semantic_index();
+        index
+            .file_directives()
+            .iter()
+            .map(|d| match d.kind() {
+                DirectiveKind::Attach(pkg) => {
+                    (d.offset(), BindingSource::PackageExports(pkg.clone()))
+                },
+            })
+            .collect()
+    }
 }
 
 /// The default R search path for scripts: the default packages that R
@@ -240,4 +259,78 @@ where
 pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
     let uris: Vec<Url> = state.documents.iter().map(|elt| elt.0.clone()).collect();
     uris
+}
+
+#[cfg(test)]
+mod tests {
+    use biome_rowan::TextSize;
+    use oak_index::external::BindingSource;
+    use stdext::assert_not;
+
+    use super::*;
+    use crate::lsp::document::Document;
+    use crate::lsp::util::test_path;
+
+    fn make_state(uri: &Url, doc: &Document) -> WorldState {
+        let mut state = WorldState::default();
+        state.documents.insert(uri.clone(), doc.clone());
+        state
+    }
+
+    fn has_package(layers: &[BindingSource], name: &str) -> bool {
+        layers
+            .iter()
+            .any(|l| matches!(l, BindingSource::PackageExports(p) if p == name))
+    }
+
+    #[test]
+    fn test_script_library_directive_position_sensitive() {
+        // At top-level, `library()` is position-sensitive: code before
+        // the call should not see the package, code after should.
+        // The lazy scope (used for completions etc.) sees all directives.
+        let code = "inform('hi')\nlibrary(rlang)\ninform('hello')\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("script.R");
+        let state = make_state(&uri, &doc);
+
+        let scope = state.file_scope(&uri);
+        let index = doc.semantic_index();
+
+        let before = scope.at(&index, TextSize::from(0));
+        assert_not!(has_package(&before, "rlang"));
+
+        let after = scope.at(&index, TextSize::from(code.rfind("inform").unwrap() as u32));
+        assert!(has_package(&after, "rlang"));
+
+        assert!(has_package(scope.lazy(), "rlang"));
+    }
+
+    #[test]
+    fn test_script_library_directive_visible_in_function_before_call() {
+        // Function bodies see all directives regardless of position,
+        // because the function will typically be called after the
+        // script has been fully sourced.
+        let code = "f <- function() inform('hello')\nlibrary(rlang)\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("script.R");
+        let state = make_state(&uri, &doc);
+
+        let scope = state.file_scope(&uri);
+        let index = doc.semantic_index();
+
+        let in_function = scope.at(&index, TextSize::from(code.find("inform").unwrap() as u32));
+        assert!(has_package(&in_function, "rlang"));
+    }
+
+    #[test]
+    fn test_script_without_library_no_extra_packages() {
+        let code = "inform('hello')\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("script.R");
+        let state = make_state(&uri, &doc);
+
+        let scope = state.file_scope(&uri);
+        let layers = scope.lazy();
+        assert_not!(has_package(&layers, "rlang"));
+    }
 }

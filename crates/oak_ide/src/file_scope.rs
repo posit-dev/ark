@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use biome_rowan::TextSize;
 use oak_index::external::BindingSource;
 use oak_index::semantic_index::ScopeKind;
@@ -20,12 +22,26 @@ pub enum FileScope {
     /// Script or file outside a package. The scope chain is the R
     /// search path: `library()` attachments from the file itself,
     /// default packages (stats, graphics, etc.), and base.
-    SearchPath(Vec<BindingSource>),
+    ///
+    /// At top-level, only directives that appear before the cursor are
+    /// visible (R executes scripts sequentially). Inside function bodies
+    /// all directives are visible because the function will typically be
+    /// called after the full script has been sourced.
+    SearchPath {
+        base: Vec<BindingSource>,
+        directives: Vec<(TextSize, BindingSource)>,
+        /// All directive layers and the base ones.
+        lazy: Vec<BindingSource>,
+    },
 }
 
 impl Default for FileScope {
     fn default() -> Self {
-        Self::SearchPath(Vec::new())
+        Self::SearchPath {
+            base: Vec::new(),
+            directives: Vec::new(),
+            lazy: Vec::new(),
+        }
     }
 }
 
@@ -34,33 +50,64 @@ impl FileScope {
         Self::Package { top_level, lazy }
     }
 
-    pub fn search_path(layers: Vec<BindingSource>) -> Self {
-        Self::SearchPath(layers)
+    pub fn search_path(
+        directives: Vec<(TextSize, BindingSource)>,
+        base: Vec<BindingSource>,
+    ) -> Self {
+        let lazy: Vec<_> = directives
+            .iter()
+            .map(|(_, b)| b.clone())
+            .chain(base.iter().cloned())
+            .collect();
+        Self::SearchPath {
+            base,
+            directives,
+            lazy,
+        }
     }
 
     /// Return the scope chain appropriate for the given offset. For
     /// packages, top-level scope uses predecessors only while lazy
-    /// (function) scopes see all files. For scripts, the same search
-    /// path applies everywhere.
-    pub fn at(&self, index: &SemanticIndex, offset: TextSize) -> &[BindingSource] {
+    /// (function) scopes see all files. For scripts, top-level code
+    /// only sees `library()` calls that precede the cursor while
+    /// function bodies see all directives.
+    pub fn at(&self, index: &SemanticIndex, offset: TextSize) -> Cow<'_, [BindingSource]> {
         match self {
             Self::Package { top_level, lazy } => {
                 let (_, scope) = index.scope_at(offset);
                 match scope.kind() {
-                    ScopeKind::File => top_level,
-                    ScopeKind::Function => lazy,
+                    ScopeKind::File => Cow::Borrowed(top_level),
+                    ScopeKind::Function => Cow::Borrowed(lazy),
                 }
             },
-            Self::SearchPath(layers) => layers,
+            Self::SearchPath {
+                base,
+                directives,
+                lazy,
+            } => {
+                let (_, scope) = index.scope_at(offset);
+                match scope.kind() {
+                    ScopeKind::File => {
+                        let layers: Vec<_> = directives
+                            .iter()
+                            .filter(|(off, _)| *off < offset)
+                            .map(|(_, b)| b.clone())
+                            .chain(base.iter().cloned())
+                            .collect();
+                        Cow::Owned(layers)
+                    },
+                    ScopeKind::Function => Cow::Borrowed(lazy),
+                }
+            },
         }
     }
 
     /// The full scope for lazy contexts. Useful for features that don't
-    /// have a cursor position (e.g. workspace symbols).
+    /// have a cursor position (e.g. completions, workspace symbols).
     pub fn lazy(&self) -> &[BindingSource] {
         match self {
             Self::Package { lazy, .. } => lazy,
-            Self::SearchPath(layers) => layers,
+            Self::SearchPath { lazy, .. } => lazy,
         }
     }
 }

@@ -507,4 +507,35 @@ mod tests {
         // `is.null` is missing from the INDEX-based export list.
         assert_eq!(result, None);
     }
+
+    // --- Script library() directives ---
+
+    #[test]
+    fn test_script_library_directive_resolves() {
+        let Some(library) = r_library() else {
+            eprintln!("skipping: R not found");
+            return;
+        };
+        if library.get("rlang").is_none() {
+            eprintln!("skipping: rlang not installed");
+            return;
+        }
+
+        // `inform` before the `library()` call should not resolve,
+        // `inform` after should (to a package symbol, no NavigationTarget yet).
+        let code = "inform('hi')\nlibrary(rlang)\ninform('hello')\n";
+        let doc = Document::new(code, None);
+        let uri = test_path("script.R");
+
+        let mut state = make_state(&uri, &doc);
+        state.library = library;
+
+        let params = make_params(uri.clone(), 0, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
+        assert_eq!(result, None);
+
+        let params = make_params(uri, 2, 0);
+        let result = goto_definition(&doc, params, &state).unwrap();
+        assert_eq!(result, None);
+    }
 }

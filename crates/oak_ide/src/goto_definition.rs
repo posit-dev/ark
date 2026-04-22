@@ -51,7 +51,7 @@ pub fn goto_definition(
     // Use site: resolve through use-def map, enclosing scopes, external.
     if let Some((scope_id, use_id)) = index.use_at_offset(offset) {
         let scope_chain = scope.at(index, offset);
-        return resolve_use(scope_id, use_id, file, index, scope_chain, library);
+        return resolve_use(scope_id, use_id, file, index, &scope_chain, library);
     }
 
     Vec::new()
