@@ -55,7 +55,7 @@ extern crate proc_macro;
 pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let function = parse_macro_input!(item as syn::ItemFn);
     match register_impl(function) {
-        Ok(tokens) => tokens.into(),
+        Ok(tokens) => tokens,
         Err(err) => err.to_compile_error().into(),
     }
 }

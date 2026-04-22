@@ -293,7 +293,7 @@ impl DeviceContext {
         self.clear_pending_origin();
     }
 
-    /// Should plot events be sent over [CommSocket]s to the frontend?
+    /// Should plot events be sent over comm channels to the frontend?
     ///
     /// This allows plots to be dynamically resized by their `id`. Only possible if the UI
     /// comm is connected (i.e. we are connected to Positron) and if we are in
@@ -529,7 +529,7 @@ impl DeviceContext {
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
-                    data: data.to_string(),
+                    data,
                     mime_type: mime_type.to_string(),
                     settings: Some(settings),
                 }))
@@ -556,13 +556,13 @@ impl DeviceContext {
         }
     }
 
-    fn get_mime_type(format: &PlotRenderFormat) -> String {
+    fn get_mime_type(format: &PlotRenderFormat) -> &'static str {
         match format {
-            PlotRenderFormat::Png => "image/png".to_string(),
-            PlotRenderFormat::Svg => "image/svg+xml".to_string(),
-            PlotRenderFormat::Pdf => "application/pdf".to_string(),
-            PlotRenderFormat::Jpeg => "image/jpeg".to_string(),
-            PlotRenderFormat::Tiff => "image/tiff".to_string(),
+            PlotRenderFormat::Png => "image/png",
+            PlotRenderFormat::Svg => "image/svg+xml",
+            PlotRenderFormat::Pdf => "application/pdf",
+            PlotRenderFormat::Jpeg => "image/jpeg",
+            PlotRenderFormat::Tiff => "image/tiff",
         }
     }
 
@@ -652,7 +652,7 @@ impl DeviceContext {
                 let mime_type = Self::get_mime_type(&PlotRenderFormat::Png);
 
                 let pre_render = PlotResult {
-                    data: pre_render.to_string(),
+                    data: pre_render,
                     mime_type: mime_type.to_string(),
                     settings: Some(settings),
                 };
@@ -707,7 +707,7 @@ impl DeviceContext {
             return;
         };
 
-        log::info!("Sending display data to IOPub.");
+        log::trace!("Sending display data to IOPub.");
 
         self.iopub_tx
             .send(IOPubMessage::DisplayData(DisplayData {
@@ -764,7 +764,7 @@ impl DeviceContext {
                 let mime_type = Self::get_mime_type(&settings.format);
 
                 let pre_render = PlotResult {
-                    data: pre_render.to_string(),
+                    data: pre_render,
                     mime_type: mime_type.to_string(),
                     settings: Some(settings),
                 };
@@ -808,7 +808,7 @@ impl DeviceContext {
             data: None,
         };
 
-        log::info!("Sending update display data to IOPub for `id` {id}.");
+        log::trace!("Sending update display data to IOPub for `id` {id}.");
 
         self.iopub_tx
             .send(IOPubMessage::UpdateDisplayData(UpdateDisplayData {
