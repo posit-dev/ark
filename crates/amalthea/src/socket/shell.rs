@@ -475,12 +475,25 @@ impl Shell {
 
             let ready = sel.ready();
 
+            // Always drain pending comm events, regardless of which
+            // channel was ready.
             while let Ok(event) = self.comm_event_rx.try_recv() {
                 self.process_comm_event(event);
             }
 
+            // `Select::ready()` can return spuriously, so we must use
+            // `try_recv()` instead of `recv()` to avoid blocking when
+            // the channel isn't actually ready. Blocking here would
+            // prevent us from draining comm events, causing a deadlock
+            // when the R thread sends a barrier via `comm_open_backend`.
             if ready == rx_idx {
-                return rx.recv().unwrap();
+                match rx.try_recv() {
+                    Ok(value) => return value,
+                    Err(crossbeam::channel::TryRecvError::Empty) => continue,
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                        panic!("Completion channel disconnected in drain_comm_events_until");
+                    },
+                }
             }
         }
     }
