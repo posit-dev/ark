@@ -65,7 +65,9 @@ fn main() {
     let resource = Path::new("resources")
         .join("manifest")
         .join("ark-manifest.rc");
-    embed_resource::compile_for_everything(resource, embed_resource::NONE).unwrap();
+    embed_resource::compile_for_everything(resource, embed_resource::NONE)
+        .manifest_optional()
+        .unwrap();
 
     cc::Build::new().file("src/debug.c").compile("debug");
 }

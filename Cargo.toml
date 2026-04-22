@@ -118,5 +118,5 @@ walkdir = "2"
 windows-sys ="0.61.2"
 winsafe = { version = "0.0.27", features = ["kernel"] }
 xdg = "3.0.0"
-yaml-rust = "0.4.5"
+yaml-rust2 = "0.9"
 zmq = "0.10.0"
