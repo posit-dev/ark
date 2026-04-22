@@ -50,19 +50,19 @@ pub fn goto_definition(
 
     // Use site: resolve through use-def map, enclosing scopes, external.
     if let Some((scope_id, use_id)) = index.use_at_offset(offset) {
-        let scope_chain = scope.at(index, offset);
-        return resolve_use(scope_id, use_id, file, index, &scope_chain, library);
+        return resolve_use(index, scope_id, use_id, file, offset, scope, library);
     }
 
     Vec::new()
 }
 
 fn resolve_use(
+    index: &SemanticIndex,
     scope_id: ScopeId,
     use_id: UseId,
     file: &Url,
-    index: &SemanticIndex,
-    scope_chain: &[BindingSource],
+    offset: TextSize,
+    scope: &FileScope,
     library: &Library,
 ) -> Vec<NavigationTarget> {
     let use_def_map = index.use_def_map(scope_id);
@@ -87,7 +87,10 @@ fn resolve_use(
             .collect()
     };
 
-    let external_targets = || resolve_external(library, scope_chain, symbol_name);
+    let external_targets = || {
+        let scope_chain = scope.at(index, offset);
+        resolve_external(library, &scope_chain, symbol_name)
+    };
 
     if !definitions.is_empty() {
         let mut targets = local_targets(scope_id, definitions);
