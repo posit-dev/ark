@@ -403,12 +403,15 @@ fn test_root_layers_from_namespace_imports() {
         ..Default::default()
     };
     let layers = package_root_layers(&ns);
-    assert_eq!(layers.len(), 2);
+    assert_eq!(layers.len(), 3);
     assert_matches!(&layers[0], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "rlang");
     });
     assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "cli");
+    });
+    assert_matches!(&layers[2], ScopeLayer::PackageExports(pkg) => {
+        assert_eq!(pkg, "base");
     });
 }
 
@@ -416,7 +419,10 @@ fn test_root_layers_from_namespace_imports() {
 fn test_root_layers_empty_namespace() {
     let ns = Namespace::default();
     let layers = package_root_layers(&ns);
-    assert!(layers.is_empty());
+    assert_eq!(layers.len(), 1);
+    assert_matches!(&layers[0], ScopeLayer::PackageExports(pkg) => {
+        assert_eq!(pkg, "base");
+    });
 }
 
 #[test]
@@ -435,10 +441,13 @@ fn test_root_layers_includes_importfrom() {
         ..Default::default()
     };
     let layers = package_root_layers(&ns);
-    assert_eq!(layers.len(), 1);
+    assert_eq!(layers.len(), 2);
     assert_matches!(&layers[0], ScopeLayer::PackageImports(map) => {
         assert_eq!(map.get("median").unwrap(), "stats");
         assert_eq!(map.get("head").unwrap(), "utils");
+    });
+    assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
+        assert_eq!(pkg, "base");
     });
 }
 
@@ -453,10 +462,13 @@ fn test_root_layers_importfrom_before_package_exports() {
         ..Default::default()
     };
     let layers = package_root_layers(&ns);
-    assert_eq!(layers.len(), 2);
+    assert_eq!(layers.len(), 3);
     assert_matches!(&layers[0], ScopeLayer::PackageImports(_));
     assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
         assert_eq!(pkg, "dplyr");
+    });
+    assert_matches!(&layers[2], ScopeLayer::PackageExports(pkg) => {
+        assert_eq!(pkg, "base");
     });
 }
 

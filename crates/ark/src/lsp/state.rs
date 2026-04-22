@@ -156,11 +156,8 @@ impl WorldState {
             }
         }
 
-        // Add the base namespace, which is the only base package in scope by default
         top_level.extend(root_layers.clone());
-        top_level.push(ScopeLayer::PackageExports("base".to_string()));
         lazy.extend(root_layers);
-        lazy.push(ScopeLayer::PackageExports("base".to_string()));
 
         ExternalScope::package(top_level, lazy)
     }

@@ -114,6 +114,7 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
 /// These go at the back of every file's scope chain:
 /// - `PackageImports` from `importFrom()` directives (name → package)
 /// - `PackageExports` from `import()` directives
+/// - `PackageExports` for `base` (always implicitly available)
 pub fn package_root_layers(namespace: &Namespace) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
@@ -129,6 +130,8 @@ pub fn package_root_layers(namespace: &Namespace) -> Vec<ScopeLayer> {
     for pkg in &namespace.package_imports {
         layers.push(ScopeLayer::PackageExports(pkg.clone()));
     }
+
+    layers.push(ScopeLayer::PackageExports("base".to_string()));
 
     layers
 }
