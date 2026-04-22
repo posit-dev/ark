@@ -12,6 +12,7 @@ pub mod comm;
 pub mod completions;
 mod config;
 mod declarations;
+pub mod goto_definition_legacy;
 pub mod diagnostics;
 pub mod diagnostics_syntax;
 pub mod document;

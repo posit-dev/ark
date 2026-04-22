@@ -46,6 +46,7 @@ use crate::lsp::backend::LspResult;
 use crate::lsp::code_action::code_actions;
 use crate::lsp::completions::provide_completions;
 use crate::lsp::completions::resolve_completion;
+use crate::lsp::goto_definition_legacy;
 use crate::lsp::document_context::DocumentContext;
 use crate::lsp::folding_range::folding_range;
 use crate::lsp::goto_definition::goto_definition;
@@ -277,7 +278,14 @@ pub(crate) fn handle_goto_definition(
 ) -> LspResult<Option<GotoDefinitionResponse>> {
     let uri = &params.text_document_position_params.text_document.uri;
     let document = state.get_document(uri)?;
-    Ok(goto_definition(document, params, state).log_err().flatten())
+
+    if std::env::var("ARK_OAK_GOTO_DEF").is_ok() {
+        Ok(goto_definition(document, params, state).log_err().flatten())
+    } else {
+        Ok(goto_definition_legacy::goto_definition(document, params)
+            .log_err()
+            .flatten())
+    }
 }
 
 #[tracing::instrument(level = "info", skip_all)]
