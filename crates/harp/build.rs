@@ -24,6 +24,6 @@ fn main() {
         .join("manifest")
         .join("harp-manifest.rc");
     embed_resource::compile_for_everything(resource, embed_resource::NONE)
-        .manifest_optional()
+        .manifest_required()
         .unwrap();
 }
