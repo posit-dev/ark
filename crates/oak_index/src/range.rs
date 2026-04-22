@@ -1,12 +1,8 @@
-use biome_rowan::TextRange;
 use biome_rowan::TextSize;
+use oak_core::range::Ranged;
 
 use crate::index_vec::Idx;
 use crate::index_vec::IndexVec;
-
-pub trait Ranged {
-    fn range(&self) -> TextRange;
-}
 
 impl<I: Idx, V: Ranged> IndexVec<I, V> {
     /// Find the `V` containing `offset`, if any.
