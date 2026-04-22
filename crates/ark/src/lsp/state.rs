@@ -133,7 +133,7 @@ impl WorldState {
         // We should lint when that is the case, mirroring how R CMD INSTALL
         // errors out.
         let filenames: Vec<String> = filenames.into_iter().collect();
-        let ordered = collation_order(&pkg.description, &filenames);
+        let ordered = collation_order(&filenames, &pkg.description);
 
         let filename = file
             .to_file_path()

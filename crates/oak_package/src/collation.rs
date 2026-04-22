@@ -7,7 +7,7 @@ use crate::package_description::Description;
 /// If the DESCRIPTION has a `Collate` field, its whitespace-separated
 /// file list is used. Otherwise files are sorted in C locale order
 /// (byte-wise, same as R's default).
-pub fn collation_order(description: &Description, files: &[String]) -> Vec<String> {
+pub fn collation_order(files: &[String], description: &Description) -> Vec<String> {
     description
         .collate()
         .map(|collate| {
@@ -42,7 +42,7 @@ mod tests {
     fn test_collate_field_determines_order() {
         let desc = desc_with_collate("zzz.R aaa.R bbb.R");
         let files = vec!["aaa.R".into(), "bbb.R".into(), "zzz.R".into()];
-        assert_eq!(collation_order(&desc, &files), vec![
+        assert_eq!(collation_order(&files, &desc), vec![
             "zzz.R", "aaa.R", "bbb.R"
         ]);
     }
@@ -51,7 +51,7 @@ mod tests {
     fn test_alphabetical_without_collate() {
         let desc = desc_without_collate();
         let files = vec!["zzz.R".into(), "aaa.R".into(), "bbb.R".into()];
-        assert_eq!(collation_order(&desc, &files), vec![
+        assert_eq!(collation_order(&files, &desc), vec![
             "aaa.R", "bbb.R", "zzz.R"
         ]);
     }
@@ -60,7 +60,7 @@ mod tests {
     fn test_collate_ignores_missing_files() {
         let desc = desc_with_collate("aaa.R missing.R bbb.R");
         let files = vec!["aaa.R".into(), "bbb.R".into()];
-        assert_eq!(collation_order(&desc, &files), vec!["aaa.R", "bbb.R"]);
+        assert_eq!(collation_order(&files, &desc), vec!["aaa.R", "bbb.R"]);
     }
 
     #[test]
@@ -69,7 +69,7 @@ mod tests {
         // preserves. split_whitespace handles this naturally.
         let desc = desc_with_collate("aaa.R\n    bbb.R\n    zzz.R");
         let files = vec!["aaa.R".into(), "bbb.R".into(), "zzz.R".into()];
-        assert_eq!(collation_order(&desc, &files), vec![
+        assert_eq!(collation_order(&files, &desc), vec![
             "aaa.R", "bbb.R", "zzz.R"
         ]);
     }
@@ -78,7 +78,7 @@ mod tests {
     fn test_empty_r_files() {
         let desc = desc_without_collate();
         let files: Vec<String> = vec![];
-        assert_eq!(collation_order(&desc, &files), Vec::<String>::new());
+        assert_eq!(collation_order(&files, &desc), Vec::<String>::new());
     }
 
     #[test]
@@ -86,7 +86,7 @@ mod tests {
         let desc = desc_without_collate();
         // Uppercase sorts before lowercase in C locale (byte order)
         let files = vec!["aaa.R".into(), "BBB.R".into(), "ccc.R".into()];
-        assert_eq!(collation_order(&desc, &files), vec![
+        assert_eq!(collation_order(&files, &desc), vec![
             "BBB.R", "aaa.R", "ccc.R"
         ]);
     }
