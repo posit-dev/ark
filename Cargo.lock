@@ -2412,9 +2412,11 @@ name = "oak_ide"
 version = "0.1.0"
 dependencies = [
  "air_r_parser",
+ "air_r_syntax",
  "assert_matches",
  "biome_rowan",
  "log",
+ "oak_core",
  "oak_index",
  "oak_package",
  "stdext",

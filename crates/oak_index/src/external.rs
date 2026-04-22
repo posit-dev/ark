@@ -68,19 +68,29 @@ pub fn resolve_external_name(
             },
 
             ScopeLayer::PackageExports(pkg_name) => {
-                let Some(pkg) = library.get(pkg_name) else {
-                    continue;
-                };
-                if pkg.exported_symbols.contains_str(name) {
-                    return Some(ExternalDefinition::Package {
-                        package: pkg_name.clone(),
-                        name: name.to_string(),
-                    });
+                if let Some(def) = resolve_in_package(library, pkg_name, name) {
+                    return Some(def);
                 }
             },
         }
     }
 
+    None
+}
+
+/// Resolve a name in a specific package's exported symbols.
+pub fn resolve_in_package(
+    library: &Library,
+    package: &str,
+    name: &str,
+) -> Option<ExternalDefinition> {
+    let pkg = library.get(package)?;
+    if pkg.exported_symbols.contains_str(name) {
+        return Some(ExternalDefinition::Package {
+            package: package.to_string(),
+            name: name.to_string(),
+        });
+    }
     None
 }
 
