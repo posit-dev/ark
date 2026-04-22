@@ -25,7 +25,7 @@ pub(crate) fn goto_definition(
     )?;
 
     let index = document.semantic_index();
-    let root = document.syntax();
+    let root = document.syntax()?;
     let targets = oak_ide::goto_definition(
         offset,
         &uri,

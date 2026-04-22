@@ -8,6 +8,7 @@
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use aether_lsp_utils::proto::PositionEncoding;
+use anyhow::anyhow;
 use oak_index::semantic_index::SemanticIndex;
 use tower_lsp::lsp_types;
 use tree_sitter::Parser;
@@ -203,8 +204,12 @@ impl Document {
 
     /// Accessor that returns an annotated `RSyntaxNode` type.
     /// More convenient than the generic `biome_rowan::SyntaxNode<L>` type.
-    pub fn syntax(&self) -> aether_syntax::RSyntaxNode {
-        self.parse.syntax()
+    /// Returns an error if the document has parse errors.
+    pub fn syntax(&self) -> anyhow::Result<aether_syntax::RSyntaxNode> {
+        if self.parse.has_error() {
+            return Err(anyhow!("Document has parse errors"));
+        }
+        Ok(self.parse.syntax())
     }
 
     /// Recomputed every time for now, we'll track this with Salsa soon.
@@ -283,7 +288,7 @@ mod tests {
         let len: u32 = syntax.text_range_with_trivia().len().into();
         assert!(len > 0);
 
-        let syntax2 = document.syntax();
+        let syntax2 = document.syntax().unwrap();
         assert_eq!(
             syntax.text_range_with_trivia(),
             syntax2.text_range_with_trivia()
@@ -408,6 +413,6 @@ mod tests {
         assert!(node.is_some(), "Should find spanning node at end of 'lib'");
 
         // The Rowan tree contains the updated document
-        assert_eq!(document.syntax().text_with_trivia(), "lib");
+        assert_eq!(document.syntax().unwrap().text_with_trivia(), "lib");
     }
 }
