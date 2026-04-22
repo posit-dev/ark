@@ -5,8 +5,10 @@
  *
  */
 
-use std::os::unix::prelude::AsRawFd;
-use std::os::unix::prelude::RawFd;
+use std::os::fd::AsFd;
+use std::os::fd::AsRawFd;
+use std::os::fd::BorrowedFd;
+use std::os::fd::OwnedFd;
 
 use crossbeam::channel::Sender;
 use log::warn;
@@ -38,13 +40,13 @@ impl StreamCapture {
     fn output_capture(iopub_tx: Sender<IOPubMessage>) -> Result<(), Error> {
         // Create redirected file descriptors for stdout and stderr. These are
         // pipes into which stdout/stderr are redirected.
-        let stdout_fd = Self::redirect_fd(nix::libc::STDOUT_FILENO)?;
-        let stderr_fd = Self::redirect_fd(nix::libc::STDERR_FILENO)?;
+        let stdout_fd = Self::redirect_fd(libc::STDOUT_FILENO)?;
+        let stderr_fd = Self::redirect_fd(libc::STDERR_FILENO)?;
 
         // Create poll descriptors for both streams. These are used as
         // arguments to a poll(2) wrapper.
-        let stdout_poll = nix::poll::PollFd::new(stdout_fd, nix::poll::PollFlags::POLLIN);
-        let stderr_poll = nix::poll::PollFd::new(stderr_fd, nix::poll::PollFlags::POLLIN);
+        let stdout_poll = nix::poll::PollFd::new(stdout_fd.as_fd(), nix::poll::PollFlags::POLLIN);
+        let stderr_poll = nix::poll::PollFd::new(stderr_fd.as_fd(), nix::poll::PollFlags::POLLIN);
         let mut poll_fds = [stdout_poll, stderr_poll];
 
         log::info!("Starting thread for stdout/stderr capture");
@@ -53,7 +55,8 @@ impl StreamCapture {
             // Wait for data to be available on either stdout or stderr.  This
             // blocks until data is available, the streams are interrupted, or
             // the timeout occurs.
-            let count = match nix::poll::poll(&mut poll_fds, 1000) {
+            let count = match nix::poll::poll(&mut poll_fds, nix::poll::PollTimeout::from(1000u16))
+            {
                 Ok(c) => c,
                 Err(err) => {
                     // https://pubs.opengroup.org/onlinepubs/9699919799/functions/poll.html
@@ -88,19 +91,19 @@ impl StreamCapture {
                 // If the stream has input (POLLIN), read it and send it to the
                 // IOPub socket.
                 if revents.contains(nix::poll::PollFlags::POLLIN) {
-                    let fd = poll_fd.as_raw_fd();
+                    let raw_fd = poll_fd.as_fd().as_raw_fd();
                     // Look up the stream name from its file descriptor.
-                    let stream = if fd == stdout_fd {
+                    let stream = if raw_fd == stdout_fd.as_raw_fd() {
                         Stream::Stdout
-                    } else if fd == stderr_fd {
+                    } else if raw_fd == stderr_fd.as_raw_fd() {
                         Stream::Stderr
                     } else {
-                        log::warn!("Unknown stream fd: {}", fd);
+                        log::warn!("Unknown stream fd: {}", raw_fd);
                         continue;
                     };
 
                     // Read the data from the stream and send it to iopub.
-                    Self::fd_to_iopub(fd, stream, iopub_tx.clone());
+                    Self::fd_to_iopub(poll_fd.as_fd(), stream, iopub_tx.clone());
                 }
             }
         }
@@ -110,7 +113,7 @@ impl StreamCapture {
     }
 
     /// Reads data from a file descriptor and sends it to the IOPub socket.
-    fn fd_to_iopub(fd: RawFd, stream: Stream, iopub_tx: Sender<IOPubMessage>) {
+    fn fd_to_iopub(fd: BorrowedFd, stream: Stream, iopub_tx: Sender<IOPubMessage>) {
         // Read up to 1024 bytes from the stream into `buf`
         let mut buf = [0u8; 1024];
         let count = match nix::unistd::read(fd, &mut buf) {
@@ -142,7 +145,7 @@ impl StreamCapture {
 
     /// Redirects a standard output stream to a pipe and returns the read end of
     /// the pipe.
-    fn redirect_fd(fd: RawFd) -> Result<RawFd, Error> {
+    fn redirect_fd(fd: i32) -> Result<OwnedFd, Error> {
         // Create a pipe to redirect the stream to
         let (read, write) = match nix::unistd::pipe() {
             Ok((read, write)) => (read, write),
@@ -154,17 +157,23 @@ impl StreamCapture {
             },
         };
 
-        // Redirect the stream into the write end of the pipe
-        if let Err(e) = nix::unistd::dup2(write, fd) {
+        // Redirect the stream into the write end of the pipe.
+        // We use `libc::dup2()` directly because nix's `dup2` now requires
+        // `&mut OwnedFd` for the target, but STDOUT/STDERR are not owned.
+        // Overwriting a global fd is a fundamentally unsafe operation for which
+        // nix has no support.
+        if unsafe { libc::dup2(write.as_raw_fd(), fd) } == -1 {
             return Err(Error::SysError(
                 format!("redirect stream for {}", fd),
-                format!("{e}"),
+                std::io::Error::last_os_error().to_string(),
             ));
         }
+        // `write` is dropped at the end of the block, closing the write end of
+        // the original pipe. The dup2'd copy on `fd` keeps it alive.
 
         // Make reads non-blocking on the read end of the pipe
         if let Err(e) = nix::fcntl::fcntl(
-            read,
+            read.as_fd(),
             nix::fcntl::FcntlArg::F_SETFL(nix::fcntl::OFlag::O_NONBLOCK),
         ) {
             return Err(Error::SysError(
