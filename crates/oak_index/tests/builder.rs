@@ -250,12 +250,13 @@ fn test_scope_at() {
     let fun = ScopeId::from(1);
 
     // Offset 0 is in `x` -- file scope
-    assert_eq!(idx.scope_at(biome_rowan::TextSize::from(0)), file);
+    assert_eq!(idx.scope_at(biome_rowan::TextSize::from(0)).0, file);
 
     // Offset inside the function body
     let body_offset = source.find(") y").unwrap() + 2;
     assert_eq!(
-        idx.scope_at(biome_rowan::TextSize::from(body_offset as u32)),
+        idx.scope_at(biome_rowan::TextSize::from(body_offset as u32))
+            .0,
         fun
     );
 }

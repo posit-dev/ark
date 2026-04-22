@@ -45,8 +45,8 @@ impl FileScope {
     pub fn at(&self, index: &SemanticIndex, offset: TextSize) -> &[BindingSource] {
         match self {
             Self::Package { top_level, lazy } => {
-                let scope = index.scope_at(offset);
-                match index.scope(scope).kind() {
+                let (_, scope) = index.scope_at(offset);
+                match scope.kind() {
                     ScopeKind::File => top_level,
                     ScopeKind::Function => lazy,
                 }

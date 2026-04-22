@@ -132,7 +132,7 @@ impl SemanticIndex {
     }
 
     /// Find the innermost scope containing `offset`.
-    pub fn scope_at(&self, offset: biome_rowan::TextSize) -> ScopeId {
+    pub fn scope_at(&self, offset: biome_rowan::TextSize) -> (ScopeId, &Scope) {
         // Start at the file scope
         let mut current = ScopeId::from(0);
         'outer: loop {
@@ -142,28 +142,28 @@ impl SemanticIndex {
                     continue 'outer;
                 }
             }
-            return current;
+            return (current, &self.scopes[current]);
         }
     }
 
     /// Find the definition site at `offset`, if any.
     pub fn definition_at_offset(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId)> {
-        let scope = self.scope_at(offset);
+        let (scope_id, _) = self.scope_at(offset);
         let def_id = self
-            .definitions(scope)
+            .definitions(scope_id)
             .iter()
             .find_map(|(id, d)| d.range().contains(offset).then_some(id));
-        Some((scope, def_id?))
+        Some((scope_id, def_id?))
     }
 
     /// Find the use site at `offset`, if any.
     pub fn use_at_offset(&self, offset: TextSize) -> Option<(ScopeId, UseId)> {
-        let scope = self.scope_at(offset);
+        let (scope_id, _) = self.scope_at(offset);
         let use_id = self
-            .uses(scope)
+            .uses(scope_id)
             .iter()
             .find_map(|(id, u)| u.range().contains(offset).then_some(id));
-        Some((scope, use_id?))
+        Some((scope_id, use_id?))
     }
 
     /// Iterate direct child scopes of `scope`.
