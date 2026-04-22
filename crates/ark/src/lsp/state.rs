@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::anyhow;
 use biome_rowan::TextSize;
@@ -10,7 +10,6 @@ use oak_index::external::file_layers;
 use oak_index::external::package_root_layers;
 use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::DirectiveKind;
-use oak_package::collation::collation_order;
 use oak_package::library::Library;
 use stdext::result::ResultExt;
 use url::Url;
@@ -102,44 +101,25 @@ impl WorldState {
         };
 
         let root_layers = package_root_layers(&pkg.namespace);
-
-        // Collect R source filenames from open documents and disk. Open
-        // documents take precedence for content (handled below when building
-        // layers), but we also need to discover files that only exist on disk
-        // (not yet opened).
         let r_dir = pkg.path.join("R");
-        let mut filenames = HashSet::new();
 
-        // Discover open documents
-        for uri in self.documents.keys() {
-            let Some(path) = uri.to_file_path().ok() else {
-                continue;
-            };
-            if path.starts_with(&r_dir) {
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    filenames.insert(name.to_string());
-                }
-            }
-        }
+        // If there is a collation field, we use it as an authoritative source
+        // for the files in the package (and the order in which they are loaded)
+        let ordered: Vec<PathBuf> = pkg
+            .description
+            .collate()
+            .map(|names| names.into_iter().map(|n| r_dir.join(n)).collect())
+            .unwrap_or_else(|| {
+                // No collation field, list R files and sort in C order
+                // (R's default collation)
+                let mut paths = list_r_files(&r_dir);
+                paths.sort();
+                paths
+            });
 
-        // Then files on disk that aren't already known from open documents.
-        for path in list_r_files(r_dir.as_ref()) {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                filenames.insert(name.to_string());
-            }
-        }
-
-        // This silently discards files not listed in the Collation field. TODO:
-        // We should lint when that is the case, mirroring how R CMD INSTALL
-        // errors out.
-        let filenames: Vec<String> = filenames.into_iter().collect();
-        let ordered = collation_order(&filenames, &pkg.description);
-
-        let filename = file
-            .to_file_path()
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
-        let filename = filename.as_deref().unwrap_or_default();
+        let Some(file_path) = file.to_file_path().ok() else {
+            return ExternalScope::default();
+        };
 
         // Iterate in reverse collation order so later files (which shadow
         // earlier ones) come first in the chain. Split at the current file
@@ -148,14 +128,13 @@ impl WorldState {
         let mut lazy = Vec::new();
         let mut past_current = false;
 
-        for name in ordered.iter().rev() {
-            if name.as_str() == filename {
+        for path in ordered.iter().rev() {
+            if *path == file_path {
                 past_current = true;
                 continue;
             }
 
-            let path = r_dir.join(name);
-            let Some(uri) = Url::from_file_path(&path).log_err() else {
+            let Some(uri) = Url::from_file_path(path).log_err() else {
                 continue;
             };
 
@@ -164,7 +143,7 @@ impl WorldState {
             let doc = if let Some(open) = self.documents.get(&uri) {
                 open
             } else {
-                let Ok(contents) = std::fs::read_to_string(&path) else {
+                let Some(contents) = std::fs::read_to_string(path).log_err() else {
                     continue;
                 };
                 &Document::new(&contents, None)
@@ -177,6 +156,7 @@ impl WorldState {
             }
         }
 
+        // Add the base namespace, which is the only base package in scope by default
         top_level.extend(root_layers.clone());
         top_level.push(ScopeLayer::PackageExports("base".to_string()));
         lazy.extend(root_layers);
@@ -329,6 +309,6 @@ mod tests {
 
         let scope = state.file_scope(&uri);
         let layers = scope.lazy();
-        assert_not!(has_package(&layers, "rlang"));
+        assert_not!(has_package(layers, "rlang"));
     }
 }

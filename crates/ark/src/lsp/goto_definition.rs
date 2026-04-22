@@ -250,15 +250,22 @@ mod tests {
         // bbb.R defines `helper`. ccc.R (later) can see it,
         // aaa.R (earlier) cannot.
         let pkg_root = std::env::temp_dir().join("test_pkg");
+        let r_dir = pkg_root.join("R");
+        std::fs::create_dir_all(&r_dir).unwrap();
 
+        std::fs::write(r_dir.join("aaa.R"), "helper\n").unwrap();
+        std::fs::write(r_dir.join("bbb.R"), "helper <- function() 1\n").unwrap();
+        std::fs::write(r_dir.join("ccc.R"), "helper\n").unwrap();
+
+        // aaa.R and ccc.R are "open" (in state.documents).
+        // bbb.R is only on disk, exercising the read-from-disk fallback.
         let doc_aaa = Document::new("helper\n", None);
-        let uri_aaa = lsp_types::Url::from_file_path(pkg_root.join("R/aaa.R")).unwrap();
+        let uri_aaa = lsp_types::Url::from_file_path(r_dir.join("aaa.R")).unwrap();
 
-        let doc_bbb = Document::new("helper <- function() 1\n", None);
-        let uri_bbb = lsp_types::Url::from_file_path(pkg_root.join("R/bbb.R")).unwrap();
+        let uri_bbb = lsp_types::Url::from_file_path(r_dir.join("bbb.R")).unwrap();
 
         let doc_ccc = Document::new("helper\n", None);
-        let uri_ccc = lsp_types::Url::from_file_path(pkg_root.join("R/ccc.R")).unwrap();
+        let uri_ccc = lsp_types::Url::from_file_path(r_dir.join("ccc.R")).unwrap();
 
         let ns = Namespace::default();
         let desc = Description {
@@ -269,7 +276,6 @@ mod tests {
 
         let mut state = WorldState::default();
         state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
-        state.documents.insert(uri_bbb.clone(), doc_bbb);
         state.documents.insert(uri_ccc.clone(), doc_ccc.clone());
         state.root = Some(SourceRoot::Package(pkg));
 
@@ -351,12 +357,18 @@ mod tests {
         // because function bodies execute lazily — the full package
         // namespace is populated before any function is called.
         let pkg_root = std::env::temp_dir().join("test_pkg_lazy");
+        let r_dir = pkg_root.join("R");
+        std::fs::create_dir_all(&r_dir).unwrap();
 
+        std::fs::write(r_dir.join("aaa.R"), "f <- function() helper()\n").unwrap();
+        std::fs::write(r_dir.join("zzz.R"), "helper <- function() 1\n").unwrap();
+
+        // aaa.R is "open" (in state.documents).
+        // zzz.R is only on disk, exercising the read-from-disk fallback.
         let doc_aaa = Document::new("f <- function() helper()\n", None);
-        let uri_aaa = lsp_types::Url::from_file_path(pkg_root.join("R/aaa.R")).unwrap();
+        let uri_aaa = lsp_types::Url::from_file_path(r_dir.join("aaa.R")).unwrap();
 
-        let doc_zzz = Document::new("helper <- function() 1\n", None);
-        let uri_zzz = lsp_types::Url::from_file_path(pkg_root.join("R/zzz.R")).unwrap();
+        let uri_zzz = lsp_types::Url::from_file_path(r_dir.join("zzz.R")).unwrap();
 
         let ns = Namespace::default();
         let desc = Description {
@@ -367,7 +379,6 @@ mod tests {
 
         let mut state = WorldState::default();
         state.documents.insert(uri_aaa.clone(), doc_aaa.clone());
-        state.documents.insert(uri_zzz.clone(), doc_zzz);
         state.root = Some(SourceRoot::Package(pkg));
 
         // Cursor on `helper` inside the function body (line 0, col 16)
