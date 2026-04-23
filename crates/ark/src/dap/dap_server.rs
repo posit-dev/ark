@@ -898,14 +898,12 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn deliver(&mut self, output: DapOutput) -> bool {
-        if let Err(err) = self.respond(output.response) {
-            log::warn!("DAP: Failed to send response: {err:?}");
+        if self.respond(output.response).log_err().is_none() {
             return false;
         }
 
         for event in output.dap_events {
-            if let Err(err) = self.send_event(event) {
-                log::warn!("DAP: Failed to send event: {err:?}");
+            if self.send_event(event).log_err().is_none() {
                 return false;
             }
         }
