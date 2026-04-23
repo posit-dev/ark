@@ -772,3 +772,80 @@ fn test_notebook_breakpoints_inert_without_attach() {
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }
+
+#[test]
+fn test_notebook_debug_info_reports_breakpoints() {
+    let frontend = DummyArkFrontendNotebook::lock();
+
+    let code = "a <- 1\nb <- 2\nc <- 3";
+
+    // Dump a cell
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 1,
+        "command": "dumpCell",
+        "arguments": { "code": code }
+    }));
+    frontend.recv_iopub_busy();
+    let dump_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    let source_path = dump_reply["body"]["sourcePath"].as_str().unwrap();
+
+    // Set two breakpoints
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 2,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": source_path },
+            "breakpoints": [
+                { "line": 1 },
+                { "line": 3, "condition": "c > 0" },
+            ]
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    // Query debugInfo and verify breakpoints are reported
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 3,
+        "command": "debugInfo",
+        "arguments": {}
+    }));
+    frontend.recv_iopub_busy();
+    let info_reply = frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+
+    assert_eq!(info_reply["success"], true);
+    let bp_groups = info_reply["body"]["breakpoints"].as_array().unwrap();
+
+    // Find the group for our source file
+    let group = bp_groups
+        .iter()
+        .find(|g| g["source"].as_str().unwrap().contains("ark-debug-"))
+        .expect("No breakpoint group found for dumped cell");
+
+    let bps = group["breakpoints"].as_array().unwrap();
+    assert_eq!(bps.len(), 2);
+    assert_eq!(bps[0]["line"], 1);
+    assert_eq!(bps[1]["line"], 3);
+    assert_eq!(bps[1]["condition"], "c > 0");
+
+    // Clean up: clear breakpoints
+    frontend.send_debug_request(serde_json::json!({
+        "type": "request",
+        "seq": 4,
+        "command": "setBreakpoints",
+        "arguments": {
+            "source": { "path": source_path },
+            "breakpoints": []
+        }
+    }));
+    frontend.recv_iopub_busy();
+    frontend.recv_debug_reply();
+    frontend.recv_iopub_idle();
+}

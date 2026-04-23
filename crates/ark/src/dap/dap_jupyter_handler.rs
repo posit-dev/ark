@@ -30,6 +30,8 @@ use stdext::result::ResultExt;
 use crate::dap::dap_notebook;
 use crate::dap::dap_server::DapConsoleEvent;
 use crate::dap::dap_server::DapHandler;
+use crate::dap::dap_state::Breakpoint;
+use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
 use crate::request::RRequest;
@@ -181,7 +183,40 @@ impl DapJupyterHandler {
             vec![]
         };
 
-        // TODO: Report actual breakpoints from `state.breakpoints`.
+        let breakpoints: Vec<serde_json::Value> = state
+            .breakpoints
+            .iter()
+            .map(|(uri, (_, bps))| {
+                let source = uri
+                    .as_url()
+                    .to_file_path()
+                    .map_or_else(|_| uri.to_string(), |p| p.to_string_lossy().into_owned());
+                let source_breakpoints: Vec<serde_json::Value> = bps
+                    .iter()
+                    .filter(|bp| !matches!(bp.state, BreakpointState::Disabled))
+                    .map(|bp| {
+                        let mut obj = serde_json::json!({
+                            "line": Breakpoint::to_dap_line(bp.original_line),
+                        });
+                        if let Some(cond) = &bp.condition {
+                            obj["condition"] = serde_json::json!(cond);
+                        }
+                        if let Some(msg) = &bp.log_message {
+                            obj["logMessage"] = serde_json::json!(msg);
+                        }
+                        if let Some(hit) = &bp.hit_condition {
+                            obj["hitCondition"] = serde_json::json!(hit);
+                        }
+                        obj
+                    })
+                    .collect();
+                serde_json::json!({
+                    "source": source,
+                    "breakpoints": source_breakpoints,
+                })
+            })
+            .collect();
+
         Ok(self.success_response(
             seq,
             "debugInfo",
@@ -191,7 +226,7 @@ impl DapJupyterHandler {
                 "hashSeed": dap_notebook::hash_seed(),
                 "tmpFilePrefix": self.tmp_file_prefix,
                 "tmpFileSuffix": dap_notebook::tmp_file_suffix(),
-                "breakpoints": [],
+                "breakpoints": breakpoints,
                 "stoppedThreads": stopped_threads,
                 "richRendering": false,
                 "exceptionPaths": [],
