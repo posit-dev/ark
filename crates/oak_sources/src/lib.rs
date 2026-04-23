@@ -1,4 +1,5 @@
 mod cran;
+mod download;
 mod fs;
 mod srcref;
 
