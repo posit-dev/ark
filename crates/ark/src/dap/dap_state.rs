@@ -224,6 +224,13 @@ pub struct Dap {
     /// Whether the REPL is stopped with a browser prompt.
     pub is_debugging: bool,
 
+    /// Whether R is stopped at an unexpected `browser()` prompt in notebook
+    /// mode (no active debug session). Mutually exclusive with `is_debugging`.
+    /// Used by the interrupt handler to decide whether to send a "Q" command.
+    /// `id_debugging` and `is_stopped_at_browser` could be folded into a single
+    /// enum in the future.
+    pub is_debugging_stdin: bool,
+
     /// Whether the DAP server is connected to a client.
     pub is_connected: bool,
 
@@ -273,12 +280,6 @@ pub struct Dap {
     /// Whether an interrupt was sent to drop into the debugger
     pub(crate) is_interrupting_for_debugger: bool,
 
-    /// Whether R is stopped at a browser prompt in notebook mode
-    /// (either a debug session breakpoint or an unexpected browser()
-    /// routed to stdin). Used by the interrupt handler to decide
-    /// whether to send a "Q" command.
-    pub(crate) is_stopped_at_browser: bool,
-
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<CommOutgoingTx>,
 
@@ -301,6 +302,7 @@ impl Dap {
     pub fn new_shared(r_request_tx: Sender<RRequest>) -> Arc<Mutex<Self>> {
         let state = Self {
             is_debugging: false,
+            is_debugging_stdin: false,
             is_connected: false,
             backend_events_tx: None,
             stack: None,
@@ -317,7 +319,6 @@ impl Dap {
             r_request_tx,
             shared_self: None,
             is_interrupting_for_debugger: false,
-            is_stopped_at_browser: false,
         };
 
         let shared = Arc::new(Mutex::new(state));
@@ -872,7 +873,7 @@ mod tests {
             comm_tx: None,
             iopub_tx: None,
             iopub_seq: 0,
-            is_stopped_at_browser: false,
+            is_debugging_stdin: false,
             r_request_tx,
             shared_self: None,
         };
@@ -986,7 +987,7 @@ mod tests {
             comm_tx: None,
             iopub_tx: None,
             iopub_seq: 0,
-            is_stopped_at_browser: false,
+            is_debugging_stdin: false,
             r_request_tx,
             shared_self: None,
         };

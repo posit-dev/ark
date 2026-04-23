@@ -92,7 +92,7 @@ impl ControlHandler for Control {
         // debugging on interrupt is natural UX in that context.
         if matches!(self.session_mode, SessionMode::Notebook) {
             let dap = self.dap.lock().unwrap();
-            if dap.is_debugging || dap.is_stopped_at_browser {
+            if dap.is_debugging || dap.is_debugging_stdin {
                 drop(dap);
                 self.r_request_tx
                     .send(RRequest::DebugCommand(crate::request::DebugRequest::Quit))

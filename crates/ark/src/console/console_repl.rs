@@ -869,15 +869,15 @@ impl Console {
                 return result;
             }
 
-            // In notebook mode, unexpected browser() or debug() calls (i.e.
-            // without an active debug session) are routed to stdin so the user
-            // can type debug commands in an input box rather than hanging.
+            // In notebook mode, `browser()` or `debug()` calls causing a
+            // browser prompt outside of an active debugging session are routed
+            // to stdin so the user can type debug commands in an input box.
             if self.session_mode == SessionMode::Notebook &&
                 !self.debug_dap.lock().unwrap().is_connected
             {
-                self.debug_dap.lock().unwrap().is_stopped_at_browser = true;
+                self.debug_dap.lock().unwrap().is_debugging_stdin = true;
                 let result = self.handle_input_request(&info, buf, buflen);
-                self.debug_dap.lock().unwrap().is_stopped_at_browser = false;
+                self.debug_dap.lock().unwrap().is_debugging_stdin = false;
                 return result;
             }
 
@@ -994,21 +994,17 @@ impl Console {
         // package. 50ms seems to be more in line with RStudio (posit-dev/positron#7235).
         let polled_events_rx = crossbeam::channel::tick(Duration::from_millis(50));
 
-        // This is the main kind of message from the frontend that we are expecting.
-        // We either wait for `input_reply` messages on StdIn, or for
-        // `execute_request` on Shell.
-        let (r_request_index, stdin_reply_index) = match wait_for {
-            WaitFor::ExecuteRequest => (Some(select.recv(&r_request_rx)), None),
-            WaitFor::InputReply => {
-                // In notebook mode, also listen for debug commands (e.g. Quit
-                // from the interrupt handler) while waiting for stdin input.
-                let r_request_index = if self.session_mode == SessionMode::Notebook {
-                    Some(select.recv(&r_request_rx))
-                } else {
-                    None
-                };
-                (r_request_index, Some(select.recv(&stdin_reply_rx)))
-            },
+        // This is the main kind of message from the frontend that we are
+        // expecting. We either wait for `input_reply` messages on StdIn, or for
+        // `execute_request` on Shell. We also listen for R requests, including
+        // while waiting on StdIn. Such requests are only expected in Notebook
+        // mode when debugging via StdIn. The interrupt handler may send us a
+        // Quit command to terminate the debugging session. For simplicity we
+        // listen for these requests unconditionally, including in Console sessions.
+        let r_request_index = select.recv(&r_request_rx);
+        let stdin_reply_index = match wait_for {
+            WaitFor::ExecuteRequest => None,
+            WaitFor::InputReply => Some(select.recv(&stdin_reply_rx)),
         };
 
         let kernel_request_index = select.recv(&kernel_request_rx);
@@ -1072,16 +1068,16 @@ impl Console {
 
             match oper.index() {
                 // We've got an execute request from the frontend
-                i if Some(i) == r_request_index => {
+                i if i == r_request_index => {
                     let req = oper.recv(&r_request_rx);
                     let Ok(req) = req else {
                         // The channel is disconnected and empty
                         return ConsoleResult::Disconnected;
                     };
 
-                    // During stdin-browser (notebook mode, waiting for input
-                    // at a browser prompt), the interrupt handler sends
-                    // DebugCommand(Quit) to exit the browser cleanly.
+                    // When debugging via StdIn in notebook mode, waiting for
+                    // input at a browser prompt, the interrupt handler may send
+                    // a Quit command to exit the browser cleanly.
                     if matches!(wait_for, WaitFor::InputReply) {
                         if let RRequest::DebugCommand(ref cmd) = req {
                             let input = crate::request::debug_request_command(cmd.clone());
