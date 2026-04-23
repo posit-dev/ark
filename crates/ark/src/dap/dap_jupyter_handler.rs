@@ -95,8 +95,9 @@ impl DapJupyterHandler {
                     self.send_dap_event(event);
                 }
 
-                // Deliver console events directly to R (no comm detour in
-                // notebook mode since there is no console prompt to sync)
+                // Deliver console events directly to R (no detour through the
+                // frontend in notebook mode since there is no console prompt to
+                // sync)
                 for effect in output.console_events {
                     self.handle_console_event(effect);
                 }
@@ -110,8 +111,26 @@ impl DapJupyterHandler {
         }
     }
 
-    // --- Jupyter Debug Protocol extensions ---
+    fn handle_console_event(&self, event: DapConsoleEvent) {
+        match event {
+            DapConsoleEvent::DebugCommand(cmd) => {
+                self.handler
+                    .r_request_tx
+                    .send(RRequest::DebugCommand(cmd))
+                    .log_err();
+            },
+            DapConsoleEvent::Interrupt => {
+                crate::sys::control::handle_interrupt_request();
+            },
+            DapConsoleEvent::Restart => {
+                log::warn!("Jupyter DAP: Restart requested but not supported");
+            },
+        }
+    }
+}
 
+// Jupyter Debug Protocol extensions
+impl DapJupyterHandler {
     /// Receive cell source code and write it to a temporary file so the
     /// debugger can set breakpoints in it.
     ///
@@ -182,28 +201,10 @@ impl DapJupyterHandler {
             }),
         )
     }
+}
 
-    // --- Side effect delivery ---
-
-    fn handle_console_event(&self, event: DapConsoleEvent) {
-        match event {
-            DapConsoleEvent::DebugCommand(cmd) => {
-                self.handler
-                    .r_request_tx
-                    .send(RRequest::DebugCommand(cmd))
-                    .log_err();
-            },
-            DapConsoleEvent::Interrupt => {
-                crate::sys::control::handle_interrupt_request();
-            },
-            DapConsoleEvent::Restart => {
-                log::warn!("Jupyter DAP: Restart requested but not supported");
-            },
-        }
-    }
-
-    // --- Serialization helpers ---
-
+// Serialization helpers
+impl DapJupyterHandler {
     fn send_dap_event(&self, event: dap::events::Event) {
         let msg = BaseMessage {
             seq: self.next_seq(),

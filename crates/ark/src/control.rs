@@ -42,6 +42,9 @@ impl Control {
         if matches!(session_mode, SessionMode::Notebook) {
             dap.lock().unwrap().set_iopub_tx(iopub_tx.clone());
         }
+
+        // Currently unused for Console, but it would be nice to get
+        // `SetBreakpoints` requests via Jupyter in the future
         let dap_handler = DapJupyterHandler::new(dap.clone(), r_request_tx.clone(), iopub_tx);
         Self {
             r_request_tx,
