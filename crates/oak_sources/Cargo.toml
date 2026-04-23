@@ -16,12 +16,12 @@ log.workspace = true
 oak_fs.workspace = true
 oak_package.workspace = true
 oak_r_process.workspace = true
-reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tar.workspace = true
 tempfile.workspace = true
+ureq.workspace = true
 
 [lints]
 workspace = true

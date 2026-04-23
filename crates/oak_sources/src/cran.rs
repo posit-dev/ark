@@ -1,8 +1,10 @@
-use std::io::Cursor;
 use std::path::Path;
 
 use flate2::read::GzDecoder;
 use oak_fs::file_lock::FileLock;
+
+use crate::download::download_with_mirrors;
+use crate::download::Outcome;
 
 /// Downloads an R package's source files from CRAN if possible and adds them to the cache
 /// at the parent folder containing `destination_lock`
@@ -11,92 +13,52 @@ pub(crate) fn cache_cran(
     version: &str,
     destination_lock: &FileLock,
 ) -> anyhow::Result<bool> {
-    let response = download(package, version)?;
+    match download(package, version) {
+        Ok(Outcome::Success(response)) => {
+            let destination = destination_lock.parent().join("R");
+            std::fs::create_dir(&destination)?;
+            extract(package, response, destination.as_path())?;
+            Ok(true)
+        },
 
-    // "Not on CRAN" isn't an error
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(false);
+        Ok(Outcome::NotFound) => {
+            // "Not on CRAN" isn't an error
+            Ok(false)
+        },
+
+        Err(err) => Err(anyhow::anyhow!(
+            "Failed to download {package} {version}: {err:?}"
+        )),
     }
-
-    // But anything else is
-    if !response.status().is_success() {
-        return Err(anyhow::anyhow!(
-            "Failed to download {package} {version}: HTTP {status}",
-            status = response.status()
-        ));
-    }
-
-    let destination = destination_lock.parent().join("R");
-    std::fs::create_dir(&destination)?;
-
-    extract(package, response, destination.as_path())?;
-
-    Ok(true)
 }
 
-fn download(package: &str, version: &str) -> anyhow::Result<reqwest::blocking::Response> {
+fn download(package: &str, version: &str) -> anyhow::Result<Outcome> {
     let mirrors = ["https://cran.r-project.org", "https://cran.rstudio.com"];
 
     // Try released version
-    let response =
+    let outcome =
         download_with_mirrors(&format!("src/contrib/{package}_{version}.tar.gz"), &mirrors)?;
 
-    if response.status() != reqwest::StatusCode::NOT_FOUND {
-        // Found it
-        return Ok(response);
+    if matches!(outcome, Outcome::Success(_)) {
+        return Ok(outcome);
     }
 
     // Try archive
-    let response = download_with_mirrors(
+    download_with_mirrors(
         &format!("src/contrib/Archive/{package}/{package}_{version}.tar.gz"),
         &mirrors,
-    )?;
-
-    // Return `response` whether or not we found something
-    Ok(response)
-}
-
-fn download_with_mirrors(
-    suffix: &str,
-    mirrors: &[&str],
-) -> anyhow::Result<reqwest::blocking::Response> {
-    if mirrors.is_empty() {
-        panic!("`mirrors` can't be empty.");
-    }
-
-    let mut out = None;
-
-    for mirror in mirrors {
-        let url = format!("{mirror}/{suffix}");
-        let response = reqwest::blocking::get(&url)?;
-        let status = response.status();
-
-        out = Some(response);
-
-        if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
-            // Try next mirror, this one is temporarily unavailable
-            continue;
-        } else {
-            // We got an actual response of some kind from this mirror, return it
-            break;
-        }
-    }
-
-    // Safety: We guarantee that there is at least 1 mirror
-    Ok(out.unwrap())
+    )
 }
 
 fn extract(
     package: &str,
-    response: reqwest::blocking::Response,
+    response: ureq::http::Response<ureq::Body>,
     destination: &Path,
 ) -> anyhow::Result<()> {
-    // Pass response bytes of the `.tar.gz` into a gzip decoder, wrapped in a tar archive
-    // reader, this abstracts away all the details, so we can just iterate over the
-    // entries
-    let bytes = response.bytes()?;
-    let cursor = Cursor::new(bytes);
-    let gz = GzDecoder::new(cursor);
+    // Stream the response body through a gzip decoder wrapped in a tar archive reader
+    // so we can just iterate over entries. `into_reader()` is unlimited by default.
+    let reader = response.into_body().into_reader();
+    let gz = GzDecoder::new(reader);
     let mut archive = tar::Archive::new(gz);
 
     // Looking for files under `R/`
