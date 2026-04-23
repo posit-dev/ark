@@ -58,32 +58,33 @@ const THREAD_ID: i64 = -1;
 /// evaluations will run in that frame's environment.
 const SELECTED_FRAME_EXPRESSION: &str = ".positron_selected_frame";
 
-/// Side effect requested by a DAP handler that the transport layer must
-/// deliver in a transport-specific way.
-pub enum DapSideEffect {
-    /// Send a debug step/quit command to R.
+/// Events for the Console requested by a DAP handler. Either delivered by a
+/// round-trip through the frontend (so users see the command) or directly to
+/// the Console.
+pub enum DapConsoleEvent {
+    /// Send a debug step/quit command to R via the frontend.
     DebugCommand(DebugRequest),
-    /// Interrupt R for a pause.
+    /// Interrupt R for a pause. No frontend round-trip.
     Interrupt,
-    /// Request a session restart.
+    /// Request a session restart via the frontend.
     Restart,
 }
 
-/// The result of handling a single DAP request. The transport layer
-/// (TCP or Jupyter) is responsible for delivering the response, events,
-/// and side effects through the appropriate channel.
+/// The result of handling a single DAP request. The transport layer (TCP or
+/// Jupyter) is responsible for delivering the response, DAP events, and console
+/// events through the appropriate channel.
 pub struct DapOutput {
     pub response: Response,
-    pub events: Vec<Event>,
-    pub side_effects: Vec<DapSideEffect>,
+    pub dap_events: Vec<Event>,
+    pub console_events: Vec<DapConsoleEvent>,
 }
 
 impl DapOutput {
     pub fn response(response: Response) -> Self {
         Self {
             response,
-            events: vec![],
-            side_effects: vec![],
+            dap_events: vec![],
+            console_events: vec![],
         }
     }
 }
@@ -186,8 +187,8 @@ impl DapHandler {
         }));
         DapOutput {
             response: rsp,
-            events: vec![Event::Initialized],
-            side_effects: vec![],
+            dap_events: vec![Event::Initialized],
+            console_events: vec![],
         }
     }
 
@@ -413,35 +414,35 @@ impl DapHandler {
         let rsp = req.success(ResponseBody::Attach);
         DapOutput {
             response: rsp,
-            events: vec![Event::Thread(ThreadEventBody {
+            dap_events: vec![Event::Thread(ThreadEventBody {
                 reason: ThreadEventReason::Started,
                 thread_id: THREAD_ID,
             })],
-            side_effects: vec![],
+            console_events: vec![],
         }
     }
 
     fn handle_disconnect(&self, req: Request, _args: DisconnectArguments) -> DapOutput {
         // Only send `Q` if currently in a debugging session.
         let is_debugging = { self.state.lock().unwrap().is_debugging };
-        let side_effects = if is_debugging {
-            vec![DapSideEffect::DebugCommand(DebugRequest::Quit)]
+        let console_events = if is_debugging {
+            vec![DapConsoleEvent::DebugCommand(DebugRequest::Quit)]
         } else {
             vec![]
         };
 
         DapOutput {
             response: req.success(ResponseBody::Disconnect),
-            events: vec![],
-            side_effects,
+            dap_events: vec![],
+            console_events,
         }
     }
 
     fn handle_restart<T>(&self, req: Request, _args: T) -> DapOutput {
         DapOutput {
             response: req.success(ResponseBody::Restart),
-            events: vec![],
-            side_effects: vec![DapSideEffect::Restart],
+            dap_events: vec![],
+            console_events: vec![DapConsoleEvent::Restart],
         }
     }
 
@@ -607,8 +608,8 @@ impl DapHandler {
     ) -> DapOutput {
         DapOutput {
             response: req.success(resp),
-            events: vec![],
-            side_effects: vec![DapSideEffect::DebugCommand(cmd)],
+            dap_events: vec![],
+            console_events: vec![DapConsoleEvent::DebugCommand(cmd)],
         }
     }
 
@@ -619,8 +620,8 @@ impl DapHandler {
 
         DapOutput {
             response: req.success(ResponseBody::Pause),
-            events: vec![],
-            side_effects: vec![DapSideEffect::Interrupt],
+            dap_events: vec![],
+            console_events: vec![DapConsoleEvent::Interrupt],
         }
     }
 }
@@ -902,23 +903,23 @@ impl<R: Read, W: Write> DapServer<R, W> {
             return false;
         }
 
-        for event in output.events {
+        for event in output.dap_events {
             if let Err(err) = self.send_event(event) {
                 log::warn!("DAP: Failed to send event: {err:?}");
                 return false;
             }
         }
 
-        for effect in output.side_effects {
-            self.handle_side_effect(effect);
+        for event in output.console_events {
+            self.handle_console_event(event);
         }
 
         true
     }
 
-    fn handle_side_effect(&mut self, effect: DapSideEffect) {
-        match effect {
-            DapSideEffect::DebugCommand(cmd) => {
+    fn handle_console_event(&mut self, event: DapConsoleEvent) {
+        match event {
+            DapConsoleEvent::DebugCommand(cmd) => {
                 if let Some(tx) = &self.comm_tx {
                     // If we have a comm channel (always the case as of this
                     // writing) we are connected to Positron or similar. Send
@@ -936,10 +937,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
                         .log_err();
                 }
             },
-            DapSideEffect::Interrupt => {
+            DapConsoleEvent::Interrupt => {
                 crate::sys::control::handle_interrupt_request();
             },
-            DapSideEffect::Restart => {
+            DapConsoleEvent::Restart => {
                 if let Some(tx) = &self.comm_tx {
                     let msg = amalthea::comm_rpc_message!("restart");
                     tx.send(msg).log_err();
