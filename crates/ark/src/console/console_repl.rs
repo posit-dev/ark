@@ -15,6 +15,7 @@ use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
+use crate::request::DebugRequest;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
 
@@ -1079,11 +1080,13 @@ impl Console {
                     // input at a browser prompt, the interrupt handler may send
                     // a Quit command to exit the browser cleanly.
                     if matches!(wait_for, WaitFor::InputReply) {
-                        if let RRequest::DebugCommand(ref cmd) = req {
-                            let input = crate::request::debug_request_command(cmd.clone());
+                        if let RRequest::DebugCommand(DebugRequest::Quit) = req {
+                            let input = String::from("Q");
                             Self::on_console_input(buf, buflen, input).unwrap();
                             return ConsoleResult::NewInput;
                         }
+                        log::warn!("Unexpected R request while waiting for stdin input: {req:?}");
+                        continue;
                     }
 
                     if let Some(input) = self.handle_execute_request(req, info, buf, buflen) {
