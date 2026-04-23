@@ -77,13 +77,21 @@ impl DapJupyterHandler {
 
         // Handle Jupyter Debug Protocol extensions and commands not in the
         // `dap` crate's `Command` enum.
-        match command {
-            "dumpCell" => return self.handle_dump_cell(seq, request),
-            "debugInfo" => return self.handle_debug_info(seq),
-            "configurationDone" => {
-                return self.success_response(seq, "configurationDone", serde_json::json!({}))
-            },
-            _ => {},
+        let result = match command {
+            "dumpCell" => Some(self.handle_dump_cell(seq, request)),
+            "debugInfo" => Some(self.handle_debug_info(seq)),
+            "configurationDone" => Some(Ok(self.success_response(
+                seq,
+                "configurationDone",
+                serde_json::json!({}),
+            ))),
+            _ => None,
+        };
+
+        match result {
+            Some(Ok(response)) => return response,
+            Some(Err(err)) => return self.error_response(seq, command, &format!("{err}")),
+            None => {},
         }
 
         // Parse as a standard DAP request and delegate to the shared handler
@@ -135,47 +143,36 @@ impl DapJupyterHandler {
     /// debugger can set breakpoints in it.
     ///
     /// https://jupyter-client.readthedocs.io/en/latest/messaging.html#dumpcell
-    fn handle_dump_cell(&self, seq: i64, request: &serde_json::Value) -> serde_json::Value {
+    fn handle_dump_cell(
+        &self,
+        seq: i64,
+        request: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
         let code = request
             .get("arguments")
             .and_then(|a| a.get("code"))
             .and_then(|c| c.as_str())
-            .unwrap_or("");
+            .ok_or_else(|| anyhow::anyhow!("Missing `code` in dumpCell arguments"))?;
 
         let source_path = dap_notebook::notebook_source_path(code);
 
-        if let Err(err) = std::fs::create_dir_all(self.tmp_file_prefix) {
-            log::error!("Jupyter DAP: Failed to create temp directory: {err:?}");
-            return self.error_response(
-                seq,
-                "dumpCell",
-                &format!("Failed to create temp directory: {err}"),
-            );
-        }
-
-        if let Err(err) = std::fs::write(&source_path, code) {
-            log::error!("Jupyter DAP: Failed to write cell source: {err:?}");
-            return self.error_response(
-                seq,
-                "dumpCell",
-                &format!("Failed to write cell source: {err}"),
-            );
-        }
+        std::fs::create_dir_all(self.tmp_file_prefix)?;
+        std::fs::write(&source_path, code)?;
 
         log::trace!("Jupyter DAP: Dumped cell to {source_path}");
 
-        self.success_response(
+        Ok(self.success_response(
             seq,
             "dumpCell",
             serde_json::json!({ "sourcePath": source_path }),
-        )
+        ))
     }
 
     /// Return debug state so the frontend can restore breakpoints and configure
     /// source mapping after (re)connecting to the kernel.
     ///
     /// https://jupyter-client.readthedocs.io/en/latest/messaging.html#debuginfo
-    fn handle_debug_info(&self, seq: i64) -> serde_json::Value {
+    fn handle_debug_info(&self, seq: i64) -> anyhow::Result<serde_json::Value> {
         let state = self.handler.state.lock().unwrap();
 
         let stopped_threads: Vec<i64> = if state.is_debugging {
@@ -185,7 +182,7 @@ impl DapJupyterHandler {
         };
 
         // TODO: Report actual breakpoints from `state.breakpoints`.
-        self.success_response(
+        Ok(self.success_response(
             seq,
             "debugInfo",
             serde_json::json!({
@@ -199,7 +196,7 @@ impl DapJupyterHandler {
                 "richRendering": false,
                 "exceptionPaths": [],
             }),
-        )
+        ))
     }
 }
 
