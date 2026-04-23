@@ -15,8 +15,7 @@
 //
 // https://jupyter-client.readthedocs.io/en/latest/messaging.html#additions-to-the-dap
 
-use std::sync::atomic::AtomicI64;
-use std::sync::atomic::Ordering;
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -38,7 +37,7 @@ use crate::request::RRequest;
 pub struct DapJupyterHandler {
     handler: DapHandler,
     iopub_tx: Sender<IOPubMessage>,
-    seq: AtomicI64,
+    seq: Cell<i64>,
     tmp_file_prefix: &'static str,
 }
 
@@ -54,13 +53,15 @@ impl DapJupyterHandler {
         Self {
             handler,
             iopub_tx,
-            seq: AtomicI64::new(1),
+            seq: Cell::new(1),
             tmp_file_prefix,
         }
     }
 
     fn next_seq(&self) -> i64 {
-        self.seq.fetch_add(1, Ordering::Relaxed)
+        let seq = self.seq.get();
+        self.seq.set(seq + 1);
+        seq
     }
 
     /// Process a DAP request from a Jupyter `debug_request` message.
