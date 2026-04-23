@@ -70,7 +70,7 @@ impl DummyAmaltheaFrontend {
             stdin_request_tx,
             stdin_reply_rx,
         ));
-        let control = Arc::new(Mutex::new(control::Control {}));
+        let control = Box::new(control::Control {});
 
         // Initialize logging
         env_logger::init();

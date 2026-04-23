@@ -17,7 +17,6 @@ use amalthea::wire::interrupt_reply::InterruptReply;
 use amalthea::wire::jupyter_message::Status;
 use amalthea::wire::shutdown_reply::ShutdownReply;
 use amalthea::wire::shutdown_request::ShutdownRequest;
-use async_trait::async_trait;
 use crossbeam::channel::Sender;
 use stdext::result::ResultExt;
 
@@ -53,12 +52,8 @@ impl Control {
     }
 }
 
-#[async_trait]
 impl ControlHandler for Control {
-    async fn handle_shutdown_request(
-        &self,
-        msg: &ShutdownRequest,
-    ) -> Result<ShutdownReply, Exception> {
+    fn handle_shutdown_request(&self, msg: &ShutdownRequest) -> Result<ShutdownReply, Exception> {
         log::info!("Received shutdown request: {msg:?}");
 
         // Interrupt any ongoing computation. We shut down from ReadConsole when
@@ -85,7 +80,7 @@ impl ControlHandler for Control {
         })
     }
 
-    async fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
+    fn handle_interrupt_request(&self) -> Result<InterruptReply, Exception> {
         log::info!("Received interrupt request");
 
         // When an interrupt is sent while debugging in notebook mode, we quit

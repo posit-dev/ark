@@ -54,7 +54,7 @@ pub enum StreamBehavior {
 /// Handler implementations provided by the language runtime.
 pub struct Handlers {
     pub shell_handler: Box<dyn ShellHandler>,
-    pub control_handler: Arc<Mutex<dyn ControlHandler>>,
+    pub control_handler: Box<dyn ControlHandler>,
     pub server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 }
 
@@ -379,7 +379,7 @@ pub fn read_connection(connection_file: &str) -> (ConnectionFile, Option<Registr
 fn control_thread(
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
-    handler: Arc<Mutex<dyn ControlHandler>>,
+    handler: Box<dyn ControlHandler>,
     stdin_interrupt_tx: Sender<bool>,
 ) {
     let control = Control::new(socket, iopub_tx, handler, stdin_interrupt_tx);

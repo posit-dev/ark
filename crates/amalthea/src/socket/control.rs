@@ -5,12 +5,8 @@
  *
  */
 
-use std::sync::Arc;
-use std::sync::Mutex;
-
 use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
-use futures::executor::block_on;
 use log::error;
 use log::info;
 use log::trace;
@@ -35,7 +31,7 @@ use crate::wire::status::KernelStatus;
 pub struct Control {
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
-    handler: Arc<Mutex<dyn ControlHandler>>,
+    handler: Box<dyn ControlHandler>,
     stdin_interrupt_tx: Sender<bool>,
 }
 
@@ -43,7 +39,7 @@ impl Control {
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
-        handler: Arc<Mutex<dyn ControlHandler>>,
+        handler: Box<dyn ControlHandler>,
         stdin_interrupt_tx: Sender<bool>,
     ) -> Self {
         Self {
@@ -135,11 +131,8 @@ impl Control {
     fn handle_shutdown_request(&self, req: JupyterMessage<ShutdownRequest>) -> Result<(), Error> {
         info!("Received shutdown request, shutting down kernel: {:?}", req);
 
-        // Lock the control handler object on this thread
-        let control_handler = self.handler.lock().unwrap();
-
         let reply = unwrap!(
-            block_on(control_handler.handle_shutdown_request(&req.content)),
+            self.handler.handle_shutdown_request(&req.content),
             Err(err) => {
                 log::error!("Failed to handle shutdown request: {err:?}");
                 return Ok(())
@@ -164,9 +157,7 @@ impl Control {
     fn handle_debug_request(&self, req: JupyterMessage<DebugRequest>) -> Result<(), Error> {
         log::trace!("Received debug request: {:?}", req);
 
-        let control_handler = self.handler.lock().unwrap();
-
-        let Some(reply) = control_handler.handle_debug_request(&req.content).log_err() else {
+        let Some(reply) = self.handler.handle_debug_request(&req.content).log_err() else {
             return Ok(());
         };
 
@@ -188,11 +179,8 @@ impl Control {
             error!("Failed to send interrupt request: {:?}", err);
         }
 
-        // Lock the control handler object on this thread
-        let control_handler = self.handler.lock().unwrap();
-
         let reply = unwrap!(
-            block_on(control_handler.handle_interrupt_request()),
+            self.handler.handle_interrupt_request(),
             Err(err) => {
                 log::error!("Failed to handle interrupt request: {err:?}");
                 return Ok(())

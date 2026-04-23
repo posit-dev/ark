@@ -11,8 +11,6 @@ mod shell;
 use std::collections::HashMap;
 use std::env;
 use std::io::stdin;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 use amalthea::comm::event::CommEvent;
 use amalthea::connection_file::ConnectionFile;
@@ -42,7 +40,7 @@ fn start_kernel(connection_file: ConnectionFile, registration_file: Option<Regis
         stdin_request_tx,
         stdin_reply_rx,
     ));
-    let control = Arc::new(Mutex::new(Control {}));
+    let control = Box::new(Control {});
 
     let server_handlers = HashMap::new();
 
