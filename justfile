@@ -15,3 +15,7 @@ test-insta:
 # Run clippy
 clippy:
   cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+# Reformat source files
+format:
+  cargo +nightly fmt --all

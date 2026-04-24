@@ -963,21 +963,28 @@ impl DeviceContext {
         id: &PlotId,
         ctx: &ExecutionContext,
     ) -> Result<serde_json::Value, anyhow::Error> {
-        let settings = ctx.render_settings.unwrap_or_else(|| {
-            let width = r_option_positive_f64("ark.plot.width")
-                .map(|w| (w * DEFAULT_DPI).round() as i64)
-                .unwrap_or(800);
-            let height = r_option_positive_f64("ark.plot.height")
-                .map(|h| (h * DEFAULT_DPI).round() as i64)
-                .unwrap_or(600);
-            let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio").unwrap_or(1.0);
-
-            PlotRenderSettings {
-                size: PlotSize { width, height },
-                pixel_ratio,
-                format: PlotRenderFormat::Png,
-            }
+        let base = ctx.render_settings.unwrap_or(PlotRenderSettings {
+            size: PlotSize {
+                width: 800,
+                height: 600,
+            },
+            pixel_ratio: 1.0,
+            format: PlotRenderFormat::Png,
         });
+
+        let width = r_option_positive_f64("ark.plot.width")
+            .map(|w| (w * DEFAULT_DPI).round() as i64)
+            .unwrap_or(base.size.width);
+        let height = r_option_positive_f64("ark.plot.height")
+            .map(|h| (h * DEFAULT_DPI).round() as i64)
+            .unwrap_or(base.size.height);
+        let pixel_ratio = r_option_positive_f64("ark.plot.pixel_ratio").unwrap_or(base.pixel_ratio);
+
+        let settings = PlotRenderSettings {
+            size: PlotSize { width, height },
+            pixel_ratio,
+            format: base.format,
+        };
 
         let data = unwrap!(self.render_plot(id, &settings), Err(error) => {
             return Err(anyhow!("Failed to render plot with id {id} due to: {error}."));
