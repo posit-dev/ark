@@ -125,6 +125,7 @@ pub(crate) use console_debug::FrameSource;
 use console_error::stack_overflow_occurred;
 use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
+pub use console_repl::catching_panics;
 pub(crate) use console_repl::console_inputs;
 pub(crate) use console_repl::r_busy;
 #[cfg(unix)]

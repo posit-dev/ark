@@ -32,6 +32,18 @@ const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "
 // These are not transient evals: they represent deliberate debugger navigation.
 const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
 
+thread_local! {
+    /// When `true`, the global panic hook should return early instead of
+    /// aborting, so that `catch_unwind` can catch the panic in `Console::with`.
+    static CATCHING_PANICS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Returns `true` when we are inside a `Console::with` catch boundary.
+/// Checked by the global panic hook to decide whether to abort.
+pub fn catching_panics() -> bool {
+    CATCHING_PANICS.get()
+}
+
 /// Used to wait for complete R startup in `Console::wait_initialized()` or
 /// check for it in `Console::is_initialized()`.
 ///
@@ -693,11 +705,14 @@ impl Console {
     /// `r_unwrap()` then surfaces as a clean R error.
     pub fn with<T>(f: impl FnOnce(&Console) -> anyhow::Result<T>) -> anyhow::Result<T> {
         if cfg!(debug_assertions) {
-            // Let panics propagate in debug builds
             return f(Console::get());
         }
 
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(Console::get()))) {
+        CATCHING_PANICS.set(true);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(Console::get())));
+        CATCHING_PANICS.set(false);
+
+        match result {
             Ok(result) => result,
             Err(panic) => {
                 let msg = match panic.downcast_ref::<&str>() {
@@ -707,7 +722,7 @@ impl Console {
                         None => String::from("(unknown payload)"),
                     },
                 };
-                log::error!("Panic in Console callback: {msg}");
+
                 Err(anyhow!("Panic in Console callback: {msg}"))
             },
         }
