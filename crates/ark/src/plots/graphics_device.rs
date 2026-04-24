@@ -963,7 +963,7 @@ impl DeviceContext {
         id: &PlotId,
         ctx: &ExecutionContext,
     ) -> Result<serde_json::Value, anyhow::Error> {
-        let base = ctx.render_settings.unwrap_or_else(|| PlotRenderSettings {
+        let base = ctx.render_settings.unwrap_or(PlotRenderSettings {
             size: PlotSize {
                 width: 800,
                 height: 600,
