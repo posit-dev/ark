@@ -692,6 +692,11 @@ impl Console {
     /// caught and converted to `anyhow::Error`, which `harp::register`'s
     /// `r_unwrap()` then surfaces as a clean R error.
     pub fn with<T>(f: impl FnOnce(&Console) -> anyhow::Result<T>) -> anyhow::Result<T> {
+        if cfg!(debug_assertions) {
+            // Let panics propagate in debug builds
+            return f(Console::get());
+        }
+
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(Console::get()))) {
             Ok(result) => result,
             Err(panic) => {
