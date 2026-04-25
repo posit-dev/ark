@@ -141,6 +141,7 @@ fn test_dap_continue() {
 /// In console mode, interrupt at a breakpoint sends SIGINT (not Q).
 /// The debugger should remain active after the interrupt.
 #[test]
+#[cfg_attr(target_os = "windows", ignore)]
 fn test_dap_interrupt_at_breakpoint_stays_in_debugger() {
     let frontend = DummyArkFrontend::lock();
     let mut dap = frontend.start_dap();

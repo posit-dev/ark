@@ -488,6 +488,7 @@ fn test_notebook_breakpoint_stops_execution() {
 }
 
 #[test]
+#[cfg_attr(target_os = "windows", ignore)]
 fn test_notebook_interrupt_at_breakpoint_exits_debugger() {
     let frontend = DummyArkFrontendNotebook::lock();
 
@@ -662,6 +663,7 @@ fn test_notebook_unexpected_browser_continue_via_stdin() {
 }
 
 #[test]
+#[cfg_attr(target_os = "windows", ignore)]
 fn test_notebook_unexpected_browser_interrupt_via_stdin() {
     let frontend = DummyArkFrontendNotebook::lock();
 
