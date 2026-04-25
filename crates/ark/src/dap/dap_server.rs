@@ -981,6 +981,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
         self.server.send_event(event)
     }
 
+    // Tied to the TCP transport for now. For Jupyter we need to figure out how
+    // to do async responses with Jupyter's Control channel.
     fn handle_evaluate(
         &mut self,
         req: Request,
