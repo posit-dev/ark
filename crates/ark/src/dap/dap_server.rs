@@ -80,9 +80,32 @@ pub struct DapOutput {
 }
 
 impl DapOutput {
-    pub fn response(response: Response) -> Self {
+    pub fn new(response: Response) -> Self {
         Self {
             response,
+            dap_events: vec![],
+            console_events: vec![],
+        }
+    }
+
+    pub fn error(req: Request, message: &str) -> Self {
+        Self::new(req.error(message))
+    }
+}
+
+/// The result of a handler method. Contains a `ResponseBody` (not a full
+/// `Response`) plus any events. The dispatcher wraps the body with
+/// `req.success()` or `req.error()` to produce a transport-ready `DapOutput`.
+pub(crate) struct HandlerOutput {
+    pub body: ResponseBody,
+    pub dap_events: Vec<Event>,
+    pub console_events: Vec<DapConsoleEvent>,
+}
+
+impl HandlerOutput {
+    fn new(body: ResponseBody) -> Self {
+        Self {
+            body,
             dap_events: vec![],
             console_events: vec![],
         }
@@ -112,55 +135,50 @@ impl DapHandler {
     pub fn dispatch(&self, req: Request) -> DapOutput {
         let cmd = req.command.clone();
 
-        let err_req = req.clone();
         let result = match cmd {
-            Command::Initialize(args) => self.handle_initialize(req, args),
-            Command::Attach(args) => self.handle_attach(req, args),
-            Command::Disconnect(args) => self.handle_disconnect(req, args),
-            Command::Restart(args) => self.handle_restart(req, args),
-            Command::Threads => self.handle_threads(req),
-            Command::SetBreakpoints(args) => self.handle_set_breakpoints(req, args),
-            Command::SetExceptionBreakpoints(args) => {
-                self.handle_set_exception_breakpoints(req, args)
-            },
-            Command::StackTrace(args) => self.handle_stacktrace(req, args),
-            Command::Source(args) => self.handle_source(req, args),
-            Command::Scopes(args) => self.handle_scopes(req, args),
-            Command::Variables(args) => self.handle_variables(req, args),
+            Command::Initialize(args) => self.handle_initialize(args),
+            Command::Attach(args) => self.handle_attach(args),
+            Command::Disconnect(args) => self.handle_disconnect(args),
+            Command::Restart(args) => self.handle_restart(args),
+            Command::Threads => self.handle_threads(),
+            Command::SetBreakpoints(args) => self.handle_set_breakpoints(args),
+            Command::SetExceptionBreakpoints(args) => self.handle_set_exception_breakpoints(args),
+            Command::StackTrace(args) => self.handle_stacktrace(args),
+            Command::Source(args) => self.handle_source(args),
+            Command::Scopes(args) => self.handle_scopes(args),
+            Command::Variables(args) => self.handle_variables(args),
             Command::Continue(args) => {
                 let resp = ResponseBody::Continue(ContinueResponse {
                     all_threads_continued: Some(true),
                 });
-                self.handle_step(req, args, DebugRequest::Continue, resp)
+                self.handle_step(args, DebugRequest::Continue, resp)
             },
-            Command::Next(args) => {
-                self.handle_step(req, args, DebugRequest::Next, ResponseBody::Next)
-            },
+            Command::Next(args) => self.handle_step(args, DebugRequest::Next, ResponseBody::Next),
             Command::StepIn(args) => {
-                self.handle_step(req, args, DebugRequest::StepIn, ResponseBody::StepIn)
+                self.handle_step(args, DebugRequest::StepIn, ResponseBody::StepIn)
             },
             Command::StepOut(args) => {
-                self.handle_step(req, args, DebugRequest::StepOut, ResponseBody::StepOut)
+                self.handle_step(args, DebugRequest::StepOut, ResponseBody::StepOut)
             },
-            Command::Pause(args) => self.handle_pause(req, args),
+            Command::Pause(args) => self.handle_pause(args),
             _ => {
                 log::warn!("DAP: Unknown request");
-                return DapOutput::response(err_req.error("Ark DAP: Unknown request"));
+                return DapOutput::error(req, "Ark DAP: Unknown request");
             },
         };
 
         match result {
-            Ok(output) => output,
-            Err(err) => DapOutput::response(err_req.error(&format!("{err}"))),
+            Ok(output) => DapOutput {
+                response: req.success(output.body),
+                dap_events: output.dap_events,
+                console_events: output.console_events,
+            },
+            Err(err) => DapOutput::error(req, &format!("{err}")),
         }
     }
 
-    fn handle_initialize(
-        &self,
-        req: Request,
-        _args: InitializeArguments,
-    ) -> anyhow::Result<DapOutput> {
-        let rsp = req.success(ResponseBody::Initialize(types::Capabilities {
+    fn handle_initialize(&self, _args: InitializeArguments) -> anyhow::Result<HandlerOutput> {
+        let body = ResponseBody::Initialize(types::Capabilities {
             supports_restart_request: Some(true),
             supports_exception_info_request: Some(false),
             exception_breakpoint_filters: Some(vec![
@@ -194,9 +212,9 @@ impl DapHandler {
             supports_hit_conditional_breakpoints: Some(true),
             supports_log_points: Some(true),
             ..Default::default()
-        }));
-        Ok(DapOutput {
-            response: rsp,
+        });
+        Ok(HandlerOutput {
+            body,
             dap_events: vec![Event::Initialized],
             console_events: vec![],
         })
@@ -219,9 +237,8 @@ impl DapHandler {
     //   can restore their state when re-enabled without requiring re-sourcing.
     fn handle_set_breakpoints(
         &self,
-        req: Request,
         args: SetBreakpointsArguments,
-    ) -> anyhow::Result<DapOutput> {
+    ) -> anyhow::Result<HandlerOutput> {
         let Some(path) = args.source.path.as_ref() else {
             return Err(anyhow::anyhow!("Missing a path to set breakpoints for"));
         };
@@ -233,10 +250,11 @@ impl DapHandler {
             Ok(uri) => uri,
             Err(err) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
-                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                    breakpoints: vec![],
-                }));
-                return Ok(DapOutput::response(rsp));
+                return Ok(HandlerOutput::new(ResponseBody::SetBreakpoints(
+                    SetBreakpointsResponse {
+                        breakpoints: vec![],
+                    },
+                )));
             },
         };
 
@@ -262,10 +280,9 @@ impl DapHandler {
                     })
                     .collect();
 
-                let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-                    breakpoints,
-                }));
-                return Ok(DapOutput::response(rsp));
+                return Ok(HandlerOutput::new(ResponseBody::SetBreakpoints(
+                    SetBreakpointsResponse { breakpoints },
+                )));
             },
         };
 
@@ -415,21 +432,16 @@ impl DapHandler {
 
         drop(state);
 
-        let rsp = req.success(ResponseBody::SetBreakpoints(SetBreakpointsResponse {
-            breakpoints: response_breakpoints,
-        }));
-
-        Ok(DapOutput::response(rsp))
+        Ok(HandlerOutput::new(ResponseBody::SetBreakpoints(
+            SetBreakpointsResponse {
+                breakpoints: response_breakpoints,
+            },
+        )))
     }
 
-    fn handle_attach(
-        &self,
-        req: Request,
-        _args: AttachRequestArguments,
-    ) -> anyhow::Result<DapOutput> {
-        let rsp = req.success(ResponseBody::Attach);
-        Ok(DapOutput {
-            response: rsp,
+    fn handle_attach(&self, _args: AttachRequestArguments) -> anyhow::Result<HandlerOutput> {
+        Ok(HandlerOutput {
+            body: ResponseBody::Attach,
             dap_events: vec![Event::Thread(ThreadEventBody {
                 reason: ThreadEventReason::Started,
                 thread_id: THREAD_ID,
@@ -438,11 +450,7 @@ impl DapHandler {
         })
     }
 
-    fn handle_disconnect(
-        &self,
-        req: Request,
-        _args: DisconnectArguments,
-    ) -> anyhow::Result<DapOutput> {
+    fn handle_disconnect(&self, _args: DisconnectArguments) -> anyhow::Result<HandlerOutput> {
         // Only send `Q` if currently in a debugging session.
         let is_debugging = { self.state.lock().unwrap().is_debugging };
         let console_events = if is_debugging {
@@ -451,16 +459,16 @@ impl DapHandler {
             vec![]
         };
 
-        Ok(DapOutput {
-            response: req.success(ResponseBody::Disconnect),
+        Ok(HandlerOutput {
+            body: ResponseBody::Disconnect,
             dap_events: vec![],
             console_events,
         })
     }
 
-    fn handle_restart<T>(&self, req: Request, _args: T) -> anyhow::Result<DapOutput> {
-        Ok(DapOutput {
-            response: req.success(ResponseBody::Restart),
+    fn handle_restart<T>(&self, _args: T) -> anyhow::Result<HandlerOutput> {
+        Ok(HandlerOutput {
+            body: ResponseBody::Restart,
             dap_events: vec![],
             console_events: vec![DapConsoleEvent::Restart],
         })
@@ -468,41 +476,34 @@ impl DapHandler {
 
     // All servers must respond to `Threads` requests, possibly with
     // a dummy thread as is the case here
-    fn handle_threads(&self, req: Request) -> anyhow::Result<DapOutput> {
-        let rsp = req.success(ResponseBody::Threads(ThreadsResponse {
+    fn handle_threads(&self) -> anyhow::Result<HandlerOutput> {
+        Ok(HandlerOutput::new(ResponseBody::Threads(ThreadsResponse {
             threads: vec![Thread {
                 id: THREAD_ID,
                 name: String::from("R console"),
             }],
-        }));
-        Ok(DapOutput::response(rsp))
+        })))
     }
 
     fn handle_set_exception_breakpoints(
         &self,
-        req: Request,
         args: SetExceptionBreakpointsArguments,
-    ) -> anyhow::Result<DapOutput> {
+    ) -> anyhow::Result<HandlerOutput> {
         {
             let mut state = self.state.lock().unwrap();
             state.exception_breakpoint_filters = args.filters;
         }
-        let rsp = req.success(ResponseBody::SetExceptionBreakpoints(
+        Ok(HandlerOutput::new(ResponseBody::SetExceptionBreakpoints(
             SetExceptionBreakpointsResponse {
                 // This field is only useful for reporting problems with
                 // individual filters. Since we always accept all filters,
                 // `None` is fine here.
                 breakpoints: None,
             },
-        ));
-        Ok(DapOutput::response(rsp))
+        )))
     }
 
-    fn handle_stacktrace(
-        &self,
-        req: Request,
-        args: StackTraceArguments,
-    ) -> anyhow::Result<DapOutput> {
+    fn handle_stacktrace(&self, args: StackTraceArguments) -> anyhow::Result<HandlerOutput> {
         let stack = {
             let state = self.state.lock().unwrap();
             let fallback_sources = &state.fallback_sources;
@@ -540,19 +541,19 @@ impl DapHandler {
         };
         let stack = stack[start..end].to_vec();
 
-        let rsp = req.success(ResponseBody::StackTrace(StackTraceResponse {
-            stack_frames: stack,
-            total_frames: Some(total_frames),
-        }));
-
-        Ok(DapOutput::response(rsp))
+        Ok(HandlerOutput::new(ResponseBody::StackTrace(
+            StackTraceResponse {
+                stack_frames: stack,
+                total_frames: Some(total_frames),
+            },
+        )))
     }
 
-    fn handle_source(&self, _req: Request, _args: SourceArguments) -> anyhow::Result<DapOutput> {
+    fn handle_source(&self, _args: SourceArguments) -> anyhow::Result<HandlerOutput> {
         Err(anyhow::anyhow!("Unsupported `source` request"))
     }
 
-    fn handle_scopes(&self, req: Request, args: ScopesArguments) -> anyhow::Result<DapOutput> {
+    fn handle_scopes(&self, args: ScopesArguments) -> anyhow::Result<HandlerOutput> {
         let state = self.state.lock().unwrap();
         let frame_id_to_variables_reference = &state.frame_id_to_variables_reference;
 
@@ -579,22 +580,19 @@ impl DapHandler {
             end_column: None,
         }];
 
-        let rsp = req.success(ResponseBody::Scopes(ScopesResponse { scopes }));
-
         drop(state);
-        Ok(DapOutput::response(rsp))
+        Ok(HandlerOutput::new(ResponseBody::Scopes(ScopesResponse {
+            scopes,
+        })))
     }
 
-    fn handle_variables(
-        &self,
-        req: Request,
-        args: VariablesArguments,
-    ) -> anyhow::Result<DapOutput> {
+    fn handle_variables(&self, args: VariablesArguments) -> anyhow::Result<HandlerOutput> {
         let variables_reference = args.variables_reference;
         let variables = self.collect_r_variables(variables_reference);
         let variables = self.make_variables(variables);
-        let rsp = req.success(ResponseBody::Variables(VariablesResponse { variables }));
-        Ok(DapOutput::response(rsp))
+        Ok(HandlerOutput::new(ResponseBody::Variables(
+            VariablesResponse { variables },
+        )))
     }
 
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
@@ -626,25 +624,24 @@ impl DapHandler {
 
     fn handle_step<A>(
         &self,
-        req: Request,
         _args: A,
         cmd: DebugRequest,
         resp: ResponseBody,
-    ) -> anyhow::Result<DapOutput> {
-        Ok(DapOutput {
-            response: req.success(resp),
+    ) -> anyhow::Result<HandlerOutput> {
+        Ok(HandlerOutput {
+            body: resp,
             dap_events: vec![],
             console_events: vec![DapConsoleEvent::DebugCommand(cmd)],
         })
     }
 
-    fn handle_pause(&self, req: Request, _args: PauseArguments) -> anyhow::Result<DapOutput> {
+    fn handle_pause(&self, _args: PauseArguments) -> anyhow::Result<HandlerOutput> {
         self.state.lock().unwrap().is_interrupting_for_debugger = true;
 
         log::info!("DAP: Received request to pause R, sending interrupt");
 
-        Ok(DapOutput {
-            response: req.success(ResponseBody::Pause),
+        Ok(HandlerOutput {
+            body: ResponseBody::Pause,
             dap_events: vec![],
             console_events: vec![DapConsoleEvent::Interrupt],
         })
