@@ -35,7 +35,7 @@ const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
 static R_INIT: once_cell::sync::OnceCell<()> = once_cell::sync::OnceCell::new();
 
 /// An enum representing the different modes in which the R session can run.
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum SessionMode {
     /// A session with an interactive console (REPL), such as in Positron.
     Console,
@@ -192,6 +192,7 @@ pub(crate) struct KernelInfo {
     pub(crate) banner: String,
     pub(crate) input_prompt: Option<String>,
     pub(crate) continuation_prompt: Option<String>,
+    pub(crate) session_mode: SessionMode,
 }
 
 /// The kind of prompt we're handling in the REPL.
@@ -485,7 +486,7 @@ impl Console {
         log::info!(
             "R has started and ark handlers have been registered, completing initialization."
         );
-        Self::complete_initialization(console.banner.take(), kernel_init_tx);
+        Self::complete_initialization(console.banner.take(), console.session_mode, kernel_init_tx);
 
         // Spawn handler loop for async messages from other components (e.g., LSP).
         // Note that we do it after init is complete to avoid deadlocking
@@ -576,7 +577,11 @@ impl Console {
     /// # Safety
     ///
     /// Can only be called from the R thread, and only once.
-    fn complete_initialization(banner: Option<String>, mut kernel_init_tx: Bus<KernelInfo>) {
+    fn complete_initialization(
+        banner: Option<String>,
+        session_mode: SessionMode,
+        mut kernel_init_tx: Bus<KernelInfo>,
+    ) {
         let version = unsafe {
             let version = Rf_findVarInFrame(R_BaseNamespace, r_symbol!("R.version.string"));
             RObject::new(version).to::<String>().unwrap()
@@ -591,6 +596,7 @@ impl Console {
             banner: banner.unwrap_or_default(),
             input_prompt: Some(input_prompt),
             continuation_prompt: Some(continuation_prompt),
+            session_mode,
         };
 
         // Set `R_INIT` before broadcasting so that threads unblocked by the

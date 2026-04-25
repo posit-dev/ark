@@ -45,6 +45,7 @@ use tokio::sync::mpsc::UnboundedSender as AsyncUnboundedSender;
 use crate::ark_comm::ArkComm;
 use crate::console::Console;
 use crate::console::KernelInfo;
+use crate::console::SessionMode;
 use crate::data_explorer::r_data_explorer::DATA_EXPLORER_COMM_NAME;
 use crate::help::r_help::RHelp;
 use crate::help_proxy;
@@ -144,6 +145,11 @@ impl ShellHandler for Shell {
                 continuation_prompt: kernel_info.continuation_prompt.clone(),
             }),
         };
+        let mut supported_features = vec![String::from("debugger")];
+        if matches!(kernel_info.session_mode, SessionMode::Notebook) {
+            supported_features.push(String::from("proactive breakpoints"));
+        }
+
         Ok(KernelInfoReply {
             status: Status::Ok,
             banner: kernel_info.banner.clone(),
@@ -152,7 +158,7 @@ impl ShellHandler for Shell {
             language_info: info,
             implementation: String::from("ark"),
             implementation_version: String::from(env!("CARGO_PKG_VERSION")),
-            supported_features: vec![String::from("debugger")],
+            supported_features,
         })
     }
 
