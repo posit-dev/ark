@@ -214,8 +214,36 @@ impl Socket {
         }
     }
 
+    #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
     pub fn poll_incoming(&self, timeout_ms: i64) -> zmq::Result<bool> {
         Ok(self.socket.poll(zmq::PollEvents::POLLIN, timeout_ms)? != 0)
+    }
+
+    /// On Windows ARM, ZMQ poll with a non-zero timeout blocks forever
+    /// instead of respecting the timeout. Use non-blocking poll with
+    /// manual timing.
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    pub fn poll_incoming(&self, timeout_ms: i64) -> zmq::Result<bool> {
+        if timeout_ms == 0 {
+            return Ok(self.socket.poll(zmq::PollEvents::POLLIN, 0)? != 0);
+        }
+
+        let start = std::time::Instant::now();
+        let timeout = if timeout_ms < 0 {
+            std::time::Duration::from_secs(u64::MAX / 2)
+        } else {
+            std::time::Duration::from_millis(timeout_ms as u64)
+        };
+
+        loop {
+            if self.socket.poll(zmq::PollEvents::POLLIN, 0)? != 0 {
+                return Ok(true);
+            }
+            if start.elapsed() >= timeout {
+                return Ok(false);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
     }
 
     pub fn has_incoming_data(&self) -> zmq::Result<bool> {
