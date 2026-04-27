@@ -8,73 +8,54 @@
 # This file contains RPC functions for the packages pane.
 # These functions are called via callMethod from the Positron R extension.
 
-# Normalize a DESCRIPTION field value for display: collapse whitespace/newlines
-# into single spaces so a multi-line Description fits on one line in the UI.
-.ps.pkg_description_text <- function(value) {
-    if (is.null(value) || is.na(value)) {
-        return("")
-    }
-    value <- as.character(value)
-    value <- gsub("\\s+", " ", value, perl = TRUE)
-    trimws(value)
-}
-
-# Normalize a Maintainer/Author value for display: collapse whitespace and strip
-# trailing email addresses in angle brackets (e.g., "Hadley Wickham <h@posit.co>"
-# becomes "Hadley Wickham").
-.ps.pkg_author_text <- function(value) {
-    if (is.null(value) || is.na(value)) {
-        return("")
-    }
-    value <- as.character(value)
-    value <- gsub("\\s+", " ", value, perl = TRUE)
-    value <- gsub("\\s*<[^>]+>", "", value, perl = TRUE)
-    trimws(value)
-}
-
-# Build the package list via utils::installed.packages(), optionally scoped to a
-# specific library path (used by the renv method).
 .ps.pkg_list_installed <- function(lib.loc = NULL) {
     ip <- utils::installed.packages(
         lib.loc = lib.loc,
         fields = c("Description", "Maintainer")
     )
-    lapply(seq_len(nrow(ip)), function(i) {
-        list(
-            id = paste0(ip[i, "Package"], "-", ip[i, "Version"]),
-            name = ip[i, "Package"],
-            displayName = ip[i, "Package"],
-            version = ip[i, "Version"],
-            description = .ps.pkg_description_text(ip[i, "Description"]),
-            author = .ps.pkg_author_text(ip[i, "Maintainer"])
-        )
-    })
+
+    name <- ip[, "Package"]
+    version <- ip[, "Version"]
+    id <- paste0(name, "-", version)
+    # Collapse whitespace so a multi-line Description fits on one line in the UI.
+    description <- trimws(gsub(
+        "\\s+",
+        " ",
+        ifelse(is.na(ip[, "Description"]), "", ip[, "Description"]),
+        perl = TRUE
+    ))
+    # Strip "<email>" markers so "Hadley Wickham <h@posit.co>" becomes "Hadley Wickham".
+    author <- trimws(gsub(
+        "\\s*<[^>]+>",
+        "",
+        gsub(
+            "\\s+",
+            " ",
+            ifelse(is.na(ip[, "Maintainer"]), "", ip[, "Maintainer"]),
+            perl = TRUE
+        ),
+        perl = TRUE
+    ))
+
+    unname(Map(
+        list,
+        id = id,
+        name = name,
+        displayName = name,
+        version = version,
+        description = description,
+        author = author
+    ))
 }
 
-# Return a list of installed packages
+# Return a list of installed packages. The pak/base/renv methods exist for
+# parity with install/update operations; for listing we always use
+# utils::installed.packages(), scoped to the renv library when requested.
 #' @export
 .ps.rpc.pkg_list <- function(method = c("pak", "base", "renv")) {
     method <- match.arg(method)
-    switch(
-        method,
-        pak = {
-            old_opt <- options(pak.no_extra_messages = TRUE)
-            on.exit(options(old_opt), add = TRUE)
-            pkgs <- pak::lib_status()
-            lapply(seq_len(nrow(pkgs)), function(i) {
-                list(
-                    id = paste0(pkgs$package[[i]], "-", pkgs$version[[i]]),
-                    name = pkgs$package[[i]],
-                    displayName = pkgs$package[[i]],
-                    version = as.character(pkgs$version[[i]]),
-                    description = .ps.pkg_description_text(pkgs$description[[i]]),
-                    author = .ps.pkg_author_text(pkgs$maintainer[[i]])
-                )
-            })
-        },
-        base = .ps.pkg_list_installed(),
-        renv = .ps.pkg_list_installed(lib.loc = renv::paths$library())
-    )
+    lib.loc <- if (method == "renv") renv::paths$library() else NULL
+    .ps.pkg_list_installed(lib.loc = lib.loc)
 }
 
 
