@@ -101,7 +101,7 @@ pub(crate) fn initialize(
                         Ok(Some(pkg)) => {
                             log::info!(
                                 "Root: Loaded package `{pkg}` from {path} as project root",
-                                pkg = pkg.description.name,
+                                pkg = pkg.description().name,
                                 path = path.display()
                             );
                             state.root = Some(SourceRoot::Package(pkg));

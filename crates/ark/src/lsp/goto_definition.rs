@@ -33,6 +33,7 @@ pub(crate) fn goto_definition(
         &index,
         &state.external_scope(&uri),
         &state.library,
+        state.library_definitions.as_ref(),
     );
 
     if targets.is_empty() {

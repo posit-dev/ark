@@ -1,34 +1,26 @@
 [package]
-name = "oak_ide"
+name = "oak_layers"
 version = "0.1.0"
-description = """
-IDE features for R: goto-definition, completions, hover, etc.
-"""
-
 authors.workspace = true
 edition.workspace = true
-license.workspace = true
 rust-version.workspace = true
-
-[lints]
-workspace = true
+license.workspace = true
 
 [dependencies]
-aether_syntax.workspace = true
+aether_parser.workspace = true
+assert_matches.workspace = true
 biome_rowan.workspace = true
-log.workspace = true
-oak_core.workspace = true
 oak_index.workspace = true
-oak_layers.workspace = true
 oak_package.workspace = true
 oak_package_definitions.workspace = true
+oak_sources.workspace = true
 stdext.workspace = true
 url.workspace = true
 
 [dev-dependencies]
-aether_parser.workspace = true
-assert_matches.workspace = true
-oak_index.workspace = true
 oak_package = { workspace = true, features = ["testing"] }
 oak_package_definitions = { workspace = true, features = ["testing"] }
 oak_sources = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

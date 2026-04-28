@@ -169,14 +169,14 @@ pub(crate) fn generate_diagnostics(
     // If this is a package, add imported symbols to workspace
     if let Some(SourceRoot::Package(root)) = &state.root {
         // Add symbols from `importFrom()` directives
-        for import in &root.namespace.imports {
+        for import in &root.namespace().imports {
             context.workspace_symbols.insert(import.name.clone());
         }
 
         // Add symbols from `import()` directives
-        for package_import in &root.namespace.package_imports {
+        for package_import in &root.namespace().package_imports {
             if let Some(pkg) = state.library.get(package_import) {
-                for export in &pkg.namespace.exports {
+                for export in &pkg.namespace().exports {
                     context.workspace_symbols.insert(export.clone());
                 }
             }
@@ -193,7 +193,7 @@ pub(crate) fn generate_diagnostics(
     // test files setup.
     if testthat {
         if let Some(pkg) = state.library.get("testthat") {
-            for export in &pkg.namespace.exports {
+            for export in &pkg.namespace().exports {
                 context.workspace_symbols.insert(export.clone());
             }
         }
@@ -882,14 +882,14 @@ fn handle_package_attach_call(node: Node, context: &mut DiagnosticContext) -> an
     let package = insert_package_exports(package_name, attach_pos, context)?;
 
     // Also attach packages from `Depends` field
-    for package_name in package.description.depends.iter() {
+    for package_name in package.description().depends.iter() {
         insert_package_exports(package_name, attach_pos, context)?;
     }
 
     // Special handling for the tidyverse and tidymodels packages. Hard-coded
     // for now but in the future, this should probably be expressed as a
     // `DESCRIPTION` field like `Config/Needs/attach`.
-    let attach_field = match package.description.name.as_str() {
+    let attach_field = match package.description().name.as_str() {
         // https://github.com/tidyverse/tidyverse/blob/0231aafb/R/attach.R#L1
         "tidyverse" => {
             vec![
@@ -949,7 +949,7 @@ fn insert_package_exports(
         .library_symbols
         .entry(attach_pos)
         .or_default()
-        .extend(package.exported_symbols.iter().cloned());
+        .extend(package.exported_symbols().clone().into_vec());
 
     Ok(package)
 }
@@ -1138,6 +1138,7 @@ mod tests {
     use oak_package::package_description::Description;
     use oak_package::package_namespace::Namespace;
     use once_cell::sync::Lazy;
+    use stdext::SortedVec;
     use tower_lsp::lsp_types;
     use tower_lsp::lsp_types::Position;
 
@@ -1638,7 +1639,7 @@ foo
         r_task(|| {
             // `mockpkg` exports `foo` and `bar`
             let namespace = Namespace {
-                exports: vec!["foo".to_string(), "bar".to_string()],
+                exports: SortedVec::from_vec(vec!["foo".to_string(), "bar".to_string()]),
                 imports: vec![],
                 package_imports: vec![],
             };
@@ -1736,7 +1737,7 @@ foo
         r_task(|| {
             // pkg1 exports `foo` and `bar`
             let namespace1 = Namespace {
-                exports: vec!["foo".to_string(), "bar".to_string()],
+                exports: SortedVec::from_vec(vec!["foo".to_string(), "bar".to_string()]),
                 imports: vec![],
                 package_imports: vec![],
             };
@@ -1753,7 +1754,7 @@ foo
 
             // pkg2 exports `bar` and `baz`
             let namespace2 = Namespace {
-                exports: vec!["bar".to_string(), "baz".to_string()],
+                exports: SortedVec::from_vec(vec!["bar".to_string(), "baz".to_string()]),
                 imports: vec![],
                 package_imports: vec![],
             };
@@ -1812,7 +1813,7 @@ foo
         r_task(|| {
             // `pkg` exports `foo` and `bar`
             let namespace = Namespace {
-                exports: vec!["foo".to_string(), "bar".to_string()],
+                exports: SortedVec::from_vec(vec!["foo".to_string(), "bar".to_string()]),
                 imports: vec![],
                 package_imports: vec![],
             };

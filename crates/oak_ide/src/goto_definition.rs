@@ -1,15 +1,16 @@
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextSize;
-use oak_index::external::resolve_external_name;
-use oak_index::external::resolve_in_package;
-use oak_index::external::ExternalDefinition;
-use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index::Use;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
 use oak_index::UseId;
+use oak_layers::external::resolve_external_name;
+use oak_layers::external::resolve_in_package;
+use oak_layers::scope_layer::ScopeLayer;
 use oak_package::library::Library;
+use oak_package_definitions::LibraryDefinitions;
+use oak_package_definitions::PackageDefinitionVisibility;
 use url::Url;
 
 use crate::ExternalScope;
@@ -42,6 +43,7 @@ pub fn goto_definition(
     index: &SemanticIndex,
     scope: &ExternalScope,
     library: &Library,
+    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
     let Some(ident) = Identifier::classify(root, index, offset) else {
         return Vec::new();
@@ -62,14 +64,30 @@ pub fn goto_definition(
         Identifier::Use { scope_id, use_id } => {
             let use_site = &index.uses(scope_id)[use_id];
             resolve_use(
-                index, scope_id, use_id, use_site, file, offset, scope, library,
+                index,
+                scope_id,
+                use_id,
+                use_site,
+                file,
+                offset,
+                scope,
+                library,
+                library_definitions,
             )
         },
         Identifier::NamespaceAccess {
             ref package,
             ref symbol,
+            internal,
             ..
-        } => resolve_namespace_access(library, package, symbol),
+        } => {
+            let visibility = if internal {
+                PackageDefinitionVisibility::Internal
+            } else {
+                PackageDefinitionVisibility::Exported
+            };
+            resolve_namespace_access(symbol, package, visibility, library, library_definitions)
+        },
     }
 }
 
@@ -82,6 +100,7 @@ fn resolve_use(
     offset: TextSize,
     scope: &ExternalScope,
     library: &Library,
+    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
     let use_def_map = index.use_def_map(scope_id);
     let bindings = use_def_map.bindings_at_use(use_id);
@@ -106,7 +125,7 @@ fn resolve_use(
 
     let external_targets = || {
         let scope_chain = scope.at(index, offset);
-        resolve_external(library, &scope_chain, symbol_name)
+        resolve_external(symbol_name, &scope_chain, library, library_definitions)
     };
 
     if !definitions.is_empty() {
@@ -136,38 +155,29 @@ fn resolve_use(
 }
 
 fn resolve_namespace_access(
-    library: &Library,
-    package: &str,
     symbol: &str,
+    package: &str,
+    visibility: PackageDefinitionVisibility,
+    library: &Library,
+    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_in_package(library, package, symbol) else {
+    let Some(external) =
+        resolve_in_package(symbol, package, visibility, library, library_definitions)
+    else {
         return Vec::new();
     };
-    external_to_targets(external)
+    vec![external.into()]
 }
 
 fn resolve_external(
-    library: &Library,
+    symbol: &str,
     scope_chain: &[ScopeLayer],
-    symbol_name: &str,
+    library: &Library,
+    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_external_name(library, scope_chain, symbol_name) else {
+    let Some(external) = resolve_external_name(library, library_definitions, scope_chain, symbol)
+    else {
         return Vec::new();
     };
-    external_to_targets(external)
-}
-
-fn external_to_targets(external: ExternalDefinition) -> Vec<NavigationTarget> {
-    match external {
-        ExternalDefinition::ProjectFile { file, name, range } => {
-            vec![NavigationTarget {
-                file,
-                name,
-                full_range: range,
-                focus_range: range,
-            }]
-        },
-        // No file/range to navigate to for package symbols (yet).
-        ExternalDefinition::Package { .. } => Vec::new(),
-    }
+    vec![external.into()]
 }

@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
 use biome_rowan::TextRange;
-use oak_package::library::Library;
+use oak_index::semantic_index::DirectiveKind;
+use oak_index::semantic_index::SemanticIndex;
 use oak_package::package_namespace::Namespace;
 use url::Url;
-
-use crate::semantic_index::DirectiveKind;
-use crate::semantic_index::SemanticIndex;
 
 /// A layer in the scope chain. Layers are ordered most-local-first; resolution
 /// iterates front-to-back, first match wins.
@@ -24,74 +22,6 @@ pub enum ScopeLayer {
 
     /// Exports of an attached package (`library()` or NAMESPACE `import()`).
     PackageExports(String),
-}
-
-/// The result of resolving a name against the external scope chain.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExternalDefinition {
-    /// Defined in a project file.
-    ProjectFile {
-        file: Url,
-        name: String,
-        range: TextRange,
-    },
-
-    /// Found in an installed package (via `importFrom()`, `library()`, etc.).
-    Package { package: String, name: String },
-}
-
-/// Walk the scope chain front-to-back, returning the first match.
-pub fn resolve_external_name(
-    library: &Library,
-    scope: &[ScopeLayer],
-    name: &str,
-) -> Option<ExternalDefinition> {
-    for source in scope {
-        match source {
-            ScopeLayer::FileExports { file, exports } => {
-                if let Some(range) = exports.get(name) {
-                    return Some(ExternalDefinition::ProjectFile {
-                        file: file.clone(),
-                        name: name.to_string(),
-                        range: *range,
-                    });
-                }
-            },
-
-            ScopeLayer::PackageImports(names) => {
-                if let Some(pkg) = names.get(name) {
-                    return Some(ExternalDefinition::Package {
-                        package: pkg.clone(),
-                        name: name.to_string(),
-                    });
-                }
-            },
-
-            ScopeLayer::PackageExports(pkg_name) => {
-                if let Some(def) = resolve_in_package(library, pkg_name, name) {
-                    return Some(def);
-                }
-            },
-        }
-    }
-
-    None
-}
-
-/// Resolve a name in a specific package's exported symbols.
-pub fn resolve_in_package(
-    library: &Library,
-    package: &str,
-    name: &str,
-) -> Option<ExternalDefinition> {
-    let pkg = library.get(package)?;
-    if pkg.exported_symbols.contains_str(name) {
-        return Some(ExternalDefinition::Package {
-            package: package.to_string(),
-            name: name.to_string(),
-        });
-    }
-    None
 }
 
 /// Compute the scope layers that a single file contributes to the

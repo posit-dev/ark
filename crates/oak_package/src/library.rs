@@ -3,9 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use log;
-
-use super::package::Package;
+use crate::package::Package;
 
 /// Lazily manages a list of known R packages by name
 #[derive(Default, Clone, Debug)]
@@ -124,7 +122,7 @@ importFrom(pkg, baz)
 
         // First access loads from disk
         let pkg = lib.get(pkg_name).unwrap();
-        assert_eq!(pkg.description.name, "mypkg");
+        assert_eq!(pkg.description().name, "mypkg");
 
         // Second access uses cache (note that we aren't testing that we are
         // indeed caching, just exercising the cache code path)
@@ -136,8 +134,8 @@ importFrom(pkg, baz)
         assert!(lib.get("notapkg").is_none());
 
         // Namespace is parsed
-        assert_eq!(pkg.namespace.exports, vec!["bar", "foo"]);
-        assert_eq!(pkg.namespace.imports, vec![Import {
+        assert_eq!(pkg.namespace().exports.to_vec(), vec!["bar", "foo"]);
+        assert_eq!(pkg.namespace().imports, vec![Import {
             name: "baz".to_string(),
             package: "pkg".to_string()
         }]);

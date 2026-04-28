@@ -6,11 +6,12 @@ use anyhow::anyhow;
 use biome_rowan::TextSize;
 use oak_core::file::list_r_files;
 use oak_ide::ExternalScope;
-use oak_index::external::file_layers;
-use oak_index::external::package_root_layers;
-use oak_index::external::ScopeLayer;
 use oak_index::semantic_index::DirectiveKind;
+use oak_layers::scope_layer::file_layers;
+use oak_layers::scope_layer::package_root_layers;
+use oak_layers::scope_layer::ScopeLayer;
 use oak_package::library::Library;
+use oak_package_definitions::LibraryDefinitions;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -65,6 +66,10 @@ pub(crate) struct WorldState {
     /// Map of package name to package metadata for installed libraries. Lazily populated.
     pub(crate) library: Library,
 
+    /// Map of package name to package definitions for installed libraries.
+    /// Only usable when a package cache is available.
+    pub(crate) library_definitions: Option<LibraryDefinitions>,
+
     pub(crate) config: LspConfig,
 }
 
@@ -74,6 +79,14 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
+    pub(crate) fn new(library: Library, library_definitions: Option<LibraryDefinitions>) -> Self {
+        Self {
+            library,
+            library_definitions,
+            ..Default::default()
+        }
+    }
+
     pub(crate) fn get_document(&self, uri: &Url) -> anyhow::Result<&Document> {
         if let Some(doc) = self.documents.get(uri) {
             Ok(doc)
@@ -100,13 +113,17 @@ impl WorldState {
             return ExternalScope::search_path(directives, default_search_path());
         };
 
-        let root_layers = package_root_layers(&pkg.namespace);
-        let r_dir = pkg.path.join("R");
+        let root_layers = package_root_layers(pkg.namespace());
+
+        // FIXME: This only works for source packages. If we do #1168, then the
+        // `DESCRIPTION` of an installed package won't live alongside its cached `R/`
+        // sources.
+        let r_dir = pkg.path().join("R");
 
         // If there is a collation field, we use it as an authoritative source
         // for the files in the package (and the order in which they are loaded)
         let ordered: Vec<PathBuf> = pkg
-            .description
+            .description()
             .collate()
             .map(|names| names.into_iter().map(|n| r_dir.join(n)).collect())
             .unwrap_or_else(|| {
@@ -239,7 +256,7 @@ pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
 #[cfg(test)]
 mod tests {
     use biome_rowan::TextSize;
-    use oak_index::external::ScopeLayer;
+    use oak_layers::scope_layer::ScopeLayer;
     use stdext::assert_not;
 
     use super::*;

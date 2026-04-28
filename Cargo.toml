@@ -38,6 +38,7 @@ async-trait = "0.1.89"
 base64 = "0.22.1"
 biome_line_index = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
 biome_rowan = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
+biome_text_size = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
 blake3 = "1.8.5"
 bus = "2.4.1"
 cc = "1.2.61"
@@ -73,7 +74,9 @@ oak_fs = { path = "crates/oak_fs" }
 oak_ide = { path = "crates/oak_ide" }
 oak_index = { path = "crates/oak_index" }
 oak_index_vec = { path = "crates/oak_index_vec" }
+oak_layers = { path = "crates/oak_layers" }
 oak_package = { path = "crates/oak_package" }
+oak_package_definitions = { path = "crates/oak_package_definitions" }
 oak_r_process = { path = "crates/oak_r_process" }
 oak_sources = { path = "crates/oak_sources" }
 once_cell = "1.21.4"

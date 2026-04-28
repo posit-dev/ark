@@ -5,12 +5,13 @@ use biome_rowan::AstNodeList;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxResult;
 use oak_core::syntax_ext::RIdentifierExt;
+use stdext::SortedVec;
 
 /// Parsed NAMESPACE file
 #[derive(Default, Clone, Debug)]
 pub struct Namespace {
     /// Names of objects exported with `export()`
-    pub exports: Vec<String>,
+    pub exports: SortedVec<String>,
     /// Symbols imported with `importFrom()`, with their source package.
     pub imports: Vec<Import>,
     /// Names of packages bulk-imported with `import()`
@@ -71,8 +72,7 @@ impl Namespace {
 
         // Take unique values of imports and exports. In the future we'll lint
         // this but for now just be defensive.
-        exports.sort();
-        exports.dedup();
+        let exports = SortedVec::from_vec(exports);
         imports.sort_by(|a, b| a.name.cmp(&b.name));
         imports.dedup_by(|a, b| a.name == b.name);
         package_imports.sort();
@@ -141,7 +141,7 @@ mod tests {
             exports(baz) # typo
         "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports, vec!["bar", "foo"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["bar", "foo"]);
         assert!(parsed.imports.is_empty());
     }
 
@@ -176,7 +176,7 @@ mod tests {
             importFrom(utils, median)
         "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports, vec!["bar", "foo"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["bar", "foo"]);
         assert_eq!(parsed.imports, vec![
             Import {
                 name: "head".to_string(),
@@ -200,7 +200,7 @@ mod tests {
             "#;
         let parsed = Namespace::parse(ns).unwrap();
         assert_eq!(parsed.package_imports, vec!["rlang", "utils"]);
-        assert_eq!(parsed.exports, vec!["foo"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["foo"]);
         assert_eq!(parsed.imports, vec![Import {
             name: "median".to_string(),
             package: "stats".to_string()
@@ -230,7 +230,7 @@ mod tests {
             },
         ]);
         assert_eq!(parsed.package_imports, vec!["bar", "foo"]);
-        assert_eq!(parsed.exports, vec!["baz", "qux"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["baz", "qux"]);
     }
 
     #[test]
@@ -241,6 +241,6 @@ mod tests {
                 exportMethods(qux)
             "#;
         let parsed = Namespace::parse(ns).unwrap();
-        assert_eq!(parsed.exports, vec!["bar", "baz", "foo", "qux"]);
+        assert_eq!(parsed.exports.to_vec(), vec!["bar", "baz", "foo", "qux"]);
     }
 }
