@@ -72,6 +72,7 @@ oak_core = { path = "crates/oak_core" }
 oak_fs = { path = "crates/oak_fs" }
 oak_ide = { path = "crates/oak_ide" }
 oak_index = { path = "crates/oak_index" }
+oak_index_vec = { path = "crates/oak_index_vec" }
 oak_package = { path = "crates/oak_package" }
 oak_r_process = { path = "crates/oak_r_process" }
 oak_sources = { path = "crates/oak_sources" }

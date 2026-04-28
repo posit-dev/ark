@@ -2483,10 +2483,19 @@ dependencies = [
  "log",
  "oak_core",
  "oak_package",
+ "oak_index_vec",
  "rustc-hash",
  "smallvec",
  "stdext",
  "url",
+]
+
+[[package]]
+name = "oak_index_vec"
+version = "0.1.0"
+dependencies = [
+ "biome_text_size",
+ "oak_core",
 ]
 
 [[package]]

@@ -18,11 +18,11 @@ use biome_rowan::TextRange;
 use biome_rowan::WalkEvent;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
+use oak_index_vec::Idx;
+use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::index_vec::Idx;
-use crate::index_vec::IndexVec;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;

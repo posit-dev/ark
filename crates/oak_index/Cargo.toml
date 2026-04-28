@@ -20,6 +20,7 @@ itertools.workspace = true
 log.workspace = true
 oak_core.workspace = true
 oak_package.workspace = true
+oak_index_vec.workspace = true
 rustc-hash.workspace = true
 smallvec.workspace = true
 stdext.workspace = true

@@ -46,6 +46,14 @@ impl<I: Idx, V> IndexVec<I, V> {
     }
 }
 
+impl<I: Idx, V: oak_core::range::Ranged> IndexVec<I, V> {
+    /// Find the `V` containing `offset`, if any.
+    pub fn contains(&self, offset: biome_text_size::TextSize) -> Option<(I, &V)> {
+        self.iter()
+            .find(|(_index, value)| value.range().contains(offset))
+    }
+}
+
 impl<I: Idx, V> IntoIterator for IndexVec<I, V> {
     type Item = V;
     type IntoIter = std::vec::IntoIter<V>;
@@ -90,6 +98,7 @@ impl<I: Idx, V> ops::IndexMut<I> for IndexVec<I, V> {
     }
 }
 
+#[macro_export]
 macro_rules! define_index {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -105,7 +114,7 @@ macro_rules! define_index {
             }
         }
 
-        impl $crate::index_vec::Idx for $name {
+        impl $crate::Idx for $name {
             fn new(value: usize) -> Self {
                 assert!(value <= Self::MAX);
                 Self(value as u32)
@@ -117,5 +126,3 @@ macro_rules! define_index {
         }
     };
 }
-
-pub(crate) use define_index;
