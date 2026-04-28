@@ -16,6 +16,7 @@ use crossbeam::channel::bounded;
 use crossbeam::channel::unbounded;
 use crossbeam::channel::Receiver;
 use crossbeam::channel::Sender;
+#[cfg(debug_assertions)]
 use libr::SEXP;
 use uuid::Uuid;
 
