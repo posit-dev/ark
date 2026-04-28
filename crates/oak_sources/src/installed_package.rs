@@ -13,12 +13,15 @@ pub(crate) struct InstalledPackage {
 }
 
 impl InstalledPackage {
-    pub(crate) fn find(package: &str, library_paths: &[PathBuf]) -> anyhow::Result<Option<Self>> {
+    pub(crate) fn find<P: AsRef<Path>>(
+        package: &str,
+        library_paths: &[P],
+    ) -> anyhow::Result<Option<Self>> {
         let mut library_path = None;
 
         for library_path_candidate in library_paths {
-            if library_path_candidate.join(package).exists() {
-                library_path = Some(library_path_candidate);
+            if library_path_candidate.as_ref().join(package).exists() {
+                library_path = Some(library_path_candidate.as_ref());
                 break;
             }
         }
@@ -51,7 +54,7 @@ impl InstalledPackage {
         Ok(Some(Self {
             key,
             name: package.to_string(),
-            library_path: library_path.clone(),
+            library_path: library_path.to_path_buf(),
             description,
             description_hash,
         }))
@@ -90,6 +93,10 @@ impl InstalledPackage {
 
     pub(crate) fn namespace_path(&self) -> PathBuf {
         self.package_path().join("NAMESPACE")
+    }
+
+    pub(crate) fn index_path(&self) -> PathBuf {
+        self.package_path().join("INDEX")
     }
 
     pub(crate) fn description_hash(&self) -> &str {

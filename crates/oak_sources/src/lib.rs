@@ -5,8 +5,12 @@ mod fs;
 mod hash;
 mod installed_package;
 mod srcref;
+#[cfg(any(test, feature = "testing"))]
+pub mod test;
+pub mod traits;
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -34,6 +38,12 @@ const METADATA_FILENAME: &str = ".metadata";
 /// cached CRAN build they had before the swap (dev builds will always be dropped due to
 /// the DESCRIPTION `Build:` timestamp being different).
 const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
+
+impl crate::traits::PackageCache for PackageCache {
+    fn get(&self, package: &str) -> Option<PathBuf> {
+        self.get(package)
+    }
+}
 
 /// A cache of extracted R package sources
 ///
@@ -109,12 +119,13 @@ const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 ///
 /// [`get`]: PackageCache::get
 /// [`clean`]: PackageCache::clean
+#[derive(Debug)]
 pub struct PackageCache {
-    /// Path to `R` binary
+    /// Path to an R executable
     r: PathBuf,
 
-    /// Set of R library paths
-    r_libpaths: Vec<PathBuf>,
+    /// Library paths to consider
+    library_paths: Vec<PathBuf>,
 
     /// On disk cache directory root
     cache_root: file_lock::Filesystem,
@@ -148,7 +159,7 @@ struct Metadata {
 }
 
 impl PackageCache {
-    pub fn new(r: PathBuf, r_libpaths: Vec<PathBuf>) -> anyhow::Result<Self> {
+    pub fn new(r: PathBuf, library_paths: Vec<PathBuf>) -> anyhow::Result<Self> {
         let cache_root = file_lock::Filesystem::new(crate::fs::sources_dir()?);
         cache_root.create_dir()?;
 
@@ -165,7 +176,7 @@ impl PackageCache {
 
         Ok(Self {
             r,
-            r_libpaths,
+            library_paths,
             cache_root,
             cache_root_lock,
             source_unavailable: RwLock::new(HashSet::new()),
@@ -188,7 +199,7 @@ impl PackageCache {
     }
 
     fn get_result(&self, package: &str) -> anyhow::Result<Option<PathBuf>> {
-        let Some(package) = InstalledPackage::find(package, &self.r_libpaths)? else {
+        let Some(package) = InstalledPackage::find(package, &self.library_paths)? else {
             // Not even installed
             return Ok(None);
         };
@@ -212,9 +223,9 @@ impl PackageCache {
         // Write path
         let result = if matches!(package.description().priority, Some(Priority::Base)) {
             // R version to download is the same as the base package version
-            self.try_populate_base(&package.description().version)
+            self.try_populate_base(&package.description().version, &self.library_paths)
         } else {
-            self.try_populate(&package)
+            self.try_populate(&package, &self.r, &self.library_paths)
         };
 
         match result {
@@ -245,7 +256,11 @@ impl PackageCache {
         }
     }
 
-    fn try_populate_base(&self, version: &str) -> anyhow::Result<bool> {
+    fn try_populate_base<P: AsRef<Path>>(
+        &self,
+        version: &str,
+        library_paths: &[P],
+    ) -> anyhow::Result<bool> {
         // Download the R sources in their entirety
         let Some(bytes) = crate::base::download(version)? else {
             log::trace!("No R source tarball on CRAN for version {version}");
@@ -254,7 +269,7 @@ impl PackageCache {
 
         // Populate all base packages from the download
         for package in crate::base::BASE_PACKAGES {
-            let Some(package) = InstalledPackage::find(package, &self.r_libpaths)? else {
+            let Some(package) = InstalledPackage::find(package, library_paths)? else {
                 // It would be very odd to not find a base package
                 log::warn!(
                     "Can't find '{package}' package from scanning {libpaths:?}",
@@ -308,6 +323,11 @@ impl PackageCache {
             )?;
         }
 
+        crate::fs::copy_as_readonly(
+            package.index_path(),
+            destination_lock.parent().join("INDEX"),
+        )?;
+
         // Last! `.metadata` is the completion sentinel.
         self.write_metadata(package, &destination_lock)?;
 
@@ -315,7 +335,12 @@ impl PackageCache {
     }
 
     /// Writes `DESCRIPTION`, `NAMESPACE`, and `R/` to the cache entry, if possible
-    fn try_populate(&self, package: &InstalledPackage) -> anyhow::Result<bool> {
+    fn try_populate<P: AsRef<Path>, Q: AsRef<Path>>(
+        &self,
+        package: &InstalledPackage,
+        r: P,
+        library_paths: &[Q],
+    ) -> anyhow::Result<bool> {
         // Take per-key exclusive lock
         let destination = self.cache_root.join(package.key());
         destination.create_dir()?;
@@ -330,7 +355,7 @@ impl PackageCache {
         // writing `.metadata`.
         destination_lock.remove_siblings()?;
 
-        if !self.write_r_files(package, &destination_lock)? {
+        if !self.write_r_files(package, r, library_paths, &destination_lock)? {
             return Ok(false);
         }
 
@@ -342,6 +367,10 @@ impl PackageCache {
             package.namespace_path(),
             destination_lock.parent().join("NAMESPACE"),
         )?;
+        crate::fs::copy_as_readonly(
+            package.index_path(),
+            destination_lock.parent().join("INDEX"),
+        )?;
 
         // Last! Only write `.metadata` if all other writes succeed. It is our completion sentinal.
         self.write_metadata(package, &destination_lock)?;
@@ -349,9 +378,11 @@ impl PackageCache {
         Ok(true)
     }
 
-    fn write_r_files(
+    fn write_r_files<P: AsRef<Path>, Q: AsRef<Path>>(
         &self,
         package: &InstalledPackage,
+        r: P,
+        library_paths: &[Q],
         destination_lock: &FileLock,
     ) -> anyhow::Result<bool> {
         // Try caching from srcref
@@ -359,8 +390,8 @@ impl PackageCache {
             package.name(),
             &package.description().version,
             destination_lock,
-            &self.r,
-            &self.r_libpaths,
+            r,
+            library_paths,
         ) {
             Ok(true) => {
                 log::trace!(
@@ -519,22 +550,3 @@ impl PackageCache {
         Ok(())
     }
 }
-
-// // For local testing
-// #[cfg(test)]
-// mod tests {
-//     use std::path::PathBuf;
-//
-//     use crate::PackageCache;
-//
-//     #[test]
-//     fn testit() {
-//         let r_script_path = PathBuf::from("/usr/local/bin/Rscript");
-//         let r_libpaths = vec![
-//             PathBuf::from("/Users/davis/Library/R/arm64/4.5/library"),
-//             PathBuf::from("/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library"),
-//         ];
-//         let cache = PackageCache::new(r_script_path, r_libpaths).unwrap();
-//         cache.get("utils");
-//     }
-// }
