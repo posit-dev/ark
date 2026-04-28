@@ -24,7 +24,6 @@ use reqwest_retry::policies::ExponentialBackoff;
 use reqwest_retry::RetryTransientMiddleware;
 use rust_embed::RustEmbed;
 use serde::Deserialize;
-use stdext::result::ResultExt;
 use stdext::spawn;
 use stdext::unwrap;
 use url::Url;
