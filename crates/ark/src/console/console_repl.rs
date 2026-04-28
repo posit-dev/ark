@@ -2714,6 +2714,7 @@ pub extern "C-unwind" fn r_suicide(buf: *const c_char) {
     panic!("Suicide: {}", msg.to_str().unwrap());
 }
 
+#[cfg(unix)]
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C-unwind" fn r_polled_events() {
     if let Err(err) = r_sandbox(|| Console::get_mut().polled_events()) {
