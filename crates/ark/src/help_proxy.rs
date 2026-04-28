@@ -94,7 +94,12 @@ pub fn start(target_port: u16) -> anyhow::Result<u16> {
     });
 
     // Wait for the returned port with an extensive timeout
-    Ok(port_rx.recv_timeout(Duration::from_secs(20))?)
+    match port_rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(port) => Ok(port),
+        Err(err) => Err(anyhow::anyhow!(
+            "Help proxy server timed out while waiting for a port: {err:?}"
+        )),
+    }
 }
 
 // Proxies a request.
