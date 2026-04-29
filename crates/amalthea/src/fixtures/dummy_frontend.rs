@@ -260,20 +260,20 @@ impl DummyFrontend {
         options: ExecuteRequestOptions,
         metadata: serde_json::Value,
     ) -> String {
-        let content = ExecuteRequest {
-            code: String::from(code),
-            silent: false,
-            store_history: true,
-            user_expressions: serde_json::Value::Null,
-            allow_stdin: options.allow_stdin,
-            stop_on_error: false,
-            positron: options.positron,
-        };
-        let mut message = JupyterMessage::create(content, None, &self.session);
-        message.metadata = metadata;
-        let id = message.header.msg_id.clone();
-        message.send(&self.shell_socket).unwrap();
-        id
+        Self::send_with_metadata(
+            &self.shell_socket,
+            &self.session,
+            ExecuteRequest {
+                code: String::from(code),
+                silent: false,
+                store_history: true,
+                user_expressions: serde_json::Value::Null,
+                allow_stdin: options.allow_stdin,
+                stop_on_error: false,
+                positron: options.positron,
+            },
+            metadata,
+        )
     }
 
     /// Send a DAP request wrapped in a Jupyter `debug_request` on the control channel.
@@ -310,6 +310,19 @@ impl DummyFrontend {
 
     fn send<T: ProtocolMessage>(socket: &Socket, session: &Session, msg: T) -> String {
         let message = JupyterMessage::create(msg, None, session);
+        let id = message.header.msg_id.clone();
+        message.send(socket).unwrap();
+        id
+    }
+
+    fn send_with_metadata<T: ProtocolMessage>(
+        socket: &Socket,
+        session: &Session,
+        msg: T,
+        metadata: serde_json::Value,
+    ) -> String {
+        let mut message = JupyterMessage::create(msg, None, session);
+        message.metadata = metadata;
         let id = message.header.msg_id.clone();
         message.send(socket).unwrap();
         id

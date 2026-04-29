@@ -227,7 +227,7 @@ pub struct Dap {
     /// Whether R is stopped at an unexpected `browser()` prompt in notebook
     /// mode (no active debug session). Mutually exclusive with `is_debugging`.
     /// Used by the interrupt handler to decide whether to send a "Q" command.
-    /// `id_debugging` and `is_stopped_at_browser` could be folded into a single
+    /// `is_debugging` and `is_debugging_stdin` could be folded into a single
     /// enum in the future.
     pub is_debugging_stdin: bool,
 
@@ -285,7 +285,7 @@ pub struct Dap {
 
     /// IOPub sender for emitting DAP events as `debug_event` messages
     /// in notebook debugging mode (Jupyter Debug Protocol path).
-    iopub_tx: Option<Sender<IOPubMessage>>,
+    notebook_iopub_tx: Option<Sender<IOPubMessage>>,
 
     /// Sequence counter for IOPub DAP event messages.
     iopub_seq: i64,
@@ -314,7 +314,7 @@ impl Dap {
             current_variables_reference: 1,
             current_breakpoint_id: 1,
             comm_tx: None,
-            iopub_tx: None,
+            notebook_iopub_tx: None,
             iopub_seq: 0,
             r_request_tx,
             shared_self: None,
@@ -388,7 +388,7 @@ impl Dap {
         let was_debugging = self.is_debugging;
         self.is_debugging = false;
 
-        if was_debugging && (self.is_connected || self.iopub_tx.is_some()) {
+        if was_debugging && (self.is_connected || self.notebook_iopub_tx.is_some()) {
             log::trace!("DAP: Sending `stop_debug` events");
 
             if let Some(comm_tx) = &self.comm_tx {
@@ -406,7 +406,7 @@ impl Dap {
     }
 
     pub fn set_iopub_tx(&mut self, tx: Sender<IOPubMessage>) {
-        self.iopub_tx = Some(tx);
+        self.notebook_iopub_tx = Some(tx);
     }
 
     fn send_backend_event(&mut self, event: DapBackendEvent) {
@@ -414,7 +414,7 @@ impl Dap {
             tx.send(event.clone()).log_err();
         }
 
-        if let Some(tx) = &self.iopub_tx {
+        if let Some(tx) = &self.notebook_iopub_tx {
             let dap_event = event.into_dap_event();
             self.iopub_seq += 1;
 
@@ -611,6 +611,8 @@ impl Dap {
             return;
         };
 
+        // Collect events first: `bp_list` borrows from `self.breakpoints`,
+        // which prevents calling `&mut self` methods like `send_backend_event()`.
         let mut events = Vec::new();
 
         for bp in bp_list.iter_mut() {
@@ -871,7 +873,7 @@ mod tests {
             current_breakpoint_id: 1,
             is_interrupting_for_debugger: false,
             comm_tx: None,
-            iopub_tx: None,
+            notebook_iopub_tx: None,
             iopub_seq: 0,
             is_debugging_stdin: false,
             r_request_tx,
@@ -985,7 +987,7 @@ mod tests {
             current_breakpoint_id: 1,
             is_interrupting_for_debugger: false,
             comm_tx: None,
-            iopub_tx: None,
+            notebook_iopub_tx: None,
             iopub_seq: 0,
             is_debugging_stdin: false,
             r_request_tx,
