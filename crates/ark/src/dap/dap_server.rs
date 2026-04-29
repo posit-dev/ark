@@ -80,16 +80,20 @@ pub struct DapOutput {
 }
 
 impl DapOutput {
-    pub fn new(response: Response) -> Self {
+    pub(crate) fn success(req: Request, output: DapHandlerOutput) -> Self {
         Self {
-            response,
-            dap_events: vec![],
-            console_events: vec![],
+            response: req.success(output.body),
+            dap_events: output.dap_events,
+            console_events: output.console_events,
         }
     }
 
     pub fn error(req: Request, message: &str) -> Self {
-        Self::new(req.error(message))
+        Self {
+            response: req.error(message),
+            dap_events: vec![],
+            console_events: vec![],
+        }
     }
 }
 
@@ -100,16 +104,6 @@ pub(crate) struct DapHandlerOutput {
     pub body: ResponseBody,
     pub dap_events: Vec<Event>,
     pub console_events: Vec<DapConsoleEvent>,
-}
-
-impl DapHandlerOutput {
-    fn new(body: ResponseBody) -> Self {
-        Self {
-            body,
-            dap_events: vec![],
-            console_events: vec![],
-        }
-    }
 }
 
 /// Transport-agnostic handler for DAP requests. Translates each request
@@ -168,11 +162,7 @@ impl DapHandler {
         };
 
         match result {
-            Ok(output) => DapOutput {
-                response: req.success(output.body),
-                dap_events: output.dap_events,
-                console_events: output.console_events,
-            },
+            Ok(output) => DapOutput::success(req, output),
             Err(err) => DapOutput::error(req, &format!("{err}")),
         }
     }
@@ -250,11 +240,13 @@ impl DapHandler {
             Ok(uri) => uri,
             Err(err) => {
                 log::warn!("Can't set breakpoints for non-file path: '{path}': {err}");
-                return Ok(DapHandlerOutput::new(ResponseBody::SetBreakpoints(
-                    SetBreakpointsResponse {
+                return Ok(DapHandlerOutput {
+                    body: ResponseBody::SetBreakpoints(SetBreakpointsResponse {
                         breakpoints: vec![],
-                    },
-                )));
+                    }),
+                    dap_events: vec![],
+                    console_events: vec![],
+                });
             },
         };
 
@@ -280,9 +272,11 @@ impl DapHandler {
                     })
                     .collect();
 
-                return Ok(DapHandlerOutput::new(ResponseBody::SetBreakpoints(
-                    SetBreakpointsResponse { breakpoints },
-                )));
+                return Ok(DapHandlerOutput {
+                    body: ResponseBody::SetBreakpoints(SetBreakpointsResponse { breakpoints }),
+                    dap_events: vec![],
+                    console_events: vec![],
+                });
             },
         };
 
@@ -432,11 +426,13 @@ impl DapHandler {
 
         drop(state);
 
-        Ok(DapHandlerOutput::new(ResponseBody::SetBreakpoints(
-            SetBreakpointsResponse {
+        Ok(DapHandlerOutput {
+            body: ResponseBody::SetBreakpoints(SetBreakpointsResponse {
                 breakpoints: response_breakpoints,
-            },
-        )))
+            }),
+            dap_events: vec![],
+            console_events: vec![],
+        })
     }
 
     fn handle_attach(&self, _args: AttachRequestArguments) -> anyhow::Result<DapHandlerOutput> {
@@ -477,14 +473,16 @@ impl DapHandler {
     // All servers must respond to `Threads` requests, possibly with
     // a dummy thread as is the case here
     fn handle_threads(&self) -> anyhow::Result<DapHandlerOutput> {
-        Ok(DapHandlerOutput::new(ResponseBody::Threads(
-            ThreadsResponse {
+        Ok(DapHandlerOutput {
+            body: ResponseBody::Threads(ThreadsResponse {
                 threads: vec![Thread {
                     id: THREAD_ID,
                     name: String::from("R console"),
                 }],
-            },
-        )))
+            }),
+            dap_events: vec![],
+            console_events: vec![],
+        })
     }
 
     fn handle_set_exception_breakpoints(
@@ -495,14 +493,16 @@ impl DapHandler {
             let mut state = self.state.lock().unwrap();
             state.exception_breakpoint_filters = args.filters;
         }
-        Ok(DapHandlerOutput::new(
-            ResponseBody::SetExceptionBreakpoints(SetExceptionBreakpointsResponse {
+        Ok(DapHandlerOutput {
+            body: ResponseBody::SetExceptionBreakpoints(SetExceptionBreakpointsResponse {
                 // This field is only useful for reporting problems with
                 // individual filters. Since we always accept all filters,
                 // `None` is fine here.
                 breakpoints: None,
             }),
-        ))
+            dap_events: vec![],
+            console_events: vec![],
+        })
     }
 
     fn handle_stacktrace(&self, args: StackTraceArguments) -> anyhow::Result<DapHandlerOutput> {
@@ -543,12 +543,14 @@ impl DapHandler {
         };
         let stack = stack[start..end].to_vec();
 
-        Ok(DapHandlerOutput::new(ResponseBody::StackTrace(
-            StackTraceResponse {
+        Ok(DapHandlerOutput {
+            body: ResponseBody::StackTrace(StackTraceResponse {
                 stack_frames: stack,
                 total_frames: Some(total_frames),
-            },
-        )))
+            }),
+            dap_events: vec![],
+            console_events: vec![],
+        })
     }
 
     fn handle_source(&self, _args: SourceArguments) -> anyhow::Result<DapHandlerOutput> {
@@ -583,18 +585,22 @@ impl DapHandler {
         }];
 
         drop(state);
-        Ok(DapHandlerOutput::new(ResponseBody::Scopes(
-            ScopesResponse { scopes },
-        )))
+        Ok(DapHandlerOutput {
+            body: ResponseBody::Scopes(ScopesResponse { scopes }),
+            dap_events: vec![],
+            console_events: vec![],
+        })
     }
 
     fn handle_variables(&self, args: VariablesArguments) -> anyhow::Result<DapHandlerOutput> {
         let variables_reference = args.variables_reference;
         let variables = self.collect_r_variables(variables_reference);
         let variables = self.make_variables(variables);
-        Ok(DapHandlerOutput::new(ResponseBody::Variables(
-            VariablesResponse { variables },
-        )))
+        Ok(DapHandlerOutput {
+            body: ResponseBody::Variables(VariablesResponse { variables }),
+            dap_events: vec![],
+            console_events: vec![],
+        })
     }
 
     fn collect_r_variables(&self, variables_reference: i64) -> Vec<RVariable> {
