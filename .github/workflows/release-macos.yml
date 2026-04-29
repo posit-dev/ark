@@ -24,6 +24,7 @@ jobs:
 
         env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            DEBUG_FLAG: ${{ matrix.flavor == 'debug' && '-debug' || '' }}
 
         strategy:
             matrix:
@@ -87,9 +88,11 @@ jobs:
                   # Enter the build directory
                   pushd target/${{ matrix.rust_target_prefix }}-apple-darwin/${{ matrix.flavor }}
 
-                  # Compress the kernel to an archive
-                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip"
-                  zip -Xry $ARCHIVE ark
+                  # Compress and bundle licenses
+                  ARCHIVE="$GITHUB_WORKSPACE/ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-${{ matrix.arch }}.zip"
+                  [ -e LICENSE ] || cp "$GITHUB_WORKSPACE/LICENSE" LICENSE
+                  [ -e NOTICE ] || cp "$GITHUB_WORKSPACE/crates/ark/NOTICE" NOTICE
+                  zip -Xry $ARCHIVE ark LICENSE NOTICE
 
                   popd
 
@@ -98,7 +101,7 @@ jobs:
               uses: actions/upload-artifact@v4
               with:
                   name: ark-${{ matrix.flavor }}-darwin-${{ matrix.arch }}-archive
-                  path: ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-${{ matrix.arch }}.zip
+                  path: ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-${{ matrix.arch }}.zip
 
 
     build_universal:
@@ -138,13 +141,13 @@ jobs:
                   # Decompress x64 builds
                   rm -rf x64 && mkdir x64
                   pushd x64
-                  unzip ../ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-x64.zip
+                  unzip ../ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-x64.zip
                   popd
 
                   # Decompress arm64 build
                   rm -rf arm64 && mkdir arm64
                   pushd arm64
-                  unzip ../ark-${{ inputs.version }}-${{ matrix.flavor }}-darwin-arm64.zip
+                  unzip ../ark-${{ inputs.version }}${{ env.DEBUG_FLAG }}-darwin-arm64.zip
                   popd
 
                   # Create a universal binary

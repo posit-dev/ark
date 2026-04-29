@@ -116,6 +116,16 @@ jobs:
               with:
                   name: ark-${{ matrix.flavor }}-darwin-universal-archive
 
+            - name: Download macOS arm64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-arm64-archive
+
+            - name: Download macOS x64 kernel (${{ matrix.flavor}})
+              uses: actions/download-artifact@v4
+              with:
+                  name: ark-${{ matrix.flavor }}-darwin-x64-archive
+
             - name: Download Windows x64 kernel (${{ matrix.flavor}})
               uses: actions/download-artifact@v4
               with:
@@ -143,6 +153,22 @@ jobs:
               with:
                   tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
                   files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-universal.zip
+
+            - name: Upload macOS release artifact (arm64)
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-arm64.zip
+
+            - name: Upload macOS release artifact (x64)
+              uses: softprops/action-gh-release@v2
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              with:
+                  tag_name: ${{ needs.get_version.outputs.ARK_VERSION }}
+                  files: ark-${{ needs.get_version.outputs.ARK_VERSION }}${{ env.DEBUG_FLAG }}-darwin-x64.zip
 
             - name: Upload Windows release artifact (x64)
               uses: softprops/action-gh-release@v2
