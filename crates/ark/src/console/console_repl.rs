@@ -2354,6 +2354,7 @@ impl Console {
     }
 
     /// Invoked by the R event loop
+    #[cfg(unix)]
     fn polled_events(&mut self) {
         // Don't process tasks until R is fully initialized
         if !Self::is_initialized() {
@@ -2366,7 +2367,7 @@ impl Console {
         // Skip running tasks if we don't have 128KB of stack space available.
         // This is 1/8th of the typical Windows stack space (1MB, whereas macOS
         // and Linux have 8MB).
-        if r_check_stack(Some(128 * 1024)).is_err() {
+        if harp::exec::r_check_stack(Some(128 * 1024)).is_err() {
             return;
         }
 
