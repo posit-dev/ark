@@ -156,7 +156,7 @@ impl DapHandler {
             },
             Command::Pause(args) => self.handle_pause(args),
             _ => {
-                log::warn!("DAP: Unknown request");
+                log::warn!("DAP: Unknown request: {cmd:?}");
                 return DapOutput::error(req, "Ark DAP: Unknown request");
             },
         };
@@ -626,6 +626,8 @@ impl DapHandler {
         variables
     }
 
+    // `make_variables()` doesn't require R, so locking outside of an
+    // `r_task()` is fine here, unlike in `collect_r_variables()`.
     fn make_variables(&self, variables: Vec<RVariable>) -> Vec<Variable> {
         self.state.lock().unwrap().make_variables(variables)
     }
@@ -912,10 +914,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
 
         // Evaluate is async: the response is sent later via `responses_tx`.
         // It is the only command that needs transport-specific handling.
-        if matches!(&req.command, Command::Evaluate(_)) {
-            let Command::Evaluate(args) = req.command.clone() else {
-                unreachable!()
-            };
+        if let Command::Evaluate(args) = &req.command {
+            let args = args.clone();
             if let Err(err) = self.handle_evaluate(req, args) {
                 log::warn!("DAP: Handler failed, closing connection: {err:?}");
                 return false;
@@ -969,6 +969,8 @@ impl<R: Read, W: Write> DapServer<R, W> {
                 crate::sys::control::handle_interrupt_request();
             },
             DapConsoleEvent::Restart => {
+                // If connected to Positron, forward the restart command to
+                // the frontend. Otherwise ignore it.
                 if let Some(tx) = &self.comm_tx {
                     let msg = amalthea::comm_rpc_message!("restart");
                     tx.send(msg).log_err();
@@ -978,7 +980,7 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn respond(&mut self, rsp: Response) -> Result<(), ServerError> {
-        log::trace!("DAP: Responding to request: {rsp:#?}");
+        log::trace!("DAP: Sending response: {rsp:#?}");
         self.server.respond(rsp)
     }
 
