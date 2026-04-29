@@ -928,6 +928,10 @@ impl<R: Read, W: Write> DapServer<R, W> {
     }
 
     fn deliver(&mut self, output: DapOutput) -> bool {
+        for event in output.console_events {
+            self.handle_console_event(event);
+        }
+
         if self.respond(output.response).log_err().is_none() {
             return false;
         }
@@ -936,10 +940,6 @@ impl<R: Read, W: Write> DapServer<R, W> {
             if self.send_event(event).log_err().is_none() {
                 return false;
             }
-        }
-
-        for event in output.console_events {
-            self.handle_console_event(event);
         }
 
         true
