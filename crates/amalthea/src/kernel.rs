@@ -54,7 +54,7 @@ pub enum StreamBehavior {
 /// Handler implementations provided by the language runtime.
 pub struct Handlers {
     pub shell_handler: Box<dyn ShellHandler>,
-    pub control_handler: Arc<Mutex<dyn ControlHandler>>,
+    pub control_handler: Box<dyn ControlHandler>,
     pub server_handlers: HashMap<String, Arc<Mutex<dyn ServerHandler>>>,
 }
 
@@ -379,7 +379,7 @@ pub fn read_connection(connection_file: &str) -> (ConnectionFile, Option<Registr
 fn control_thread(
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
-    handler: Arc<Mutex<dyn ControlHandler>>,
+    handler: Box<dyn ControlHandler>,
     stdin_interrupt_tx: Sender<bool>,
 ) {
     let control = Control::new(socket, iopub_tx, handler, stdin_interrupt_tx);
@@ -531,37 +531,69 @@ fn socket_bridge_thread(
     };
 
     loop {
-        let n = unwrap!(
-            zmq::poll(&mut poll_items, -1),
-            Err(err) => {
-                debug_panic!("While polling 0MQ items: {err:?}");
-                0
-            }
-        );
+        // On Windows ARM, zmq::poll with a non-zero timeout blocks forever
+        // and inproc notification sockets may not wake the poll at all.
+        // Use a fully separate polling path that doesn't rely on ZMQ
+        // readability reporting: non-blocking poll + unconditional drain
+        // of all sources + short sleep when idle.
+        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+        {
+            // Drain outbound messages (IOPub, StdIn) unconditionally
+            consume_outbound_notification();
+            forward_outbound();
 
-        for _ in 0..n {
-            if consume_outbound_notification() {
-                forward_outbound();
-                continue;
-            }
-
+            // Check inbound sockets with non-blocking poll
             if has_inbound(&stdin_socket) {
                 unwrap!(
                     forward_inbound(&stdin_socket, &stdin_inbound_tx),
                     Err(err) => debug_panic!("While forwarding inbound message: {err:?}")
                 );
-                continue;
             }
-
             if has_inbound(&iopub_socket) {
                 unwrap!(
                     forward_inbound_subscription(&iopub_socket, &iopub_inbound_tx),
                     Err(err) => debug_panic!("While forwarding inbound message: {err:?}")
                 );
-                continue;
             }
 
-            debug_panic!("Could not find readable message");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
+        }
+
+        #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
+        {
+            let n = unwrap!(
+                zmq::poll(&mut poll_items, -1),
+                Err(err) => {
+                    debug_panic!("While polling 0MQ items: {err:?}");
+                    0
+                }
+            );
+
+            for _ in 0..n {
+                if consume_outbound_notification() {
+                    forward_outbound();
+                    continue;
+                }
+
+                if has_inbound(&stdin_socket) {
+                    unwrap!(
+                        forward_inbound(&stdin_socket, &stdin_inbound_tx),
+                        Err(err) => debug_panic!("While forwarding inbound message: {err:?}")
+                    );
+                    continue;
+                }
+
+                if has_inbound(&iopub_socket) {
+                    unwrap!(
+                        forward_inbound_subscription(&iopub_socket, &iopub_inbound_tx),
+                        Err(err) => debug_panic!("While forwarding inbound message: {err:?}")
+                    );
+                    continue;
+                }
+
+                debug_panic!("Could not find readable message");
+            }
         }
     }
 }

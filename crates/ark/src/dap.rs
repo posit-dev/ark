@@ -5,6 +5,8 @@
 //
 //
 
+pub mod dap_jupyter_handler;
+pub mod dap_notebook;
 pub mod dap_server;
 pub mod dap_state;
 pub mod dap_variables;

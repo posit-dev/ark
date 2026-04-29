@@ -95,7 +95,12 @@ pub fn start_kernel(
 
     // Create the control handler; this is used to handle shutdown/interrupt and
     // related requests
-    let control = Arc::new(Mutex::new(Control::new(r_request_tx.clone())));
+    let control = Box::new(Control::new(
+        r_request_tx.clone(),
+        dap.clone(),
+        iopub_tx.clone(),
+        session_mode,
+    ));
 
     // Create the stream behavior; this determines whether the kernel should
     // capture stdout/stderr and send them to the frontend as IOPub messages

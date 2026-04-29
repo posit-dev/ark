@@ -138,6 +138,51 @@ fn test_dap_continue() {
     dap.recv_continued();
 }
 
+/// In console mode, interrupt at a breakpoint sends SIGINT (not Q).
+/// The debugger should remain active after the interrupt.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_dap_interrupt_at_breakpoint_stays_in_debugger() {
+    let frontend = DummyArkFrontend::lock();
+    let mut dap = frontend.start_dap();
+
+    let file = frontend.send_source(
+        "
+{
+  browser()
+  Sys.sleep(10)
+}
+",
+    );
+    dap.recv_stopped();
+
+    // Verify we're at the browser() call
+    let stack = dap.stack_trace();
+    assert_file_frame(&stack[0], &file.filename, 3, 12);
+
+    // Send interrupt via the Jupyter control channel.
+    // In console mode this sends SIGINT, not Q.
+    frontend.send_interrupt_request();
+    frontend.recv_control_interrupt_reply();
+
+    // Consume the interrupt request's IOPub busy/idle
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_idle();
+
+    // The debugger should still be active — we can step
+    frontend.debug_send_step_command("n");
+    dap.recv_continued();
+    dap.recv_stopped();
+
+    // Verify we moved to Sys.sleep(10)
+    let stack = dap.stack_trace();
+    assert_file_frame(&stack[0], &file.filename, 4, 16);
+
+    // Quit the debugger
+    frontend.debug_send_quit();
+    dap.recv_continued();
+}
+
 #[test]
 fn test_dap_step_out() {
     let frontend = DummyArkFrontend::lock();

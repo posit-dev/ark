@@ -59,10 +59,13 @@ impl MessageType for KernelInfoReply {
 /// Adds Amalthea fields to partial [kernel_info_reply::KernelInfoReply].
 impl From<kernel_info_reply::KernelInfoReply> for KernelInfoReply {
     fn from(value: kernel_info_reply::KernelInfoReply) -> Self {
+        // Merge client's supported features with Amalthea's
+        let mut supported_features = vec![String::from("iopub_welcome")];
+        supported_features.extend(value.supported_features);
+
         Self {
-            // These fields are set by Amalthea
             protocol_version: String::from("5.4"),
-            supported_features: vec![String::from("iopub_welcome")],
+            supported_features,
 
             // These fields are set by the Amalthea user
             status: value.status,

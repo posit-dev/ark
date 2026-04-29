@@ -14,9 +14,16 @@ use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use amalthea::language::server_handler::ServerHandler;
 use amalthea::socket::comm::CommOutgoingTx;
+use amalthea::socket::iopub::IOPubMessage;
+use amalthea::wire::debug_event::DebugEvent;
 use anyhow::anyhow;
 use crossbeam::channel::Sender;
+use dap::base_message::BaseMessage;
+use dap::base_message::Sendable;
+use dap::events::Event;
+use dap::events::*;
 use dap::responses::EvaluateResponse;
+use dap::types;
 use dap::types::Variable;
 use harp::environment::R_ENVS;
 use harp::object::RObject;
@@ -32,6 +39,9 @@ use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
 use crate::url::UrlId;
+
+/// Thread ID used in DAP events. R is single-threaded so there's only one.
+pub(crate) const THREAD_ID: i64 = -1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakpointState {
@@ -152,9 +162,74 @@ pub struct DapExceptionEvent {
     pub message: String,
 }
 
+impl DapBackendEvent {
+    pub(crate) fn into_dap_event(self) -> Event {
+        match self {
+            DapBackendEvent::Continued => Event::Continued(ContinuedEventBody {
+                thread_id: THREAD_ID,
+                all_threads_continued: Some(true),
+            }),
+
+            DapBackendEvent::Stopped => Event::Stopped(StoppedEventBody {
+                reason: types::StoppedEventReason::Step,
+                description: None,
+                thread_id: Some(THREAD_ID),
+                preserve_focus_hint: Some(false),
+                text: None,
+                all_threads_stopped: Some(true),
+                hit_breakpoint_ids: None,
+            }),
+
+            DapBackendEvent::Exception(DapExceptionEvent { class, message }) => {
+                let text = format!("<{class}>\n{message}");
+                Event::Stopped(StoppedEventBody {
+                    reason: types::StoppedEventReason::Exception,
+                    description: Some(message),
+                    thread_id: Some(THREAD_ID),
+                    preserve_focus_hint: Some(false),
+                    text: Some(text),
+                    all_threads_stopped: Some(true),
+                    hit_breakpoint_ids: None,
+                })
+            },
+
+            DapBackendEvent::Invalidated => Event::Invalidated(InvalidatedEventBody {
+                areas: Some(vec![types::InvalidatedAreas::Variables]),
+                thread_id: Some(THREAD_ID),
+                stack_frame_id: None,
+            }),
+
+            DapBackendEvent::Terminated => Event::Terminated(None),
+
+            DapBackendEvent::BreakpointState {
+                id,
+                line,
+                verified,
+                message,
+            } => Event::Breakpoint(BreakpointEventBody {
+                reason: types::BreakpointEventReason::Changed,
+                breakpoint: dap::types::Breakpoint {
+                    id: Some(id),
+                    line: Some(Breakpoint::to_dap_line(line)),
+                    verified,
+                    message,
+                    ..Default::default()
+                },
+            }),
+        }
+    }
+}
+
 pub struct Dap {
     /// Whether the REPL is stopped with a browser prompt.
     pub is_debugging: bool,
+
+    /// Whether R is stopped at an unexpected `browser()` prompt in notebook
+    /// mode (no active debug session). Mutually exclusive with `is_debugging`.
+    /// Used by the interrupt handler to decide whether to send a "Q" command.
+    /// `is_debugging` and `is_debugging_stdin` could be folded into a single
+    /// enum in the future.
+    pub is_debugging_stdin: bool,
 
     /// Whether the DAP server is connected to a client.
     pub is_connected: bool,
@@ -208,6 +283,13 @@ pub struct Dap {
     /// Channel for sending events to the comm frontend.
     comm_tx: Option<CommOutgoingTx>,
 
+    /// IOPub sender for emitting DAP events as `debug_event` messages
+    /// in notebook debugging mode (Jupyter Debug Protocol path).
+    notebook_iopub_tx: Option<Sender<IOPubMessage>>,
+
+    /// Sequence counter for IOPub DAP event messages.
+    iopub_seq: i64,
+
     /// Channel for sending debug commands to `read_console()`
     r_request_tx: Sender<RRequest>,
 
@@ -220,6 +302,7 @@ impl Dap {
     pub fn new_shared(r_request_tx: Sender<RRequest>) -> Arc<Mutex<Self>> {
         let state = Self {
             is_debugging: false,
+            is_debugging_stdin: false,
             is_connected: false,
             backend_events_tx: None,
             stack: None,
@@ -231,6 +314,8 @@ impl Dap {
             current_variables_reference: 1,
             current_breakpoint_id: 1,
             comm_tx: None,
+            notebook_iopub_tx: None,
+            iopub_seq: 0,
             r_request_tx,
             shared_self: None,
             is_interrupting_for_debugger: false,
@@ -266,24 +351,20 @@ impl Dap {
 
         log::trace!("DAP: Sending `start_debug` events");
 
+        // Console debugging: ask frontend to show debug toolbar
         if let Some(comm_tx) = &self.comm_tx {
-            // Ask frontend to connect to the DAP
             comm_tx
                 .send(amalthea::comm_rpc_message!("start_debug"))
                 .log_err();
-
-            if let Some(dap_tx) = &self.backend_events_tx {
-                let event = match stopped_reason {
-                    DebugStoppedReason::Step | DebugStoppedReason::Pause => {
-                        DapBackendEvent::Stopped
-                    },
-                    DebugStoppedReason::Condition { class, message } => {
-                        DapBackendEvent::Exception(DapExceptionEvent { class, message })
-                    },
-                };
-                dap_tx.send(event).log_err();
-            }
         }
+
+        let event = match stopped_reason {
+            DebugStoppedReason::Step | DebugStoppedReason::Pause => DapBackendEvent::Stopped,
+            DebugStoppedReason::Condition { class, message } => {
+                DapBackendEvent::Exception(DapExceptionEvent { class, message })
+            },
+        };
+        self.send_backend_event(event);
     }
 
     /// Notify the frontend that we've exited the debugger.
@@ -307,27 +388,50 @@ impl Dap {
         let was_debugging = self.is_debugging;
         self.is_debugging = false;
 
-        if was_debugging && self.is_connected {
+        if was_debugging && (self.is_connected || self.notebook_iopub_tx.is_some()) {
             log::trace!("DAP: Sending `stop_debug` events");
 
             if let Some(comm_tx) = &self.comm_tx {
                 comm_tx
                     .send(amalthea::comm_rpc_message!("stop_debug"))
                     .log_err();
-
-                if let Some(datp_tx) = &self.backend_events_tx {
-                    datp_tx.send(DapBackendEvent::Continued).log_err();
-                }
             }
-            // else: If not connected to a frontend, the DAP client should
-            // have received a `Continued` event already, after a `n`
-            // command or similar.
+
+            self.send_backend_event(DapBackendEvent::Continued);
         }
     }
 
-    pub fn send_invalidated(&self) {
+    pub fn send_invalidated(&mut self) {
+        self.send_backend_event(DapBackendEvent::Invalidated);
+    }
+
+    pub fn set_iopub_tx(&mut self, tx: Sender<IOPubMessage>) {
+        self.notebook_iopub_tx = Some(tx);
+    }
+
+    fn send_backend_event(&mut self, event: DapBackendEvent) {
         if let Some(tx) = &self.backend_events_tx {
-            tx.send(DapBackendEvent::Invalidated).log_err();
+            tx.send(event.clone()).log_err();
+        }
+
+        if let Some(tx) = &self.notebook_iopub_tx {
+            let dap_event = event.into_dap_event();
+            self.iopub_seq += 1;
+
+            let msg = BaseMessage {
+                seq: self.iopub_seq,
+                message: Sendable::Event(dap_event),
+            };
+
+            match serde_json::to_value(&msg) {
+                Ok(json) => {
+                    tx.send(IOPubMessage::DebugEvent(DebugEvent { content: json }))
+                        .log_err();
+                },
+                Err(err) => {
+                    log::error!("DAP: Failed to serialize IOPub event: {err:?}");
+                },
+            }
         }
     }
 
@@ -507,6 +611,10 @@ impl Dap {
             return;
         };
 
+        // Collect events first: `bp_list` borrows from `self.breakpoints`,
+        // which prevents calling `&mut self` methods like `send_backend_event()`.
+        let mut events = Vec::new();
+
         for bp in bp_list.iter_mut() {
             // Verified and Disabled breakpoints are both already verified.
             // Invalid breakpoints never get verified so we skip them too.
@@ -525,16 +633,17 @@ impl Dap {
             if line >= start_line && line < end_line {
                 bp.state = BreakpointState::Verified;
 
-                if let Some(tx) = &self.backend_events_tx {
-                    tx.send(DapBackendEvent::BreakpointState {
-                        id: bp.id,
-                        line: bp.line,
-                        verified: true,
-                        message: None,
-                    })
-                    .log_err();
-                }
+                events.push(DapBackendEvent::BreakpointState {
+                    id: bp.id,
+                    line: bp.line,
+                    verified: true,
+                    message: None,
+                });
             }
+        }
+
+        for event in events {
+            self.send_backend_event(event);
         }
     }
 
@@ -543,29 +652,29 @@ impl Dap {
     /// Finds the breakpoint with the given ID for the URI and marks it as verified
     /// if it was previously unverified. Sends a `BreakpointVerified` event.
     pub fn verify_breakpoint(&mut self, uri: &UrlId, id: &str) {
-        let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
-            return;
-        };
-        let Some(bp) = bp_list.iter_mut().find(|bp| bp.id.to_string() == id) else {
-            return;
-        };
+        let event = {
+            let Some((_, bp_list)) = self.breakpoints.get_mut(uri) else {
+                return;
+            };
+            let Some(bp) = bp_list.iter_mut().find(|bp| bp.id.to_string() == id) else {
+                return;
+            };
 
-        // Only verify unverified breakpoints
-        if !matches!(bp.state, BreakpointState::Unverified) {
-            return;
-        }
+            if !matches!(bp.state, BreakpointState::Unverified) {
+                return;
+            }
 
-        bp.state = BreakpointState::Verified;
+            bp.state = BreakpointState::Verified;
 
-        if let Some(tx) = &self.backend_events_tx {
-            tx.send(DapBackendEvent::BreakpointState {
+            DapBackendEvent::BreakpointState {
                 id: bp.id,
                 line: bp.line,
                 verified: true,
                 message: None,
-            })
-            .log_err();
-        }
+            }
+        };
+
+        self.send_backend_event(event);
     }
 
     /// Called when a document changes. Removes all breakpoints for the URI
@@ -578,42 +687,40 @@ impl Dap {
         };
 
         log::trace!("DAP: Removing {} breakpoints for {uri}", breakpoints.len());
-        let Some(tx) = &self.backend_events_tx else {
-            return;
-        };
 
         for bp in breakpoints {
-            tx.send(DapBackendEvent::BreakpointState {
+            self.send_backend_event(DapBackendEvent::BreakpointState {
                 id: bp.id,
                 line: bp.line,
                 verified: false,
                 message: None,
-            })
-            .log_err();
+            });
         }
     }
 
     /// Notify the frontend about breakpoints that were marked invalid during annotation.
     /// Sends a `BreakpointState` event with verified=false and a message for each.
-    pub fn notify_invalid_breakpoints(&self, uri: &UrlId) {
-        let Some(tx) = &self.backend_events_tx else {
-            return;
-        };
-        let Some((_, breakpoints)) = self.breakpoints.get(uri) else {
-            return;
-        };
-
-        for bp in breakpoints {
-            let BreakpointState::Invalid(reason) = &bp.state else {
-                continue;
-            };
-            tx.send(DapBackendEvent::BreakpointState {
-                id: bp.id,
-                line: bp.line,
-                verified: false,
-                message: Some(reason.message().to_string()),
+    pub fn notify_invalid_breakpoints(&mut self, uri: &UrlId) {
+        let events: Vec<_> = self
+            .breakpoints
+            .get(uri)
+            .into_iter()
+            .flat_map(|(_, breakpoints)| breakpoints)
+            .filter_map(|bp| {
+                let BreakpointState::Invalid(reason) = &bp.state else {
+                    return None;
+                };
+                Some(DapBackendEvent::BreakpointState {
+                    id: bp.id,
+                    line: bp.line,
+                    verified: false,
+                    message: Some(reason.message().to_string()),
+                })
             })
-            .log_err();
+            .collect();
+
+        for event in events {
+            self.send_backend_event(event);
         }
     }
 
@@ -766,6 +873,9 @@ mod tests {
             current_breakpoint_id: 1,
             is_interrupting_for_debugger: false,
             comm_tx: None,
+            notebook_iopub_tx: None,
+            iopub_seq: 0,
+            is_debugging_stdin: false,
             r_request_tx,
             shared_self: None,
         };
@@ -877,6 +987,9 @@ mod tests {
             current_breakpoint_id: 1,
             is_interrupting_for_debugger: false,
             comm_tx: None,
+            notebook_iopub_tx: None,
+            iopub_seq: 0,
+            is_debugging_stdin: false,
             r_request_tx,
             shared_self: None,
         };

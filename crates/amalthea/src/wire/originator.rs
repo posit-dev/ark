@@ -5,6 +5,8 @@
  *
  */
 
+use serde_json::Value;
+
 use crate::wire::header::JupyterHeader;
 use crate::wire::jupyter_message::JupyterMessage;
 
@@ -12,6 +14,7 @@ use crate::wire::jupyter_message::JupyterMessage;
 pub struct Originator {
     pub zmq_identities: Vec<Vec<u8>>,
     pub header: JupyterHeader,
+    pub metadata: Value,
 }
 
 impl<T> From<&JupyterMessage<T>> for Originator {
@@ -19,6 +22,7 @@ impl<T> From<&JupyterMessage<T>> for Originator {
         Originator {
             zmq_identities: msg.zmq_identities.clone(),
             header: msg.header.clone(),
+            metadata: msg.metadata.clone(),
         }
     }
 }

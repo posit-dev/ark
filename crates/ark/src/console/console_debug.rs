@@ -24,6 +24,7 @@ use regex::Regex;
 use stdext::result::ResultExt;
 
 use crate::console::Console;
+use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
@@ -111,7 +112,7 @@ impl Console {
 
                 // Transient eval with unchanged stack: just refresh variables
                 if transient_eval && !stack_changed {
-                    let dap = self.debug_dap.lock().unwrap();
+                    let mut dap = self.debug_dap.lock().unwrap();
                     dap.send_invalidated();
                     return;
                 }
@@ -552,6 +553,11 @@ pub unsafe extern "C-unwind" fn ps_handle_breakpoint(
 
     let console = Console::get_mut();
     let dap = console.debug_dap.lock().unwrap();
+
+    // In notebook mode, breakpoints are inert when no debug session is active
+    if console.session_mode() == SessionMode::Notebook && !dap.is_connected {
+        return Ok(RObject::from(false).sexp);
+    }
 
     let enabled = dap.is_breakpoint_enabled(&uri, id);
     let bp = dap.get_breakpoint(&uri, id);

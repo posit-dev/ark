@@ -18,6 +18,7 @@ use crate::session::Session;
 use crate::wire::comm_close::CommClose;
 use crate::wire::comm_msg::CommWireMsg;
 use crate::wire::comm_open::CommOpen;
+use crate::wire::debug_event::DebugEvent;
 use crate::wire::display_data::DisplayData;
 use crate::wire::execute_error::ExecuteError;
 use crate::wire::execute_input::ExecuteInput;
@@ -85,6 +86,7 @@ pub enum IOPubContextChannel {
 #[derive(Debug)]
 pub enum IOPubMessage {
     Status(JupyterHeader, IOPubContextChannel, KernelStatus),
+    DebugEvent(DebugEvent),
     ExecuteResult(ExecuteResult),
     ExecuteError(ExecuteError),
     ExecuteInput(ExecuteInput),
@@ -239,6 +241,12 @@ impl IOPub {
                 self.flush_stream();
                 self.forward(Message::UpdateDisplayData(
                     self.message_with_context(content, IOPubContextChannel::Shell),
+                ))
+            },
+            IOPubMessage::DebugEvent(content) => {
+                self.flush_stream();
+                self.forward(Message::DebugEvent(
+                    self.message_with_context(content, IOPubContextChannel::Control),
                 ))
             },
             IOPubMessage::Wait(content) => self.process_wait_request(content),

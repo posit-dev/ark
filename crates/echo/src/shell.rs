@@ -83,6 +83,7 @@ impl ShellHandler for Shell {
             language_info: info,
             implementation: String::from("echo"),
             implementation_version: String::from(env!("CARGO_PKG_VERSION")),
+            supported_features: vec![],
         })
     }
 

@@ -5,16 +5,13 @@
  *
  */
 
-use std::sync::Arc;
-use std::sync::Mutex;
-
 use crossbeam::channel::SendError;
 use crossbeam::channel::Sender;
-use futures::executor::block_on;
 use log::error;
 use log::info;
 use log::trace;
 use log::warn;
+use stdext::result::ResultExt;
 use stdext::unwrap;
 
 use crate::error::Error;
@@ -22,6 +19,7 @@ use crate::language::control_handler::ControlHandler;
 use crate::socket::iopub::IOPubContextChannel;
 use crate::socket::iopub::IOPubMessage;
 use crate::socket::Socket;
+use crate::wire::debug_request::DebugRequest;
 use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
@@ -33,7 +31,7 @@ use crate::wire::status::KernelStatus;
 pub struct Control {
     socket: Socket,
     iopub_tx: Sender<IOPubMessage>,
-    handler: Arc<Mutex<dyn ControlHandler>>,
+    handler: Box<dyn ControlHandler>,
     stdin_interrupt_tx: Sender<bool>,
 }
 
@@ -41,7 +39,7 @@ impl Control {
     pub fn new(
         socket: Socket,
         iopub_tx: Sender<IOPubMessage>,
-        handler: Arc<Mutex<dyn ControlHandler>>,
+        handler: Box<dyn ControlHandler>,
         stdin_interrupt_tx: Sender<bool>,
     ) -> Self {
         Self {
@@ -73,6 +71,9 @@ impl Control {
 
     fn process_message(&self, message: Message) -> Result<(), Error> {
         match message {
+            Message::DebugRequest(req) => {
+                self.handle_request(req, |r| self.handle_debug_request(r))
+            },
             Message::ShutdownRequest(req) => {
                 self.handle_request(req, |r| self.handle_shutdown_request(r))
             },
@@ -130,11 +131,8 @@ impl Control {
     fn handle_shutdown_request(&self, req: JupyterMessage<ShutdownRequest>) -> Result<(), Error> {
         info!("Received shutdown request, shutting down kernel: {:?}", req);
 
-        // Lock the control handler object on this thread
-        let control_handler = self.handler.lock().unwrap();
-
         let reply = unwrap!(
-            block_on(control_handler.handle_shutdown_request(&req.content)),
+            self.handler.handle_shutdown_request(&req.content),
             Err(err) => {
                 log::error!("Failed to handle shutdown request: {err:?}");
                 return Ok(())
@@ -156,6 +154,18 @@ impl Control {
         Ok(())
     }
 
+    fn handle_debug_request(&self, req: JupyterMessage<DebugRequest>) -> Result<(), Error> {
+        log::trace!("Received debug request: {:?}", req);
+
+        let Some(reply) = self.handler.handle_debug_request(&req.content).log_err() else {
+            return Ok(());
+        };
+
+        req.send_reply(reply, &self.socket).log_err();
+
+        Ok(())
+    }
+
     fn handle_interrupt_request(&self, req: JupyterMessage<InterruptRequest>) -> Result<(), Error> {
         info!(
             "Received interrupt request, asking kernel to stop: {:?}",
@@ -169,11 +179,8 @@ impl Control {
             error!("Failed to send interrupt request: {:?}", err);
         }
 
-        // Lock the control handler object on this thread
-        let control_handler = self.handler.lock().unwrap();
-
         let reply = unwrap!(
-            block_on(control_handler.handle_interrupt_request()),
+            self.handler.handle_interrupt_request(),
             Err(err) => {
                 log::error!("Failed to handle interrupt request: {err:?}");
                 return Ok(())

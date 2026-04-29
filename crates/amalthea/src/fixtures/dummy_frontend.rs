@@ -14,11 +14,13 @@ use crate::registration_file::RegistrationFile;
 use crate::session::Session;
 use crate::socket::Socket;
 use crate::wire::comm_msg::CommWireMsg;
+use crate::wire::debug_request::DebugRequest;
 use crate::wire::execute_input::ExecuteInput;
 use crate::wire::execute_request::ExecuteRequest;
 use crate::wire::execute_request::ExecuteRequestPositron;
 use crate::wire::handshake_reply::HandshakeReply;
 use crate::wire::input_reply::InputReply;
+use crate::wire::interrupt_request::InterruptRequest;
 use crate::wire::jupyter_message::JupyterMessage;
 use crate::wire::jupyter_message::Message;
 use crate::wire::jupyter_message::ProtocolMessage;
@@ -235,6 +237,10 @@ impl DummyFrontend {
         self.send_control(ShutdownRequest { restart })
     }
 
+    pub fn send_interrupt_request(&self) -> String {
+        self.send_control(InterruptRequest {})
+    }
+
     pub fn send_execute_request(&self, code: &str, options: ExecuteRequestOptions) -> String {
         self.send_shell(ExecuteRequest {
             code: String::from(code),
@@ -247,6 +253,56 @@ impl DummyFrontend {
         })
     }
 
+    /// Send an execute request with custom metadata (e.g. `cellId` for notebook debugging).
+    pub fn send_execute_request_with_metadata(
+        &self,
+        code: &str,
+        options: ExecuteRequestOptions,
+        metadata: serde_json::Value,
+    ) -> String {
+        Self::send_with_metadata(
+            &self.shell_socket,
+            &self.session,
+            ExecuteRequest {
+                code: String::from(code),
+                silent: false,
+                store_history: true,
+                user_expressions: serde_json::Value::Null,
+                allow_stdin: options.allow_stdin,
+                stop_on_error: false,
+                positron: options.positron,
+            },
+            metadata,
+        )
+    }
+
+    /// Send a DAP request wrapped in a Jupyter `debug_request` on the control channel.
+    pub fn send_debug_request(&self, dap_request: serde_json::Value) -> String {
+        self.send_control(DebugRequest {
+            content: dap_request,
+        })
+    }
+
+    /// Receive a `debug_reply` from the control channel.
+    #[track_caller]
+    pub fn recv_debug_reply(&self) -> serde_json::Value {
+        let msg = Self::recv(&self.control_socket);
+        match msg {
+            Message::DebugReply(msg) => msg.content.content,
+            other => panic!("Expected DebugReply, got {other:?}"),
+        }
+    }
+
+    /// Receive a `debug_event` from the IOPub channel.
+    #[track_caller]
+    pub fn recv_iopub_debug_event(&self) -> serde_json::Value {
+        let msg = Self::recv(&self.iopub_socket);
+        match msg {
+            Message::DebugEvent(msg) => msg.content.content,
+            other => panic!("Expected DebugEvent, got {other:?}"),
+        }
+    }
+
     /// Sends a Jupyter message on the Stdin socket
     pub fn send_stdin<T: ProtocolMessage>(&self, msg: T) {
         Self::send(&self.stdin_socket, &self.session, msg);
@@ -254,6 +310,19 @@ impl DummyFrontend {
 
     fn send<T: ProtocolMessage>(socket: &Socket, session: &Session, msg: T) -> String {
         let message = JupyterMessage::create(msg, None, session);
+        let id = message.header.msg_id.clone();
+        message.send(socket).unwrap();
+        id
+    }
+
+    fn send_with_metadata<T: ProtocolMessage>(
+        socket: &Socket,
+        session: &Session,
+        msg: T,
+        metadata: serde_json::Value,
+    ) -> String {
+        let mut message = JupyterMessage::create(msg, None, session);
+        message.metadata = metadata;
         let id = message.header.msg_id.clone();
         message.send(socket).unwrap();
         id
@@ -310,6 +379,15 @@ impl DummyFrontend {
         assert_matches!(message, Message::ShutdownReply(message) => {
             message.content
         })
+    }
+
+    /// Receive from Control and assert `InterruptReply` message.
+    #[track_caller]
+    pub fn recv_control_interrupt_reply(&self) {
+        let message = self.recv_control();
+        assert_matches!(message, Message::InterruptReply(message) => {
+            assert_eq!(message.content.status, Status::Ok);
+        });
     }
 
     /// Receive from Shell and assert `ExecuteReply` message.
