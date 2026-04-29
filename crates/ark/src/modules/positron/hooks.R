@@ -23,6 +23,10 @@ initialize_hooks <- function() {
         namespace = TRUE
     )
     register_getHook_hook()
+
+    if (is_windows()) {
+        rebind("utils", "timestamp", windows_timestamp, namespace = TRUE)
+    }
 }
 
 rebind <- function(pkg, name, value, namespace = FALSE) {

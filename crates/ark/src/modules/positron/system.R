@@ -14,6 +14,10 @@ system_os <- function() {
     )
 }
 
+is_windows <- function() {
+    system_os() == "windows"
+}
+
 has_aqua <- function() {
     capabilities("aqua")
 }
