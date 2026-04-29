@@ -24,7 +24,9 @@ use amalthea::wire::debug_event::DebugEvent;
 use crossbeam::channel::Sender;
 use dap::base_message::BaseMessage;
 use dap::base_message::Sendable;
+use dap::requests::EvaluateArguments;
 use dap::requests::Request;
+use dap::responses::ResponseBody;
 use stdext::result::ResultExt;
 
 use crate::dap::dap_notebook;
@@ -34,6 +36,7 @@ use crate::dap::dap_state::Breakpoint;
 use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::Dap;
 use crate::dap::dap_state::THREAD_ID;
+use crate::r_task;
 use crate::request::RRequest;
 
 pub struct DapJupyterHandler {
@@ -78,10 +81,12 @@ impl DapJupyterHandler {
         log::trace!("Jupyter DAP: Handling `{command}` (seq={seq})");
 
         // Handle Jupyter Debug Protocol extensions and commands not in the
-        // `dap` crate's `Command` enum.
+        // `dap` crate's `Command` enum, plus `evaluate` which requires
+        // running R code via `try_idle_task`.
         let result = match command {
             "dumpCell" => Some(self.handle_dump_cell(seq, request)),
             "debugInfo" => Some(self.handle_debug_info(seq)),
+            "evaluate" => Some(self.handle_evaluate(seq, request)),
             "configurationDone" => Some(Ok(self.success_response(
                 seq,
                 "configurationDone",
@@ -118,6 +123,39 @@ impl DapJupyterHandler {
                 log::warn!("Jupyter DAP: Failed to parse `{command}`: {err:?}");
                 self.error_response(seq, command, &format!("Failed to parse request: {err}"))
             },
+        }
+    }
+
+    fn handle_evaluate(
+        &self,
+        seq: i64,
+        request: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let args: EvaluateArguments =
+            serde_json::from_value(request.get("arguments").cloned().unwrap_or_default())?;
+
+        let state = self.handler.state.clone();
+        let expression = args.expression;
+        let frame_id = args.frame_id;
+
+        // This only returns `Some()` if R is idle. Even though we stopped at
+        // some point, causing the Evaluate request, R could be busy evaluating
+        // the next expression already.
+        let result = r_task::try_idle_task(move |capture| {
+            DapHandler::evaluate(&state, &expression, frame_id, capture)
+        });
+
+        match result {
+            None => Ok(self.error_response(seq, "evaluate", "R is busy")),
+            // The task raised an R error, caught by the sandbox on the R thread.
+            Some(Err(err)) => Ok(self.error_response(seq, "evaluate", &format!("{err}"))),
+            Some(Ok(Ok(body))) => {
+                let ResponseBody::Evaluate(eval) = body else {
+                    return Err(anyhow::anyhow!("Unexpected response body from evaluate"));
+                };
+                Ok(self.success_response(seq, "evaluate", serde_json::to_value(eval)?))
+            },
+            Some(Ok(Err(err))) => Ok(self.error_response(seq, "evaluate", &format!("{err}"))),
         }
     }
 

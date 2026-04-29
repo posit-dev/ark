@@ -20,6 +20,7 @@ use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
 use crate::r_task::QueuedRTask;
 use crate::r_task::RTask;
+use crate::r_task::TryIdleTask;
 use crate::request::DebugRequest;
 
 static RE_DEBUG_PROMPT: Lazy<Regex> = Lazy::new(|| Regex::new(r"Browse\[\d+\]").unwrap());
@@ -375,13 +376,15 @@ impl Console {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
+        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx, try_idle_rx) =
+            r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             r_home,
             tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
+            try_idle_rx,
             comm_event_tx,
             r_request_rx,
             stdin_request_tx,
@@ -616,6 +619,7 @@ impl Console {
         tasks_interrupt_rx: Receiver<QueuedRTask>,
         tasks_idle_rx: Receiver<QueuedRTask>,
         tasks_idle_any_rx: Receiver<QueuedRTask>,
+        try_idle_rx: Receiver<TryIdleTask>,
         comm_event_tx: Sender<CommEvent>,
         r_request_rx: Receiver<RRequest>,
         stdin_request_tx: Sender<StdInRequest>,
@@ -651,6 +655,7 @@ impl Console {
             tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
+            try_idle_rx,
             pending_futures: HashMap::new(),
             session_mode,
             positron_ns: None,
@@ -759,6 +764,7 @@ impl Console {
             let (_, tasks_interrupt_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
+            let (_, try_idle_rx) = crossbeam::channel::unbounded();
             let (comm_event_tx, _) = crossbeam::channel::unbounded();
             let (r_request_tx, r_request_rx) = crossbeam::channel::unbounded();
             let (stdin_request_tx, _) = crossbeam::channel::unbounded();
@@ -772,6 +778,7 @@ impl Console {
                 tasks_interrupt_rx,
                 tasks_idle_rx,
                 tasks_idle_any_rx,
+                try_idle_rx,
                 comm_event_tx,
                 r_request_rx,
                 stdin_request_tx,
@@ -1088,6 +1095,7 @@ impl Console {
         let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
         let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
+        let try_idle_rx = self.try_idle_rx.clone();
 
         // Process R's polled events regularly while waiting for console input.
         // We used to poll every 200ms but that lead to visible delays for the
@@ -1127,6 +1135,12 @@ impl Console {
             } else {
                 None
             };
+
+        let try_idle_index = if matches!(info.kind, PromptKind::TopLevel | PromptKind::Browser) {
+            Some(select.recv(&try_idle_rx))
+        } else {
+            None
+        };
 
         loop {
             // If an interrupt was signaled and we are waiting for user
@@ -1222,6 +1236,13 @@ impl Console {
                 i if Some(i) == tasks_idle_any_index => {
                     let task = oper.recv(&tasks_idle_any_rx).unwrap();
                     self.handle_task(task);
+                },
+
+                // A try-idle task woke us up
+                i if Some(i) == try_idle_index => {
+                    let task = oper.recv(&try_idle_rx).unwrap();
+                    let mut capture = self.start_capture();
+                    (task.fun)(&mut capture);
                 },
 
                 // It's time to run R's polled events
