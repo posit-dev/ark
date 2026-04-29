@@ -28,8 +28,7 @@ use crate::request::RRequest;
 pub struct Control {
     r_request_tx: Sender<RRequest>,
     dap: Arc<Mutex<Dap>>,
-    session_mode: SessionMode,
-    dap_handler: DapJupyterHandler,
+    dap_handler: Option<DapJupyterHandler>,
 }
 
 impl Control {
@@ -39,17 +38,20 @@ impl Control {
         iopub_tx: Sender<IOPubMessage>,
         session_mode: SessionMode,
     ) -> Self {
-        if matches!(session_mode, SessionMode::Notebook) {
+        let dap_handler = if matches!(session_mode, SessionMode::Notebook) {
             dap.lock().unwrap().set_iopub_tx(iopub_tx.clone());
-        }
+            Some(DapJupyterHandler::new(
+                dap.clone(),
+                r_request_tx.clone(),
+                iopub_tx,
+            ))
+        } else {
+            None
+        };
 
-        // Currently unused for Console, but it would be nice to get
-        // `SetBreakpoints` requests via Jupyter in the future
-        let dap_handler = DapJupyterHandler::new(dap.clone(), r_request_tx.clone(), iopub_tx);
         Self {
             r_request_tx,
             dap,
-            session_mode,
             dap_handler,
         }
     }
@@ -90,7 +92,7 @@ impl ControlHandler for Control {
         // the debugger. The difference is justified by how the Console stays
         // busy while debugging, showing a spinning wheel to the user. Quitting
         // debugging on interrupt is natural UX in that context.
-        if matches!(self.session_mode, SessionMode::Notebook) {
+        if self.dap_handler.is_some() {
             let dap = self.dap.lock().unwrap();
             if dap.is_debugging || dap.is_debugging_stdin {
                 drop(dap);
@@ -105,7 +107,16 @@ impl ControlHandler for Control {
     }
 
     fn handle_debug_request(&self, msg: &DebugRequest) -> Result<DebugReply, Exception> {
-        let response = self.dap_handler.handle(&msg.content);
+        let Some(handler) = &self.dap_handler else {
+            let response = serde_json::json!({
+                "seq": 0,
+                "type": "response",
+                "success": false,
+                "message": "Debug requests are not supported in console mode",
+            });
+            return Ok(DebugReply { content: response });
+        };
+        let response = handler.handle(&msg.content);
         Ok(DebugReply { content: response })
     }
 }
