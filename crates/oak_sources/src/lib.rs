@@ -19,8 +19,8 @@ use chrono::TimeDelta;
 use chrono::Utc;
 use oak_fs::file_lock;
 use oak_fs::file_lock::FileLock;
-use oak_package::package_description::Priority;
-use oak_package::package_description::Repository;
+use oak_package_metadata::description::Priority;
+use oak_package_metadata::description::Repository;
 use serde::Deserialize;
 use serde::Serialize;
 

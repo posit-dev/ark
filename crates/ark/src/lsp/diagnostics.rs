@@ -1134,9 +1134,9 @@ mod tests {
     use harp::eval::RParseEvalOptions;
     use oak_package::library::Library;
     use oak_package::package::Package;
-    use oak_package::package_description::Dcf;
-    use oak_package::package_description::Description;
-    use oak_package::package_namespace::Namespace;
+    use oak_package_metadata::dcf::Dcf;
+    use oak_package_metadata::description::Description;
+    use oak_package_metadata::namespace::Namespace;
     use once_cell::sync::Lazy;
     use stdext::SortedVec;
     use tower_lsp::lsp_types;

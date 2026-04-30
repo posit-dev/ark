@@ -87,9 +87,9 @@ mod tests {
     use assert_matches::assert_matches;
     use oak_package::library::Library;
     use oak_package::package::Package;
-    use oak_package::package_description::Description;
-    use oak_package::package_namespace::Import;
-    use oak_package::package_namespace::Namespace;
+    use oak_package_metadata::description::Description;
+    use oak_package_metadata::namespace::Import;
+    use oak_package_metadata::namespace::Namespace;
     use tower_lsp::lsp_types;
 
     use super::*;
@@ -326,7 +326,7 @@ mod tests {
         let ns = Namespace::default();
         let desc = Description {
             name: "mypkg".to_string(),
-            fields: oak_package::Dcf { fields: dcf_fields },
+            fields: oak_package_metadata::dcf::Dcf { fields: dcf_fields },
             ..Default::default()
         };
         let pkg = Package::from_parts(pkg_root, desc, ns);

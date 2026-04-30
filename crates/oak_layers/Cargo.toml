@@ -13,6 +13,7 @@ biome_rowan.workspace = true
 oak_index.workspace = true
 oak_package.workspace = true
 oak_package_definitions.workspace = true
+oak_package_metadata.workspace = true
 oak_sources.workspace = true
 stdext.workspace = true
 url.workspace = true

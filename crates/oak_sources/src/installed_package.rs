@@ -2,7 +2,7 @@ use std::fs::read_to_string;
 use std::path::Path;
 use std::path::PathBuf;
 
-use oak_package::package_description::Description;
+use oak_package_metadata::description::Description;
 
 pub(crate) struct InstalledPackage {
     key: String,

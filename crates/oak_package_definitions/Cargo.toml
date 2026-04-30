@@ -15,6 +15,7 @@ oak_core.workspace = true
 oak_index.workspace = true
 oak_index_vec.workspace = true
 oak_package.workspace = true
+oak_package_metadata.workspace = true
 oak_sources.workspace = true
 rustc-hash.workspace = true
 stdext.workspace = true

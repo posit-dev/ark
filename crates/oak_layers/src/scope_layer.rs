@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use biome_rowan::TextRange;
 use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::SemanticIndex;
-use oak_package::package_namespace::Namespace;
+use oak_package_metadata::namespace::Namespace;
 use url::Url;
 
 /// A layer in the scope chain. Layers are ordered most-local-first; resolution

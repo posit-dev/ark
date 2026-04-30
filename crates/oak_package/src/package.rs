@@ -2,11 +2,10 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
+use oak_package_metadata::description::Description;
+use oak_package_metadata::index::Index;
+use oak_package_metadata::namespace::Namespace;
 use stdext::SortedVec;
-
-use crate::package_description::Description;
-use crate::package_index::Index;
-use crate::package_namespace::Namespace;
 
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
@@ -172,10 +171,11 @@ penguins_raw            Penguin size, clutch, and blood isotope data
 
 #[cfg(test)]
 mod tests {
+    use oak_package_metadata::description::Description;
+    use oak_package_metadata::index::Index;
+    use oak_package_metadata::namespace::Namespace;
+
     use super::*;
-    use crate::package_description::Description;
-    use crate::package_index::Index;
-    use crate::package_namespace::Namespace;
 
     fn new_package(name: &str, ns: Namespace, index: Index) -> Package {
         Package::new(

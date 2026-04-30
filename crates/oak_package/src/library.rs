@@ -76,10 +76,10 @@ mod tests {
     use std::fs::{self};
     use std::io::Write;
 
+    use oak_package_metadata::namespace::Import;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::package_namespace::Import;
 
     // Helper to create a temporary package directory with DESCRIPTION and NAMESPACE
     fn create_temp_package(
