@@ -68,7 +68,7 @@ pub unsafe extern "C-unwind" fn ps_ark_version() -> anyhow::Result<SEXP> {
     // Set the version info in the map
     info.insert(
         String::from("version"),
-        String::from(env!("CARGO_PKG_VERSION")),
+        String::from(env!("ARK_BUILD_VERSION")),
     );
 
     // Add the current commit hash and branch; these are set by the build script (build.rs)

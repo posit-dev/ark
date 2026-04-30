@@ -51,4 +51,4 @@ pub mod viewer;
 
 pub(crate) use r_task::r_task;
 
-pub const ARK_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const ARK_VERSION: &str = env!("ARK_BUILD_VERSION");
