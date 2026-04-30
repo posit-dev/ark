@@ -6,7 +6,7 @@
  */
 
 use assert_matches::assert_matches;
-use rand::Rng;
+use rand::RngExt;
 use serde_json::Value;
 
 use crate::connection_file::ConnectionFile;
@@ -65,7 +65,7 @@ impl Default for DummyConnection {
 impl DummyConnection {
     pub fn new() -> Self {
         // Create a random HMAC key for signing messages.
-        let key_bytes = rand::thread_rng().gen::<[u8; 16]>();
+        let key_bytes = rand::rng().random::<[u8; 16]>();
         let key = hex::encode(key_bytes);
 
         // Create a new kernel session from the key
@@ -144,7 +144,7 @@ impl DummyFrontend {
 
         // Create a random socket identity for the shell and stdin sockets. Per
         // the Jupyter specification, these must share a ZeroMQ identity.
-        let shell_id = rand::thread_rng().gen::<[u8; 16]>();
+        let shell_id = rand::rng().random::<[u8; 16]>();
 
         let control_socket = Socket::new(
             connection.session.clone(),

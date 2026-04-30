@@ -36,7 +36,6 @@ ego-tree.workspace = true
 futures.workspace = true
 harp.workspace = true
 home.workspace = true
-http.workspace = true
 itertools.workspace = true
 libc.workspace = true
 libr.workspace = true
@@ -74,7 +73,7 @@ url.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 winsafe.workspace = true
-yaml-rust.workspace = true
+yaml-rust2.workspace = true
 
 [dev-dependencies]
 ark_test.workspace = true

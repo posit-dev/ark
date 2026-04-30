@@ -140,13 +140,7 @@ fn apply_default_repos_auto() -> anyhow::Result<()> {
 
 #[cfg(unix)]
 fn find_repos_conf_xdg(prefix: String) -> Option<PathBuf> {
-    let xdg_dirs = match xdg::BaseDirectories::with_prefix(prefix.clone()) {
-        Ok(xdg_dirs) => xdg_dirs,
-        Err(e) => {
-            log::error!("Error finding {prefix:?} XDG directories: {}", e);
-            return None;
-        },
-    };
+    let xdg_dirs = xdg::BaseDirectories::with_prefix(prefix);
     xdg_dirs.find_config_file("repos.conf")
 }
 

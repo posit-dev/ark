@@ -39,8 +39,7 @@ use amalthea::wire::update_display_data::TransientValue;
 use amalthea::wire::update_display_data::UpdateDisplayData;
 use anyhow::anyhow;
 use anyhow::Context;
-use base64::engine::general_purpose;
-use base64::Engine;
+use base64::prelude::*;
 use crossbeam::channel::Select;
 use crossbeam::channel::Sender;
 use harp::exec::RFunction;
@@ -1030,7 +1029,7 @@ impl DeviceContext {
         reader.read_to_end(&mut buffer)?;
 
         // what an odd interface
-        let data = general_purpose::STANDARD_NO_PAD.encode(buffer);
+        let data = BASE64_STANDARD_NO_PAD.encode(buffer);
 
         Ok(data)
     }

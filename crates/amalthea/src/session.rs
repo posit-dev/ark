@@ -6,7 +6,7 @@
  */
 
 use hmac::Hmac;
-use hmac::Mac;
+use hmac::KeyInit;
 use sha2::Sha256;
 use uuid::Uuid;
 
