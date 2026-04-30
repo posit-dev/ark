@@ -119,6 +119,7 @@ struct DummyArkFrontendOptions {
     site_r_profile: bool,
     user_r_profile: bool,
     r_environ: bool,
+    capture_streams: bool,
     session_mode: SessionMode,
     default_repos: DefaultRepos,
     startup_file: Option<String>,
@@ -1825,7 +1826,7 @@ impl DummyArkFrontend {
                 r_args,
                 options.startup_file,
                 options.session_mode,
-                false,
+                options.capture_streams,
                 options.default_repos,
             );
         });
@@ -2127,6 +2128,57 @@ impl DerefMut for DummyArkFrontendRprofile {
     }
 }
 
+/// Wrapper around `DummyArkFrontend` with fd-level stream capture enabled.
+///
+/// This enables the `StreamCapture` thread that redirects the process's
+/// stdout/stderr file descriptors into pipes, capturing output from child
+/// processes (e.g. `system()` calls) that write directly to the inherited fds.
+///
+/// Because the redirect affects the global file descriptors, panic messages
+/// and test framework output will also be captured and won't be visible in
+/// test runner output.
+#[cfg(unix)]
+pub struct DummyArkFrontendStreamCapture {
+    inner: DummyArkFrontend,
+}
+
+#[cfg(unix)]
+impl DummyArkFrontendStreamCapture {
+    /// NOTE: Only one `DummyArkFrontend` variant should call `lock()` within
+    /// a given process.
+    pub fn lock() -> Self {
+        Self::init();
+
+        Self {
+            inner: DummyArkFrontend::lock(),
+        }
+    }
+
+    fn init() {
+        let options = DummyArkFrontendOptions {
+            capture_streams: true,
+            ..Default::default()
+        };
+        FRONTEND.get_or_init(|| Arc::new(Mutex::new(DummyArkFrontend::init(options))));
+    }
+}
+
+#[cfg(unix)]
+impl Deref for DummyArkFrontendStreamCapture {
+    type Target = DummyArkFrontend;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+#[cfg(unix)]
+impl DerefMut for DummyArkFrontendStreamCapture {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 impl Default for DummyArkFrontendOptions {
     fn default() -> Self {
         Self {
@@ -2134,6 +2186,7 @@ impl Default for DummyArkFrontendOptions {
             site_r_profile: false,
             user_r_profile: false,
             r_environ: false,
+            capture_streams: false,
             session_mode: SessionMode::Console,
             default_repos: DefaultRepos::Auto,
             startup_file: None,
