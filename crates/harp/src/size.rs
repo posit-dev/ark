@@ -70,9 +70,9 @@ fn obj_size_tree(
     sizeof_node: usize,
     sizeof_vector: usize,
     seen: &mut HashSet<SEXP>,
-    mut depth: usize,
+    depth: usize,
 ) -> usize {
-    depth += 1;
+    let depth = depth + 1;
 
     // Guard against stack overflow from deeply nested R objects.
     // Returns 0 (undercounting) rather than crashing when depth limit is exceeded.
