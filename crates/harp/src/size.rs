@@ -154,7 +154,14 @@ fn obj_size_tree(
         STRSXP => {
             size += v_size(r_length(x) as usize, size_of::<SEXP>());
             for i in 0..r_length(x) {
-                size += obj_size_tree(r_chr_get(x, i), base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+                size += obj_size_tree(
+                    r_chr_get(x, i),
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth + 1,
+                );
             }
         },
         CHARSXP => {
@@ -164,7 +171,14 @@ fn obj_size_tree(
         VECSXP | EXPRSXP | WEAKREFSXP => {
             size += v_size(r_length(x) as usize, size_of::<SEXP>());
             for i in 0..r_length(x) {
-                size += obj_size_tree(list_get(x, i), base_env, sizeof_node, sizeof_vector, seen, depth + 1)
+                size += obj_size_tree(
+                    list_get(x, i),
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth + 1,
+                )
             }
         },
         // Nodes
@@ -253,37 +267,85 @@ fn obj_size_tree(
 
                 size += match binding.value {
                     // For active bindings, we compute the size of the function
-                    BindingValue::Active { fun } => {
-                        obj_size_tree(fun.sexp, base_env, sizeof_node, sizeof_vector, seen, depth + 1)
-                    },
+                    BindingValue::Active { fun } => obj_size_tree(
+                        fun.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
                     // `obj_size_tree` is aware of altrep objects.
-                    BindingValue::Altrep { object, .. } => {
-                        obj_size_tree(object.sexp, base_env, sizeof_node, sizeof_vector, seen, depth + 1)
-                    },
+                    BindingValue::Altrep { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
                     // `object_size_tree` is aware of promise objects.
                     // The environment iterator will automatically return `PRVALUE` as
                     // a `Standard` binding though. So this is only seeing unevaluated promises.
                     // For evaluated promises, we are not counting the size of `PRCODE`, but hopefully
                     // their sizes are negligible, mostly just symbols or small expressions.
-                    BindingValue::Promise { promise } => {
-                        obj_size_tree(promise.sexp, base_env, sizeof_node, sizeof_vector, seen, depth + 1)
-                    },
+                    BindingValue::Promise { promise } => obj_size_tree(
+                        promise.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
                     // Immediate bindings are expanded, thus we might overestimate the size of
                     // environments that use this kind of bindings.
                     // See more in https://github.com/r-devel/r-svn/blob/31340c871c7df54e45bfc7c4f49d09bb5806ec70/doc/notes/immbnd.md
-                    BindingValue::Standard { object, .. } => {
-                        obj_size_tree(object.sexp, base_env, sizeof_node, sizeof_vector, seen, depth + 1)
-                    },
+                    BindingValue::Standard { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth + 1,
+                    ),
                 }
             }
 
-            size += obj_size_tree(env_parent(x), base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+            size += obj_size_tree(
+                env_parent(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
         },
         // Functions
         CLOSXP => {
-            size += obj_size_tree(fn_formals(x), base_env, sizeof_node, sizeof_vector, seen, depth + 1);
-            size += obj_size_tree(fn_body(x), base_env, sizeof_node, sizeof_vector, seen, depth + 1);
-            size += obj_size_tree(fn_env(x), base_env, sizeof_node, sizeof_vector, seen, depth + 1);
+            size += obj_size_tree(
+                fn_formals(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
+            size += obj_size_tree(
+                fn_body(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
+            size += obj_size_tree(
+                fn_env(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth + 1,
+            );
         },
         PROMSXP => {
             size += obj_size_tree(
