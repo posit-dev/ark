@@ -72,8 +72,9 @@ fn obj_size_tree(
     seen: &mut HashSet<SEXP>,
     depth: usize,
 ) -> usize {
-    // Guard against stack overflow from deeply nested R objects
-    if depth > MAX_DEPTH {
+    // Guard against stack overflow from deeply nested R objects.
+    // Returns 0 (undercounting) rather than crashing when depth limit is exceeded.
+    if depth >= MAX_DEPTH {
         return 0;
     }
 
