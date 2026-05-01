@@ -60,7 +60,6 @@ use harp::environment::r_ns_env;
 use harp::environment::Environment;
 use harp::environment::R_ENVS;
 use harp::exec::exec_with_cleanup;
-use harp::exec::r_check_stack;
 use harp::exec::r_peek_error_buffer;
 use harp::exec::r_sandbox;
 use harp::exec::with_calling_error_handler;

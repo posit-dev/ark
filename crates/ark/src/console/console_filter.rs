@@ -263,6 +263,7 @@ impl ConsoleFilter {
     /// Check for timeout and handle state transitions.
     /// Timeout means we didn't reach ReadConsole to confirm debug output,
     /// so we emit the accumulated content back to the user.
+    #[cfg(any(unix, test))]
     pub(super) fn check_timeout(&mut self) -> Option<String> {
         self.drain_on_timeout()
     }
