@@ -19,7 +19,7 @@ initialize_hooks <- function() {
         "utils",
         "recover",
         # Keep this wrapped up this way for a better "Called from:" call
-        function(...) ark_recover(),
+        function() ark_recover(),
         namespace = TRUE
     )
     register_getHook_hook()
