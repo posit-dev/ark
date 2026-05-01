@@ -35,6 +35,11 @@ use crate::RObject;
 // `utils::object.size()` is too slow on large datasets and this code path is used trough the
 // variables pane which required more performance.
 // See for more info.
+
+// Maximum recursion depth to prevent stack overflow on deeply nested R objects.
+// https://github.com/posit-dev/positron/issues/13294
+const MAX_DEPTH: usize = 500;
+
 pub fn r_size(x: SEXP) -> harp::Result<usize> {
     let mut seen: HashSet<SEXP> = HashSet::new();
 
@@ -54,6 +59,7 @@ pub fn r_size(x: SEXP) -> harp::Result<usize> {
             sizeof_node as usize,
             sizeof_vector as usize,
             &mut seen,
+            0,
         )
     })
 }
@@ -64,7 +70,19 @@ fn obj_size_tree(
     sizeof_node: usize,
     sizeof_vector: usize,
     seen: &mut HashSet<SEXP>,
+    depth: usize,
 ) -> usize {
+    // Guard against stack overflow from deeply nested R objects.
+    // Returns 0 (undercounting) rather than crashing when depth limit is exceeded.
+    if depth >= MAX_DEPTH {
+        log::warn!(
+            "`obj_size_tree()`: recursion depth limit ({MAX_DEPTH}) exceeded, undercounting to size 0"
+        );
+        return 0;
+    }
+
+    let depth = depth + 1;
+
     // In case there's a nullptr, return 0
     if x.is_null() {
         return 0;
@@ -94,7 +112,7 @@ fn obj_size_tree(
         let klass = unsafe { libr::ALTREP_CLASS(x) };
         size += 3 * size_of::<SEXP>();
 
-        size += obj_size_tree(klass, base_env, sizeof_node, sizeof_vector, seen);
+        size += obj_size_tree(klass, base_env, sizeof_node, sizeof_vector, seen, depth);
 
         size += obj_size_tree(
             unsafe { libr::R_altrep_data1(x) },
@@ -102,6 +120,7 @@ fn obj_size_tree(
             sizeof_node,
             sizeof_vector,
             seen,
+            depth,
         );
         size += obj_size_tree(
             unsafe { libr::R_altrep_data2(x) },
@@ -109,6 +128,7 @@ fn obj_size_tree(
             sizeof_node,
             sizeof_vector,
             seen,
+            depth,
         );
 
         return size;
@@ -117,8 +137,8 @@ fn obj_size_tree(
     if r_typeof(x) != CHARSXP && attrib_has_any(x) {
         attrib_for_each(x, |tag, val| {
             size += sizeof_node;
-            size += obj_size_tree(tag, base_env, sizeof_node, sizeof_vector, seen);
-            size += obj_size_tree(val, base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(tag, base_env, sizeof_node, sizeof_vector, seen, depth);
+            size += obj_size_tree(val, base_env, sizeof_node, sizeof_vector, seen, depth);
         });
     }
 
@@ -139,7 +159,14 @@ fn obj_size_tree(
         STRSXP => {
             size += v_size(r_length(x) as usize, size_of::<SEXP>());
             for i in 0..r_length(x) {
-                size += obj_size_tree(r_chr_get(x, i), base_env, sizeof_node, sizeof_vector, seen);
+                size += obj_size_tree(
+                    r_chr_get(x, i),
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth,
+                );
             }
         },
         CHARSXP => {
@@ -149,7 +176,14 @@ fn obj_size_tree(
         VECSXP | EXPRSXP | WEAKREFSXP => {
             size += v_size(r_length(x) as usize, size_of::<SEXP>());
             for i in 0..r_length(x) {
-                size += obj_size_tree(list_get(x, i), base_env, sizeof_node, sizeof_vector, seen)
+                size += obj_size_tree(
+                    list_get(x, i),
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth,
+                )
             }
         },
         // Nodes
@@ -169,6 +203,7 @@ fn obj_size_tree(
                         sizeof_node,
                         sizeof_vector,
                         seen,
+                        depth,
                     );
                     size += obj_size_tree(
                         unsafe { libr::CAR(cons) },
@@ -176,11 +211,12 @@ fn obj_size_tree(
                         sizeof_node,
                         sizeof_vector,
                         seen,
+                        depth,
                     );
                     cons = unsafe { libr::CDR(cons) };
                 }
                 // Handle non-nil CDRs
-                size += obj_size_tree(cons, base_env, sizeof_node, sizeof_vector, seen);
+                size += obj_size_tree(cons, base_env, sizeof_node, sizeof_vector, seen, depth);
             }
         },
         BCODESXP => {
@@ -190,6 +226,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
             size += obj_size_tree(
                 unsafe { libr::CAR(x) },
@@ -197,6 +234,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
             size += obj_size_tree(
                 unsafe { libr::CDR(x) },
@@ -204,6 +242,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
         },
         // Environments
@@ -234,36 +273,72 @@ fn obj_size_tree(
                 size += match binding.value {
                     // For active bindings, we compute the size of the function
                     BindingValue::Active { fun } => {
-                        obj_size_tree(fun.sexp, base_env, sizeof_node, sizeof_vector, seen)
+                        obj_size_tree(fun.sexp, base_env, sizeof_node, sizeof_vector, seen, depth)
                     },
                     // `obj_size_tree` is aware of altrep objects.
-                    BindingValue::Altrep { object, .. } => {
-                        obj_size_tree(object.sexp, base_env, sizeof_node, sizeof_vector, seen)
-                    },
+                    BindingValue::Altrep { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth,
+                    ),
                     // `object_size_tree` is aware of promise objects.
                     // The environment iterator will automatically return `PRVALUE` as
                     // a `Standard` binding though. So this is only seeing unevaluated promises.
                     // For evaluated promises, we are not counting the size of `PRCODE`, but hopefully
                     // their sizes are negligible, mostly just symbols or small expressions.
-                    BindingValue::Promise { promise } => {
-                        obj_size_tree(promise.sexp, base_env, sizeof_node, sizeof_vector, seen)
-                    },
+                    BindingValue::Promise { promise } => obj_size_tree(
+                        promise.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth,
+                    ),
                     // Immediate bindings are expanded, thus we might overestimate the size of
                     // environments that use this kind of bindings.
                     // See more in https://github.com/r-devel/r-svn/blob/31340c871c7df54e45bfc7c4f49d09bb5806ec70/doc/notes/immbnd.md
-                    BindingValue::Standard { object, .. } => {
-                        obj_size_tree(object.sexp, base_env, sizeof_node, sizeof_vector, seen)
-                    },
+                    BindingValue::Standard { object, .. } => obj_size_tree(
+                        object.sexp,
+                        base_env,
+                        sizeof_node,
+                        sizeof_vector,
+                        seen,
+                        depth,
+                    ),
                 }
             }
 
-            size += obj_size_tree(env_parent(x), base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(
+                env_parent(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth,
+            );
         },
         // Functions
         CLOSXP => {
-            size += obj_size_tree(fn_formals(x), base_env, sizeof_node, sizeof_vector, seen);
-            size += obj_size_tree(fn_body(x), base_env, sizeof_node, sizeof_vector, seen);
-            size += obj_size_tree(fn_env(x), base_env, sizeof_node, sizeof_vector, seen);
+            size += obj_size_tree(
+                fn_formals(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth,
+            );
+            size += obj_size_tree(
+                fn_body(x),
+                base_env,
+                sizeof_node,
+                sizeof_vector,
+                seen,
+                depth,
+            );
+            size += obj_size_tree(fn_env(x), base_env, sizeof_node, sizeof_vector, seen, depth);
         },
         PROMSXP => {
             size += obj_size_tree(
@@ -272,6 +347,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
             size += obj_size_tree(
                 unsafe { libr::PRCODE(x) },
@@ -279,6 +355,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
             size += obj_size_tree(
                 unsafe { libr::PRENV(x) },
@@ -286,6 +363,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
         },
         EXTPTRSXP => {
@@ -296,6 +374,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
             size += obj_size_tree(
                 unsafe { libr::R_ExternalPtrTag(x) },
@@ -303,6 +382,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
         },
         S4SXP => {
@@ -312,6 +392,7 @@ fn obj_size_tree(
                 sizeof_node,
                 sizeof_vector,
                 seen,
+                depth,
             );
         },
         SYMSXP => {},
