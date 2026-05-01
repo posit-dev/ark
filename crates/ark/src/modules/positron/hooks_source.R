@@ -14,26 +14,49 @@ make_ark_source <- function(original_source) {
     force(original_source)
 
     # Take all original arguments for e.g. completions
-    function(
-        file,
-        local = FALSE,
-        echo = verbose,
-        print.eval = echo,
-        exprs,
-        spaced = use_file,
-        verbose = getOption("verbose"),
-        prompt.echo = getOption("prompt"),
-        max.deparse.length = 150,
-        width.cutoff = 60L,
-        deparseCtrl = "showAttributes",
-        chdir = FALSE,
-        catch.aborts = FALSE,
-        encoding = getOption("encoding"),
-        continue.echo = getOption("continue"),
-        skip.echo = 0,
-        keep.source = getOption("keep.source"),
-        ...
-    ) {
+    formals <- if (getRversion() <= "4.4.0") {
+        alist(
+            file = ,
+            local = FALSE,
+            echo = verbose,
+            print.eval = echo,
+            exprs = ,
+            spaced = use_file,
+            verbose = getOption("verbose"),
+            prompt.echo = getOption("prompt"),
+            max.deparse.length = 150,
+            width.cutoff = 60L,
+            deparseCtrl = "showAttributes",
+            chdir = FALSE,
+            # catch.aborts = FALSE,
+            encoding = getOption("encoding"),
+            continue.echo = getOption("continue"),
+            skip.echo = 0,
+            keep.source = getOption("keep.source")
+        )
+    } else {
+        alist(
+            file = ,
+            local = FALSE,
+            echo = verbose,
+            print.eval = echo,
+            exprs = ,
+            spaced = use_file,
+            verbose = getOption("verbose"),
+            prompt.echo = getOption("prompt"),
+            max.deparse.length = 150,
+            width.cutoff = 60L,
+            deparseCtrl = "showAttributes",
+            chdir = FALSE,
+            catch.aborts = FALSE,
+            encoding = getOption("encoding"),
+            continue.echo = getOption("continue"),
+            skip.echo = 0,
+            keep.source = getOption("keep.source")
+        )
+    }
+
+    body <- quote({
         # Compute default argument for `spaced`. Must be defined before the
         # fallback calls.
         use_file <- missing(exprs)
@@ -61,14 +84,8 @@ make_ark_source <- function(original_source) {
             encoding = encoding,
             continue.echo = continue.echo,
             skip.echo = skip.echo,
-            keep.source = keep.source,
-            ...
+            keep.source = keep.source
         )
-
-        # Remove arguments that are not yet supported
-        if (getRversion() <= "4.4.0") {
-            args$catch.aborts <- NULL
-        }
 
         # Try to resolve the file URI early so we can attribute plots to this
         # source file. This is best-effort; if it fails we proceed without attribution.
@@ -161,7 +178,13 @@ make_ark_source <- function(original_source) {
         # unexpected lengths (0 or >1). The annotated code is wrapped in
         # `withVisible()` so the result already has the right structure.
         invisible(eval(parsed, env))
-    }
+    })
+
+    out <- function() {}
+    formals(out) <- formals
+    body(out) <- body
+
+    out
 }
 
 #' @export
