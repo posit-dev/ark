@@ -66,10 +66,7 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
 pub unsafe extern "C-unwind" fn ps_ark_version() -> anyhow::Result<SEXP> {
     let mut info = HashMap::<String, String>::new();
     // Set the version info in the map
-    info.insert(
-        String::from("version"),
-        String::from(crate::ARK_BUILD_VERSION),
-    );
+    info.insert(String::from("version"), String::from(crate::BUILD_VERSION));
 
     // Add the current commit hash and branch; these are set by the build script (build.rs)
     info.insert(String::from("commit"), String::from(env!("BUILD_GIT_HASH")));
