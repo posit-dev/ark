@@ -11,7 +11,6 @@ use oak_layers::scope_layer::file_layers;
 use oak_layers::scope_layer::package_root_layers;
 use oak_layers::scope_layer::ScopeLayer;
 use oak_package::library::Library;
-use oak_package_definitions::LibraryDefinitions;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -63,12 +62,9 @@ pub(crate) struct WorldState {
     /// The root of the source tree (e.g., a package).
     pub(crate) root: Option<SourceRoot>,
 
-    /// Map of package name to package metadata for installed libraries. Lazily populated.
+    /// Map of package name to package metadata and package sources for installed
+    /// libraries. Lazily populated.
     pub(crate) library: Library,
-
-    /// Map of package name to package definitions for installed libraries.
-    /// Only usable when a package cache is available.
-    pub(crate) library_definitions: Option<LibraryDefinitions>,
 
     pub(crate) config: LspConfig,
 }
@@ -79,10 +75,9 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
-    pub(crate) fn new(library: Library, library_definitions: Option<LibraryDefinitions>) -> Self {
+    pub(crate) fn new(library: Library) -> Self {
         Self {
             library,
-            library_definitions,
             ..Default::default()
         }
     }

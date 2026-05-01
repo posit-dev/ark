@@ -21,7 +21,7 @@ oak_core.workspace = true
 oak_index.workspace = true
 oak_layers.workspace = true
 oak_package.workspace = true
-oak_package_definitions.workspace = true
+oak_sources.workspace = true
 stdext.workspace = true
 url.workspace = true
 
@@ -30,6 +30,5 @@ aether_parser.workspace = true
 assert_matches.workspace = true
 oak_index.workspace = true
 oak_package = { workspace = true, features = ["testing"] }
-oak_package_definitions = { workspace = true, features = ["testing"] }
 oak_package_metadata.workspace = true
 oak_sources = { workspace = true, features = ["testing"] }

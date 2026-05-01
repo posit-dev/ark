@@ -33,7 +33,6 @@ pub(crate) fn goto_definition(
         &index,
         &state.external_scope(&uri),
         &state.library,
-        state.library_definitions.as_ref(),
     );
 
     if targets.is_empty() {
@@ -107,7 +106,7 @@ mod tests {
         if paths.is_empty() {
             return None;
         }
-        Some(Library::new(paths))
+        Some(Library::new(paths, None))
     }
 
     fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {

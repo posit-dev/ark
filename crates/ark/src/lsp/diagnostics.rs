@@ -1654,7 +1654,7 @@ foo
             let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
 
             // Create a library with `mockpkg` installed
-            let library = Library::new(vec![]).insert("mockpkg", package);
+            let library = Library::new(vec![], None).insert("mockpkg", package);
 
             // Simulate a search path with `library` in scope
             let console_scopes = vec![vec!["library".to_string()]];
@@ -1769,7 +1769,7 @@ foo
             let package2 =
                 Package::from_parts(PathBuf::from("/mock/path2"), description2, namespace2);
 
-            let library = Library::new(vec![])
+            let library = Library::new(vec![], None)
                 .insert("pkg1", package1)
                 .insert("pkg2", package2);
 
@@ -1827,7 +1827,7 @@ foo
             };
             let package = Package::from_parts(PathBuf::from("/mock/path"), description, namespace);
 
-            let library = Library::new(vec![]).insert("pkg", package);
+            let library = Library::new(vec![], None).insert("pkg", package);
 
             let console_scopes = vec![vec!["require".to_string()]];
             let state = WorldState {
@@ -1858,7 +1858,7 @@ foo
             let palmerpenguins_pkg = Package::load_from_folder(palmerpenguins_dir.path())
                 .unwrap()
                 .unwrap();
-            let library = Library::new(vec![]).insert("penguins", palmerpenguins_pkg);
+            let library = Library::new(vec![], None).insert("penguins", palmerpenguins_pkg);
 
             // Simulate a world state with the penguins package installed and attached
             let mut state = DEFAULT_STATE.clone();

@@ -8,9 +8,8 @@ use oak_index::UseId;
 use oak_layers::external::resolve_external_name;
 use oak_layers::external::resolve_in_package;
 use oak_layers::scope_layer::ScopeLayer;
+use oak_package::definitions::PackageDefinitionVisibility;
 use oak_package::library::Library;
-use oak_package_definitions::LibraryDefinitions;
-use oak_package_definitions::PackageDefinitionVisibility;
 use url::Url;
 
 use crate::ExternalScope;
@@ -43,7 +42,6 @@ pub fn goto_definition(
     index: &SemanticIndex,
     scope: &ExternalScope,
     library: &Library,
-    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
     let Some(ident) = Identifier::classify(root, index, offset) else {
         return Vec::new();
@@ -64,15 +62,7 @@ pub fn goto_definition(
         Identifier::Use { scope_id, use_id } => {
             let use_site = &index.uses(scope_id)[use_id];
             resolve_use(
-                index,
-                scope_id,
-                use_id,
-                use_site,
-                file,
-                offset,
-                scope,
-                library,
-                library_definitions,
+                index, scope_id, use_id, use_site, file, offset, scope, library,
             )
         },
         Identifier::NamespaceAccess {
@@ -86,7 +76,7 @@ pub fn goto_definition(
             } else {
                 PackageDefinitionVisibility::Exported
             };
-            resolve_namespace_access(symbol, package, visibility, library, library_definitions)
+            resolve_namespace_access(symbol, package, visibility, library)
         },
     }
 }
@@ -100,7 +90,6 @@ fn resolve_use(
     offset: TextSize,
     scope: &ExternalScope,
     library: &Library,
-    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
     let use_def_map = index.use_def_map(scope_id);
     let bindings = use_def_map.bindings_at_use(use_id);
@@ -125,7 +114,7 @@ fn resolve_use(
 
     let external_targets = || {
         let scope_chain = scope.at(index, offset);
-        resolve_external(symbol_name, &scope_chain, library, library_definitions)
+        resolve_external(symbol_name, &scope_chain, library)
     };
 
     if !definitions.is_empty() {
@@ -159,11 +148,8 @@ fn resolve_namespace_access(
     package: &str,
     visibility: PackageDefinitionVisibility,
     library: &Library,
-    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
-    let Some(external) =
-        resolve_in_package(symbol, package, visibility, library, library_definitions)
-    else {
+    let Some(external) = resolve_in_package(symbol, package, visibility, library) else {
         return Vec::new();
     };
     vec![external.into()]
@@ -173,10 +159,8 @@ fn resolve_external(
     symbol: &str,
     scope_chain: &[ScopeLayer],
     library: &Library,
-    library_definitions: Option<&LibraryDefinitions>,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_external_name(library, library_definitions, scope_chain, symbol)
-    else {
+    let Some(external) = resolve_external_name(library, scope_chain, symbol) else {
         return Vec::new();
     };
     vec![external.into()]

@@ -17,9 +17,16 @@ testing = ["dep:tempfile"]
 workspace = true
 
 [dependencies]
+aether_parser.workspace = true
 anyhow.workspace = true
+biome_text_size.workspace = true
 log.workspace = true
+oak_core.workspace = true
+oak_index.workspace = true
+oak_index_vec.workspace = true
 oak_package_metadata.workspace = true
+oak_sources.workspace = true
+rustc-hash.workspace = true
 stdext.workspace = true
 
 [dependencies.tempfile]

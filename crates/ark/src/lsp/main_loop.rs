@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
@@ -19,7 +20,7 @@ use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_package::library::Library;
-use oak_package_definitions::LibraryDefinitions;
+use oak_sources::PackageCache;
 use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
@@ -218,14 +219,17 @@ impl GlobalState {
 
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
-        let library = Library::new(library_paths.clone());
-
         let r = harp::command::r_executable(&r_home);
-        let library_definitions =
-            r.and_then(|r| LibraryDefinitions::new(r, library_paths).log_err());
+        let package_cache = r
+            .and_then(|r| PackageCache::new(r, library_paths.clone()).log_err())
+            .map(|package_cache| {
+                Arc::new(package_cache) as Arc<dyn oak_sources::traits::PackageCache>
+            });
+
+        let library = Library::new(library_paths, package_cache);
 
         Self {
-            world: WorldState::new(library, library_definitions),
+            world: WorldState::new(library),
             lsp_state,
             client,
             events_tx,

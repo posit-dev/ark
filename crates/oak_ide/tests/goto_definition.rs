@@ -16,7 +16,6 @@ use oak_layers::scope_layer::file_layers;
 use oak_layers::scope_layer::ScopeLayer;
 use oak_package::library::Library;
 use oak_package::package::Package;
-use oak_package_definitions::LibraryDefinitions;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
 use oak_sources::test::TestPackageCache;
@@ -31,7 +30,7 @@ fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
 }
 
 fn empty_library() -> Library {
-    Library::new(vec![])
+    Library::new(vec![], None)
 }
 
 struct TestPackage {
@@ -59,8 +58,20 @@ impl TestPackage {
     }
 }
 
-fn test_library(packages: Vec<TestPackage>) -> (Library, LibraryDefinitions) {
-    let mut library = Library::new(vec![]);
+fn test_library(packages: Vec<TestPackage>) -> Library {
+    let cache = TestPackageCache::new().unwrap();
+
+    // Both exports and internals are in the test file
+    for package in &packages {
+        let content = test_file(&package.exports, &package.internals);
+        cache
+            .add(&package.name, vec![(package.file.as_path(), &content)])
+            .expect("Can write to cache");
+    }
+
+    let cache = Arc::new(cache);
+
+    let mut library = Library::new(vec![], Some(cache));
 
     // Only exports are included in `Namespace`
     for package in &packages {
@@ -76,20 +87,7 @@ fn test_library(packages: Vec<TestPackage>) -> (Library, LibraryDefinitions) {
         library = library.insert(&package.name, pkg);
     }
 
-    let cache = TestPackageCache::new().unwrap();
-
-    // Both exports and internals are in the test file
-    for package in &packages {
-        let content = test_file(&package.exports, &package.internals);
-        cache
-            .add(&package.name, vec![(package.file.as_path(), &content)])
-            .expect("Can write to cache");
-    }
-
-    let cache = Arc::new(cache);
-    let library_definitions = LibraryDefinitions::from_cache(cache);
-
-    (library, library_definitions)
+    library
 }
 
 // Create a file worth of function definitions
@@ -136,7 +134,6 @@ fn test_local_simple() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -161,7 +158,6 @@ fn test_local_reassignment_shadows() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -187,7 +183,6 @@ fn test_local_conditional_returns_both() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![
         NavigationTarget {
@@ -220,7 +215,6 @@ fn test_local_in_function() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -245,7 +239,6 @@ fn test_local_parameter() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -272,7 +265,6 @@ fn test_enclosing_scope() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -303,7 +295,6 @@ fn test_external_project_file() {
         &idx,
         &ExternalScope::package(scope_chain.clone(), scope_chain),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file: other_url,
@@ -320,7 +311,7 @@ fn test_external_package() {
     let source = "mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "dplyr",
         "dplyr.R",
         vec!["filter", "mutate", "select"],
@@ -336,7 +327,6 @@ fn test_external_package() {
         &idx,
         &ExternalScope::package(scope_chain.clone(), scope_chain),
         &library,
-        Some(&library_definitions),
     );
 
     assert_eq!(targets.len(), 1);
@@ -366,7 +356,6 @@ fn test_external_import_from() {
         &idx,
         &ExternalScope::package(scope_chain.clone(), scope_chain),
         &library,
-        None,
     );
     // importFrom resolves to a package, no file/range to navigate to
     assert!(targets.is_empty());
@@ -390,7 +379,6 @@ fn test_dollar_lhs_resolves() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -416,7 +404,6 @@ fn test_dollar_rhs_no_resolution() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert!(targets.is_empty());
 }
@@ -452,7 +439,6 @@ fn test_use_in_function_body_resolves_via_external() {
         &idx,
         &scope,
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file: other_url,
@@ -478,7 +464,6 @@ fn test_no_use_at_offset() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert!(targets.is_empty());
 }
@@ -497,7 +482,6 @@ fn test_unresolved_symbol() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert!(targets.is_empty());
 }
@@ -509,8 +493,7 @@ fn test_local_shadows_external() {
     let source = "foo <- 1\nfoo\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) =
-        test_library(vec![TestPackage::new("pkg", "pkg.R", vec!["foo"], vec![])]);
+    let library = test_library(vec![TestPackage::new("pkg", "pkg.R", vec!["foo"], vec![])]);
 
     let scope_chain = vec![ScopeLayer::PackageExports("pkg".to_string())];
 
@@ -522,7 +505,6 @@ fn test_local_shadows_external() {
         &idx,
         &ExternalScope::package(scope_chain.clone(), scope_chain),
         &library,
-        Some(&library_definitions),
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -555,7 +537,6 @@ fn test_conditional_definition_includes_external() {
         &idx,
         &ExternalScope::package(scope_chain.clone(), scope_chain),
         &library,
-        None,
     );
     assert_eq!(targets, vec![
         NavigationTarget {
@@ -590,7 +571,6 @@ fn test_definition_site_assignment() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -615,7 +595,6 @@ fn test_definition_site_parameter() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -640,7 +619,6 @@ fn test_definition_site_for_variable() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -667,7 +645,6 @@ fn test_right_assignment_definition_site() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file: file.clone(),
@@ -692,7 +669,6 @@ fn test_right_assignment_use_resolves() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -722,7 +698,6 @@ fn test_super_assignment_resolves_in_enclosing() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].name, "x");
@@ -746,7 +721,6 @@ fn test_super_assignment_definition_site() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets.len(), 1);
     assert_eq!(targets[0].name, "x");
@@ -770,7 +744,6 @@ fn test_string_definition() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -799,7 +772,6 @@ fn test_deeply_nested_function() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -829,7 +801,6 @@ fn test_use_on_rhs_of_assignment() {
         &idx,
         &ExternalScope::default(),
         &library,
-        None,
     );
     assert_eq!(targets, vec![NavigationTarget {
         file,
@@ -855,7 +826,7 @@ fn test_library_directive_in_predecessor() {
     let (bbb_root, bbb_idx) = parse_source(bbb_source);
 
     let aaa_layers = file_layers(aaa_url, &aaa_idx);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "dplyr",
         "dplyr.R",
         vec!["filter", "mutate", "select"],
@@ -864,15 +835,7 @@ fn test_library_directive_in_predecessor() {
 
     let scope = ExternalScope::package(aaa_layers.clone(), aaa_layers);
 
-    let targets = goto_definition(
-        offset(0),
-        &bbb_url,
-        &bbb_root,
-        &bbb_idx,
-        &scope,
-        &library,
-        Some(&library_definitions),
-    );
+    let targets = goto_definition(offset(0), &bbb_url, &bbb_root, &bbb_idx, &scope, &library);
 
     assert_eq!(targets.len(), 1);
 
@@ -891,7 +854,7 @@ fn test_namespace_access_exported_symbol() {
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "dplyr",
         "dplyr.R",
         vec!["filter", "mutate", "select"],
@@ -905,7 +868,6 @@ fn test_namespace_access_exported_symbol() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
 
     assert_eq!(targets.len(), 1);
@@ -921,7 +883,7 @@ fn test_namespace_access_unknown_symbol() {
     let source = "dplyr::nonexistent\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "dplyr",
         "dplyr.R",
         vec!["filter", "mutate", "select"],
@@ -935,7 +897,6 @@ fn test_namespace_access_unknown_symbol() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
     assert!(targets.is_empty());
 }
@@ -945,7 +906,7 @@ fn test_namespace_access_unknown_package() {
     let source = "bogus::foo\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![]);
+    let library = test_library(vec![]);
 
     let targets = goto_definition(
         offset(7),
@@ -954,7 +915,6 @@ fn test_namespace_access_unknown_package() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
     assert!(targets.is_empty());
 }
@@ -967,7 +927,7 @@ fn test_namespace_access_triple_colon() {
     let source = "pkg:::internal_fn\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "pkg",
         "pkg.R",
         vec!["external_fn"],
@@ -981,7 +941,6 @@ fn test_namespace_access_triple_colon() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
     assert_eq!(targets.len(), 1);
 
@@ -996,7 +955,7 @@ fn test_fixme_namespace_access_cursor_on_package_name() {
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "dplyr",
         "dplyr.R",
         vec!["filter", "mutate", "select"],
@@ -1010,7 +969,6 @@ fn test_fixme_namespace_access_cursor_on_package_name() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
     // FIXME: Cursor on the package name still classifies as NamespaceAccess
     // and resolves `mutate` in `dplyr`.
@@ -1026,7 +984,7 @@ fn test_fixme_namespace_access_cursor_on_operator() {
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) = test_library(vec![TestPackage::new(
+    let library = test_library(vec![TestPackage::new(
         "dplyr",
         "dplyr.R",
         vec!["filter", "mutate", "select"],
@@ -1040,7 +998,6 @@ fn test_fixme_namespace_access_cursor_on_operator() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
     // FIXME: Operator token is inside the RNamespaceExpression, still resolves.
     assert_eq!(targets.len(), 1);
@@ -1113,8 +1070,7 @@ fn test_namespace_access_in_call() {
     let source = "foo::bar()\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) =
-        test_library(vec![TestPackage::new("foo", "foo.R", vec!["bar"], vec![])]);
+    let library = test_library(vec![TestPackage::new("foo", "foo.R", vec!["bar"], vec![])]);
 
     let targets = goto_definition(
         offset(5),
@@ -1123,7 +1079,6 @@ fn test_namespace_access_in_call() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
 
     assert_eq!(targets.len(), 1);
@@ -1139,8 +1094,7 @@ fn test_namespace_access_in_extract() {
     let source = "foo::bar$baz\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let (library, library_definitions) =
-        test_library(vec![TestPackage::new("foo", "foo.R", vec!["bar"], vec![])]);
+    let library = test_library(vec![TestPackage::new("foo", "foo.R", vec!["bar"], vec![])]);
 
     let targets = goto_definition(
         offset(5),
@@ -1149,7 +1103,6 @@ fn test_namespace_access_in_extract() {
         &idx,
         &ExternalScope::default(),
         &library,
-        Some(&library_definitions),
     );
 
     assert_eq!(targets.len(), 1);

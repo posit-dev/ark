@@ -1,7 +1,6 @@
 use biome_rowan::TextRange;
+use oak_package::definitions::PackageDefinitionVisibility;
 use oak_package::library::Library;
-use oak_package_definitions::LibraryDefinitions;
-use oak_package_definitions::PackageDefinitionVisibility;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -36,7 +35,6 @@ impl ExternalDefinition {
 /// Walk the scope chain front-to-back, returning the first match.
 pub fn resolve_external_name(
     library: &Library,
-    library_definitions: Option<&LibraryDefinitions>,
     scope: &[ScopeLayer],
     name: &str,
 ) -> Option<ExternalDefinition> {
@@ -59,7 +57,6 @@ pub fn resolve_external_name(
                         pkg,
                         PackageDefinitionVisibility::Exported,
                         library,
-                        library_definitions,
                     ) {
                         return Some(def);
                     }
@@ -67,13 +64,9 @@ pub fn resolve_external_name(
             },
 
             ScopeLayer::PackageExports(pkg) => {
-                if let Some(def) = resolve_in_package(
-                    name,
-                    pkg,
-                    PackageDefinitionVisibility::Exported,
-                    library,
-                    library_definitions,
-                ) {
+                if let Some(def) =
+                    resolve_in_package(name, pkg, PackageDefinitionVisibility::Exported, library)
+                {
                     return Some(def);
                 }
             },
@@ -89,11 +82,9 @@ pub fn resolve_in_package(
     package: &str,
     visibility: PackageDefinitionVisibility,
     library: &Library,
-    library_definitions: Option<&LibraryDefinitions>,
 ) -> Option<ExternalDefinition> {
-    let library_definitions = library_definitions?;
-    let package = library.get(package)?;
-    let package_definitions = library_definitions.get(&package)?;
+    // FIXME: Slow without salsa!
+    let package_definitions = library.definitions(package)?;
     let definition = package_definitions.get(name)?;
 
     if visibility != definition.visibility() {

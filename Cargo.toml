@@ -76,7 +76,6 @@ oak_index = { path = "crates/oak_index" }
 oak_index_vec = { path = "crates/oak_index_vec" }
 oak_layers = { path = "crates/oak_layers" }
 oak_package = { path = "crates/oak_package" }
-oak_package_definitions = { path = "crates/oak_package_definitions" }
 oak_package_metadata = { path = "crates/oak_package_metadata" }
 oak_r_process = { path = "crates/oak_r_process" }
 oak_sources = { path = "crates/oak_sources" }
