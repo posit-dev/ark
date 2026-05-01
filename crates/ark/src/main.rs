@@ -29,7 +29,7 @@ thread_local! {
 }
 
 fn print_usage() {
-    println!("Ark {}, an R Kernel.", env!("ARK_BUILD_VERSION"));
+    println!("Ark {}, an R Kernel.", ark::ARK_BUILD_VERSION);
     print!(
         r#"
 Usage: ark [OPTIONS]
@@ -142,7 +142,7 @@ fn main() -> anyhow::Result<()> {
                 }
             },
             "--version" => {
-                println!("Ark {}", env!("ARK_BUILD_VERSION"));
+                println!("Ark {}", ark::ARK_BUILD_VERSION);
                 return Ok(());
             },
             "--install" => {
