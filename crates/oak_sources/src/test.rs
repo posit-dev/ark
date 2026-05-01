@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-impl crate::traits::PackageCache for TestPackageCache {
+impl crate::PackageSources for TestPackageCache {
     fn get(&self, package: &str) -> Option<PathBuf> {
         self.get(package)
     }

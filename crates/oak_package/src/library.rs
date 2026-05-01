@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use oak_sources::traits::PackageCache;
+use oak_sources::PackageSources;
 use stdext::result::ResultExt;
 
 use crate::definitions::PackageDefinitions;
@@ -15,20 +15,23 @@ pub struct Library {
     /// Paths to library directories, i.e. what `base::libPaths()` returns.
     pub library_paths: Arc<Vec<PathBuf>>,
 
-    /// Package cache for loading package sources
+    /// Object for loading package sources
     ///
-    /// Stored as `dyn PackageCache` so we can easily swap in a test cache during
+    /// Stored as `dyn PackageSources` so we can easily swap in a test cache during
     /// LSP feature testing
-    package_cache: Option<Arc<dyn PackageCache>>,
+    package_sources: Option<Arc<dyn PackageSources>>,
 
     packages: Arc<RwLock<HashMap<String, Option<Arc<Package>>>>>,
 }
 
 impl Library {
-    pub fn new(library_paths: Vec<PathBuf>, package_cache: Option<Arc<dyn PackageCache>>) -> Self {
+    pub fn new(
+        library_paths: Vec<PathBuf>,
+        package_sources: Option<Arc<dyn PackageSources>>,
+    ) -> Self {
         Self {
             library_paths: Arc::new(library_paths),
-            package_cache,
+            package_sources,
             packages: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -66,9 +69,9 @@ impl Library {
     /// We expect this to be a tracked salsa function, which should memoize it
     /// efficiently.
     pub fn definitions(&self, name: &str) -> Option<PackageDefinitions> {
-        let package_cache = self.package_cache.as_ref()?;
+        let package_sources = self.package_sources.as_ref()?;
         let package = self.get(name)?;
-        let directory = package_cache.get(&package.description().name)?;
+        let directory = package_sources.get(&package.description().name)?;
         PackageDefinitions::load_from_directory(&directory, package.namespace()).log_err()
     }
 

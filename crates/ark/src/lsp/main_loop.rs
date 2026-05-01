@@ -220,13 +220,11 @@ impl GlobalState {
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
         let r = harp::command::r_executable(&r_home);
-        let package_cache = r
+        let package_sources = r
             .and_then(|r| PackageCache::new(r, library_paths.clone()).log_err())
-            .map(|package_cache| {
-                Arc::new(package_cache) as Arc<dyn oak_sources::traits::PackageCache>
-            });
+            .map(|cache| Arc::new(cache) as Arc<dyn oak_sources::PackageSources>);
 
-        let library = Library::new(library_paths, package_cache);
+        let library = Library::new(library_paths, package_sources);
 
         Self {
             world: WorldState::new(library),
