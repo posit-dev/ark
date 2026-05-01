@@ -77,6 +77,9 @@ fn obj_size_tree(
     // Guard against stack overflow from deeply nested R objects.
     // Returns 0 (undercounting) rather than crashing when depth limit is exceeded.
     if depth >= MAX_DEPTH {
+        log::warn!(
+            "`obj_size_tree()`: recursion depth limit ({MAX_DEPTH}) exceeded, undercounting to size 0"
+        );
         return 0;
     }
 
