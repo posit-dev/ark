@@ -6,7 +6,7 @@
 #
 
 initialize_hooks <- function() {
-    rebind("utils", "View", view, namespace = TRUE)
+    rebind("utils", "View", view_hook, namespace = TRUE)
     rebind("base", "debug", new_ark_debug(base::debug), namespace = TRUE)
     rebind(
         "base",
