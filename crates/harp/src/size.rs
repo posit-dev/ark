@@ -64,6 +64,12 @@ pub fn r_size(x: SEXP) -> harp::Result<usize> {
     })
 }
 
+#[harp::register]
+unsafe extern "C-unwind" fn ps_obj_size(x: SEXP) -> anyhow::Result<SEXP> {
+    let size = r_size(x)?;
+    Ok(libr::Rf_ScalarReal(size as f64))
+}
+
 fn obj_size_tree(
     x: SEXP,
     base_env: SEXP,
@@ -668,6 +674,21 @@ mod tests {
                 })",
             );
             assert!(size != 0)
+        });
+    }
+
+    // https://github.com/posit-dev/positron/issues/13294
+    #[test]
+    fn test_deeply_nested_object_does_not_crash() {
+        crate::r_task(|| {
+            let code = "local({
+                x <- list(NULL)
+                for (i in 1:1000000) x <- list(x)
+                x
+            })";
+            // Should not stack overflow, just returns a (possibly undercounted) size
+            let size = object_size(code);
+            assert!(size > 0);
         });
     }
 }

@@ -147,6 +147,7 @@ The following R packages are required for tests:
 - tibble
 - haven
 - R6
+- readr
 
 ### Installation
 

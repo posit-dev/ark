@@ -68,6 +68,7 @@ jobs:
             haven
             R6
             ragg
+            readr
             rstudioapi
             survival
             tibble

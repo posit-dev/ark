@@ -5,6 +5,10 @@
 #
 #
 
+obj_size <- function(x) {
+    .ps.Call("ps_obj_size", x)
+}
+
 setHook(
     packageEvent("survival", "onLoad"),
     function(...) {
