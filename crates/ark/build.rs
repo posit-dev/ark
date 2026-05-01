@@ -47,7 +47,7 @@ fn main() {
     // to override the version string baked into the binary. Defaults to the
     // version declared in `Cargo.toml`.
     let build_version = option_env!("ARK_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-    println!("cargo:rustc-env=ARK_BUILD_VERSION={}", build_version);
+    println!("cargo:rustc-env=BUILD_VERSION={}", build_version);
 
     // Embed an Application Manifest file on Windows.
     // Turns on UTF-8 support and declares our Windows version compatibility.
