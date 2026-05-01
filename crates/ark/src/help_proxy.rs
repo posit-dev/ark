@@ -5,7 +5,7 @@
 //
 //
 
-use std::net::TcpListener;
+use std::time::Duration;
 
 use actix_web::get;
 use actix_web::http::header::ContentType;
@@ -40,11 +40,39 @@ struct PreviewRdParams {
     file: String,
 }
 
+struct AppState {
+    target_port: u16,
+}
+
 // Starts the help proxy.
 pub fn start(target_port: u16) -> anyhow::Result<u16> {
-    let source_port = HelpProxy::get_os_assigned_port()?;
+    let (port_tx, port_rx) = crossbeam::channel::bounded::<u16>(1);
 
     spawn!("ark-help-proxy", move || -> anyhow::Result<()> {
+        // Bind to port `0` to allow the OS to assign the port, avoiding any race conditions
+        let address = "127.0.0.1:0";
+
+        let server = HttpServer::new(move || {
+            App::new()
+                .app_data(web::Data::new(AppState { target_port }))
+                .service(preview_rd)
+                .service(preview_img)
+                .default_service(web::to(proxy_request))
+        })
+        .bind(address)?
+        .workers(1);
+
+        // Get finalized address post `bind()`
+        let addresses = server.addrs();
+        let Some(address) = addresses.first() else {
+            return Err(anyhow::anyhow!(
+                "Help proxy server failed to finalize address"
+            ));
+        };
+
+        // Send back the finalized port address
+        port_tx.send(address.port())?;
+
         // Create a single-threaded Tokio runtime to spare stack memory. The
         // help proxy server does not need to be high performance.
         // Note that `new_current_thread()` seems to consume much more memory.
@@ -55,7 +83,7 @@ pub fn start(target_port: u16) -> anyhow::Result<u16> {
 
         // Execute the task within the runtime.
         rt.block_on(async {
-            match task(source_port, target_port).await {
+            match server.run().await {
                 Ok(value) => log::info!("Help proxy server exited with value: {:?}", value),
                 Err(error) => log::error!("Help proxy server exited unexpectedly: {}", error),
             }
@@ -64,64 +92,12 @@ pub fn start(target_port: u16) -> anyhow::Result<u16> {
         Ok(())
     });
 
-    Ok(source_port)
-}
-
-// The help proxy main entry point.
-async fn task(source_port: u16, target_port: u16) -> anyhow::Result<()> {
-    // Create the help proxy.
-    let help_proxy = HelpProxy::new(source_port, target_port)?;
-
-    // Run the help proxy.
-    help_proxy.run().await
-}
-
-// AppState struct.
-#[derive(Clone)]
-struct AppState {
-    target_port: u16,
-}
-
-// HelpProxy struct.
-struct HelpProxy {
-    source_port: u16,
-    target_port: u16,
-}
-
-// HelpProxy implementation.
-impl HelpProxy {
-    // Creates a new HelpProxy.
-    fn new(source_port: u16, target_port: u16) -> anyhow::Result<Self> {
-        Ok(HelpProxy {
-            source_port,
-            target_port,
-        })
-    }
-
-    // Runs the HelpProxy.
-    async fn run(&self) -> anyhow::Result<()> {
-        // Create the app state.
-        let app_state = web::Data::new(AppState {
-            target_port: self.target_port,
-        });
-
-        // Create the server.
-        let server = HttpServer::new(move || {
-            App::new()
-                .app_data(app_state.clone())
-                .service(preview_rd)
-                .service(preview_img)
-                .default_service(web::to(proxy_request))
-        })
-        .bind(("127.0.0.1", self.source_port))?
-        .workers(1);
-
-        // Run the server.
-        Ok(server.run().await?)
-    }
-
-    fn get_os_assigned_port() -> std::io::Result<u16> {
-        Ok(TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
+    // Wait for the returned port with an extensive timeout
+    match port_rx.recv_timeout(Duration::from_secs(20)) {
+        Ok(port) => Ok(port),
+        Err(err) => Err(anyhow::anyhow!(
+            "Help proxy server timed out while waiting for a port: {err:?}"
+        )),
     }
 }
 
