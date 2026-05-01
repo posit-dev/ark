@@ -40,6 +40,8 @@ pub struct Description {
 
     pub repository: Option<Repository>,
 
+    pub priority: Option<Priority>,
+
     /// Raw DCF fields
     pub fields: Dcf,
 }
@@ -47,6 +49,12 @@ pub struct Description {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Repository {
     CRAN,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Priority {
+    Base,
+    Recommended,
 }
 
 impl Description {
@@ -84,11 +92,22 @@ impl Description {
             None
         });
 
+        let priority = fields.get("Priority").and_then(|priority| {
+            if priority == "base" {
+                return Some(Priority::Base);
+            }
+            if priority == "recommended" {
+                return Some(Priority::Recommended);
+            }
+            None
+        });
+
         Ok(Description {
             name,
             version,
             depends,
             repository,
+            priority,
             fields,
         })
     }
@@ -212,6 +231,26 @@ Title: My Package
 Repository: CRAN"#;
         let parsed = Description::parse(desc).unwrap();
         assert_eq!(parsed.repository, Some(Repository::CRAN));
+    }
+
+    #[test]
+    fn parses_description_with_priority() {
+        let desc = r#"Package: utils
+Version: 4.5.0
+Priority: base"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.priority, Some(Priority::Base));
+
+        let desc = r#"Package: MASS
+Version: 7.3-65
+Priority: recommended"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert_eq!(parsed.priority, Some(Priority::Recommended));
+
+        let desc = r#"Package: mypkg
+Version: 1.0.0"#;
+        let parsed = Description::parse(desc).unwrap();
+        assert!(parsed.priority.is_none());
     }
 
     #[test]

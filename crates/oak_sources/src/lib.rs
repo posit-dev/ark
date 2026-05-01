@@ -1,11 +1,12 @@
+mod base;
 mod cran;
 mod download;
 mod fs;
+mod hash;
+mod installed_package;
 mod srcref;
 
 use std::collections::HashSet;
-use std::fs::read_to_string;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
@@ -14,12 +15,12 @@ use chrono::TimeDelta;
 use chrono::Utc;
 use oak_fs::file_lock;
 use oak_fs::file_lock::FileLock;
-use oak_package::package_description::Description;
+use oak_package::package_description::Priority;
 use oak_package::package_description::Repository;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
+
+use crate::installed_package::InstalledPackage;
 
 /// Name of the root lock file and the per-key lock file.
 const LOCK_FILENAME: &str = ".lock";
@@ -187,40 +188,13 @@ impl PackageCache {
     }
 
     fn get_result(&self, package: &str) -> anyhow::Result<Option<PathBuf>> {
-        // Find install path of the package
-        let mut libpath = None;
-        for r_libpath in &self.r_libpaths {
-            if r_libpath.join(package).exists() {
-                libpath = Some(r_libpath);
-                break;
-            }
-        }
-        let Some(libpath) = libpath else {
-            // Not even installed. We don't record this package in `source_unavailable` in
-            // case the user installs it later in the session.
+        let Some(package) = InstalledPackage::find(package, &self.r_libpaths)? else {
+            // Not even installed
             return Ok(None);
         };
 
-        let package_path = libpath.join(package);
-        let namespace_path = package_path.join("NAMESPACE");
-        let description_path = package_path.join("DESCRIPTION");
-
-        let description_contents = read_to_string(&description_path)?;
-        let description = Description::parse(&description_contents)?;
-
-        let version = description.version.as_str();
-
-        let libpath_hash = hash(libpath.to_string_lossy().as_ref());
-        let description_hash = hash(&description_contents);
-
-        // Flat key unique enough to handle:
-        // - The same R package across multiple libpaths
-        // - Reinstalling a dev R package without changing the version (0.1.0.9000)
-        let key =
-            format!("{package}_{version}_libpath-{libpath_hash}_description-{description_hash}");
-
         // Read path: completion sentinel present, already exists on disk
-        let destination = self.cache_root_lock.parent().join(&key);
+        let destination = self.cache_root_lock.parent().join(package.key());
         if destination.join(METADATA_FILENAME).exists() {
             return Ok(Some(destination));
         }
@@ -230,92 +204,170 @@ impl PackageCache {
         if self
             .source_unavailable
             .read()
-            .is_ok_and(|set| set.contains(&key))
+            .is_ok_and(|set| set.contains(package.key()))
         {
             return Ok(None);
         }
 
-        // Write path: take per-key exclusive lock
-        let destination = self.cache_root.join(&key);
+        // Write path
+        let result = if matches!(package.description().priority, Some(Priority::Base)) {
+            // R version to download is the same as the base package version
+            self.try_populate_base(&package.description().version)
+        } else {
+            self.try_populate(&package)
+        };
+
+        match result {
+            Ok(true) => Ok(Some(destination)),
+            Ok(false) => {
+                // Unavailable for some reason, maybe package isn't on CRAN.
+                // Never try and generate sources again this session.
+                self.source_unavailable
+                    .write()
+                    .ok()
+                    .map(|mut set| set.insert(package.key().to_string()));
+                Ok(None)
+            },
+            Err(err) => {
+                // Errored for some reason during source generation, maybe a download failed.
+                // Never try and generate sources again this session.
+                log::error!(
+                    "Failed to cache {name} {version}: {err:?}",
+                    name = package.name(),
+                    version = package.version()
+                );
+                self.source_unavailable
+                    .write()
+                    .ok()
+                    .map(|mut set| set.insert(package.key().to_string()));
+                Ok(None)
+            },
+        }
+    }
+
+    fn try_populate_base(&self, version: &str) -> anyhow::Result<bool> {
+        // Download the R sources in their entirety
+        let Some(bytes) = crate::base::download(version)? else {
+            log::trace!("No R source tarball on CRAN for version {version}");
+            return Ok(false);
+        };
+
+        // Populate all base packages from the download
+        for package in crate::base::BASE_PACKAGES {
+            let Some(package) = InstalledPackage::find(package, &self.r_libpaths)? else {
+                // It would be very odd to not find a base package
+                log::warn!(
+                    "Can't find '{package}' package from scanning {libpaths:?}",
+                    libpaths = self.r_libpaths
+                );
+                return Ok(false);
+            };
+            self.try_populate_base_package(&package, version, &bytes)?;
+        }
+
+        Ok(true)
+    }
+
+    fn try_populate_base_package(
+        &self,
+        package: &InstalledPackage,
+        version: &str,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        // Take per-key exclusive lock
+        let destination = self.cache_root.join(package.key());
         destination.create_dir()?;
         let destination_lock = destination.open_rw_exclusive_create(LOCK_FILENAME)?;
 
-        // Re-check: another writer may have populated the key while we waited for an
-        // exclusive lock
+        // Another writer may have populated the key while we waited for an exclusive lock
         if destination_lock.parent().join(METADATA_FILENAME).exists() {
-            return Ok(Some(destination_lock.parent().to_path_buf()));
+            return Ok(());
         }
 
         // Wipe any partial content from a prior writer that may have crashed before
         // writing `.metadata`.
         destination_lock.remove_siblings()?;
 
-        if self.try_populate(
-            package,
-            version,
-            libpath,
-            &namespace_path,
-            &description_path,
-            &description,
-            &description_hash,
-            &destination_lock,
-        )? {
-            Ok(Some(destination_lock.parent().to_path_buf()))
+        crate::base::extract(package.name(), version, bytes, &destination_lock)?;
+
+        crate::fs::copy_as_readonly(
+            package.description_path(),
+            destination_lock.parent().join("DESCRIPTION"),
+        )?;
+
+        // The `base` package itself has no NAMESPACE, for now we generate an empty
+        // NAMESPACE, but eventually we will want to fully populate it with a
+        // pseudo-NAMESPACE.
+        if package.name() == "base" {
+            std::fs::write(destination_lock.parent().join("NAMESPACE"), "")?;
+            crate::fs::set_readonly(destination_lock.parent().join("NAMESPACE"))?;
         } else {
-            // Never try source generation for this key again
-            self.source_unavailable
-                .write()
-                .ok()
-                .map(|mut set| set.insert(key));
-            Ok(None)
+            crate::fs::copy_as_readonly(
+                package.namespace_path(),
+                destination_lock.parent().join("NAMESPACE"),
+            )?;
         }
+
+        // Last! `.metadata` is the completion sentinel.
+        self.write_metadata(package, &destination_lock)?;
+
+        Ok(())
     }
 
     /// Writes `DESCRIPTION`, `NAMESPACE`, and `R/` to the cache entry, if possible
-    fn try_populate(
-        &self,
-        package: &str,
-        version: &str,
-        libpath: &Path,
-        namespace_path: &Path,
-        description_path: &Path,
-        description: &Description,
-        description_hash: &str,
-        destination_lock: &FileLock,
-    ) -> anyhow::Result<bool> {
-        if !self.write_r_files(package, version, description, destination_lock)? {
+    fn try_populate(&self, package: &InstalledPackage) -> anyhow::Result<bool> {
+        // Take per-key exclusive lock
+        let destination = self.cache_root.join(package.key());
+        destination.create_dir()?;
+        let destination_lock = destination.open_rw_exclusive_create(LOCK_FILENAME)?;
+
+        // Another writer may have populated the key while we waited for an exclusive lock
+        if destination_lock.parent().join(METADATA_FILENAME).exists() {
+            return Ok(true);
+        }
+
+        // Wipe any partial content from a prior writer that may have crashed before
+        // writing `.metadata`.
+        destination_lock.remove_siblings()?;
+
+        if !self.write_r_files(package, &destination_lock)? {
             return Ok(false);
         }
 
         crate::fs::copy_as_readonly(
-            description_path,
+            package.description_path(),
             destination_lock.parent().join("DESCRIPTION"),
         )?;
-        crate::fs::copy_as_readonly(namespace_path, destination_lock.parent().join("NAMESPACE"))?;
+        crate::fs::copy_as_readonly(
+            package.namespace_path(),
+            destination_lock.parent().join("NAMESPACE"),
+        )?;
 
         // Last! Only write `.metadata` if all other writes succeed. It is our completion sentinal.
-        self.write_metadata(package, libpath, description_hash, destination_lock)?;
+        self.write_metadata(package, &destination_lock)?;
 
         Ok(true)
     }
 
     fn write_r_files(
         &self,
-        package: &str,
-        version: &str,
-        description: &Description,
+        package: &InstalledPackage,
         destination_lock: &FileLock,
     ) -> anyhow::Result<bool> {
         // Try caching from srcref
         match crate::srcref::cache_srcref(
-            package,
-            version,
+            package.name(),
+            &package.description().version,
             destination_lock,
             &self.r,
             &self.r_libpaths,
         ) {
             Ok(true) => {
-                log::trace!("Cached {package} {version} from srcrefs.");
+                log::trace!(
+                    "Cached {name} {version} from srcrefs.",
+                    name = package.name(),
+                    version = package.version()
+                );
                 return Ok(true);
             },
             Ok(false) => {
@@ -323,15 +375,23 @@ impl PackageCache {
             },
             Err(err) => {
                 // Fall through with log
-                log::warn!("Failed to cache {package} {version} from srcrefs: {err:?}");
+                log::warn!(
+                    "Failed to cache {name} {version} from srcrefs: {err:?}",
+                    name = package.name(),
+                    version = package.version()
+                );
             },
         }
 
         // Try caching from CRAN
-        if matches!(description.repository, Some(Repository::CRAN)) {
-            match crate::cran::cache_cran(package, version, destination_lock) {
+        if matches!(package.description().repository, Some(Repository::CRAN)) {
+            match crate::cran::cache_cran(package.name(), package.version(), destination_lock) {
                 Ok(true) => {
-                    log::trace!("Cached {package} {version} from CRAN download.");
+                    log::trace!(
+                        "Cached {name} {version} from CRAN download.",
+                        name = package.name(),
+                        version = package.version()
+                    );
                     return Ok(true);
                 },
                 Ok(false) => {
@@ -339,7 +399,11 @@ impl PackageCache {
                 },
                 Err(err) => {
                     // Fall through with log
-                    log::warn!("Failed to cache {package} {version} from CRAN download: {err:?}");
+                    log::warn!(
+                        "Failed to cache {name} {version} from CRAN download: {err:?}",
+                        name = package.name(),
+                        version = package.version()
+                    );
                 },
             }
         }
@@ -362,15 +426,13 @@ impl PackageCache {
     /// hold a shared lock).
     fn write_metadata(
         &self,
-        package: &str,
-        libpath: &Path,
-        description_hash: &str,
+        package: &InstalledPackage,
         destination_lock: &FileLock,
     ) -> anyhow::Result<()> {
         let metadata = Metadata {
-            package: package.to_string(),
-            libpath: libpath.to_path_buf(),
-            description_hash: description_hash.to_string(),
+            package: package.name().to_string(),
+            libpath: package.library_path().to_path_buf(),
+            description_hash: package.description_hash().to_string(),
             generated_at: Utc::now(),
         };
         let contents = serde_json::to_vec_pretty(&metadata)?;
@@ -447,7 +509,7 @@ impl PackageCache {
                 continue;
             };
 
-            if hash(&description_contents) != metadata.description_hash {
+            if crate::hash::hash(&description_contents) != metadata.description_hash {
                 log::trace!("Cleaning {} due to changed DESCRIPTION", path.display());
                 crate::fs::remove_dir_all_or_warn(&path);
                 continue;
@@ -458,9 +520,21 @@ impl PackageCache {
     }
 }
 
-/// Retain 8 ASCII characters for each hash fragment
-fn hash(contents: &str) -> String {
-    let mut hash = hex::encode(Sha256::digest(contents));
-    hash.truncate(8);
-    hash
-}
+// // For local testing
+// #[cfg(test)]
+// mod tests {
+//     use std::path::PathBuf;
+//
+//     use crate::PackageCache;
+//
+//     #[test]
+//     fn testit() {
+//         let r_script_path = PathBuf::from("/usr/local/bin/Rscript");
+//         let r_libpaths = vec![
+//             PathBuf::from("/Users/davis/Library/R/arm64/4.5/library"),
+//             PathBuf::from("/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library"),
+//         ];
+//         let cache = PackageCache::new(r_script_path, r_libpaths).unwrap();
+//         cache.get("utils");
+//     }
+// }
