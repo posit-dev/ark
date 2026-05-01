@@ -120,7 +120,27 @@ pub(crate) enum AuxiliaryEvent {
     Log(lsp_types::MessageType, String),
     PublishDiagnostics(Url, Vec<Diagnostic>, Option<i32>),
     SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
+    EnableProgress,
+    Progress(Progress),
     Shutdown,
+}
+
+#[derive(Debug)]
+pub(crate) struct Progress {
+    id: String,
+    event: ProgressEvent,
+}
+
+impl Progress {
+    pub(crate) fn new(id: String, event: ProgressEvent) -> Self {
+        Self { id, event }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum ProgressEvent {
+    Begin,
+    End,
 }
 
 /// Global state for the main loop
@@ -178,6 +198,12 @@ struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     tasks: TaskList<Option<AuxiliaryEvent>>,
+    progress_support: ProgressSupport,
+}
+
+enum ProgressSupport {
+    Enabled,
+    Disabled,
 }
 
 impl GlobalState {
@@ -546,10 +572,14 @@ impl AuxiliaryState {
             Box::pin(pending) as Pin<Box<dyn AnyhowJoinHandleFut<Option<AuxiliaryEvent>> + Send>>;
         tasks.push(pending);
 
+        // Until told otherwise by the client capabilities
+        let progress_support = ProgressSupport::Disabled;
+
         Self {
             client,
             auxiliary_event_rx,
             tasks,
+            progress_support,
         }
     }
 
@@ -567,6 +597,8 @@ impl AuxiliaryState {
                         .publish_diagnostics(uri, diagnostics, version)
                         .await
                 },
+                AuxiliaryEvent::EnableProgress => self.enable_progress(),
+                AuxiliaryEvent::Progress(progress) => self.handle_progress(progress).await,
                 AuxiliaryEvent::Shutdown => break,
             }
         }
@@ -605,6 +637,57 @@ impl AuxiliaryState {
     }
     async fn log_error(&self, message: String) {
         self.client.log_message(MessageType::ERROR, message).await
+    }
+
+    fn enable_progress(&mut self) {
+        log::info!("Enabling work done progress support");
+        self.progress_support = ProgressSupport::Enabled;
+    }
+
+    async fn handle_progress(&self, progress: Progress) {
+        if matches!(self.progress_support, ProgressSupport::Disabled) {
+            return;
+        }
+
+        let token = lsp_types::ProgressToken::String(format!("ark/progress/{}", progress.id));
+
+        let work_done_progress = match progress.event {
+            ProgressEvent::Begin => {
+                tracing::trace!("handle_progress(begin): token {token:?}");
+
+                let result = self
+                    .client
+                    .send_request::<lsp_types::request::WorkDoneProgressCreate>(
+                        lsp_types::WorkDoneProgressCreateParams {
+                            token: token.clone(),
+                        },
+                    )
+                    .await;
+
+                if let Err(error) = result {
+                    log::warn!("Client rejected progress token: {error:?}");
+                    return;
+                };
+
+                lsp_types::WorkDoneProgress::Begin(lsp_types::WorkDoneProgressBegin {
+                    title: String::from("This is progress"),
+                    cancellable: None,
+                    message: Some(String::from("This is progress")),
+                    percentage: None,
+                })
+            },
+            ProgressEvent::End => {
+                tracing::trace!("handle_progress(end): token {token:?}");
+                lsp_types::WorkDoneProgress::End(lsp_types::WorkDoneProgressEnd { message: None })
+            },
+        };
+
+        self.client
+            .send_notification::<lsp_types::notification::Progress>(lsp_types::ProgressParams {
+                token,
+                value: lsp_types::ProgressParamsValue::WorkDone(work_done_progress),
+            })
+            .await;
     }
 }
 
@@ -687,6 +770,14 @@ pub(crate) fn publish_diagnostics(uri: Url, diagnostics: Vec<Diagnostic>, versio
         diagnostics,
         version,
     ));
+}
+
+pub(crate) fn enable_progress() {
+    send_auxiliary(AuxiliaryEvent::EnableProgress);
+}
+
+pub(crate) fn report_progress(progress: Progress) {
+    send_auxiliary(AuxiliaryEvent::Progress(progress));
 }
 
 impl KernelNotification {

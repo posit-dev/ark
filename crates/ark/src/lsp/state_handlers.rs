@@ -53,6 +53,7 @@ use crate::lsp::config::DOCUMENT_SETTINGS;
 use crate::lsp::config::GLOBAL_SETTINGS;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
+use crate::lsp::main_loop::enable_progress;
 use crate::lsp::main_loop::DidCloseVirtualDocumentParams;
 use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
@@ -86,6 +87,11 @@ pub(crate) fn initialize(
     state: &mut WorldState,
 ) -> LspResult<InitializeResult> {
     lsp_state.capabilities = Capabilities::new(params.capabilities);
+
+    // Let the auxiliary loop know it can emit progress reports
+    if lsp_state.capabilities.work_done_progress() {
+        enable_progress();
+    }
 
     // Initialize the workspace folders
     let mut folders: Vec<String> = Vec::new();

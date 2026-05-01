@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::anyhow;
@@ -8,6 +10,9 @@ use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::LocationLink;
 
 use crate::lsp::document::Document;
+use crate::lsp::main_loop::report_progress;
+use crate::lsp::main_loop::Progress;
+use crate::lsp::main_loop::ProgressEvent;
 use crate::lsp::state::WorldState;
 
 pub(crate) fn goto_definition(
@@ -26,6 +31,11 @@ pub(crate) fn goto_definition(
 
     let index = document.semantic_index();
     let root = document.syntax()?;
+    // TODO: Need a unique key
+    // TODO: Use the package name
+    // TODO: How do we fire this at the right location? Callback? Ask Lionel his opinion.
+    let now = format!("{:?}", std::time::SystemTime::now());
+    report_progress(Progress::new(now.clone(), ProgressEvent::Begin));
     let targets = oak_ide::goto_definition(
         offset,
         &uri,
@@ -34,6 +44,7 @@ pub(crate) fn goto_definition(
         &state.external_scope(&uri),
         &state.library,
     );
+    report_progress(Progress::new(now.clone(), ProgressEvent::End));
 
     if targets.is_empty() {
         return Ok(None);

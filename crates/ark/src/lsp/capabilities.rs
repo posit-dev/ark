@@ -17,6 +17,7 @@ pub(crate) struct Capabilities {
     dynamic_registration_for_did_change_configuration: bool,
     code_action_literal_support: bool,
     workspace_edit_document_changes: bool,
+    work_done_progress: bool,
 }
 
 impl Capabilities {
@@ -46,10 +47,17 @@ impl Capabilities {
             .and_then(|workspace_edit| workspace_edit.document_changes)
             .is_some_and(|document_changes| document_changes);
 
+        let work_done_progress = client_capabilities
+            .window
+            .as_ref()
+            .and_then(|window| window.work_done_progress)
+            .unwrap_or(false);
+
         Self {
             dynamic_registration_for_did_change_configuration,
             code_action_literal_support,
             workspace_edit_document_changes,
+            work_done_progress,
         }
     }
 
@@ -83,6 +91,10 @@ impl Capabilities {
     ) -> Self {
         self.workspace_edit_document_changes = workspace_edit_document_changes;
         self
+    }
+
+    pub(crate) fn work_done_progress(&self) -> bool {
+        self.work_done_progress
     }
 
     pub(crate) fn code_action_provider_capability(&self) -> Option<CodeActionProviderCapability> {
