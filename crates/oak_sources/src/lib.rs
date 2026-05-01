@@ -256,6 +256,10 @@ impl PackageCache {
         for package in crate::base::BASE_PACKAGES {
             let Some(package) = InstalledPackage::find(package, &self.r_libpaths)? else {
                 // It would be very odd to not find a base package
+                log::warn!(
+                    "Can't find '{package}' package from scanning {libpaths:?}",
+                    libpaths = self.r_libpaths
+                );
                 return Ok(false);
             };
             self.try_populate_base_package(&package, version, &bytes)?;
