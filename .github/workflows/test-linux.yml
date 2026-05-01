@@ -18,13 +18,20 @@ jobs:
       fail-fast: false
       matrix:
         config:
+          # Test on all supported R versions
+          # (Particularly important to do this on at least one OS for
+          # version dependent R hook override checks, like `utils::View()`)
           - { rust: 'stable',  r: 'release' }
-          # Oldest supported R version
+          - { rust: 'stable',  r: '4.5' }
+          - { rust: 'stable',  r: '4.4' }
+          - { rust: 'stable',  r: '4.3' }
           - { rust: 'stable',  r: '4.2' }
-          # Nightly rust
-          - { rust: 'nightly', r: 'release' }
+
           # Track upstream breaking changes
           - { rust: 'stable',  r: 'devel' }
+
+          # Nightly rust
+          - { rust: 'nightly', r: 'release' }
     timeout-minutes: 40
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
