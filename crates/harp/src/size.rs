@@ -36,7 +36,7 @@ use crate::RObject;
 // variables pane which required more performance.
 // See for more info.
 
-// Maximum recursion depth to prevent stack overflow on deeply nested R objects.
+// Hard ceiling on recursion depth as a last-resort safeguard.
 // https://github.com/posit-dev/positron/issues/13294
 const MAX_DEPTH: usize = 500;
 
@@ -78,13 +78,17 @@ fn obj_size_tree(
     seen: &mut HashSet<SEXP>,
     depth: usize,
 ) -> usize {
-    // Guard against stack overflow from deeply nested R objects.
-    // Returns 0 (undercounting) rather than crashing when depth limit is exceeded.
+    // Periodically check we have enough stack space to continue.
+    // https://github.com/posit-dev/positron/issues/13294
     if depth >= MAX_DEPTH {
-        log::warn!(
-            "`obj_size_tree()`: recursion depth limit ({MAX_DEPTH}) exceeded, undercounting to size 0"
-        );
+        log::warn!("obj_size_tree: depth limit ({MAX_DEPTH}) exceeded, undercounting");
         return 0;
+    }
+    if depth.is_multiple_of(10) {
+        if let Err(_err) = harp::exec::r_check_stack(None) {
+            log::warn!("obj_size_tree: near stack limit at depth {depth}, undercounting");
+            return 0;
+        }
     }
 
     let depth = depth + 1;
