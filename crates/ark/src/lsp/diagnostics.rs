@@ -14,8 +14,8 @@ use anyhow::bail;
 use anyhow::Result;
 use harp::syntax::is_valid_symbol;
 use harp::syntax::sym_quote_invalid;
-use oak_package::library::Library;
-use oak_package::package::Package;
+use oak_index::library::Library;
+use oak_index::package::Package;
 use stdext::*;
 use tower_lsp::lsp_types::Diagnostic;
 use tower_lsp::lsp_types::DiagnosticSeverity;
@@ -1132,8 +1132,8 @@ mod tests {
     use std::path::PathBuf;
 
     use harp::eval::RParseEvalOptions;
-    use oak_package::library::Library;
-    use oak_package::package::Package;
+    use oak_index::library::Library;
+    use oak_index::package::Package;
     use oak_package_metadata::dcf::Dcf;
     use oak_package_metadata::description::Description;
     use oak_package_metadata::namespace::Namespace;
@@ -1854,7 +1854,7 @@ foo
     #[test]
     fn test_penguins_symbol_no_diagnostic() {
         r_task(|| {
-            let palmerpenguins_dir = oak_package::package::temp_palmerpenguin();
+            let palmerpenguins_dir = oak_index::package::temp_palmerpenguin();
             let palmerpenguins_pkg = Package::load_from_folder(palmerpenguins_dir.path())
                 .unwrap()
                 .unwrap();

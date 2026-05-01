@@ -6,8 +6,8 @@ use std::sync::RwLock;
 use oak_sources::PackageSources;
 use stdext::result::ResultExt;
 
-use crate::definitions::PackageDefinitions;
 use crate::package::Package;
+use crate::package_definitions::PackageDefinitions;
 
 /// Lazily manages a list of known R packages by name
 #[derive(Default, Clone, Debug)]

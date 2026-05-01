@@ -1,6 +1,6 @@
 use biome_rowan::TextRange;
-use oak_package::definitions::PackageDefinitionVisibility;
-use oak_package::library::Library;
+use oak_index::library::Library;
+use oak_index::package_definitions::PackageDefinitionVisibility;
 use stdext::result::ResultExt;
 use url::Url;
 

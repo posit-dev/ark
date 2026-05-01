@@ -6,7 +6,7 @@
 //
 
 use anyhow::anyhow;
-use oak_package::package::Package;
+use oak_index::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;

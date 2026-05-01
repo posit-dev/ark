@@ -84,8 +84,8 @@ mod tests {
     use std::process::Command;
 
     use assert_matches::assert_matches;
-    use oak_package::library::Library;
-    use oak_package::package::Package;
+    use oak_index::library::Library;
+    use oak_index::package::Package;
     use oak_package_metadata::description::Description;
     use oak_package_metadata::namespace::Import;
     use oak_package_metadata::namespace::Namespace;

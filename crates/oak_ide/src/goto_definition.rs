@@ -8,8 +8,8 @@ use oak_index::UseId;
 use oak_layers::external::resolve_external_name;
 use oak_layers::external::resolve_in_package;
 use oak_layers::scope_layer::ScopeLayer;
-use oak_package::definitions::PackageDefinitionVisibility;
-use oak_package::library::Library;
+use oak_index::library::Library;
+use oak_index::package_definitions::PackageDefinitionVisibility;
 use url::Url;
 
 use crate::ExternalScope;

@@ -427,7 +427,7 @@ fn new_syntax_diagnostic(
 
 #[cfg(test)]
 mod tests {
-    use oak_package::library::Library;
+    use oak_index::library::Library;
     use tower_lsp::lsp_types::Diagnostic;
     use tower_lsp::lsp_types::Position;
 

@@ -10,7 +10,7 @@ use oak_index::semantic_index::DirectiveKind;
 use oak_layers::scope_layer::file_layers;
 use oak_layers::scope_layer::package_root_layers;
 use oak_layers::scope_layer::ScopeLayer;
-use oak_package::library::Library;
+use oak_index::library::Library;
 use stdext::result::ResultExt;
 use url::Url;
 

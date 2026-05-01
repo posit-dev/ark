@@ -4,12 +4,13 @@ use std::path::PathBuf;
 
 use aether_parser::RParserOptions;
 use biome_text_size::TextRange;
-use oak_index::semantic_index;
 use oak_index_vec::define_index;
 use oak_index_vec::IndexVec;
 use oak_package_metadata::namespace::Namespace;
 use rustc_hash::FxHashMap;
 use stdext::result::ResultExt;
+
+use crate::semantic_index;
 
 define_index!(FileId);
 
