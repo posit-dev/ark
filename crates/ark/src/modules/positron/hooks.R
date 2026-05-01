@@ -59,9 +59,20 @@ pkg_bind <- function(pkg, name, value) {
     env <- sprintf("package:%s", pkg)
     env <- as.environment(env)
 
-    if (!exists(name, envir = env, mode = "function", inherits = FALSE)) {
+    fn <- get0(name, envir = env, mode = "function", inherits = FALSE)
+
+    if (is.null(fn)) {
         msg <- sprintf(
             "Can't register hook: function `%s::%s` not found.",
+            pkg,
+            name
+        )
+        stop(msg, call. = FALSE)
+    }
+
+    if (!identical(formals(fn), formals(value))) {
+        msg <- sprintf(
+            "Can't register hook: replacement for `%s::%s` does not have the same arguments.",
             pkg,
             name
         )
@@ -75,8 +86,19 @@ pkg_bind <- function(pkg, name, value) {
 ns_bind <- function(pkg, name, value) {
     ns <- asNamespace(pkg)
 
-    if (!exists(name, envir = ns, mode = "function", inherits = FALSE)) {
+    fn <- get0(name, envir = ns, mode = "function", inherits = FALSE)
+
+    if (is.null(fn)) {
         msg <- sprintf("Can't replace `%s` in the '%s' namespace.", name, pkg)
+        stop(msg, call. = FALSE)
+    }
+
+    if (!identical(formals(fn), formals(value))) {
+        msg <- sprintf(
+            "Can't replace `%s` in the '%s' namespace: replacement does not have the same arguments.",
+            pkg,
+            name
+        )
         stop(msg, call. = FALSE)
     }
 
