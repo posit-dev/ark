@@ -1,9 +1,9 @@
 use biome_rowan::TextRange;
-use oak_index::library::Library;
-use oak_index::package_definitions::PackageDefinitionVisibility;
 use stdext::result::ResultExt;
 use url::Url;
 
+use crate::library::Library;
+use crate::package_definitions::PackageDefinitionVisibility;
 use crate::scope_layer::ScopeLayer;
 
 /// The result of resolving a name against the external scope chain.

@@ -19,7 +19,6 @@ biome_rowan.workspace = true
 log.workspace = true
 oak_core.workspace = true
 oak_index.workspace = true
-oak_layers.workspace = true
 oak_sources.workspace = true
 stdext.workspace = true
 url.workspace = true

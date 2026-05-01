@@ -1,7 +1,9 @@
 pub mod builder;
+pub mod external;
 pub mod library;
 pub mod package;
 pub mod package_definitions;
+pub mod scope_layer;
 pub mod semantic_index;
 pub mod use_def_map;
 

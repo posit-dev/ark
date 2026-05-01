@@ -6,11 +6,11 @@ use anyhow::anyhow;
 use biome_rowan::TextSize;
 use oak_core::file::list_r_files;
 use oak_ide::ExternalScope;
-use oak_index::semantic_index::DirectiveKind;
-use oak_layers::scope_layer::file_layers;
-use oak_layers::scope_layer::package_root_layers;
-use oak_layers::scope_layer::ScopeLayer;
 use oak_index::library::Library;
+use oak_index::scope_layer::file_layers;
+use oak_index::scope_layer::package_root_layers;
+use oak_index::scope_layer::ScopeLayer;
+use oak_index::semantic_index::DirectiveKind;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -251,7 +251,7 @@ pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
 #[cfg(test)]
 mod tests {
     use biome_rowan::TextSize;
-    use oak_layers::scope_layer::ScopeLayer;
+    use oak_index::scope_layer::ScopeLayer;
     use stdext::assert_not;
 
     use super::*;

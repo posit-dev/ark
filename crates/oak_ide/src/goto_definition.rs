@@ -5,11 +5,11 @@ use oak_index::semantic_index::Use;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
 use oak_index::UseId;
-use oak_layers::external::resolve_external_name;
-use oak_layers::external::resolve_in_package;
-use oak_layers::scope_layer::ScopeLayer;
+use oak_index::external::resolve_external_name;
+use oak_index::external::resolve_in_package;
 use oak_index::library::Library;
 use oak_index::package_definitions::PackageDefinitionVisibility;
+use oak_index::scope_layer::ScopeLayer;
 use url::Url;
 
 use crate::ExternalScope;

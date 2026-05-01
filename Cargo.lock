@@ -413,7 +413,6 @@ dependencies = [
  "oak_core",
  "oak_ide",
  "oak_index",
- "oak_layers",
  "oak_package_metadata",
  "oak_sources",
  "once_cell",
@@ -2468,7 +2467,6 @@ dependencies = [
  "log",
  "oak_core",
  "oak_index",
- "oak_layers",
  "oak_package_metadata",
  "oak_sources",
  "stdext",
@@ -2488,6 +2486,7 @@ dependencies = [
  "itertools 0.14.0",
  "log",
  "oak_core",
+ "oak_index",
  "oak_index_vec",
  "oak_package_metadata",
  "oak_sources",
@@ -2495,6 +2494,7 @@ dependencies = [
  "smallvec",
  "stdext",
  "tempfile",
+ "url",
 ]
 
 [[package]]
@@ -2503,20 +2503,6 @@ version = "0.1.0"
 dependencies = [
  "biome_text_size",
  "oak_core",
-]
-
-[[package]]
-name = "oak_layers"
-version = "0.1.0"
-dependencies = [
- "air_r_parser",
- "assert_matches",
- "biome_rowan",
- "oak_index",
- "oak_package_metadata",
- "oak_sources",
- "stdext",
- "url",
 ]
 
 [[package]]

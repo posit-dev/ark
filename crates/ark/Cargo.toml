@@ -46,7 +46,6 @@ notify.workspace = true
 oak_core.workspace = true
 oak_ide.workspace = true
 oak_index.workspace = true
-oak_layers.workspace = true
 oak_sources.workspace = true
 once_cell.workspace = true
 regex.workspace = true
