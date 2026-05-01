@@ -14,46 +14,29 @@ make_ark_source <- function(original_source) {
     force(original_source)
 
     # Take all original arguments for e.g. completions
-    formals <- if (getRversion() <= "4.4.0") {
-        alist(
-            file = ,
-            local = FALSE,
-            echo = verbose,
-            print.eval = echo,
-            exprs = ,
-            spaced = use_file,
-            verbose = getOption("verbose"),
-            prompt.echo = getOption("prompt"),
-            max.deparse.length = 150,
-            width.cutoff = 60L,
-            deparseCtrl = "showAttributes",
-            chdir = FALSE,
-            # catch.aborts = FALSE,
-            encoding = getOption("encoding"),
-            continue.echo = getOption("continue"),
-            skip.echo = 0,
-            keep.source = getOption("keep.source")
-        )
-    } else {
-        alist(
-            file = ,
-            local = FALSE,
-            echo = verbose,
-            print.eval = echo,
-            exprs = ,
-            spaced = use_file,
-            verbose = getOption("verbose"),
-            prompt.echo = getOption("prompt"),
-            max.deparse.length = 150,
-            width.cutoff = 60L,
-            deparseCtrl = "showAttributes",
-            chdir = FALSE,
-            catch.aborts = FALSE,
-            encoding = getOption("encoding"),
-            continue.echo = getOption("continue"),
-            skip.echo = 0,
-            keep.source = getOption("keep.source")
-        )
+    formals <- alist(
+        file = ,
+        local = FALSE,
+        echo = verbose,
+        print.eval = echo,
+        exprs = ,
+        spaced = use_file,
+        verbose = getOption("verbose"),
+        prompt.echo = getOption("prompt"),
+        max.deparse.length = 150,
+        width.cutoff = 60L,
+        deparseCtrl = "showAttributes",
+        chdir = FALSE,
+        catch.aborts = FALSE,
+        encoding = getOption("encoding"),
+        continue.echo = getOption("continue"),
+        skip.echo = 0,
+        keep.source = getOption("keep.source")
+    )
+
+    # Remove arguments that are not yet supported
+    if (getRversion() <= "4.4.0") {
+        formals$catch.aborts <- NULL
     }
 
     body <- quote({
@@ -86,6 +69,11 @@ make_ark_source <- function(original_source) {
             skip.echo = skip.echo,
             keep.source = keep.source
         )
+
+        # Remove arguments that are not yet supported
+        if (getRversion() <= "4.4.0") {
+            args$catch.aborts <- NULL
+        }
 
         # Try to resolve the file URI early so we can attribute plots to this
         # source file. This is best-effort; if it fails we proceed without attribution.
