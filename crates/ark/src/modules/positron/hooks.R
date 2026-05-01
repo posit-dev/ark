@@ -70,7 +70,10 @@ pkg_bind <- function(pkg, name, value) {
         stop(msg, call. = FALSE)
     }
 
-    if (!identical(formals(fn), formals(value))) {
+    # Check formals, but if we are wrong, only panic in debug builds.
+    # Not worth it to bring the whole system down for this.
+    # Checked in CI across all supported R versions.
+    if (is_debug_build() && !identical(formals(fn), formals(value))) {
         msg <- sprintf(
             "Can't register hook: replacement for `%s::%s` does not have the same arguments.",
             pkg,
@@ -93,7 +96,10 @@ ns_bind <- function(pkg, name, value) {
         stop(msg, call. = FALSE)
     }
 
-    if (!identical(formals(fn), formals(value))) {
+    # Check formals, but if we are wrong, only panic in debug builds.
+    # Not worth it to bring the whole system down for this.
+    # Checked in CI across all supported R versions.
+    if (is_debug_build() && !identical(formals(fn), formals(value))) {
         msg <- sprintf(
             "Can't replace `%s` in the '%s' namespace: replacement does not have the same arguments.",
             pkg,
