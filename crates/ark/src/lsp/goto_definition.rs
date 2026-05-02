@@ -1040,8 +1040,8 @@ mod tests {
 
         let (index, file_scope) = state.file_analysis(&script_uri, &script_doc);
 
-        let has_dplyr = |layers: &[oak_index::external::ScopeLayer]| -> bool {
-            layers.iter().any(|l| matches!(l, oak_index::external::ScopeLayer::PackageExports(pkg) if pkg == "dplyr"))
+        let has_dplyr = |layers: &[oak_index::scope_layer::ScopeLayer]| -> bool {
+            layers.iter().any(|l| matches!(l, oak_index::scope_layer::ScopeLayer::PackageExports(pkg) if pkg == "dplyr"))
         };
 
         // Before f (offset 0, on "mutate"): dplyr is NOT visible because the

@@ -7,7 +7,6 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
-use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
@@ -39,7 +38,7 @@ impl Identifier {
         let (scope_id, _) = index.scope_at(offset);
 
         if let Some((def_id, def)) = index.definitions(scope_id).contains(offset) {
-            if !matches!(def.kind(), DefinitionKind::Sourced { .. }) {
+            if def.file().is_none() {
                 return Some(Identifier::Definition { scope_id, def_id });
             }
         }

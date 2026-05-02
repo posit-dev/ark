@@ -1574,9 +1574,8 @@ fn test_source_resolver_injects_definitions() {
 
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
-    let DefinitionKind::Sourced { file: ref url } = def.kind() else {
-        panic!("expected Sourced definition, got {:?}", def.kind());
-    };
+    assert!(matches!(def.kind(), DefinitionKind::Sourced));
+    let url = def.file().unwrap();
     assert_eq!(url.as_str(), "file:///test/helpers.R");
 
     // file_exports() excludes sourced definitions
@@ -1610,7 +1609,7 @@ fn test_source_resolver_offset_visibility() {
     assert!(!second.definitions().is_empty());
     let def_id = second.definitions()[0];
     let def = &index.definitions(file)[def_id];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+    assert!(matches!(def.kind(), DefinitionKind::Sourced));
 }
 
 #[test]
@@ -1692,9 +1691,8 @@ fn test_source_resolver_later_shadows_earlier() {
 
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
-    let DefinitionKind::Sourced { file: ref url } = def.kind() else {
-        panic!("expected Sourced definition, got {:?}", def.kind());
-    };
+    assert!(matches!(def.kind(), DefinitionKind::Sourced));
+    let url = def.file().unwrap();
     assert_eq!(*url, b_url);
 }
 
@@ -1712,7 +1710,7 @@ fn test_source_resolver_local_true_in_function_scope() {
     let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
     assert_eq!(inner_bindings.definitions().len(), 1);
     let def = &index.definitions(fun)[inner_bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+    assert!(matches!(def.kind(), DefinitionKind::Sourced));
 
     // File scope: `helper` does not resolve
     let file_map = index.use_def_map(file);
@@ -1742,7 +1740,7 @@ fn test_source_resolver_local_true_shadows_local_def() {
     let bindings = fun_map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions().len(), 1);
     let def = &index.definitions(fun)[bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced { .. }));
+    assert!(matches!(def.kind(), DefinitionKind::Sourced));
 }
 
 #[test]

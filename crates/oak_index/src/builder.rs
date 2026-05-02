@@ -182,12 +182,14 @@ impl<'a> SemanticIndexBuilder<'a> {
         flags: SymbolFlags,
         kind: DefinitionKind,
         range: TextRange,
+        file: Option<Url>,
     ) {
         let symbol_id = self.symbol_tables[self.current_scope].intern(name, flags);
         let def_id = self.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
             kind,
             range,
+            file,
         });
         self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
         self.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
@@ -208,6 +210,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             symbol: symbol_id,
             kind: kind.clone(),
             range,
+            file: None,
         });
 
         let target_scope = self.resolve_super_target(name);
@@ -217,6 +220,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             symbol: target_symbol,
             kind,
             range,
+            file: None,
         });
         self.use_def_maps[target_scope].ensure_symbol(target_symbol);
         self.use_def_maps[target_scope].record_deferred_definition(target_symbol, target_def_id);
@@ -422,6 +426,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                         SymbolFlags::IS_BOUND,
                         DefinitionKind::ForVariable(stmt.syntax().clone()),
                         variable.syntax().text_trimmed_range(),
+                        None,
                     );
                 }
                 if let Ok(sequence) = stmt.sequence() {
@@ -628,6 +633,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                         flags,
                         DefinitionKind::Parameter(param.syntax().clone()),
                         ident.syntax().text_trimmed_range(),
+                        None,
                     );
                 },
                 AnyRParameterName::RDots(dots) => {
@@ -636,6 +642,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                         flags,
                         DefinitionKind::Parameter(param.syntax().clone()),
                         dots.syntax().text_trimmed_range(),
+                        None,
                     );
                 },
                 AnyRParameterName::RDotDotI(ddi) => {
@@ -644,6 +651,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                         flags,
                         DefinitionKind::Parameter(param.syntax().clone()),
                         ddi.syntax().text_trimmed_range(),
+                        None,
                     );
                 },
             }
@@ -690,6 +698,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                 SymbolFlags::IS_BOUND,
                 DefinitionKind::Assignment(op.syntax().clone()),
                 range,
+                None,
             );
         }
     }
@@ -871,8 +880,9 @@ impl<'a> SemanticIndexBuilder<'a> {
                 self.add_definition(
                     &name,
                     SymbolFlags::IS_BOUND,
-                    DefinitionKind::Sourced { file },
+                    DefinitionKind::Sourced,
                     range,
+                    Some(file),
                 );
             }
             for pkg in resolution.packages {

@@ -122,7 +122,7 @@ impl SemanticIndex {
         let symbols = &self.symbol_tables[file_scope];
         self.definitions[file_scope]
             .iter()
-            .filter(|(_id, def)| !matches!(def.kind(), DefinitionKind::Sourced { .. }))
+            .filter(|(_id, def)| def.file().is_none())
             .map(|(_id, def)| {
                 let name = symbols.symbol(def.symbol()).name();
                 (name, def.range())
@@ -142,10 +142,7 @@ impl SemanticIndex {
             .iter()
             .map(|(_id, def)| {
                 let name = symbols.symbol(def.symbol()).name();
-                let url = match def.kind() {
-                    DefinitionKind::Sourced { file } => file.clone(),
-                    _ => file_url.clone(),
-                };
+                let url = def.file().cloned().unwrap_or_else(|| file_url.clone());
                 (name, url, def.range())
             })
             .collect();
@@ -198,7 +195,7 @@ impl SemanticIndex {
         let def_id = self
             .definitions(scope)
             .iter()
-            .filter(|(_id, def)| !matches!(def.kind(), DefinitionKind::Sourced { .. }))
+            .filter(|(_id, def)| def.file().is_none())
             .find_map(|(id, d)| d.range().contains(offset).then_some(id));
         Some((scope, def_id?))
     }
@@ -526,8 +523,9 @@ impl SymbolFlags {
 // declarations.
 #[derive(Debug)]
 pub struct Definition {
-    pub(crate) symbol: SymbolId,
     pub(crate) kind: DefinitionKind,
+    pub(crate) file: Option<Url>,
+    pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
 }
 
@@ -537,11 +535,8 @@ pub enum DefinitionKind {
     SuperAssignment(RSyntaxNode),
     Parameter(RSyntaxNode),
     ForVariable(RSyntaxNode),
-    /// Injected from a `source()` call. The definition lives in an external
-    /// file; `range` on the `Definition` gives the name's range in that file.
-    Sourced {
-        file: Url,
-    },
+    /// Injected from a `source()` call. The range belongs to `Definition::file`.
+    Sourced,
 }
 
 impl Definition {
@@ -555,6 +550,10 @@ impl Definition {
 
     pub fn range(&self) -> TextRange {
         self.range
+    }
+
+    pub fn file(&self) -> Option<&Url> {
+        self.file.as_ref()
     }
 }
 

@@ -1290,7 +1290,12 @@ fn test_source_directive_resolves_nested_library() {
     let script_source = "source(\"helpers.R\")\nmutate\n";
     let script_url = file_url("script.R");
 
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let exports_clone = helpers_exports.clone();
     let packages_clone = helpers_packages.clone();
@@ -1316,10 +1321,8 @@ fn test_source_directive_resolves_nested_library() {
         &scope,
         &library,
     );
-    // Package symbol, no NavigationTarget
-    assert!(targets.is_empty());
-
-    // `helper` still resolves to helpers.R
+    // `mutate` resolves via dplyr (attached by helpers.R's library() call)
+    assert!(!targets.is_empty());
     let source_with_helper = "source(\"helpers.R\")\nhelper\n";
 
     let exports_clone = helpers_exports.clone();
@@ -1371,7 +1374,12 @@ fn test_directive_not_visible_before_call_site() {
     let script_source = "mutate\nhelper\nlibrary(dplyr)\nsource(\"helpers.R\")\nmutate\nhelper\n";
     let script_url = file_url("script.R");
 
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let helpers_url_clone = helpers_url.clone();
     let helpers_exports: Vec<_> = helpers_idx
@@ -1414,7 +1422,7 @@ fn test_directive_not_visible_before_call_site() {
     );
     assert!(targets.is_empty());
 
-    // `mutate` after library(dplyr) (offset 49) — package symbol, no NavigationTarget yet (FIXME)
+    // `mutate` after library(dplyr) (offset 49) — resolves via dplyr
     let targets = goto_definition(
         offset(49),
         &script_url,
@@ -1423,7 +1431,7 @@ fn test_directive_not_visible_before_call_site() {
         &scope,
         &library,
     );
-    assert!(targets.is_empty());
+    assert!(!targets.is_empty());
 
     // `helper` after source() (offset 56) — should resolve to helpers.R
     let targets = goto_definition(
@@ -1452,7 +1460,12 @@ fn test_directives_in_function_body_are_scoped() {
     let script_url = file_url("script.R");
     let (script_root, script_idx) = parse_source(script_source);
 
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     // library() inside f produces a scoped directive
     let directives = script_idx.file_directives();
@@ -1473,8 +1486,8 @@ fn test_directives_in_function_body_are_scoped() {
         &scope,
         &library,
     );
-    // Package symbol, no NavigationTarget
-    assert!(targets.is_empty());
+    // `mutate` inside f (after library()) — resolves via scoped dplyr
+    assert!(!targets.is_empty());
 
     // `helper` at file scope — not resolved (source() had no resolver)
     let use_offset = script_source.find("\nhelper").unwrap() as u32 + 1;
