@@ -111,29 +111,6 @@ impl Shell {
 
     /// Main loop for the Shell thread; to be invoked by the kernel.
     pub fn listen(&mut self) {
-        #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-        self.listen_polling();
-
-        #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-        self.listen_blocking();
-    }
-
-    /// On Windows ARM, zmq::poll with a non-zero timeout blocks forever
-    /// and inproc notification sockets may not wake the poll. Use
-    /// non-blocking poll with unconditional comm checks and a short sleep.
-    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
-    fn listen_polling(&mut self) {
-        loop {
-            self.process_comm_notification();
-            if self.socket.has_incoming_data().unwrap_or(false) {
-                self.process_shell_socket();
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-    }
-
-    #[cfg(not(all(target_os = "windows", target_arch = "aarch64")))]
-    fn listen_blocking(&mut self) {
         loop {
             log::trace!("Waiting for shell messages or comm events");
 
