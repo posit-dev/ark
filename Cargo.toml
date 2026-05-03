@@ -44,7 +44,7 @@ cc = "1.2.61"
 cfg-if = "1.0.4"
 chrono = "0.4.44"
 crossbeam = { version = "0.8.4", features = ["crossbeam-channel"] }
-ctor = "0.1.26"
+ctor = "1.0.0"
 dap = { branch = "main", git = "https://github.com/sztomi/dap-rs" }
 dashmap = "6.1.0"
 dirs = "6.0.0"
