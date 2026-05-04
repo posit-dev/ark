@@ -51,4 +51,4 @@ pub mod viewer;
 
 pub(crate) use r_task::r_task;
 
-pub const ARK_VERSION: &str = env!("ARK_BUILD_VERSION");
+pub const BUILD_VERSION: &str = env!("BUILD_VERSION");
