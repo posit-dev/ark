@@ -14,8 +14,8 @@ jobs:
         config:
           # x64
           - { rust: 'stable', r: 'release', runs_on: 'windows-latest' }
-          # arm64 (pinned to 4.5 until 4.6 has ARM64 binaries)
-          - { rust: 'stable', r: '4.5', runs_on: 'windows-11-arm' }
+          # arm64
+          - { rust: 'stable', r: 'release', runs_on: 'windows-11-arm' }
     timeout-minutes: 60
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
