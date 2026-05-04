@@ -155,7 +155,7 @@ pub fn register(_attr: TokenStream, item: TokenStream) -> TokenStream {
     // Define a separate function that produces this for us.
     let registration = quote! {
 
-        #[ctor::ctor]
+        #[ctor::ctor(unsafe)]
         fn #register() {
 
             unsafe {
