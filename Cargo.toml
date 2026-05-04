@@ -119,3 +119,8 @@ winsafe = { version = "0.0.27", features = ["kernel"] }
 xdg = "3.0.0"
 yaml-rust2 = "0.11"
 zmq = "0.10.0"
+
+[patch.crates-io]
+# We need ZMQ 4.3.5 to fix polling issues on Windows arm64
+zmq = { git = "https://github.com/erickt/rust-zmq", rev = "5d78967" }
+zmq-sys = { git = "https://github.com/erickt/rust-zmq", rev = "5d78967" }
