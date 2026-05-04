@@ -42,6 +42,13 @@ fn main() {
     let build_date = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
+    // Allow downstream builds (e.g. Positron prebuilds, which embed the public
+    // release version plus the submodule commit distance, like "0.1.251+10")
+    // to override the version string baked into the binary. Defaults to the
+    // version declared in `Cargo.toml`.
+    let build_version = option_env!("ARK_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
+    println!("cargo:rustc-env=BUILD_VERSION={}", build_version);
+
     // Embed an Application Manifest file on Windows.
     // Turns on UTF-8 support and declares our Windows version compatibility.
     // Documented to do nothing on non-Windows.

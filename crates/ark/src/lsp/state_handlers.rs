@@ -133,7 +133,7 @@ pub(crate) fn initialize(
     Ok(InitializeResult {
         server_info: Some(ServerInfo {
             name: "Ark R Kernel".to_string(),
-            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            version: Some(crate::BUILD_VERSION.to_string()),
         }),
         capabilities: ServerCapabilities {
             // Currently hard-coded to UTF-16, but we might want to allow UTF-8 frontends
