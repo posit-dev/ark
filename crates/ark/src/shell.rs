@@ -157,7 +157,9 @@ impl ShellHandler for Shell {
             help_links: Vec::new(),
             language_info: info,
             implementation: String::from("ark"),
-            implementation_version: String::from(crate::BUILD_VERSION),
+            // We use CARGO_PKG_VERSION here vs. the build version override since the Jupyter spec
+            // specifically calls out the X.Y.Z format for this value
+            implementation_version: String::from(env!("CARGO_PKG_VERSION")),
             supported_features,
         })
     }
