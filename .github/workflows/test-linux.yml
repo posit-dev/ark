@@ -86,6 +86,20 @@ jobs:
         run: |
           cargo build
 
+      # Surveys what links to GCC's OpenMP runtime, since loading two
+      # libgomps in one process can trip `goacc_register` assertions during
+      # R/BLAS-related tests. Compare across runs to spot a new offender.
+      - name: Diagnose OpenMP Runtime
+        run: |
+          set +e
+          echo "::group::libgomp linkage in ark binary"
+          ldd target/debug/ark | grep -iE 'gomp|omp' || echo "(none)"
+          echo "::endgroup::"
+
+          echo "::group::libgomp visible to the dynamic loader"
+          ldconfig -p | grep -i gomp || echo "(none)"
+          echo "::endgroup::"
+
       - name: Run Tests
         env:
           NEXTEST_PROFILE: "ci"
