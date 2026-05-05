@@ -207,16 +207,16 @@ impl WorldState {
         // matching RStudio's behaviour of setting the working directory
         // to the project root. Fall back to the file's own directory
         // when no workspace folder is open.
-        let file_dir = file
-            .to_file_path()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()));
         let source_root = self
             .workspace
             .folders
             .first()
             .and_then(|url| url.to_file_path().ok())
-            .or(file_dir);
+            .or_else(|| {
+                file.to_file_path()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            });
 
         let mut stack = HashSet::new();
         stack.insert(file.clone());
