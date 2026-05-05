@@ -7,6 +7,8 @@ use crate::package_definitions::PackageDefinitionVisibility;
 use crate::scope_layer::ScopeLayer;
 
 /// The result of resolving a name against the external scope chain.
+///
+/// TODO: Try to fold into `Definition` after switch to Salsa
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalDefinition {
     file: Url,
