@@ -413,7 +413,8 @@ dependencies = [
  "oak_core",
  "oak_ide",
  "oak_index",
- "oak_package",
+ "oak_package_metadata",
+ "oak_sources",
  "once_cell",
  "regex",
  "reqwest",
@@ -2466,7 +2467,8 @@ dependencies = [
  "log",
  "oak_core",
  "oak_index",
- "oak_package",
+ "oak_package_metadata",
+ "oak_sources",
  "stdext",
  "url",
 ]
@@ -2477,27 +2479,40 @@ version = "0.1.0"
 dependencies = [
  "air_r_parser",
  "air_r_syntax",
+ "anyhow",
  "assert_matches",
  "biome_rowan",
+ "biome_text_size",
  "itertools 0.14.0",
  "log",
  "oak_core",
- "oak_package",
+ "oak_index",
+ "oak_index_vec",
+ "oak_package_metadata",
+ "oak_sources",
  "rustc-hash",
  "smallvec",
  "stdext",
+ "tempfile",
  "url",
 ]
 
 [[package]]
-name = "oak_package"
+name = "oak_index_vec"
+version = "0.1.0"
+dependencies = [
+ "biome_text_size",
+ "oak_core",
+]
+
+[[package]]
+name = "oak_package_metadata"
 version = "0.1.0"
 dependencies = [
  "air_r_parser",
  "air_r_syntax",
  "anyhow",
  "biome_rowan",
- "log",
  "oak_core",
  "regex",
  "stdext",
@@ -2524,7 +2539,7 @@ dependencies = [
  "hex",
  "log",
  "oak_fs",
- "oak_package",
+ "oak_package_metadata",
  "oak_r_process",
  "serde",
  "serde_json",

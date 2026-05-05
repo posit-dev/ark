@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use biome_rowan::TextSize;
-use oak_index::external::ScopeLayer;
+use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
 

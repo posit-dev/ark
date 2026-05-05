@@ -2,14 +2,14 @@ use aether_syntax::RSyntaxNode;
 use biome_rowan::TextSize;
 use oak_index::external::resolve_external_name;
 use oak_index::external::resolve_in_package;
-use oak_index::external::ExternalDefinition;
-use oak_index::external::ScopeLayer;
+use oak_index::library::Library;
+use oak_index::package_definitions::PackageDefinitionVisibility;
+use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index::Use;
 use oak_index::DefinitionId;
 use oak_index::ScopeId;
 use oak_index::UseId;
-use oak_package::library::Library;
 use url::Url;
 
 use crate::ExternalScope;
@@ -68,8 +68,16 @@ pub fn goto_definition(
         Identifier::NamespaceAccess {
             ref package,
             ref symbol,
+            internal,
             ..
-        } => resolve_namespace_access(library, package, symbol),
+        } => {
+            let visibility = if internal {
+                PackageDefinitionVisibility::Internal
+            } else {
+                PackageDefinitionVisibility::Exported
+            };
+            resolve_namespace_access(symbol, package, visibility, library)
+        },
     }
 }
 
@@ -106,7 +114,7 @@ fn resolve_use(
 
     let external_targets = || {
         let scope_chain = scope.at(index, offset);
-        resolve_external(library, &scope_chain, symbol_name)
+        resolve_external(symbol_name, &scope_chain, library)
     };
 
     if !definitions.is_empty() {
@@ -136,38 +144,24 @@ fn resolve_use(
 }
 
 fn resolve_namespace_access(
-    library: &Library,
-    package: &str,
     symbol: &str,
+    package: &str,
+    visibility: PackageDefinitionVisibility,
+    library: &Library,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_in_package(library, package, symbol) else {
+    let Some(external) = resolve_in_package(symbol, package, visibility, library) else {
         return Vec::new();
     };
-    external_to_targets(external)
+    vec![external.into()]
 }
 
 fn resolve_external(
-    library: &Library,
+    symbol: &str,
     scope_chain: &[ScopeLayer],
-    symbol_name: &str,
+    library: &Library,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_external_name(library, scope_chain, symbol_name) else {
+    let Some(external) = resolve_external_name(library, scope_chain, symbol) else {
         return Vec::new();
     };
-    external_to_targets(external)
-}
-
-fn external_to_targets(external: ExternalDefinition) -> Vec<NavigationTarget> {
-    match external {
-        ExternalDefinition::ProjectFile { file, name, range } => {
-            vec![NavigationTarget {
-                file,
-                name,
-                full_range: range,
-                focus_range: range,
-            }]
-        },
-        // No file/range to navigate to for package symbols (yet).
-        ExternalDefinition::Package { .. } => Vec::new(),
-    }
+    vec![external.into()]
 }

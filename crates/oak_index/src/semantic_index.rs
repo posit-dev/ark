@@ -4,10 +4,10 @@ use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::range::Ranged;
+use oak_index_vec::define_index;
+use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 
-use crate::index_vec::define_index;
-use crate::index_vec::IndexVec;
 use crate::use_def_map::Bindings;
 use crate::use_def_map::UseDefMap;
 

@@ -41,6 +41,12 @@ pub fn start_kernel(
     capture_streams: bool,
     default_repos: DefaultRepos,
 ) {
+    // Locate R home directory
+    let r_home = match harp::command::r_home_setup() {
+        Ok(r_home) => r_home,
+        Err(err) => panic!("Can't set up `R_HOME`: {err}"),
+    };
+
     // Create the channels used for communication. These are created here
     // as they need to be shared across different components / threads.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);
@@ -67,6 +73,7 @@ pub fn start_kernel(
     // Not all Amalthea kernels provide these, but ark does.
     // They must be able to deliver messages to the shell channel directly.
     let lsp = Arc::new(Mutex::new(lsp::handler::Lsp::new(
+        r_home.clone(),
         kernel_init_tx.add_rx(),
         console_notification_tx.clone(),
     )));
@@ -147,6 +154,7 @@ pub fn start_kernel(
 
     // Start R
     crate::console::Console::start(
+        r_home,
         r_args,
         startup_file,
         comm_event_tx,

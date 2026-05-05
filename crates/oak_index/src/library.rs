@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-use log;
+use oak_sources::PackageSources;
+use stdext::result::ResultExt;
 
-use super::package::Package;
+use crate::package::Package;
+use crate::package_definitions::PackageDefinitions;
 
 /// Lazily manages a list of known R packages by name
 #[derive(Default, Clone, Debug)]
@@ -13,14 +15,24 @@ pub struct Library {
     /// Paths to library directories, i.e. what `base::libPaths()` returns.
     pub library_paths: Arc<Vec<PathBuf>>,
 
+    /// Object for loading package sources
+    ///
+    /// Stored as `dyn PackageSources` so we can easily swap in a test cache during
+    /// LSP feature testing
+    package_sources: Option<Arc<dyn PackageSources>>,
+
     packages: Arc<RwLock<HashMap<String, Option<Arc<Package>>>>>,
 }
 
 impl Library {
-    pub fn new(library_paths: Vec<PathBuf>) -> Self {
+    pub fn new(
+        library_paths: Vec<PathBuf>,
+        package_sources: Option<Arc<dyn PackageSources>>,
+    ) -> Self {
         Self {
-            packages: Arc::new(RwLock::new(HashMap::new())),
             library_paths: Arc::new(library_paths),
+            package_sources,
+            packages: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -51,6 +63,18 @@ impl Library {
         pkg
     }
 
+    /// Collect all top level definitions from a package's sources
+    ///
+    /// FIXME: This is currently very expensive as it reparses the package at every call.
+    /// We expect this to be a tracked salsa function, which should memoize it
+    /// efficiently.
+    pub fn definitions(&self, name: &str) -> Option<PackageDefinitions> {
+        let package_sources = self.package_sources.as_ref()?;
+        let package = self.get(name)?;
+        let directory = package_sources.get(&package.description().name)?;
+        PackageDefinitions::load_from_directory(&directory, package.namespace()).log_err()
+    }
+
     /// Insert a package in the library for testing purposes.
     #[cfg(any(test, feature = "testing"))]
     pub fn insert(self, name: &str, package: Package) -> Self {
@@ -78,10 +102,10 @@ mod tests {
     use std::fs::{self};
     use std::io::Write;
 
+    use oak_package_metadata::namespace::Import;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::package_namespace::Import;
 
     // Helper to create a temporary package directory with DESCRIPTION and NAMESPACE
     fn create_temp_package(
@@ -120,11 +144,11 @@ importFrom(pkg, baz)
         let (temp_dir, _pkg_dir) = create_temp_package(pkg_name, description, namespace);
 
         // Library should point to the temp_dir as its only library path
-        let lib = Library::new(vec![temp_dir.path().to_path_buf()]);
+        let lib = Library::new(vec![temp_dir.path().to_path_buf()], None);
 
         // First access loads from disk
         let pkg = lib.get(pkg_name).unwrap();
-        assert_eq!(pkg.description.name, "mypkg");
+        assert_eq!(pkg.description().name, "mypkg");
 
         // Second access uses cache (note that we aren't testing that we are
         // indeed caching, just exercising the cache code path)
@@ -136,8 +160,8 @@ importFrom(pkg, baz)
         assert!(lib.get("notapkg").is_none());
 
         // Namespace is parsed
-        assert_eq!(pkg.namespace.exports, vec!["bar", "foo"]);
-        assert_eq!(pkg.namespace.imports, vec![Import {
+        assert_eq!(pkg.namespace().exports.to_vec(), vec!["bar", "foo"]);
+        assert_eq!(pkg.namespace().imports, vec![Import {
             name: "baz".to_string(),
             package: "pkg".to_string()
         }]);

@@ -1,43 +1,37 @@
-use std::collections::HashMap;
-
 use biome_rowan::TextRange;
-use oak_package::library::Library;
-use oak_package::package_namespace::Namespace;
+use stdext::result::ResultExt;
 use url::Url;
 
-use crate::semantic_index::DirectiveKind;
-use crate::semantic_index::SemanticIndex;
-
-/// A layer in the scope chain. Layers are ordered most-local-first; resolution
-/// iterates front-to-back, first match wins.
-#[derive(Debug, Clone)]
-pub enum ScopeLayer {
-    /// Bindings from a project file's top-level definitions.
-    /// When a name is defined multiple times, the last definition wins.
-    FileExports {
-        file: Url,
-        exports: HashMap<String, TextRange>,
-    },
-
-    /// Imports from e.g. `importFrom`. Maps symbol name to package name.
-    PackageImports(HashMap<String, String>),
-
-    /// Exports of an attached package (`library()` or NAMESPACE `import()`).
-    PackageExports(String),
-}
+use crate::library::Library;
+use crate::package_definitions::PackageDefinitionVisibility;
+use crate::scope_layer::ScopeLayer;
 
 /// The result of resolving a name against the external scope chain.
+///
+/// TODO: Try to fold into `Definition` after switch to Salsa
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExternalDefinition {
-    /// Defined in a project file.
-    ProjectFile {
-        file: Url,
-        name: String,
-        range: TextRange,
-    },
+pub struct ExternalDefinition {
+    file: Url,
+    name: String,
+    range: TextRange,
+}
 
-    /// Found in an installed package (via `importFrom()`, `library()`, etc.).
-    Package { package: String, name: String },
+impl ExternalDefinition {
+    pub fn into_parts(self) -> (Url, String, TextRange) {
+        (self.file, self.name, self.range)
+    }
+
+    pub fn file(&self) -> &Url {
+        &self.file
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn range(&self) -> TextRange {
+        self.range
+    }
 }
 
 /// Walk the scope chain front-to-back, returning the first match.
@@ -50,7 +44,7 @@ pub fn resolve_external_name(
         match source {
             ScopeLayer::FileExports { file, exports } => {
                 if let Some(range) = exports.get(name) {
-                    return Some(ExternalDefinition::ProjectFile {
+                    return Some(ExternalDefinition {
                         file: file.clone(),
                         name: name.to_string(),
                         range: *range,
@@ -60,15 +54,21 @@ pub fn resolve_external_name(
 
             ScopeLayer::PackageImports(names) => {
                 if let Some(pkg) = names.get(name) {
-                    return Some(ExternalDefinition::Package {
-                        package: pkg.clone(),
-                        name: name.to_string(),
-                    });
+                    if let Some(def) = resolve_in_package(
+                        name,
+                        pkg,
+                        PackageDefinitionVisibility::Exported,
+                        library,
+                    ) {
+                        return Some(def);
+                    }
                 }
             },
 
-            ScopeLayer::PackageExports(pkg_name) => {
-                if let Some(def) = resolve_in_package(library, pkg_name, name) {
+            ScopeLayer::PackageExports(pkg) => {
+                if let Some(def) =
+                    resolve_in_package(name, pkg, PackageDefinitionVisibility::Exported, library)
+                {
                     return Some(def);
                 }
             },
@@ -80,68 +80,29 @@ pub fn resolve_external_name(
 
 /// Resolve a name in a specific package's exported symbols.
 pub fn resolve_in_package(
-    library: &Library,
-    package: &str,
     name: &str,
+    package: &str,
+    visibility: PackageDefinitionVisibility,
+    library: &Library,
 ) -> Option<ExternalDefinition> {
-    let pkg = library.get(package)?;
-    if pkg.exported_symbols.contains_str(name) {
-        return Some(ExternalDefinition::Package {
-            package: package.to_string(),
-            name: name.to_string(),
-        });
-    }
-    None
-}
+    // FIXME: Slow without salsa!
+    let package_definitions = library.definitions(package)?;
+    let definition = package_definitions.get(name)?;
 
-/// Compute the scope layers that a single file contributes to the
-/// scope chain: one `FileExports` layer from its top-level definitions, plus
-/// one `PackageExports` layer per `library()`/`require()` directive.
-pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
-    let mut layers = Vec::new();
-
-    // Last definition of each name wins
-    let mut exports = HashMap::new();
-    for (name, range) in index.file_exports() {
-        exports.insert(name.to_string(), range);
+    if visibility == PackageDefinitionVisibility::Exported &&
+        definition.visibility() == PackageDefinitionVisibility::Internal
+    {
+        // Requested only exports, but located definition is internal.
+        // Notably if we requested internal, both exports and internal are returned.
+        return None;
     }
 
-    layers.push(ScopeLayer::FileExports { file, exports });
+    let file = package_definitions.file(definition.file_id());
+    let file = Url::from_file_path(file).log_err()?;
 
-    for directive in index.file_directives() {
-        match directive.kind() {
-            DirectiveKind::Attach(pkg) => {
-                layers.push(ScopeLayer::PackageExports(pkg.clone()));
-            },
-        }
-    }
-
-    layers
-}
-
-/// Build the root layers for a package from its NAMESPACE.
-///
-/// These go at the back of every file's scope chain:
-/// - `PackageImports` from `importFrom()` directives (name → package)
-/// - `PackageExports` from `import()` directives
-/// - `PackageExports` for `base` (always implicitly available)
-pub fn package_root_layers(namespace: &Namespace) -> Vec<ScopeLayer> {
-    let mut layers = Vec::new();
-
-    if !namespace.imports.is_empty() {
-        let map = namespace
-            .imports
-            .iter()
-            .map(|imp| (imp.name.clone(), imp.package.clone()))
-            .collect();
-        layers.push(ScopeLayer::PackageImports(map));
-    }
-
-    for pkg in &namespace.package_imports {
-        layers.push(ScopeLayer::PackageExports(pkg.clone()));
-    }
-
-    layers.push(ScopeLayer::PackageExports("base".to_string()));
-
-    layers
+    Some(ExternalDefinition {
+        file,
+        name: name.to_string(),
+        range: definition.range(),
+    })
 }

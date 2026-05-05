@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use oak_fs::file_lock::FileLock;
 
@@ -9,25 +8,25 @@ const SCRIPT: &str = include_str!("../scripts/srcrefs.R");
 /// them to the cache at the parent folder containing `destination_lock`
 ///
 /// Launches a sidecar R session to read the srcrefs from the installed package.
-pub(crate) fn cache_srcref(
+pub(crate) fn cache_srcref<P: AsRef<Path>, Q: AsRef<Path>>(
     package: &str,
     version: &str,
     destination_lock: &FileLock,
-    r: &Path,
-    r_libpaths: &[PathBuf],
+    r: P,
+    library_paths: &[Q],
 ) -> anyhow::Result<bool> {
     let args = &[package, version];
 
     // Set `R_LIBS` to ensure the correct R package libraries are checked
     // `:` on Unix, `;` on Windows, see `?R_LIBS`
-    let libpaths = r_libpaths
+    let library_paths = library_paths
         .iter()
-        .map(|libpath| libpath.to_string_lossy())
+        .map(|library_path| library_path.as_ref().to_string_lossy())
         .collect::<Vec<_>>()
         .join(if cfg!(windows) { ";" } else { ":" });
-    let env = &[("R_LIBS", libpaths.as_str())];
+    let env = &[("R_LIBS", library_paths.as_str())];
 
-    let output = oak_r_process::run_text(r, SCRIPT, args, env)?;
+    let output = oak_r_process::run_text(r.as_ref(), SCRIPT, args, env)?;
 
     let code = output.status.code().unwrap_or(1);
 
@@ -120,6 +119,8 @@ fn parse_line_directive(line: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use oak_fs::file_lock::Filesystem;
 
     use super::*;

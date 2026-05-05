@@ -6,6 +6,7 @@
 //
 
 use std::io;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
@@ -17,7 +18,7 @@ use crate::sys::command::COMMAND_R_NAMES;
 /// Execute a `Command` for R, trying multiple names for the R executable
 ///
 /// - For unix, this look at `R`
-/// - For Windows, this looks at `R` (`R.exe`) and `R.bat` (for rig compatibility)
+/// - For Windows, this looks at `R.exe` and `R.bat` (for rig compatibility)
 ///
 /// The executable name is joined to the path in `R_HOME`. If not set, this is a
 /// panic. Use `r_home_setup()` to set `R_HOME` from the R on the `PATH` or use
@@ -87,6 +88,24 @@ pub fn r_home_setup() -> anyhow::Result<PathBuf> {
         )),
         Err(err) => Err(anyhow!("Can't check if `R_HOME` path exists: {err}")),
     }
+}
+
+/// Locate an R executable, given an `R_HOME` path
+///
+/// - For unix, this look for `{R_HOME}/bin/R`
+/// - For Windows, this looks for `{R_HOME}/bin/R.exe` and `{R_HOME}/bin/R.bat` (for rig compatibility)
+pub fn r_executable(r_home: &Path) -> Option<PathBuf> {
+    let r_bin = r_home.join("bin");
+
+    for command in COMMAND_R_NAMES {
+        let candidate = r_bin.join(command);
+
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    None
 }
 
 /// Execute a `Command` for R found on the `PATH`

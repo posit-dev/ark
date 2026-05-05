@@ -7,6 +7,7 @@
 
 #![allow(deprecated)]
 
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -517,6 +518,7 @@ impl Backend {
 }
 
 pub(crate) fn start_lsp(
+    r_home: PathBuf,
     runtime: Arc<Runtime>,
     server_start: ServerStartMessage,
     server_started_tx: Sender<ServerStartedMessage>,
@@ -555,7 +557,7 @@ pub(crate) fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client, console_notification_tx);
+            let state = GlobalState::new(client, r_home, console_notification_tx);
             let events_tx = state.events_tx();
 
             // Start main loop and hold onto the handle that keeps it alive

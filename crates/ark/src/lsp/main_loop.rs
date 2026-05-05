@@ -12,13 +12,16 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use oak_package::library::Library;
+use oak_index::library::Library;
+use oak_sources::PackageCache;
+use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task;
@@ -186,6 +189,7 @@ impl GlobalState {
     ///   and auxiliary loop.
     pub(crate) fn new(
         client: Client,
+        r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
     ) -> Self {
         // Transmission channel for the main loop events. Shared with the
@@ -198,30 +202,37 @@ impl GlobalState {
             console_notification_tx,
         };
 
-        let mut state = Self {
-            world: WorldState::default(),
+        // FIXME: We shouldn't call R code in the kernel to figure this out
+        let library_paths = crate::r_task(|| -> anyhow::Result<Vec<String>> {
+            Ok(harp::RFunction::new("base", ".libPaths")
+                .call()?
+                .try_into()?)
+        });
+
+        let library_paths = match library_paths {
+            Ok(library_paths) => library_paths,
+            Err(err) => {
+                log::error!("Can't evaluate `libPaths()`: {err:?}");
+                Vec::new()
+            },
+        };
+
+        let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
+
+        let r = harp::command::r_executable(&r_home);
+        let package_sources = r
+            .and_then(|r| PackageCache::new(r, library_paths.clone()).log_err())
+            .map(|cache| Arc::new(cache) as Arc<dyn oak_sources::PackageSources>);
+
+        let library = Library::new(library_paths, package_sources);
+
+        Self {
+            world: WorldState::new(library),
             lsp_state,
             client,
             events_tx,
             events_rx,
-        };
-
-        // FIXME: We shouldn't call R code in the kernel to figure this out
-        if let Err(err) = crate::r_task(|| -> anyhow::Result<()> {
-            let paths: Vec<String> = harp::RFunction::new("base", ".libPaths")
-                .call()?
-                .try_into()?;
-
-            log::info!("Using library paths: {paths:#?}");
-            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-            state.world.library = Library::new(paths);
-
-            Ok(())
-        }) {
-            log::error!("Can't evaluate `libPaths()`: {err:?}");
-        };
-
-        state
+        }
     }
 
     /// Get `Event` transmission channel

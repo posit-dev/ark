@@ -1,27 +1,27 @@
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
+use oak_package_metadata::description::Description;
+use oak_package_metadata::index::Index;
+use oak_package_metadata::namespace::Namespace;
 use stdext::SortedVec;
-
-use crate::package_description::Description;
-use crate::package_index::Index;
-use crate::package_namespace::Namespace;
 
 /// Represents an R package and its metadata relevant for static analysis.
 #[derive(Clone, Debug)]
 pub struct Package {
-    /// Path to the directory that contains `DESCRIPTION``. Can
+    /// Path to the directory that contains `DESCRIPTION`. Can
     /// be an installed package or a package source.
-    pub path: PathBuf,
+    path: PathBuf,
 
-    pub description: Description,
-    pub namespace: Namespace,
+    description: Description,
+    namespace: Namespace,
 
     // List of symbols exported via NAMESPACE `export()` directives and via
     // documented symbols listed in INDEX. The latter is a stopgap to ensure we
     // support exported datasets and prevent spurious diagnostics (we accept
     // false negatives to avoid annoying false positives).
-    pub exported_symbols: SortedVec<String>,
+    exported_symbols: SortedVec<String>,
 }
 
 impl Package {
@@ -32,10 +32,10 @@ impl Package {
         index: Index,
     ) -> Self {
         // Compute exported symbols. Start from explicit NAMESPACE exports.
-        let mut symbols = namespace.exports.clone();
+        let mut symbols = namespace.exports.clone().to_vec();
 
         // Add all documented symbols. This should cover documented datasets.
-        symbols.extend(index.names.iter().cloned());
+        symbols.extend(index.names.clone());
 
         let exported_symbols = SortedVec::from_vec(symbols);
 
@@ -118,6 +118,22 @@ impl Package {
             Ok(None)
         }
     }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn description(&self) -> &Description {
+        &self.description
+    }
+
+    pub fn namespace(&self) -> &Namespace {
+        &self.namespace
+    }
+
+    pub fn exported_symbols(&self) -> &SortedVec<String> {
+        &self.exported_symbols
+    }
 }
 
 #[cfg(any(test, feature = "testing"))]
@@ -155,10 +171,11 @@ penguins_raw            Penguin size, clutch, and blood isotope data
 
 #[cfg(test)]
 mod tests {
+    use oak_package_metadata::description::Description;
+    use oak_package_metadata::index::Index;
+    use oak_package_metadata::namespace::Namespace;
+
     use super::*;
-    use crate::package_description::Description;
-    use crate::package_index::Index;
-    use crate::package_namespace::Namespace;
 
     fn new_package(name: &str, ns: Namespace, index: Index) -> Package {
         Package::new(
@@ -175,7 +192,7 @@ mod tests {
     #[test]
     fn exported_symbols_are_sorted_and_unique() {
         let ns = Namespace {
-            exports: vec!["b".to_string(), "a".to_string(), "a".to_string()],
+            exports: SortedVec::from_vec(vec!["b".to_string(), "a".to_string(), "a".to_string()]),
             ..Default::default()
         };
 

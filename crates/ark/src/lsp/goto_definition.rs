@@ -84,11 +84,11 @@ mod tests {
     use std::process::Command;
 
     use assert_matches::assert_matches;
-    use oak_package::library::Library;
-    use oak_package::package::Package;
-    use oak_package::package_description::Description;
-    use oak_package::package_namespace::Import;
-    use oak_package::package_namespace::Namespace;
+    use oak_index::library::Library;
+    use oak_index::package::Package;
+    use oak_package_metadata::description::Description;
+    use oak_package_metadata::namespace::Import;
+    use oak_package_metadata::namespace::Namespace;
     use tower_lsp::lsp_types;
 
     use super::*;
@@ -106,7 +106,7 @@ mod tests {
         if paths.is_empty() {
             return None;
         }
-        Some(Library::new(paths))
+        Some(Library::new(paths, None))
     }
 
     fn make_params(uri: lsp_types::Url, line: u32, character: u32) -> GotoDefinitionParams {
@@ -325,7 +325,7 @@ mod tests {
         let ns = Namespace::default();
         let desc = Description {
             name: "mypkg".to_string(),
-            fields: oak_package::Dcf { fields: dcf_fields },
+            fields: oak_package_metadata::dcf::Dcf { fields: dcf_fields },
             ..Default::default()
         };
         let pkg = Package::from_parts(pkg_root, desc, ns);
