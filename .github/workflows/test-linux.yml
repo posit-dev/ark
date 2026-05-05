@@ -27,11 +27,9 @@ jobs:
           - { rust: 'stable',  r: '4.3' }
           - { rust: 'stable',  r: '4.2' }
 
-          # Track upstream breaking changes
-          - { rust: 'stable',  r: 'devel' }
-
-          # Nightly rust
-          - { rust: 'nightly', r: 'release' }
+          # Early warning signal for upstream changes,
+          # both in Rust and R-devel
+          - { rust: 'nightly',  r: 'devel' }
     timeout-minutes: 40
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
