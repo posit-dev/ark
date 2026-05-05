@@ -599,7 +599,12 @@ fn collect_call_test_that(
     let start = doc.lsp_position_from_tree_sitter_point(node.start_position())?;
     let end = doc.lsp_position_from_tree_sitter_point(node.end_position())?;
 
-    let symbol = new_symbol_node(name, SymbolKind::TYPE_PARAMETER, Range { start, end }, children);
+    let symbol = new_symbol_node(
+        name,
+        SymbolKind::TYPE_PARAMETER,
+        Range { start, end },
+        children,
+    );
     symbols.push(symbol);
 
     Ok(())
