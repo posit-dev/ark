@@ -19,7 +19,7 @@ use ark::repos::DefaultRepos;
 use ark::signals::initialize_signal_block;
 use ark::start::start_kernel;
 use ark::traps::register_trap_handlers;
-use ark::version::detect_r;
+use ark::version::detect_r_setup;
 use crossbeam::channel::unbounded;
 use notify::Watcher;
 use stdext::unwrap;
@@ -481,7 +481,7 @@ fn install_kernel_spec() -> anyhow::Result<()> {
     // https://github.com/posit-dev/positron/issues/1619#issuecomment-1971552522
     if cfg!(target_os = "linux") {
         // Detect the active version of R
-        let r_version = detect_r().unwrap();
+        let r_version = detect_r_setup().unwrap();
 
         let lib = format!("{}/lib", r_version.r_home.clone());
         env.insert("LD_LIBRARY_PATH".into(), serde_json::Value::String(lib));

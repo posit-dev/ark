@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -15,6 +16,9 @@ use harp::command::r_home_setup;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
+
+pub const MIN_R_MAJOR: u32 = 4;
+pub const MIN_R_MINOR: u32 = 2;
 
 pub struct RVersion {
     // Major version of the R installation
@@ -31,9 +35,15 @@ pub struct RVersion {
     pub r_home: String,
 }
 
-pub fn detect_r() -> anyhow::Result<RVersion> {
-    let r_home: String = r_home_setup()?.to_string_lossy().to_string();
+impl RVersion {
+    pub fn is_supported(&self) -> bool {
+        self.major > MIN_R_MAJOR || (self.major == MIN_R_MAJOR && self.minor >= MIN_R_MINOR)
+    }
+}
 
+// It is assumed that r_home matches the R_HOME env var. Usually the input will
+// come from r_home_setup()
+pub fn detect_r(r_home: &Path) -> anyhow::Result<RVersion> {
     let output = r_command(|command| {
         command
             .arg("--vanilla")
@@ -55,11 +65,16 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
             major,
             minor,
             patch,
-            r_home,
+            r_home: r_home.to_string_lossy().to_string(),
         })
     } else {
         anyhow::bail!("Failed to extract R version");
     }
+}
+
+// Like detect_r() but calls r_home_setup() to get the path
+pub fn detect_r_setup() -> anyhow::Result<RVersion> {
+    detect_r(&r_home_setup()?)
 }
 
 #[harp::register]
@@ -90,4 +105,64 @@ pub unsafe extern "C-unwind" fn ps_ark_version() -> anyhow::Result<SEXP> {
 
     let result = RObject::from(info);
     Ok(result.sexp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reject_low_major() {
+        let version = RVersion {
+            major: 3,
+            minor: 9,
+            patch: 0,
+            r_home: "".to_string(),
+        };
+        assert_eq!(version.is_supported(), false);
+    }
+
+    #[test]
+    fn test_reject_low_minor() {
+        let version = RVersion {
+            major: 4,
+            minor: 1,
+            patch: 0,
+            r_home: "".to_string(),
+        };
+        assert_eq!(version.is_supported(), false);
+    }
+
+    #[test]
+    fn test_accept_excact() {
+        let version = RVersion {
+            major: 4,
+            minor: 2,
+            patch: 0,
+            r_home: "".to_string(),
+        };
+        assert_eq!(version.is_supported(), true);
+    }
+
+    #[test]
+    fn test_reject_accept_high_minor() {
+        let version = RVersion {
+            major: 4,
+            minor: 4,
+            patch: 0,
+            r_home: "".to_string(),
+        };
+        assert_eq!(version.is_supported(), true);
+    }
+
+    #[test]
+    fn test_reject_high_major() {
+        let version = RVersion {
+            major: 5,
+            minor: 0,
+            patch: 0,
+            r_home: "".to_string(),
+        };
+        assert_eq!(version.is_supported(), true);
+    }
 }
