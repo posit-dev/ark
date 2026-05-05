@@ -921,12 +921,6 @@ fn test_namespace_access_unknown_package() {
 
 #[test]
 fn test_namespace_access_triple_colon() {
-    // "pkg:::internal_fn\n"
-    //  01234567890...
-    // Cursor on `internal_fn` (offset 6)
-    let source = "pkg:::internal_fn\n";
-    let file = file_url("test.R");
-    let (root, idx) = parse_source(source);
     let library = test_library(vec![TestPackage::new(
         "pkg",
         "pkg.R",
@@ -934,6 +928,12 @@ fn test_namespace_access_triple_colon() {
         vec!["internal_fn"],
     )]);
 
+    // "pkg:::internal_fn\n"
+    //  01234567890...
+    // Cursor on `internal_fn` (offset 6)
+    let source = "pkg:::internal_fn\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
     let targets = goto_definition(
         offset(6),
         &file,
@@ -943,10 +943,28 @@ fn test_namespace_access_triple_colon() {
         &library,
     );
     assert_eq!(targets.len(), 1);
-
     let target = targets.first().unwrap();
     assert!(target.file.path().ends_with("pkg.R"));
     assert_eq!(target.name, "internal_fn".to_string());
+
+    // "pkg:::external_fn\n"
+    //  01234567890...
+    // Cursor on `external_fn` (offset 6)
+    let source = "pkg:::external_fn\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+    let targets = goto_definition(
+        offset(6),
+        &file,
+        &root,
+        &idx,
+        &ExternalScope::default(),
+        &library,
+    );
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("pkg.R"));
+    assert_eq!(target.name, "external_fn".to_string());
 }
 
 #[test]

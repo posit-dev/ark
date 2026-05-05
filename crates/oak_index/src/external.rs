@@ -87,7 +87,11 @@ pub fn resolve_in_package(
     let package_definitions = library.definitions(package)?;
     let definition = package_definitions.get(name)?;
 
-    if visibility != definition.visibility() {
+    if visibility == PackageDefinitionVisibility::Exported &&
+        definition.visibility() == PackageDefinitionVisibility::Internal
+    {
+        // Requested only exports, but located definition is internal.
+        // Notably if we requested internal, both exports and internal are returned.
         return None;
     }
 
