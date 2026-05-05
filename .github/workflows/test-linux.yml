@@ -100,6 +100,30 @@ jobs:
           ldconfig -p | grep -i gomp || echo "(none)"
           echo "::endgroup::"
 
+          echo "::group::R package shared objects dynamically linking libgomp"
+          for libpath in $(Rscript -e 'cat(.libPaths(), sep="\n")'); do
+            find "$libpath" -name '*.so' 2>/dev/null | while read -r so; do
+              if ldd "$so" 2>/dev/null | grep -qi gomp; then
+                echo "$so"
+                ldd "$so" | grep -i gomp | sed 's/^/    /'
+              fi
+            done
+          done
+          echo "::endgroup::"
+
+          # Catches packages built with `-static-libgomp`: GOMP_* / goacc_*
+          # symbols end up defined inside the package .so itself, so they
+          # don't show up via ldd but still run constructors at dlopen time.
+          echo "::group::R package shared objects with statically embedded libgomp"
+          for libpath in $(Rscript -e 'cat(.libPaths(), sep="\n")'); do
+            find "$libpath" -name '*.so' 2>/dev/null | while read -r so; do
+              if nm -D --defined-only "$so" 2>/dev/null | grep -qE ' (T|W) (GOMP_|goacc_)'; then
+                echo "$so"
+              fi
+            done
+          done
+          echo "::endgroup::"
+
       - name: Run Tests
         env:
           NEXTEST_PROFILE: "ci"
