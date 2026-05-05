@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -107,13 +108,14 @@ impl WorldState {
     ///
     /// TODO: Replace with a proper VFS so non-opened workspace documents
     /// are cached rather than re-read on every query.
-    fn workspace_document(&self, uri: &Url) -> Option<Document> {
+    fn workspace_document(&self, uri: &Url) -> Option<Cow<'_, Document>> {
         if let Some(doc) = self.documents.get(uri) {
-            return Some(doc.clone());
+            return Some(Cow::Borrowed(doc));
         }
+
         let path = uri.to_file_path().log_err()?;
         let contents = std::fs::read_to_string(&path).log_err()?;
-        Some(Document::new(&contents, None))
+        Some(Cow::Owned(Document::new(&contents, None)))
     }
 
     /// Create the semantic index and scope chain for a particular file.
@@ -251,7 +253,10 @@ impl WorldState {
             return None;
         }
 
-        let sourced_doc = self.workspace_document(&url)?;
+        let Some(sourced_doc) = self.workspace_document(&url) else {
+            stack.remove(&url);
+            return None;
+        };
 
         // Build the sourced file's index with a nested resolver so that
         // transitive `source()` calls are also resolved. The base
