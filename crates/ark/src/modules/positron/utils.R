@@ -141,6 +141,14 @@ node_poke_cdr <- function(node, cdr) {
     .ps.Call("ark_node_poke_cdr", node, cdr)
 }
 
+# Detect if ark is running under a debug build or not
+#
+# - Debug: `cargo build`
+# - Release: `cargo build --release`
+is_debug_build <- function() {
+    .ps.Call("ark_is_debug_build")
+}
+
 # Alias to make intent clear. We store values in symbols so they are reachable
 # via `base::`.
 base_bind <- function(sym, value) {
