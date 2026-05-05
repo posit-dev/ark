@@ -119,7 +119,7 @@ mod tests {
             patch: 0,
             r_home: "".to_string(),
         };
-        assert_eq!(version.is_supported(), false);
+        assert!(!version.is_supported());
     }
 
     #[test]
@@ -130,7 +130,7 @@ mod tests {
             patch: 0,
             r_home: "".to_string(),
         };
-        assert_eq!(version.is_supported(), false);
+        assert!(!version.is_supported());
     }
 
     #[test]
@@ -141,7 +141,7 @@ mod tests {
             patch: 0,
             r_home: "".to_string(),
         };
-        assert_eq!(version.is_supported(), true);
+        assert!(version.is_supported());
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
             patch: 0,
             r_home: "".to_string(),
         };
-        assert_eq!(version.is_supported(), true);
+        assert!(version.is_supported());
     }
 
     #[test]
@@ -163,6 +163,6 @@ mod tests {
             patch: 0,
             r_home: "".to_string(),
         };
-        assert_eq!(version.is_supported(), true);
+        assert!(version.is_supported());
     }
 }
