@@ -297,8 +297,8 @@ impl WorldState {
 
         let names: Vec<String> = index
             .file_exports()
-            .into_iter()
-            .map(|(name, _range)| name.to_string())
+            .keys()
+            .map(|name| name.to_string())
             .collect();
 
         let packages: Vec<String> = index

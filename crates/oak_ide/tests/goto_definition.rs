@@ -1363,8 +1363,8 @@ fn test_source_directive_resolves_to_sourced_file() {
 
     let helpers_names: Vec<String> = helpers_idx
         .file_exports()
-        .into_iter()
-        .map(|(name, _range)| name.to_string())
+        .keys()
+        .map(|name| name.to_string())
         .collect();
 
     let helpers_url_clone = helpers_url.clone();
@@ -1417,8 +1417,8 @@ fn test_source_directive_resolves_nested_library() {
 
     let helpers_names: Vec<String> = helpers_idx
         .file_exports()
-        .into_iter()
-        .map(|(name, _range)| name.to_string())
+        .keys()
+        .map(|name| name.to_string())
         .collect();
     let helpers_packages: Vec<_> = helpers_idx
         .file_directives()
@@ -1535,8 +1535,8 @@ fn test_directive_not_visible_before_call_site() {
     let helpers_url_clone = helpers_url.clone();
     let helpers_names: Vec<String> = helpers_idx
         .file_exports()
-        .into_iter()
-        .map(|(name, _range)| name.to_string())
+        .keys()
+        .map(|name| name.to_string())
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
@@ -1690,8 +1690,8 @@ fn test_source_in_function_body_scoping() {
     let helpers_url_clone = helpers_url.clone();
     let helpers_names: Vec<String> = helpers_idx
         .file_exports()
-        .into_iter()
-        .map(|(name, _range)| name.to_string())
+        .keys()
+        .map(|name| name.to_string())
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
@@ -1743,4 +1743,55 @@ fn test_source_in_function_body_scoping() {
         &scope,
     );
     assert!(targets.is_empty());
+}
+
+// TODO(salsa): This tests `resolve_import` which is slated to move to
+// `oak_index`. Move this test alongside it and call `resolve_import` directly
+// once it becomes pub.
+#[test]
+fn test_resolve_import_last_def_wins() {
+    // If the target file defines the same name twice, resolve_import
+    // should navigate to the last definition.
+    let helpers_url = file_url("helpers.R");
+    let script_url = file_url("script.R");
+
+    let db = TestDb {
+        library: empty_library(),
+        sources: HashMap::from([(
+            helpers_url.clone(),
+            "foo <- function() 'first'\nfoo <- function() 'second'\n".to_string(),
+        )]),
+    };
+
+    let script_source = "source(\"helpers.R\")\nfoo\n";
+    let parsed = parse(script_source, RParserOptions::default());
+    let script_root = parsed.syntax();
+    let script_idx = semantic_index_with_source_resolver(&parsed.tree(), &script_url, |_path| {
+        Some(SourceResolution {
+            file: helpers_url.clone(),
+            names: vec!["foo".to_string()],
+            packages: Vec::new(),
+        })
+    });
+
+    let dir_layers = directive_layers(script_idx.file_directives());
+    let scope = ExternalScope::search_path(dir_layers, Vec::new());
+
+    let use_offset = script_source.rfind("foo").unwrap() as u32;
+    let targets = goto_definition(
+        &db,
+        offset(use_offset),
+        &script_url,
+        &script_root,
+        &script_idx,
+        &scope,
+    );
+
+    // Should resolve to the SECOND definition of `foo` in helpers.R (line 1)
+    assert_eq!(targets, vec![NavigationTarget {
+        file: helpers_url,
+        name: "foo".to_string(),
+        full_range: text_range(26, 29),
+        focus_range: text_range(26, 29),
+    }]);
 }

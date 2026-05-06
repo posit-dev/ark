@@ -37,11 +37,11 @@ pub enum ScopeLayer {
 pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
-    // Last definition of each name wins
-    let mut exports = HashMap::new();
-    for (name, range) in index.file_exports() {
-        exports.insert(name.to_string(), range);
-    }
+    let exports = index
+        .file_exports()
+        .into_iter()
+        .map(|(name, range)| (name.to_string(), range))
+        .collect();
 
     layers.push(ScopeLayer::FileExports { file, exports });
     let dir_layers = directive_layers(index.file_directives());

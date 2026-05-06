@@ -175,7 +175,8 @@ fn resolve_import_inner(
     let (_def_id, def) = target_index
         .definitions(file_scope)
         .iter()
-        .find(|(_id, def)| symbols.symbol_id(def.symbol()).name() == name)?;
+        .filter(|(_id, def)| symbols.symbol_id(def.symbol()).name() == name)
+        .last()?;
 
     match def.kind() {
         DefinitionKind::Import {

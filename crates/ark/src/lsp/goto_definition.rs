@@ -1199,4 +1199,43 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_script_source_last_def_wins_in_target() {
+        // If the sourced file defines the same name twice, the LAST
+        // definition is the one that goto-definition navigates to.
+        let dir = tempfile::tempdir().unwrap();
+
+        // helpers.R defines `fn` twice — second def is at line 1
+        std::fs::write(
+            dir.path().join("helpers.R"),
+            "fn <- function() 'first'\nfn <- function() 'second'\n",
+        )
+        .unwrap();
+
+        let script_doc = Document::new("source(\"helpers.R\")\nfn\n", None);
+        let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
+
+        let mut state = WorldState::default();
+        state
+            .documents
+            .insert(script_uri.clone(), script_doc.clone());
+
+        // `fn` on line 1 should resolve to the SECOND def in helpers.R (line 1)
+        let params = make_params(script_uri, 1, 0);
+        assert_matches!(
+            goto_definition(&script_doc, params, &state).unwrap(),
+            Some(GotoDefinitionResponse::Link(ref links)) => {
+                assert_eq!(links[0].target_uri, helpers_uri);
+                assert_eq!(
+                    links[0].target_range,
+                    lsp_types::Range {
+                        start: lsp_types::Position::new(1, 0),
+                        end: lsp_types::Position::new(1, 2),
+                    }
+                );
+            }
+        );
+    }
 }
