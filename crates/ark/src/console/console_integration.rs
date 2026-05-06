@@ -24,9 +24,7 @@ impl Console {
 
     pub(crate) fn ui_comm(&self) -> Option<UiCommRef<'_>> {
         let guard = self.ui_comm.borrow();
-        if guard.is_none() {
-            return None;
-        }
+        let guard = DebugRef::filter_map(guard, |opt| opt.as_ref())?;
         Some(UiCommRef {
             guard,
             originator: self
@@ -231,18 +229,14 @@ impl Console {
 ///
 /// Existence of this value guarantees the comm is connected.
 pub(crate) struct UiCommRef<'a> {
-    guard: DebugRef<'a, Option<ConsoleComm>>,
+    guard: DebugRef<'a, ConsoleComm>,
     originator: Option<&'a Originator>,
     stdin_request_tx: &'a Sender<StdInRequest>,
 }
 
 impl UiCommRef<'_> {
-    fn comm(&self) -> &ConsoleComm {
-        self.guard.as_ref().unwrap()
-    }
-
     pub(crate) fn send_event(&self, event: &UiFrontendEvent) {
-        self.comm().ctx.send_event(event);
+        self.guard.ctx.send_event(event);
     }
 
     pub(crate) fn busy(&self, busy: bool) {

@@ -176,6 +176,59 @@ pub struct DebugRef<'a, T: ?Sized> {
     tracked: bool,
 }
 
+impl<'a, T: ?Sized> DebugRef<'a, T> {
+    /// Project through the guard, like `std::cell::Ref::map`.
+    pub fn map<U: ?Sized>(orig: DebugRef<'a, T>, f: impl FnOnce(&T) -> &U) -> DebugRef<'a, U> {
+        #[cfg(debug_assertions)]
+        {
+            DebugRef {
+                inner: std::cell::Ref::map(orig.inner, f),
+            }
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            let mapped = DebugRef {
+                value: f(orig.value),
+                state: orig.state,
+                tracked: orig.tracked,
+            };
+            // Prevent `orig`'s Drop from decrementing the borrow count;
+            // the new guard takes over ownership of the borrow.
+            std::mem::forget(orig);
+            mapped
+        }
+    }
+
+    /// Try to project through the guard, returning `None` if the closure
+    /// returns `None`. Like `std::cell::Ref::filter_map`.
+    pub fn filter_map<U: ?Sized>(
+        orig: DebugRef<'a, T>,
+        f: impl FnOnce(&T) -> Option<&U>,
+    ) -> Option<DebugRef<'a, U>> {
+        #[cfg(debug_assertions)]
+        {
+            std::cell::Ref::filter_map(orig.inner, f)
+                .ok()
+                .map(|inner| DebugRef { inner })
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            match f(orig.value) {
+                Some(value) => {
+                    let mapped = DebugRef {
+                        value,
+                        state: orig.state,
+                        tracked: orig.tracked,
+                    };
+                    std::mem::forget(orig);
+                    Some(mapped)
+                },
+                None => None,
+            }
+        }
+    }
+}
+
 impl<T: ?Sized> Deref for DebugRef<'_, T> {
     type Target = T;
 
