@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -35,8 +36,8 @@ impl RVersion {
     }
 }
 
-pub fn detect_r() -> anyhow::Result<RVersion> {
-    let output = r_command(|command| {
+pub fn from_r_home(r_home: &Path) -> anyhow::Result<RVersion> {
+    let output = r_command(r_home, |command| {
         command
             .arg("--vanilla")
             .arg("-s")

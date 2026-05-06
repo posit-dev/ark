@@ -47,7 +47,7 @@ pub fn start_kernel(
         Err(err) => panic!("Can't set up `R_HOME`: {err}"),
     };
 
-    let r_version = match crate::version::detect_r() {
+    let r_version = match crate::version::from_r_home(&r_home) {
         Ok(r_version) => r_version,
         Err(err) => panic!("Can't detect R version: {err:?}"),
     };
