@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use aether_lsp_utils::proto::from_proto;
 use aether_lsp_utils::proto::to_proto;
 use anyhow::anyhow;
