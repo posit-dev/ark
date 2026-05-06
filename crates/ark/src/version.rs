@@ -110,7 +110,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_reject_low_major() {
+    fn test_version_reject_low_major() {
         let version = RVersion {
             major: 3,
             minor: 9,
@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_low_minor() {
+    fn test_version_reject_low_minor() {
         let version = RVersion {
             major: 4,
             minor: 1,
@@ -132,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn test_accept_excact() {
+    fn test_version_accept_exact() {
         let version = RVersion {
             major: 4,
             minor: 2,
@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_accept_high_minor() {
+    fn test_version_accept_high_minor() {
         let version = RVersion {
             major: 4,
             minor: 4,
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reject_high_major() {
+    fn test_version_accept_high_major() {
         let version = RVersion {
             major: 5,
             minor: 0,
