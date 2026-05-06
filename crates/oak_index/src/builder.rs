@@ -739,6 +739,9 @@ impl<'a> SemanticIndexBuilder<'a> {
         };
         let mut items = args.items().iter();
 
+        // For now, only recognise exactly one unnamed argument. We'll do
+        // argument matching later (`character.only` unquoting is another
+        // complication).
         let Some(Ok(first_arg)) = items.next() else {
             return;
         };
@@ -856,13 +859,9 @@ impl<'a> SemanticIndexBuilder<'a> {
         }
     }
 
-    /// Call the source resolver for `path`, temporarily taking it out of
-    /// `self` to avoid borrow conflicts.
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
-        let mut resolver = self.source_resolver.take()?;
-        let result = resolver(path);
-        self.source_resolver = Some(resolver);
-        result
+        let source_resolver = self.source_resolver.as_mut()?;
+        source_resolver(path)
     }
 
     fn finish(mut self) -> SemanticIndex {
