@@ -124,7 +124,12 @@ pub(crate) enum AuxiliaryEvent {
 
 #[derive(Debug)]
 pub(crate) struct Progress {
+    /// Identifier for the kind of progress being reported
+    ///
+    /// If we understand correctly, this allows different identifiers to show up as
+    /// different spinners that all report progress concurrently
     id: String,
+
     event: ProgressEvent,
 }
 
@@ -136,8 +141,19 @@ impl Progress {
 
 #[derive(Debug)]
 pub(crate) enum ProgressEvent {
-    Begin,
+    Begin(ProgressEventBegin),
     End,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProgressEventBegin {
+    title: String,
+}
+
+impl ProgressEventBegin {
+    pub(crate) fn new(title: String) -> Self {
+        Self { title }
+    }
 }
 
 /// Global state for the main loop
@@ -602,7 +618,7 @@ impl AuxiliaryState {
         let token = lsp_types::ProgressToken::String(format!("ark/progress/{}", progress.id));
 
         let work_done_progress = match progress.event {
-            ProgressEvent::Begin => {
+            ProgressEvent::Begin(begin) => {
                 tracing::trace!("handle_progress(begin): token {token:?}");
 
                 let result = self
@@ -620,9 +636,9 @@ impl AuxiliaryState {
                 };
 
                 lsp_types::WorkDoneProgress::Begin(lsp_types::WorkDoneProgressBegin {
-                    title: String::from("This is progress"),
+                    title: begin.title,
                     cancellable: None,
-                    message: Some(String::from("This is progress")),
+                    message: None,
                     percentage: None,
                 })
             },

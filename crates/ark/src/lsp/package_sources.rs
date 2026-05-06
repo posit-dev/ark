@@ -2,6 +2,10 @@ use oak_sources::PackageCacheWriter;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::lsp::main_loop::report_progress;
+use crate::lsp::main_loop::Progress;
+use crate::lsp::main_loop::ProgressEvent;
+use crate::lsp::main_loop::ProgressEventBegin;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
 
 #[derive(Debug)]
@@ -47,6 +51,19 @@ impl PackageSourcesState {
     }
 
     fn handle_populate(&mut self, populate: Populate) {
+        // We don't populate packages concurrently, so we don't need per package ids
+        let id = String::from("package-sources");
+
+        report_progress(Progress::new(
+            id.clone(),
+            ProgressEvent::Begin(ProgressEventBegin::new(format!(
+                "Populating {package}",
+                package = &populate.package
+            ))),
+        ));
+
         self.writer.insert(&populate.package);
+
+        report_progress(Progress::new(id, ProgressEvent::End));
     }
 }
