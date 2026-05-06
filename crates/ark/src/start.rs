@@ -47,6 +47,22 @@ pub fn start_kernel(
         Err(err) => panic!("Can't set up `R_HOME`: {err}"),
     };
 
+    let r_version = match crate::version::detect_r() {
+        Ok(r_version) => r_version,
+        Err(err) => panic!("Can't detect R version: {err:?}"),
+    };
+
+    if !r_version.is_supported() {
+        panic!(
+            "Unsupported R version {}.{}.{}. Ark requires R >= {}.{}.0",
+            r_version.major,
+            r_version.minor,
+            r_version.patch,
+            crate::version::MIN_R_MAJOR,
+            crate::version::MIN_R_MINOR,
+        );
+    };
+
     // Create the channels used for communication. These are created here
     // as they need to be shared across different components / threads.
     let (iopub_tx, iopub_rx) = bounded::<IOPubMessage>(10);

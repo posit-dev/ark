@@ -396,22 +396,6 @@ impl Console {
             startup::push_ignore_user_r_profile(&mut r_args);
         }
 
-        let r_version = match crate::version::detect_r() {
-            Ok(r_version) => r_version,
-            Err(err) => panic!("Can't detect R version: {err:?}"),
-        };
-
-        if !r_version.is_supported() {
-            panic!(
-                "Unsupported R version {}.{}.{}. Ark requires R >= {}.{}.0",
-                r_version.major,
-                r_version.minor,
-                r_version.patch,
-                crate::version::MIN_R_MAJOR,
-                crate::version::MIN_R_MINOR,
-            );
-        };
-
         // `R_HOME` is now defined no matter what and will be used by
         // `r_command()`. Let's discover the other important environment
         // variables set by R's shell script frontend.
