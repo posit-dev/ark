@@ -14,12 +14,12 @@ make_ark_source <- function(original_source) {
     force(original_source)
 
     # Take all original arguments for e.g. completions
-    function(
-        file,
+    formals <- alist(
+        file = ,
         local = FALSE,
         echo = verbose,
         print.eval = echo,
-        exprs,
+        exprs = ,
         spaced = use_file,
         verbose = getOption("verbose"),
         prompt.echo = getOption("prompt"),
@@ -31,9 +31,15 @@ make_ark_source <- function(original_source) {
         encoding = getOption("encoding"),
         continue.echo = getOption("continue"),
         skip.echo = 0,
-        keep.source = getOption("keep.source"),
-        ...
-    ) {
+        keep.source = getOption("keep.source")
+    )
+
+    # Remove arguments that are not yet supported
+    if (getRversion() <= "4.4.0") {
+        formals$catch.aborts <- NULL
+    }
+
+    body <- quote({
         # Compute default argument for `spaced`. Must be defined before the
         # fallback calls.
         use_file <- missing(exprs)
@@ -61,8 +67,7 @@ make_ark_source <- function(original_source) {
             encoding = encoding,
             continue.echo = continue.echo,
             skip.echo = skip.echo,
-            keep.source = keep.source,
-            ...
+            keep.source = keep.source
         )
 
         # Remove arguments that are not yet supported
@@ -161,7 +166,13 @@ make_ark_source <- function(original_source) {
         # unexpected lengths (0 or >1). The annotated code is wrapped in
         # `withVisible()` so the result already has the right structure.
         invisible(eval(parsed, env))
-    }
+    })
+
+    out <- function() {}
+    formals(out) <- formals
+    body(out) <- body
+
+    out
 }
 
 #' @export

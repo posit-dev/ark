@@ -19,12 +19,13 @@ biome_rowan.workspace = true
 log.workspace = true
 oak_core.workspace = true
 oak_index.workspace = true
-oak_package.workspace = true
+oak_sources.workspace = true
 stdext.workspace = true
 url.workspace = true
 
 [dev-dependencies]
 aether_parser.workspace = true
 assert_matches.workspace = true
-oak_index.workspace = true
-oak_package = { workspace = true, features = ["testing"] }
+oak_index = { workspace = true, features = ["testing"] }
+oak_package_metadata.workspace = true
+oak_sources = { workspace = true, features = ["testing"] }

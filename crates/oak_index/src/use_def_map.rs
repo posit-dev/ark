@@ -1,10 +1,10 @@
 use itertools::EitherOrBoth;
 use itertools::Itertools;
+use oak_index_vec::Idx;
+use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::index_vec::Idx;
-use crate::index_vec::IndexVec;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::SymbolId;

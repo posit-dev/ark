@@ -5,10 +5,21 @@
 #
 #
 
-# Dispatches to object handlers. The handlers take `var` and `env` arguments.
-# These are only passed if we could infer a variable name from the input and if
-# that variable exists in the calling environment. This is used for live
-# updating the objects, if supported (e.g. data frames in the data viewer).
+# `utils::View()` replacement, with exact same arguments
+view_hook <- function(x, title) {
+    view(
+        x = x,
+        title = title,
+        name = as_label(substitute(x)),
+        env = parent.frame()
+    )
+}
+
+# Called from Rust. Dispatches to object handlers. The handlers take `name` and
+# `env` arguments. These are only passed if we could infer a variable name from
+# the input and if that variable exists in the calling environment. This is used
+# for live updating the objects, if supported (e.g. data frames in the data
+# viewer).
 view <- function(x, title, name = NULL, env = parent.frame()) {
     # Derive the name of the object from the expression passed to View()
     name <- name %||% as_label(substitute(x))

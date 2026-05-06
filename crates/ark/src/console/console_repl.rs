@@ -10,6 +10,8 @@
 //! This module contains `impl Console` with methods and functions related to
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
+use std::path::Path;
+
 use super::*;
 use crate::dap::dap_notebook;
 use crate::data_explorer::r_data_explorer::POSITRON_DATA_EXPLORER_MIME;
@@ -333,6 +335,7 @@ impl Console {
     /// and starts R. Does not return!
     /// SAFETY: Must be called only once. Enforced with a panic.
     pub(crate) fn start(
+        r_home: PathBuf,
         r_args: Vec<String>,
         startup_file: Option<String>,
         comm_event_tx: Sender<CommEvent>,
@@ -361,6 +364,7 @@ impl Console {
         let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
+            r_home,
             tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
@@ -440,7 +444,7 @@ impl Console {
             Err(err) => log::error!("Failed to discover R envvars: {err}"),
         };
 
-        let libraries = RLibraries::from_r_home_path(&r_home);
+        let libraries = RLibraries::from_r_home_path(console.r_home());
         libraries.initialize_pre_setup_r();
 
         crate::sys::console::setup_r(&r_args);
@@ -526,7 +530,7 @@ impl Console {
         // Now that R has started and libr and ark have fully initialized, run site and user
         // level R profiles, in that order
         if !ignore_site_r_profile {
-            startup::source_site_r_profile(&r_home);
+            startup::source_site_r_profile(console.r_home());
         }
         if !ignore_user_r_profile {
             startup::source_user_r_profile();
@@ -619,6 +623,7 @@ impl Console {
     }
 
     fn new(
+        r_home: PathBuf,
         tasks_interrupt_rx: Receiver<QueuedRTask>,
         tasks_idle_rx: Receiver<QueuedRTask>,
         tasks_idle_any_rx: Receiver<QueuedRTask>,
@@ -632,6 +637,7 @@ impl Console {
         session_mode: SessionMode,
     ) -> Self {
         Self {
+            r_home,
             r_request_rx,
             comm_event_tx,
             stdin_request_tx,
@@ -718,6 +724,10 @@ impl Console {
     pub(crate) fn on_main_thread() -> bool {
         let thread = std::thread::current();
         thread.id() == unsafe { CONSOLE_THREAD_ID.unwrap() }
+    }
+
+    pub(crate) fn r_home(&self) -> &Path {
+        self.r_home.as_path()
     }
 
     pub(crate) fn iopub_tx(&self) -> &Sender<IOPubMessage> {

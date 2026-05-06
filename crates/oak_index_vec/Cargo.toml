@@ -1,0 +1,18 @@
+[package]
+name = "oak_index_vec"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = """
+`Vec<V>` indexed by a strongly-typed newtype so that indices from different
+vectors can't be mixed up.
+"""
+license.workspace = true
+
+[dependencies]
+biome_text_size.workspace = true
+oak_core.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use aether_parser::parse;
 use aether_parser::RParserOptions;
@@ -9,14 +10,16 @@ use biome_rowan::TextSize;
 use oak_ide::goto_definition;
 use oak_ide::ExternalScope;
 use oak_ide::NavigationTarget;
-use oak_index::external::file_layers;
-use oak_index::external::ScopeLayer;
+use oak_index::library::Library;
+use oak_index::package::Package;
+use oak_index::scope_layer::file_layers;
+use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index;
 use oak_index::semantic_index::SemanticIndex;
-use oak_package::library::Library;
-use oak_package::package::Package;
-use oak_package::package_description::Description;
-use oak_package::package_namespace::Namespace;
+use oak_package_metadata::description::Description;
+use oak_package_metadata::namespace::Namespace;
+use oak_sources::test::TestPackageCache;
+use stdext::SortedVec;
 use url::Url;
 
 fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
@@ -27,24 +30,78 @@ fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
 }
 
 fn empty_library() -> Library {
-    Library::new(vec![])
+    Library::new(vec![], None)
 }
 
-fn test_library(packages: Vec<(&str, Vec<&str>)>) -> Library {
-    let mut library = Library::new(vec![]);
-    for (name, exports) in packages {
+struct TestPackage {
+    name: String,
+    file: PathBuf,
+    exports: Vec<String>,
+    internals: Vec<String>,
+}
+
+impl TestPackage {
+    // Most convenient input types for test construction
+    fn new(name: &str, file: &str, exports: Vec<&str>, internals: Vec<&str>) -> Self {
+        Self {
+            name: String::from(name),
+            file: PathBuf::from(file),
+            exports: exports
+                .into_iter()
+                .map(|export| export.to_string())
+                .collect(),
+            internals: internals
+                .into_iter()
+                .map(|export| export.to_string())
+                .collect(),
+        }
+    }
+}
+
+fn test_library(packages: Vec<TestPackage>) -> Library {
+    let cache = TestPackageCache::new().unwrap();
+
+    // Both exports and internals are in the test file
+    for package in &packages {
+        let content = test_file(&package.exports, &package.internals);
+        cache
+            .add(&package.name, vec![(package.file.as_path(), &content)])
+            .expect("Can write to cache");
+    }
+
+    let cache = Arc::new(cache);
+
+    let mut library = Library::new(vec![], Some(cache));
+
+    // Only exports are included in `Namespace`
+    for package in &packages {
         let ns = Namespace {
-            exports: exports.into_iter().map(String::from).collect(),
+            exports: SortedVec::from_vec(package.exports.clone()),
             ..Default::default()
         };
         let desc = Description {
-            name: name.to_string(),
+            name: package.name.clone(),
             ..Default::default()
         };
         let pkg = Package::from_parts(PathBuf::from("/fake"), desc, ns);
-        library = library.insert(name, pkg);
+        library = library.insert(&package.name, pkg);
     }
+
     library
+}
+
+// Create a file worth of function definitions
+fn test_file(exports: &Vec<String>, internals: &Vec<String>) -> String {
+    let mut out = String::new();
+
+    for export in exports {
+        out.push_str(&format!("{export} <- function() {{}}\n\n"));
+    }
+    for internal in internals {
+        out.push_str(&format!("{internal} <- function() {{}}\n\n"));
+    }
+
+    out
 }
 
 fn text_range(start: u32, end: u32) -> TextRange {
@@ -254,7 +311,12 @@ fn test_external_package() {
     let source = "mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let scope_chain = vec![ScopeLayer::PackageExports("dplyr".to_string())];
 
@@ -266,8 +328,12 @@ fn test_external_package() {
         &ExternalScope::package(scope_chain.clone(), scope_chain),
         &library,
     );
-    // No navigation target for package symbols (no file/range to navigate to)
-    assert!(targets.is_empty());
+
+    assert_eq!(targets.len(), 1);
+
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("dplyr.R"));
+    assert_eq!(target.name, "mutate".to_string());
 }
 
 // --- External resolution: importFrom ---
@@ -427,7 +493,7 @@ fn test_local_shadows_external() {
     let source = "foo <- 1\nfoo\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("pkg", vec!["foo"])]);
+    let library = test_library(vec![TestPackage::new("pkg", "pkg.R", vec!["foo"], vec![])]);
 
     let scope_chain = vec![ScopeLayer::PackageExports("pkg".to_string())];
 
@@ -760,26 +826,40 @@ fn test_library_directive_in_predecessor() {
     let (bbb_root, bbb_idx) = parse_source(bbb_source);
 
     let aaa_layers = file_layers(aaa_url, &aaa_idx);
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let scope = ExternalScope::package(aaa_layers.clone(), aaa_layers);
 
     let targets = goto_definition(offset(0), &bbb_url, &bbb_root, &bbb_idx, &scope, &library);
-    // dplyr::mutate is a package symbol, no file/range to navigate to
-    assert!(targets.is_empty());
+
+    assert_eq!(targets.len(), 1);
+
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("dplyr.R"));
+    assert_eq!(target.name, "mutate".to_string());
 }
 
 // --- Namespace access (:: and :::) ---
 
 #[test]
-fn test_fixme_namespace_access_exported_symbol() {
+fn test_namespace_access_exported_symbol() {
     // "dplyr::mutate\n"
     //  0123456789...
     // Cursor on `mutate` (offset 7)
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let targets = goto_definition(
         offset(7),
@@ -789,8 +869,12 @@ fn test_fixme_namespace_access_exported_symbol() {
         &ExternalScope::default(),
         &library,
     );
-    // FIXME: Package symbol, no NavigationTarget yet
-    assert!(targets.is_empty());
+
+    assert_eq!(targets.len(), 1);
+
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("dplyr.R"));
+    assert_eq!(target.name, "mutate".to_string());
 }
 
 #[test]
@@ -799,7 +883,12 @@ fn test_namespace_access_unknown_symbol() {
     let source = "dplyr::nonexistent\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let targets = goto_definition(
         offset(7),
@@ -817,7 +906,7 @@ fn test_namespace_access_unknown_package() {
     let source = "bogus::foo\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = empty_library();
+    let library = test_library(vec![]);
 
     let targets = goto_definition(
         offset(7),
@@ -831,15 +920,20 @@ fn test_namespace_access_unknown_package() {
 }
 
 #[test]
-fn test_fixme_namespace_access_triple_colon() {
+fn test_namespace_access_triple_colon() {
+    let library = test_library(vec![TestPackage::new(
+        "pkg",
+        "pkg.R",
+        vec!["external_fn"],
+        vec!["internal_fn"],
+    )]);
+
     // "pkg:::internal_fn\n"
     //  01234567890...
     // Cursor on `internal_fn` (offset 6)
     let source = "pkg:::internal_fn\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("pkg", vec!["internal_fn"])]);
-
     let targets = goto_definition(
         offset(6),
         &file,
@@ -848,8 +942,29 @@ fn test_fixme_namespace_access_triple_colon() {
         &ExternalScope::default(),
         &library,
     );
-    // FIXME: Package symbol, no NavigationTarget yet
-    assert!(targets.is_empty());
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("pkg.R"));
+    assert_eq!(target.name, "internal_fn".to_string());
+
+    // "pkg:::external_fn\n"
+    //  01234567890...
+    // Cursor on `external_fn` (offset 6)
+    let source = "pkg:::external_fn\n";
+    let file = file_url("test.R");
+    let (root, idx) = parse_source(source);
+    let targets = goto_definition(
+        offset(6),
+        &file,
+        &root,
+        &idx,
+        &ExternalScope::default(),
+        &library,
+    );
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("pkg.R"));
+    assert_eq!(target.name, "external_fn".to_string());
 }
 
 #[test]
@@ -858,7 +973,12 @@ fn test_fixme_namespace_access_cursor_on_package_name() {
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let targets = goto_definition(
         offset(0),
@@ -868,9 +988,12 @@ fn test_fixme_namespace_access_cursor_on_package_name() {
         &ExternalScope::default(),
         &library,
     );
-    // FIXME: Cursor on the package name still classifies as NamespaceAccess,
-    // resolves `mutate` in `dplyr` — but package symbols have no target yet
-    assert!(targets.is_empty());
+    // FIXME: Cursor on the package name still classifies as NamespaceAccess
+    // and resolves `mutate` in `dplyr`.
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("dplyr.R"));
+    assert_eq!(target.name, "mutate".to_string());
 }
 
 #[test]
@@ -879,7 +1002,12 @@ fn test_fixme_namespace_access_cursor_on_operator() {
     let source = "dplyr::mutate\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("dplyr", vec!["filter", "mutate", "select"])]);
+    let library = test_library(vec![TestPackage::new(
+        "dplyr",
+        "dplyr.R",
+        vec!["filter", "mutate", "select"],
+        vec![],
+    )]);
 
     let targets = goto_definition(
         offset(5),
@@ -889,8 +1017,11 @@ fn test_fixme_namespace_access_cursor_on_operator() {
         &ExternalScope::default(),
         &library,
     );
-    // FIXME: Operator token is inside the RNamespaceExpression, still resolves
-    assert!(targets.is_empty());
+    // FIXME: Operator token is inside the RNamespaceExpression, still resolves.
+    assert_eq!(targets.len(), 1);
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("dplyr.R"));
+    assert_eq!(target.name, "mutate".to_string());
 }
 
 #[test]
@@ -952,12 +1083,12 @@ fn test_namespace_classify_triple_colon() {
 }
 
 #[test]
-fn test_fixme_namespace_access_in_call() {
+fn test_namespace_access_in_call() {
     // foo::bar() — cursor on `bar`
     let source = "foo::bar()\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("foo", vec!["bar"])]);
+    let library = test_library(vec![TestPackage::new("foo", "foo.R", vec!["bar"], vec![])]);
 
     let targets = goto_definition(
         offset(5),
@@ -967,17 +1098,21 @@ fn test_fixme_namespace_access_in_call() {
         &ExternalScope::default(),
         &library,
     );
-    // FIXME: Package symbol, no NavigationTarget yet
-    assert!(targets.is_empty());
+
+    assert_eq!(targets.len(), 1);
+
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("foo.R"));
+    assert_eq!(target.name, "bar".to_string());
 }
 
 #[test]
-fn test_fixme_namespace_access_in_extract() {
+fn test_namespace_access_in_extract() {
     // foo::bar$baz — cursor on `bar`
     let source = "foo::bar$baz\n";
     let file = file_url("test.R");
     let (root, idx) = parse_source(source);
-    let library = test_library(vec![("foo", vec!["bar"])]);
+    let library = test_library(vec![TestPackage::new("foo", "foo.R", vec!["bar"], vec![])]);
 
     let targets = goto_definition(
         offset(5),
@@ -987,8 +1122,12 @@ fn test_fixme_namespace_access_in_extract() {
         &ExternalScope::default(),
         &library,
     );
-    // FIXME: Package symbol, no NavigationTarget yet
-    assert!(targets.is_empty());
+
+    assert_eq!(targets.len(), 1);
+
+    let target = targets.first().unwrap();
+    assert!(target.file.path().ends_with("foo.R"));
+    assert_eq!(target.name, "bar".to_string());
 }
 
 #[test]

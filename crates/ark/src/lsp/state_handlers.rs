@@ -6,7 +6,7 @@
 //
 
 use anyhow::anyhow;
-use oak_package::package::Package;
+use oak_index::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
 use tower_lsp::lsp_types::CompletionOptions;
@@ -101,7 +101,7 @@ pub(crate) fn initialize(
                         Ok(Some(pkg)) => {
                             log::info!(
                                 "Root: Loaded package `{pkg}` from {path} as project root",
-                                pkg = pkg.description.name,
+                                pkg = pkg.description().name,
                                 path = path.display()
                             );
                             state.root = Some(SourceRoot::Package(pkg));
