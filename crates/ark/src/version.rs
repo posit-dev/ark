@@ -43,20 +43,23 @@ impl RVersion {
 
 // It is assumed that r_home matches the R_HOME env var. Usually the input will
 // come from r_home_setup()
-pub fn detect_r(r_home: &Path) -> anyhow::Result<RVersion> {
+pub fn detect_r() -> anyhow::Result<RVersion> {
     let output = r_command(|command| {
         command
             .arg("--vanilla")
             .arg("-s")
             .arg("-e")
-            .arg("cat(version$major, \".\", version$minor, sep = \"\")");
+            .arg("cat(version$major, \".\", version$minor, \":\", R.home(), sep = \"\")");
     })
     .context("Failed to execute R to determine version number")?;
 
-    let version = String::from_utf8(output.stdout)
+    let output = String::from_utf8(output.stdout)
         .context("Failed to convert R version number to a string")?
         .trim()
         .to_string();
+
+    let (version, path) = output.split_once(":")
+        .context("Expected `:` delimiter in string")?;
 
     let version = version.split(".").map(|x| x.parse::<u32>());
 
@@ -65,16 +68,11 @@ pub fn detect_r(r_home: &Path) -> anyhow::Result<RVersion> {
             major,
             minor,
             patch,
-            r_home: r_home.to_string_lossy().to_string(),
+            r_home: path.to_string(),
         })
     } else {
         anyhow::bail!("Failed to extract R version");
     }
-}
-
-// Like detect_r() but calls r_home_setup() to get the path
-pub fn detect_r_setup() -> anyhow::Result<RVersion> {
-    detect_r(&r_home_setup()?)
 }
 
 #[harp::register]

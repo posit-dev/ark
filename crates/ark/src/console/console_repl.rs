@@ -392,12 +392,7 @@ impl Console {
             startup::push_ignore_user_r_profile(&mut r_args);
         }
 
-        let r_home = match r_home_setup() {
-            Ok(r_home) => r_home,
-            Err(err) => panic!("Can't set up `R_HOME`: {err}"),
-        };
-
-        let r_version = match crate::version::detect_r(&r_home) {
+        let r_version = match crate::version::detect_r() {
             Ok(r_version) => r_version,
             Err(err) => panic!("Can't detect R version: {err:?}"),
         };
