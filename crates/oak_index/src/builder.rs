@@ -74,11 +74,22 @@ pub fn semantic_index_with_source_resolver<'a>(
 /// callback passed to the builder.
 pub struct SourceResolution {
     /// Definitions to inject as synthetic bindings in the calling scope.
-    /// Each entry is (name, file_url, range_in_source_file).
-    pub definitions: Vec<(String, Url, TextRange)>,
+    pub definitions: Vec<FileDefinition>,
+
     /// Package names from `library()` directives in the sourced file
     /// (and transitively from files it sources).
     pub packages: Vec<String>,
+}
+
+/// A top-level definition from a file, represented so it can be consumed
+/// outside of that file's [`SemanticIndex`]. Where [`Definition`] refers to
+/// names through a `SymbolId` scoped to a specific symbol table,
+/// `FileDefinition` carries the name inline and is self-contained.
+#[derive(Clone)]
+pub struct FileDefinition {
+    pub name: String,
+    pub file: Url,
+    pub range: TextRange,
 }
 
 type SourceResolver<'a> = Box<dyn FnMut(&str) -> Option<SourceResolution> + 'a>;
@@ -876,13 +887,13 @@ impl<'a> SemanticIndexBuilder<'a> {
         if is_local || !in_nested_scope {
             // `local = TRUE` or at file scope: inject into the
             // use-def map so sourced definitions shadow locals.
-            for (name, file, range) in resolution.definitions {
+            for def in resolution.definitions {
                 self.add_definition(
-                    &name,
+                    &def.name,
                     SymbolFlags::IS_BOUND,
                     DefinitionKind::Sourced,
-                    range,
-                    Some(file),
+                    def.range,
+                    Some(def.file),
                 );
             }
             for pkg in resolution.packages {
@@ -897,8 +908,11 @@ impl<'a> SemanticIndexBuilder<'a> {
             // resolution only via directives, scoped to the current scope
             // instead of the file scope.
             let mut by_file: HashMap<Url, HashMap<String, TextRange>> = HashMap::new();
-            for (name, file, range) in resolution.definitions {
-                by_file.entry(file).or_default().insert(name, range);
+            for def in resolution.definitions {
+                by_file
+                    .entry(def.file)
+                    .or_default()
+                    .insert(def.name, def.range);
             }
             for (file, exports) in by_file {
                 self.directives.push(Directive {

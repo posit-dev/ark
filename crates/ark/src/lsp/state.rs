@@ -5,7 +5,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use biome_rowan::TextRange;
 use oak_core::file::list_r_files;
 use oak_ide::ExternalScope;
 use oak_index::library::Library;
@@ -16,6 +15,7 @@ use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::SourceResolution;
+use oak_index::FileDefinition;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -265,10 +265,14 @@ impl WorldState {
             self.resolve_source(base_dir, nested_path, stack)
         });
 
-        let definitions: Vec<(String, Url, TextRange)> = index
+        let definitions: Vec<FileDefinition> = index
             .file_source_exports(&url)
             .into_iter()
-            .map(|(name, file, range)| (name.to_string(), file, range))
+            .map(|(name, file, range)| FileDefinition {
+                name: name.to_string(),
+                file,
+                range,
+            })
             .collect();
 
         let packages: Vec<String> = index

@@ -14,6 +14,7 @@ use oak_index::semantic_index::SymbolFlags;
 use oak_index::semantic_index::UseId;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::SourceResolution;
+use oak_index::FileDefinition;
 use url::Url;
 
 fn index(source: &str) -> SemanticIndex {
@@ -1551,11 +1552,11 @@ fn index_with_resolver(
 
 fn helper_resolution() -> SourceResolution {
     SourceResolution {
-        definitions: vec![(
-            "helper".into(),
-            Url::parse("file:///test/helpers.R").unwrap(),
-            TextRange::new(TextSize::from(0), TextSize::from(6)),
-        )],
+        definitions: vec![FileDefinition {
+            name: "helper".into(),
+            file: Url::parse("file:///test/helpers.R").unwrap(),
+            range: TextRange::new(TextSize::from(0), TextSize::from(6)),
+        }],
         packages: vec![],
     }
 }
@@ -1677,7 +1678,11 @@ fn test_source_resolver_later_shadows_earlier() {
             _ => return None,
         };
         Some(SourceResolution {
-            definitions: vec![("foo".to_string(), url, range)],
+            definitions: vec![FileDefinition {
+                name: "foo".to_string(),
+                file: url,
+                range,
+            }],
             packages: Vec::new(),
         })
     });
@@ -1725,11 +1730,11 @@ fn test_source_resolver_local_true_shadows_local_def() {
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\", local = TRUE)\n  foo\n}\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
-            definitions: vec![(
-                "foo".into(),
-                Url::parse("file:///test/helpers.R").unwrap(),
-                TextRange::new(TextSize::from(0), TextSize::from(3)),
-            )],
+            definitions: vec![FileDefinition {
+                name: "foo".into(),
+                file: Url::parse("file:///test/helpers.R").unwrap(),
+                range: TextRange::new(TextSize::from(0), TextSize::from(3)),
+            }],
             packages: vec![],
         })
     });
@@ -1751,11 +1756,11 @@ fn test_source_resolver_local_false_does_not_shadow_local_def() {
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
-            definitions: vec![(
-                "foo".into(),
-                Url::parse("file:///test/helpers.R").unwrap(),
-                TextRange::new(TextSize::from(0), TextSize::from(3)),
-            )],
+            definitions: vec![FileDefinition {
+                name: "foo".into(),
+                file: Url::parse("file:///test/helpers.R").unwrap(),
+                range: TextRange::new(TextSize::from(0), TextSize::from(3)),
+            }],
             packages: vec![],
         })
     });

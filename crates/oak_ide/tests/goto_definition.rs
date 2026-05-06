@@ -21,6 +21,7 @@ use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::ScopeId;
 use oak_index::SourceResolution;
+use oak_index::FileDefinition;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
 use oak_sources::test::TestPackageCache;
@@ -1227,10 +1228,14 @@ fn test_source_directive_resolves_to_sourced_file() {
     let script_url = file_url("script.R");
 
     let helpers_url_clone = helpers_url.clone();
-    let helpers_exports: Vec<_> = helpers_idx
+    let helpers_exports: Vec<FileDefinition> = helpers_idx
         .file_exports()
         .into_iter()
-        .map(|(name, range)| (name.to_string(), helpers_url_clone.clone(), range))
+        .map(|(name, range)| FileDefinition {
+            name: name.to_string(),
+            file: helpers_url_clone.clone(),
+            range,
+        })
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
@@ -1273,10 +1278,14 @@ fn test_source_directive_resolves_nested_library() {
     let (_helpers_root, helpers_idx) = parse_source(helpers_source);
     let helpers_url = file_url("helpers.R");
 
-    let helpers_exports: Vec<_> = helpers_idx
+    let helpers_exports: Vec<FileDefinition> = helpers_idx
         .file_exports()
         .into_iter()
-        .map(|(name, range)| (name.to_string(), helpers_url.clone(), range))
+        .map(|(name, range)| FileDefinition {
+            name: name.to_string(),
+            file: helpers_url.clone(),
+            range,
+        })
         .collect();
     let helpers_packages: Vec<_> = helpers_idx
         .file_directives()
@@ -1382,10 +1391,14 @@ fn test_directive_not_visible_before_call_site() {
     )]);
 
     let helpers_url_clone = helpers_url.clone();
-    let helpers_exports: Vec<_> = helpers_idx
+    let helpers_exports: Vec<FileDefinition> = helpers_idx
         .file_exports()
         .into_iter()
-        .map(|(name, range)| (name.to_string(), helpers_url_clone.clone(), range))
+        .map(|(name, range)| FileDefinition {
+            name: name.to_string(),
+            file: helpers_url_clone.clone(),
+            range,
+        })
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
@@ -1527,10 +1540,14 @@ fn test_source_in_function_body_scoping() {
     let script_url = file_url("script.R");
 
     let helpers_url_clone = helpers_url.clone();
-    let helpers_exports: Vec<_> = helpers_idx
+    let helpers_exports: Vec<FileDefinition> = helpers_idx
         .file_exports()
         .into_iter()
-        .map(|(name, range)| (name.to_string(), helpers_url_clone.clone(), range))
+        .map(|(name, range)| FileDefinition {
+            name: name.to_string(),
+            file: helpers_url_clone.clone(),
+            range,
+        })
         .collect();
 
     let parsed = parse(script_source, RParserOptions::default());
