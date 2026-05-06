@@ -34,7 +34,7 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
                 DocumentSymbol {
                     name: "foo",
                     detail: None,
-                    kind: TypeParameter,
+                    kind: Function,
                     tags: None,
                     deprecated: None,
                     range: Range {
@@ -189,7 +189,7 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
                 DocumentSymbol {
                     name: "bar",
                     detail: None,
-                    kind: TypeParameter,
+                    kind: Function,
                     tags: None,
                     deprecated: None,
                     range: Range {

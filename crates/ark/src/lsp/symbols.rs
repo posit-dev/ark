@@ -601,7 +601,7 @@ fn collect_call_test_that(
 
     let symbol = new_symbol_node(
         name,
-        SymbolKind::TYPE_PARAMETER,
+        SymbolKind::FUNCTION,
         Range { start, end },
         children,
     );
