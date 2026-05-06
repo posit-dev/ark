@@ -406,7 +406,7 @@ impl Shell {
     }
 
     fn handle_comm_msg_request(&mut self, req: JupyterMessage<CommWireMsg>) -> crate::Result<()> {
-        self.handle_comm_notification(req, |this, req| {
+        self.handle_comm_request(req, |this, req| {
             let originator = Originator::from(req);
             Self::handle_comm_msg(
                 &mut this.shell_handler,
@@ -418,13 +418,13 @@ impl Shell {
     }
 
     fn handle_comm_close_request(&mut self, req: JupyterMessage<CommClose>) -> crate::Result<()> {
-        self.handle_comm_notification(req, |this, req| {
+        self.handle_comm_request(req, |this, req| {
             Self::handle_comm_close(&mut this.shell_handler, &mut this.open_comms, &req.content)
         })
     }
 
     fn handle_comm_open_request(&mut self, req: JupyterMessage<CommOpen>) -> crate::Result<()> {
-        self.handle_comm_notification(req, |this, req| {
+        self.handle_comm_request(req, |this, req| {
             Self::handle_comm_open(
                 &this.iopub_tx,
                 &mut this.shell_handler,
@@ -439,7 +439,7 @@ impl Shell {
     /// the handler runs. The handler returns a result and an optional
     /// completion receiver; if present, Shell select-loops on it to process
     /// comm events (e.g. barriers from `comm_open_backend`).
-    fn handle_comm_notification<T: ProtocolMessage>(
+    fn handle_comm_request<T: ProtocolMessage>(
         &mut self,
         req: JupyterMessage<T>,
         handler: impl FnOnce(&mut Self, &JupyterMessage<T>) -> (crate::Result<()>, Option<Receiver<()>>),
@@ -448,7 +448,7 @@ impl Shell {
             .send(status(req.clone(), ExecutionState::Busy))
             .unwrap();
 
-        log::info!("Received shell notification: {req:?}");
+        log::info!("Received shell request: {req:?}");
 
         let (result, done_rx) = handler(self, &req);
 
