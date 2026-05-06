@@ -83,9 +83,9 @@ pub trait ShellHandler: Send {
 
     /// Handle a request to open a comm.
     ///
-    /// Returns `(true, Some(receiver))` if the comm was opened and the handler
-    /// was dispatched asynchronously. Shell will select-loop on the receiver
-    /// and `comm_event_rx` to drain comm events while the handler runs.
+    /// Returns `(true, Some(receiver))` if the comm was opened and the
+    /// handler was dispatched asynchronously. Shell will wait on the
+    /// receiver before returning to idle.
     ///
     /// Returns `(true, None)` if the comm was opened synchronously.
     /// Returns `(false, None)` if the comm was not handled.
@@ -99,9 +99,8 @@ pub trait ShellHandler: Send {
     /// Handle an incoming comm message (RPC or data).
     ///
     /// Returns `(CommHandled::Handled, Some(receiver))` if the message was
-    /// dispatched to the R thread. Shell will select-loop on the receiver
-    /// and `comm_event_rx` to drain comm events (e.g. barriers from
-    /// `comm_open_backend`) while the handler runs.
+    /// dispatched asynchronously. Shell will wait on the receiver before
+    /// returning to idle.
     ///
     /// Returns `(CommHandled::NotHandled, None)` to fall back to the
     /// existing `incoming_tx` path.
@@ -124,7 +123,7 @@ pub trait ShellHandler: Send {
     /// Handle a comm close.
     ///
     /// Same pattern as `handle_comm_msg`: returns a completion receiver
-    /// so Shell can drain comm events while the handler runs.
+    /// so Shell can wait for the handler to finish.
     ///
     /// * `comm_id` - The comm's unique identifier
     /// * `comm_name` - The comm's target name

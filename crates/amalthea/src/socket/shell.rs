@@ -464,9 +464,13 @@ impl Shell {
     }
 
     /// Drain comm events while waiting for a value on `rx`.
-    /// Used by execute requests, comm_msg, comm_close, and comm_open to
-    /// process comm events (e.g. barriers from `comm_open_backend`) while
-    /// the R thread is working.
+    ///
+    /// Used by execute requests and comm handlers (msg/close/open) to prevent
+    /// deadlocks when the R thread calls `comm_open_backend` during handling.
+    /// `comm_open_backend` sends `CommEvent::Opened` with a barrier back to
+    /// Shell and blocks until Shell processes it (to guarantee `comm_open` is
+    /// on IOPub before the caller continues). If Shell were blocked on `rx`
+    /// without draining, both sides would deadlock.
     fn drain_comm_events_until<T>(&mut self, rx: &Receiver<T>) -> T {
         loop {
             let mut sel = Select::new();
