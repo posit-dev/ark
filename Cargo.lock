@@ -456,6 +456,7 @@ dependencies = [
  "crossbeam",
  "dap",
  "harp",
+ "libc",
  "log",
  "regex",
  "serde",

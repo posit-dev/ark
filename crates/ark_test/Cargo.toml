@@ -20,6 +20,7 @@ ark.workspace = true
 crossbeam.workspace = true
 dap = { workspace = true, features = ["client"] }
 harp.workspace = true
+libc.workspace = true
 log.workspace = true
 regex.workspace = true
 serde.workspace = true

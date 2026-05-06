@@ -768,8 +768,6 @@ impl DummyArkFrontend {
     #[cfg(unix)]
     #[track_caller]
     pub fn wait_for_cleanup() {
-        use std::time::Duration;
-
         use ark::sys::console::CLEANUP_SIGNAL;
 
         let (lock, cvar) = &CLEANUP_SIGNAL;
@@ -1793,6 +1791,40 @@ impl DummyArkFrontend {
         // we redirect stdout.
         // https://github.com/r-lib/cli/blob/1220ed092c03e167ff0062e9839c81d7258a4600/R/onload.R#L33-L40
         unsafe { std::env::set_var("R_CLI_HIDE_CURSOR", "false") };
+
+        // On Linux, register an atexit handler that calls `_exit(0)` to skip
+        // library fini sections (`.fini_array` destructors). libgomp's
+        // `.fini_array` destructor can trigger a re-initialization crash on
+        // Ubuntu CI runners:
+        //
+        // ```
+        // test test_dap_reconnect_basic ... ok
+        // test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+        // dap_breakpoints_reconnect-abc123: ../../../src/libgomp/oacc-init.c:84:
+        //   goacc_register: Assertion `!dispatchers[disp->type]' failed.
+        // (test aborted with signal 6: SIGABRT)
+        // ```
+        //
+        // In glibc, `_dl_fini()` (which runs `.fini_array` destructors for all
+        // loaded shared objects) is itself an atexit handler, registered by the
+        // dynamic linker at process startup. Since atexit is LIFO and `_dl_fini`
+        // is registered before any user code, it executes after all
+        // user-registered handlers. Our handler, registered here during test
+        // init, executes before `_dl_fini` and calls `_exit(0)` to terminate
+        // the process, preventing `_dl_fini` from ever running. Registering
+        // early also means handlers registered later (by R, Rust runtime, etc.)
+        // execute before ours, so normal cleanup still happens.
+        //
+        // From exit(3): "If one of these functions [from atexit] does not
+        // return (e.g., it calls _exit(2)), then none of the remaining
+        // functions is called, and further exit processing [...] is abandoned."
+        #[cfg(target_os = "linux")]
+        unsafe {
+            extern "C" fn skip_fini() {
+                unsafe { libc::_exit(0) };
+            }
+            libc::atexit(skip_fini);
+        }
 
         let connection = DummyConnection::new();
         let (connection_file, registration_file) = connection.get_connection_files();
