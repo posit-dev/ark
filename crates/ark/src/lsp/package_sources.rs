@@ -40,11 +40,11 @@ impl PackageSourcesState {
         }
     }
 
-    pub(crate) async fn next_event(&mut self) -> Option<PackageSourcesEvent> {
+    async fn next_event(&mut self) -> Option<PackageSourcesEvent> {
         self.event_rx.recv().await
     }
 
-    pub(crate) fn handle_event(&mut self, event: PackageSourcesEvent) {
+    fn handle_event(&mut self, event: PackageSourcesEvent) {
         match event {
             PackageSourcesEvent::Populate(populate) => self.handle_populate(populate),
         }
