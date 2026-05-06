@@ -9,9 +9,9 @@ use oak_core::file::list_r_files;
 use oak_db::Db;
 use oak_ide::ExternalScope;
 use oak_index::library::Library;
+use oak_index::scope_layer::default_search_path;
 use oak_index::scope_layer::file_layers;
 use oak_index::scope_layer::package_root_layers;
-use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::SourceResolution;
@@ -314,27 +314,6 @@ impl WorldState {
             packages,
         })
     }
-}
-
-/// The default R search path for scripts: the default packages that R
-/// attaches on startup, in search order (last attached = searched first).
-fn default_search_path() -> Vec<ScopeLayer> {
-    // R's default packages, in reverse attachment order (most recently
-    // attached first). These are always on the search path unless
-    // overridden by `R_DEFAULT_PACKAGES`.
-    let default_packages = [
-        "utils",
-        "stats",
-        "datasets",
-        "methods",
-        "grDevices",
-        "graphics",
-        "base",
-    ];
-    default_packages
-        .into_iter()
-        .map(|pkg| ScopeLayer::PackageExports(pkg.to_string()))
-        .collect()
 }
 
 pub(crate) fn with_document<T, F>(

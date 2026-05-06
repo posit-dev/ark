@@ -53,6 +53,27 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     layers
 }
 
+/// The default R search path for scripts: the default packages that R
+/// attaches on startup, in search order (last attached = searched first).
+pub fn default_search_path() -> Vec<ScopeLayer> {
+    // R's default packages, in reverse attachment order (most recently
+    // attached first). These are always on the search path unless
+    // overridden by `R_DEFAULT_PACKAGES`.
+    let default_packages = [
+        "utils",
+        "stats",
+        "datasets",
+        "methods",
+        "grDevices",
+        "graphics",
+        "base",
+    ];
+    default_packages
+        .into_iter()
+        .map(|pkg| ScopeLayer::PackageExports(pkg.to_string()))
+        .collect()
+}
+
 /// Build the root layers for a package from its NAMESPACE.
 ///
 /// These go at the back of every file's scope chain:
