@@ -8,11 +8,9 @@
 use std::collections::HashMap;
 use std::future;
 use std::path::Path;
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use std::sync::LazyLock;
 use std::sync::RwLock;
 
@@ -20,8 +18,6 @@ use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
 use oak_index::library::Library;
-use oak_sources::PackageCache;
-use stdext::result::ResultExt;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
 use tokio::task;
@@ -171,7 +167,7 @@ pub(crate) struct GlobalState {
     events_rx: TokioUnboundedReceiver<Event>,
 
     /// Event channel for sending populate requests to the package sources event loop
-    package_sources_event_tx: TokioUnboundedSender<PackageSourcesEvent>,
+    package_sources_event_tx: Option<TokioUnboundedSender<PackageSourcesEvent>>,
 }
 
 /// Unlike `WorldState`, `ParserState` cannot be cloned and is only accessed by
@@ -212,9 +208,9 @@ impl GlobalState {
     /// Create a new global state and its `events_tx` sender
     pub(crate) fn new(
         client: Client,
-        r_home: PathBuf,
+        library: Library,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
-        package_sources_event_tx: TokioUnboundedSender<PackageSourcesEvent>,
+        package_sources_event_tx: Option<TokioUnboundedSender<PackageSourcesEvent>>,
     ) -> (Self, TokioUnboundedSender<Event>) {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
@@ -225,30 +221,6 @@ impl GlobalState {
             capabilities: Capabilities::default(),
             console_notification_tx,
         };
-
-        // FIXME: We shouldn't call R code in the kernel to figure this out
-        let library_paths = crate::r_task(|| -> anyhow::Result<Vec<String>> {
-            Ok(harp::RFunction::new("base", ".libPaths")
-                .call()?
-                .try_into()?)
-        });
-
-        let library_paths = match library_paths {
-            Ok(library_paths) => library_paths,
-            Err(err) => {
-                log::error!("Can't evaluate `libPaths()`: {err:?}");
-                Vec::new()
-            },
-        };
-
-        let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
-
-        let r = harp::command::r_executable(&r_home);
-        let package_sources = r
-            .and_then(|r| PackageCache::new(r, library_paths.clone()).log_err())
-            .map(|cache| Arc::new(cache) as Arc<dyn oak_sources::PackageSources>);
-
-        let library = Library::new(library_paths, package_sources);
 
         (
             Self {

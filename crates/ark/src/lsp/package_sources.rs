@@ -1,3 +1,4 @@
+use oak_sources::PackageCacheWriter;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -15,15 +16,17 @@ pub(crate) struct Populate {
 
 #[derive(Debug)]
 pub(crate) struct PackageSourcesState {
+    writer: PackageCacheWriter,
+
     event_rx: TokioUnboundedReceiver<PackageSourcesEvent>,
 }
 
 impl PackageSourcesState {
     /// Construct a [PackageSourcesState] and its `event_tx` sender
-    pub(crate) fn new() -> (Self, UnboundedSender<PackageSourcesEvent>) {
+    pub(crate) fn new(writer: PackageCacheWriter) -> (Self, UnboundedSender<PackageSourcesEvent>) {
         // Channels for communication with the package sources event loop
         let (event_tx, event_rx) = unbounded_channel::<PackageSourcesEvent>();
-        (Self { event_rx }, event_tx)
+        (Self { writer, event_rx }, event_tx)
     }
 
     /// Start the event loop
@@ -39,7 +42,11 @@ impl PackageSourcesState {
 
     pub(crate) fn handle_event(&mut self, event: PackageSourcesEvent) {
         match event {
-            PackageSourcesEvent::Populate(populate) => todo!(),
+            PackageSourcesEvent::Populate(populate) => self.handle_populate(populate),
         }
+    }
+
+    fn handle_populate(&mut self, populate: Populate) {
+        self.writer.insert(&populate.package);
     }
 }

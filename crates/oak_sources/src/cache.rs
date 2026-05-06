@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::Arc;
 
 use chrono::DateTime;
 use chrono::TimeDelta;
@@ -28,13 +28,24 @@ const METADATA_FILENAME: &str = ".metadata";
 /// the DESCRIPTION `Build:` timestamp being different).
 const ONE_WEEK: TimeDelta = TimeDelta::weeks(1);
 
-impl crate::PackageSources for PackageCache {
+impl crate::PackageSources for PackageCacheReader {
     fn get(&self, package: &str) -> Option<PathBuf> {
         self.get(package)
     }
 }
 
 /// A cache of extracted R package sources
+///
+/// # Reader / Writer split
+///
+/// The cache is split into [PackageCacheReader] and [PackageCacheWriter].
+///
+/// - [PackageCacheReader::get] reads from the cache and returns instantly. If the
+///   package isn't in the cache, it simply returns [None].
+///
+/// - [PackageCacheWriter::insert] writes into the cache if the package sources aren't
+///   already in the cache. Insertion can be very expensive, and takes place on a
+///   dedicated tokio task to avoid blocking the main loop.
 ///
 /// # On disk layout
 ///
@@ -71,7 +82,7 @@ impl crate::PackageSources for PackageCache {
 ///
 /// The cache root `.lock` can be locked as shared or exclusive:
 ///
-/// - **Shared root lock** is held for the lifetime of this `PackageCache`. The invariant
+/// - **Shared root lock** is held for the lifetime of this cache. The invariant
 ///   is that if you hold a shared root lock, you can read from or append new entries to
 ///   the cache, but never delete from it. Multiple sessions can hold this simultaneously.
 ///   The main purpose is to prevent cleanup from running so that any PathBuf handed out
@@ -106,35 +117,44 @@ impl crate::PackageSources for PackageCache {
 /// - Deleting if the package it originated from no longer exists
 /// - Deleting if the DESCRIPTION it originated from has changed
 ///
-/// [`get`]: PackageCache::get
-/// [`clean`]: PackageCache::clean
+/// [`get`]: PackageCacheReader::get
+/// [`clean`]: clean
 #[derive(Debug)]
-pub struct PackageCache {
+pub struct PackageCacheReader {
+    shared: Arc<PackageCacheShared>,
+}
+
+#[derive(Debug)]
+pub struct PackageCacheWriter {
+    shared: Arc<PackageCacheShared>,
+
     /// Path to an R executable
     r: PathBuf,
 
+    /// Set of packages which are installed, but we failed to populate their sources (from
+    /// CRAN or srcrefs). If we request sources for one of these packages a second time,
+    /// we don't attempt expensive source generation again.
+    source_unavailable: HashSet<String>,
+}
+
+/// Immutable data shared between reader and writer
+///
+/// Both carry the shared cache root lock, because both look at the cache and hand out
+/// paths into it.
+#[derive(Debug)]
+struct PackageCacheShared {
     /// Library paths to consider
     library_paths: Vec<PathBuf>,
 
     /// On disk cache directory root
-    cache_root: file_lock::Filesystem,
+    fs: file_lock::Filesystem,
 
     /// Shared lock on the root `.lock`, held for the life of this cache.
     ///
     /// Blocks any other process from acquiring the root exclusive lock (the only thing
     /// that can delete entries). That way, any `PathBuf` we hand out remains valid for
-    /// the life of this cache (as long as `PackageCache` itself is not dropped!).
-    cache_root_lock: FileLock,
-
-    /// Set of packages which are installed, but we failed to populate their sources (from
-    /// CRAN or srcrefs). If we request sources for one of these packages a second time,
-    /// we don't attempt expensive source generation again.
-    ///
-    /// Inside an [RwLock] so that [PackageCache::get()] avoids being `mut`, allowing a
-    /// caller to wrap a [PackageCache] in an [std::sync::Arc] and call
-    /// [PackageCache::get()] in the background on a thread, acting as a form of
-    /// "prefetching".
-    source_unavailable: RwLock<HashSet<String>>,
+    /// the life of this cache (as long as the cache itself is not dropped!).
+    lock: FileLock,
 }
 
 /// Completion sentinel for a cache entry, written last. Also used to determine if we can
@@ -147,35 +167,47 @@ struct Metadata {
     generated_at: DateTime<Utc>,
 }
 
-impl PackageCache {
-    pub fn new(r: PathBuf, library_paths: Vec<PathBuf>) -> anyhow::Result<Self> {
-        let cache_root = file_lock::Filesystem::new(crate::fs::sources_dir()?);
-        cache_root.create_dir()?;
+pub fn new_cache_pair(
+    r: PathBuf,
+    library_paths: Vec<PathBuf>,
+) -> anyhow::Result<(PackageCacheReader, PackageCacheWriter)> {
+    let fs = file_lock::Filesystem::new(crate::fs::sources_dir()?);
+    fs.create_dir()?;
 
-        // Try to clean the cache. Only works if no other processes hold a shared root lock.
-        if let Some(cache_root_lock) = cache_root.try_open_rw_exclusive_create(LOCK_FILENAME)? {
-            if let Err(err) = Self::clean(&cache_root_lock) {
-                log::warn!("Failed to clean sources cache: {err:?}");
-            }
-            drop(cache_root_lock);
+    // Try to clean the cache. Only works if no other processes hold a shared root lock.
+    if let Some(lock) = fs.try_open_rw_exclusive_create(LOCK_FILENAME)? {
+        if let Err(err) = clean(&lock) {
+            log::warn!("Failed to clean sources cache: {err:?}");
         }
-
-        // Take shared lock for the lifetime of the cache so any paths we hand out stay valid
-        let cache_root_lock = cache_root.open_ro_shared_create(LOCK_FILENAME)?;
-
-        Ok(Self {
-            r,
-            library_paths,
-            cache_root,
-            cache_root_lock,
-            source_unavailable: RwLock::new(HashSet::new()),
-        })
+        drop(lock);
     }
 
+    // Take shared lock for the lifetime of the cache so any paths we hand out stay valid
+    let lock = fs.open_ro_shared_create(LOCK_FILENAME)?;
+
+    let shared = PackageCacheShared {
+        library_paths,
+        fs,
+        lock,
+    };
+    let shared = Arc::new(shared);
+
+    let reader = PackageCacheReader {
+        shared: Arc::clone(&shared),
+    };
+    let writer = PackageCacheWriter {
+        shared,
+        r,
+        source_unavailable: HashSet::new(),
+    };
+
+    Ok((reader, writer))
+}
+
+impl PackageCacheReader {
     /// Get a package's cached source folder
     ///
-    /// May spawn an R subprocess or download from CRAN (in a blocking manner) to
-    /// generate the sources, so keep that in mind when calling this.
+    /// Returns [None] if the cached source folder doesn't exist
     pub fn get(&self, package: &str) -> Option<PathBuf> {
         match self.get_result(package) {
             Ok(Some(sources)) => Some(sources),
@@ -188,33 +220,61 @@ impl PackageCache {
     }
 
     fn get_result(&self, package: &str) -> anyhow::Result<Option<PathBuf>> {
-        let Some(package) = InstalledPackage::find(package, &self.library_paths)? else {
+        let Some(package) = InstalledPackage::find(package, &self.shared.library_paths)? else {
+            // Not even installed
+            return Ok(None);
+        };
+
+        // If completion sentinel file is present, the cache folder exists
+        let destination = self.shared.lock.parent().join(package.key());
+
+        if !destination.join(METADATA_FILENAME).exists() {
+            // Not cached
+            return Ok(None);
+        }
+
+        Ok(Some(destination))
+    }
+}
+
+impl PackageCacheWriter {
+    pub fn insert(&mut self, package: &str) -> Option<PathBuf> {
+        match self.insert_result(package) {
+            Ok(Some(sources)) => Some(sources),
+            Ok(None) => None,
+            Err(err) => {
+                log::error!("Failed to get sources for {package}: {err:?}");
+                None
+            },
+        }
+    }
+
+    fn insert_result(&mut self, package: &str) -> anyhow::Result<Option<PathBuf>> {
+        let Some(package) = InstalledPackage::find(package, &self.shared.library_paths)? else {
             // Not even installed
             return Ok(None);
         };
 
         // Read path: completion sentinel present, already exists on disk
-        let destination = self.cache_root_lock.parent().join(package.key());
+        let destination = self.shared.lock.parent().join(package.key());
+
         if destination.join(METADATA_FILENAME).exists() {
+            // Already cached
             return Ok(Some(destination));
         }
 
         // Check if we've already tried to generate sources for this installed package but
         // failed. If so, refuse to attempt expensive source generation again.
-        if self
-            .source_unavailable
-            .read()
-            .is_ok_and(|set| set.contains(package.key()))
-        {
+        if self.source_unavailable.contains(package.key()) {
             return Ok(None);
         }
 
         // Write path
         let result = if matches!(package.description().priority, Some(Priority::Base)) {
             // R version to download is the same as the base package version
-            self.try_populate_base(&package.description().version, &self.library_paths)
+            self.try_populate_base(&package.description().version, &self.shared.library_paths)
         } else {
-            self.try_populate(&package, &self.r, &self.library_paths)
+            self.try_populate(&package, &self.r, &self.shared.library_paths)
         };
 
         match result {
@@ -222,10 +282,7 @@ impl PackageCache {
             Ok(false) => {
                 // Unavailable for some reason, maybe package isn't on CRAN.
                 // Never try and generate sources again this session.
-                self.source_unavailable
-                    .write()
-                    .ok()
-                    .map(|mut set| set.insert(package.key().to_string()));
+                self.source_unavailable.insert(package.key().to_string());
                 Ok(None)
             },
             Err(err) => {
@@ -236,10 +293,7 @@ impl PackageCache {
                     name = package.name(),
                     version = package.version()
                 );
-                self.source_unavailable
-                    .write()
-                    .ok()
-                    .map(|mut set| set.insert(package.key().to_string()));
+                self.source_unavailable.insert(package.key().to_string());
                 Ok(None)
             },
         }
@@ -276,7 +330,7 @@ impl PackageCache {
         bytes: &[u8],
     ) -> anyhow::Result<()> {
         // Take per-key exclusive lock
-        let destination = self.cache_root.join(package.key());
+        let destination = self.shared.fs.join(package.key());
         destination.create_dir()?;
         let destination_lock = destination.open_rw_exclusive_create(LOCK_FILENAME)?;
 
@@ -328,7 +382,7 @@ impl PackageCache {
         library_paths: &[Q],
     ) -> anyhow::Result<bool> {
         // Take per-key exclusive lock
-        let destination = self.cache_root.join(package.key());
+        let destination = self.shared.fs.join(package.key());
         destination.create_dir()?;
         let destination_lock = destination.open_rw_exclusive_create(LOCK_FILENAME)?;
 
@@ -456,83 +510,82 @@ impl PackageCache {
         std::fs::write(destination_lock.parent().join(METADATA_FILENAME), contents)?;
         Ok(())
     }
+}
 
-    /// Walks all cache entries and evicts ones that are provably stale.
-    ///
-    /// Caller must hold the root exclusive lock.
-    fn clean(cache_root_lock: &file_lock::FileLock) -> anyhow::Result<()> {
-        let cache_root = cache_root_lock.parent();
-        let now = Utc::now();
+/// Walks all cache entries and evicts ones that are provably stale.
+///
+/// Caller must hold the root exclusive lock.
+fn clean(cache_root_lock: &file_lock::FileLock) -> anyhow::Result<()> {
+    let cache_root = cache_root_lock.parent();
+    let now = Utc::now();
 
-        for entry in std::fs::read_dir(cache_root)? {
-            let entry = entry?;
-            let path = entry.path();
+    for entry in std::fs::read_dir(cache_root)? {
+        let entry = entry?;
+        let path = entry.path();
 
-            if !entry.file_type()?.is_dir() {
-                // i.e. `.lock` itself
-                continue;
-            }
+        if !entry.file_type()?.is_dir() {
+            // i.e. `.lock` itself
+            continue;
+        }
 
-            let metadata_path = path.join(METADATA_FILENAME);
+        let metadata_path = path.join(METADATA_FILENAME);
 
-            let Ok(metadata_contents) = std::fs::read_to_string(&metadata_path) else {
+        let Ok(metadata_contents) = std::fs::read_to_string(&metadata_path) else {
+            log::warn!(
+                "Cleaning {} due to missing or unreadable metadata",
+                path.display()
+            );
+            crate::fs::remove_dir_all_or_warn(&path);
+            continue;
+        };
+
+        let metadata: Metadata = match serde_json::from_str(&metadata_contents) {
+            Ok(m) => m,
+            Err(err) => {
                 log::warn!(
-                    "Cleaning {} due to missing or unreadable metadata",
+                    "Cleaning {} due to unreadable metadata: {err:?}",
                     path.display()
                 );
                 crate::fs::remove_dir_all_or_warn(&path);
                 continue;
-            };
+            },
+        };
 
-            let metadata: Metadata = match serde_json::from_str(&metadata_contents) {
-                Ok(m) => m,
-                Err(err) => {
-                    log::warn!(
-                        "Cleaning {} due to unreadable metadata: {err:?}",
-                        path.display()
-                    );
-                    crate::fs::remove_dir_all_or_warn(&path);
-                    continue;
-                },
-            };
-
-            // Refuse to do anything if younger than 1 week. The user may be switching
-            // between CRAN and dev, and we want to keep the cache for the CRAN version
-            // around.
-            let age = now.signed_duration_since(metadata.generated_at);
-            if age < ONE_WEEK {
-                continue;
-            }
-
-            if !metadata.libpath.exists() {
-                log::trace!("Cleaning {} due to nonexistent libpath", path.display());
-                crate::fs::remove_dir_all_or_warn(&path);
-                continue;
-            }
-
-            let package_path = metadata.libpath.join(&metadata.package);
-
-            if !package_path.exists() {
-                log::trace!("Cleaning {} due to nonexistent package", path.display());
-                crate::fs::remove_dir_all_or_warn(&path);
-                continue;
-            }
-
-            let Ok(description_contents) =
-                std::fs::read_to_string(package_path.join("DESCRIPTION"))
-            else {
-                log::trace!("Cleaning {} due to missing DESCRIPTION", path.display());
-                crate::fs::remove_dir_all_or_warn(&path);
-                continue;
-            };
-
-            if crate::hash::hash(&description_contents) != metadata.description_hash {
-                log::trace!("Cleaning {} due to changed DESCRIPTION", path.display());
-                crate::fs::remove_dir_all_or_warn(&path);
-                continue;
-            }
+        // Refuse to do anything if younger than 1 week. The user may be switching
+        // between CRAN and dev, and we want to keep the cache for the CRAN version
+        // around.
+        let age = now.signed_duration_since(metadata.generated_at);
+        if age < ONE_WEEK {
+            continue;
         }
 
-        Ok(())
+        if !metadata.libpath.exists() {
+            log::trace!("Cleaning {} due to nonexistent libpath", path.display());
+            crate::fs::remove_dir_all_or_warn(&path);
+            continue;
+        }
+
+        let package_path = metadata.libpath.join(&metadata.package);
+
+        if !package_path.exists() {
+            log::trace!("Cleaning {} due to nonexistent package", path.display());
+            crate::fs::remove_dir_all_or_warn(&path);
+            continue;
+        }
+
+        let Ok(description_contents) = std::fs::read_to_string(package_path.join("DESCRIPTION"))
+        else {
+            log::trace!("Cleaning {} due to missing DESCRIPTION", path.display());
+            crate::fs::remove_dir_all_or_warn(&path);
+            continue;
+        };
+
+        if crate::hash::hash(&description_contents) != metadata.description_hash {
+            log::trace!("Cleaning {} due to changed DESCRIPTION", path.display());
+            crate::fs::remove_dir_all_or_warn(&path);
+            continue;
+        }
     }
+
+    Ok(())
 }

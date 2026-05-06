@@ -15,6 +15,7 @@ use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
 use anyhow::Context;
 use crossbeam::channel::Sender;
+use oak_index::library::Library;
 use serde_json::Value;
 use stdext::result::ResultExt;
 use tokio::net::TcpListener;
@@ -559,12 +560,52 @@ pub(crate) fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let auxiliary = AuxiliaryState::new(client.clone());
-            let (package_sources, package_sources_event_tx) = PackageSourcesState::new();
+            let r = harp::command::r_executable(&r_home);
+
+            // FIXME: We shouldn't call R code in the kernel to figure this out
+            let library_paths = r_task(|| -> anyhow::Result<Vec<String>> {
+                Ok(harp::RFunction::new("base", ".libPaths")
+                    .call()?
+                    .try_into()?)
+            });
+            let library_paths = match library_paths {
+                Ok(library_paths) => library_paths,
+                Err(err) => {
+                    log::error!("Can't evaluate `libPaths()`: {err:?}");
+                    Vec::new()
+                },
+            };
+            let library_paths: Vec<PathBuf> =
+                library_paths.into_iter().map(PathBuf::from).collect();
+
+            // If reader/writer generation fails, all features related to source references are disabled,
+            // but we don't bring the whole system down. We don't expect this to ever occur in practice.
+            let (package_cache_reader, package_cache_writer) =
+                match oak_sources::new_cache_pair(r, library_paths.clone()).log_err() {
+                    Some((reader, writer)) => (Some(reader), Some(writer)),
+                    None => (None, None),
+                };
+
+            let package_sources = package_cache_reader
+                .map(|reader| Arc::new(reader) as Arc<dyn oak_sources::PackageSources>);
+
+            // Package cache reader goes to `Library`
+            let library = Library::new(library_paths, package_sources);
+
+            // Package cache writer goes to `PackageSourcesState` event loop
+            let (package_sources_state, package_sources_event_tx) = match package_cache_writer {
+                Some(writer) => {
+                    let (state, event_tx) = PackageSourcesState::new(writer);
+                    (Some(state), Some(event_tx))
+                },
+                None => (None, None),
+            };
+
+            let auxiliary_state = AuxiliaryState::new(client.clone());
 
             let (state, events_tx) = GlobalState::new(
                 client,
-                r_home,
+                library,
                 console_notification_tx,
                 package_sources_event_tx,
             );
@@ -588,10 +629,12 @@ pub(crate) fn start_lsp(
 
             // Spawn latency-sensitive auxiliary loop. Must be first to initialise
             // global transmission channel.
-            tokio_tasks_handle.spawn(async move { auxiliary.start().await });
+            tokio_tasks_handle.spawn(async move { auxiliary_state.start().await });
 
             // Spawn package sources event loop
-            tokio_tasks_handle.spawn(async move { package_sources.start().await });
+            if let Some(package_sources_state) = package_sources_state {
+                tokio_tasks_handle.spawn(async move { package_sources_state.start().await });
+            }
 
             // Spawn main loop
             tokio_tasks_handle.spawn(async move { state.start().await });
