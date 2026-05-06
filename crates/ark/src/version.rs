@@ -27,10 +27,6 @@ pub struct RVersion {
 
     // Patch version of the R installation
     pub patch: u32,
-
-    // The full path on disk to the R installation -- that is, the value R_HOME
-    // would have inside an R session: > R.home()
-    pub r_home: String,
 }
 
 impl RVersion {
@@ -45,18 +41,14 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
             .arg("--vanilla")
             .arg("-s")
             .arg("-e")
-            .arg("cat(version$major, \".\", version$minor, \":\", R.home(), sep = \"\")");
+            .arg("cat(as.character(getRversion()))");
     })
     .context("Failed to execute R to determine version number")?;
 
-    let output = String::from_utf8(output.stdout)
+    let version = String::from_utf8(output.stdout)
         .context("Failed to convert R version number to a string")?
         .trim()
         .to_string();
-
-    let (version, path) = output
-        .split_once(":")
-        .context("Expected `:` delimiter in string")?;
 
     let version = version.split(".").map(|x| x.parse::<u32>());
 
@@ -65,7 +57,6 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
             major,
             minor,
             patch,
-            r_home: path.to_string(),
         })
     } else {
         anyhow::bail!("Failed to extract R version");
@@ -112,7 +103,6 @@ mod tests {
             major: 3,
             minor: 9,
             patch: 0,
-            r_home: "".to_string(),
         };
         assert!(!version.is_supported());
     }
@@ -123,7 +113,6 @@ mod tests {
             major: 4,
             minor: 1,
             patch: 0,
-            r_home: "".to_string(),
         };
         assert!(!version.is_supported());
     }
@@ -134,7 +123,6 @@ mod tests {
             major: 4,
             minor: 2,
             patch: 0,
-            r_home: "".to_string(),
         };
         assert!(version.is_supported());
     }
@@ -145,7 +133,6 @@ mod tests {
             major: 4,
             minor: 4,
             patch: 0,
-            r_home: "".to_string(),
         };
         assert!(version.is_supported());
     }
@@ -156,7 +143,6 @@ mod tests {
             major: 5,
             minor: 0,
             patch: 0,
-            r_home: "".to_string(),
         };
         assert!(version.is_supported());
     }
