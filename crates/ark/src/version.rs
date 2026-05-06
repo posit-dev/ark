@@ -41,8 +41,6 @@ impl RVersion {
     }
 }
 
-// It is assumed that r_home matches the R_HOME env var. Usually the input will
-// come from r_home_setup()
 pub fn detect_r() -> anyhow::Result<RVersion> {
     let output = r_command(|command| {
         command
