@@ -1625,7 +1625,7 @@ dependencies = [
  "cfg-if",
  "ctor",
  "embed-resource",
- "harp-macros",
+ "harp_macros",
  "itertools 0.14.0",
  "libc",
  "libloading",
@@ -1643,7 +1643,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "harp-macros"
+name = "harp_macros"
 version = "0.1.0"
 dependencies = [
  "quote",
