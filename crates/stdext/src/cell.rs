@@ -9,7 +9,7 @@
 //!
 //! In debug/test builds, `DebugRefCell` delegates to `RefCell` and panics
 //! on borrow violations. In release builds, it tracks borrows via a
-//! lightweight counter and logs violations with `log::error!` but does
+//! lightweight state cell and logs violations with `log::error!` but does
 //! not panic. Callers must still uphold `RefCell`-style aliasing rules;
 //! violating them in release builds is undefined behaviour (the same UB
 //! that raw `UnsafeCell` access would produce).
@@ -22,16 +22,22 @@ use std::fmt;
 use std::ops::Deref;
 use std::ops::DerefMut;
 
+#[cfg(not(debug_assertions))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BorrowState {
+    Unused,
+    Shared(isize),
+    Exclusive,
+}
+
 pub struct DebugRefCell<T: ?Sized> {
     #[cfg(debug_assertions)]
     inner: std::cell::RefCell<T>,
 
     #[cfg(not(debug_assertions))]
     inner: UnsafeCell<T>,
-    /// Borrow state: 0 = unused, positive = number of shared borrows,
-    /// -1 = exclusive borrow.
     #[cfg(not(debug_assertions))]
-    borrow_count: Cell<isize>,
+    state: Cell<BorrowState>,
 }
 
 // --- Construction & owned access (no guards needed) -------------------------
@@ -44,7 +50,7 @@ impl<T> DebugRefCell<T> {
             #[cfg(not(debug_assertions))]
             inner: UnsafeCell::new(value),
             #[cfg(not(debug_assertions))]
-            borrow_count: Cell::new(0),
+            state: Cell::new(BorrowState::Unused),
         }
     }
 
@@ -74,23 +80,29 @@ impl<T: ?Sized> DebugRefCell<T> {
         }
         #[cfg(not(debug_assertions))]
         {
-            let count = self.borrow_count.get();
-            let tracked = if count < 0 {
-                log::error!(
-                    "INTERNAL ERROR (DebugRefCell): immutable borrow while mutably borrowed (at {})",
-                    std::panic::Location::caller(),
-                );
-                false
-            } else {
-                self.borrow_count.set(count + 1);
-                true
+            let tracked = match self.state.get() {
+                BorrowState::Exclusive => {
+                    log::error!(
+                        "INTERNAL ERROR (DebugRefCell): immutable borrow while mutably borrowed (at {})",
+                        std::panic::Location::caller(),
+                    );
+                    false
+                },
+                BorrowState::Shared(count) => {
+                    self.state.set(BorrowState::Shared(count + 1));
+                    true
+                },
+                BorrowState::Unused => {
+                    self.state.set(BorrowState::Shared(1));
+                    true
+                },
             };
             DebugRef {
                 // SAFETY: Sound only when no `DebugRefMut` is alive for this
                 // cell. On violation we log but still hand out the reference,
                 // accepting UB to avoid panicking in production.
                 value: unsafe { &*self.inner.get() },
-                borrow_count: &self.borrow_count,
+                state: &self.state,
                 tracked,
             }
         }
@@ -106,17 +118,25 @@ impl<T: ?Sized> DebugRefCell<T> {
         }
         #[cfg(not(debug_assertions))]
         {
-            let count = self.borrow_count.get();
-            let tracked = if count != 0 {
-                let kind = if count > 0 { "immutably" } else { "mutably" };
-                log::error!(
-                    "INTERNAL ERROR (DebugRefCell): mutable borrow while already borrowed {kind} (at {})",
-                    std::panic::Location::caller(),
-                );
-                false
-            } else {
-                self.borrow_count.set(-1);
-                true
+            let tracked = match self.state.get() {
+                BorrowState::Unused => {
+                    self.state.set(BorrowState::Exclusive);
+                    true
+                },
+                BorrowState::Shared(_) => {
+                    log::error!(
+                        "INTERNAL ERROR (DebugRefCell): mutable borrow while already borrowed immutably (at {})",
+                        std::panic::Location::caller(),
+                    );
+                    false
+                },
+                BorrowState::Exclusive => {
+                    log::error!(
+                        "INTERNAL ERROR (DebugRefCell): mutable borrow while already borrowed mutably (at {})",
+                        std::panic::Location::caller(),
+                    );
+                    false
+                },
             };
             DebugRefMut {
                 // SAFETY: Sound only when no other borrow (shared or
@@ -124,7 +144,7 @@ impl<T: ?Sized> DebugRefCell<T> {
                 // but still hand out the reference, accepting UB to avoid
                 // panicking in production.
                 value: unsafe { &mut *self.inner.get() },
-                borrow_count: &self.borrow_count,
+                state: &self.state,
                 tracked,
             }
         }
@@ -151,7 +171,7 @@ pub struct DebugRef<'a, T: ?Sized> {
     #[cfg(not(debug_assertions))]
     value: &'a T,
     #[cfg(not(debug_assertions))]
-    borrow_count: &'a Cell<isize>,
+    state: &'a Cell<BorrowState>,
     #[cfg(not(debug_assertions))]
     tracked: bool,
 }
@@ -175,8 +195,11 @@ impl<T: ?Sized> Deref for DebugRef<'_, T> {
 impl<T: ?Sized> Drop for DebugRef<'_, T> {
     fn drop(&mut self) {
         if self.tracked {
-            let count = self.borrow_count.get();
-            self.borrow_count.set(count - 1);
+            match self.state.get() {
+                BorrowState::Shared(1) => self.state.set(BorrowState::Unused),
+                BorrowState::Shared(count) => self.state.set(BorrowState::Shared(count - 1)),
+                _ => {},
+            }
         }
     }
 }
@@ -196,7 +219,7 @@ pub struct DebugRefMut<'a, T: ?Sized> {
     #[cfg(not(debug_assertions))]
     value: &'a mut T,
     #[cfg(not(debug_assertions))]
-    borrow_count: &'a Cell<isize>,
+    state: &'a Cell<BorrowState>,
     #[cfg(not(debug_assertions))]
     tracked: bool,
 }
@@ -233,7 +256,7 @@ impl<T: ?Sized> DerefMut for DebugRefMut<'_, T> {
 impl<T: ?Sized> Drop for DebugRefMut<'_, T> {
     fn drop(&mut self) {
         if self.tracked {
-            self.borrow_count.set(0);
+            self.state.set(BorrowState::Unused);
         }
     }
 }
