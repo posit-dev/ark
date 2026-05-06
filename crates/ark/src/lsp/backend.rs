@@ -45,9 +45,11 @@ use crate::lsp::help_topic::HelpTopicResponse;
 use crate::lsp::input_boundaries;
 use crate::lsp::input_boundaries::InputBoundariesParams;
 use crate::lsp::input_boundaries::InputBoundariesResponse;
+use crate::lsp::main_loop::AuxiliaryState;
 use crate::lsp::main_loop::Event;
 use crate::lsp::main_loop::GlobalState;
 use crate::lsp::main_loop::TokioUnboundedSender;
+use crate::lsp::package_sources::PackageSourcesState;
 use crate::lsp::statement_range;
 use crate::lsp::statement_range::StatementRangeParams;
 use crate::lsp::statement_range::StatementRangeResponse;
@@ -228,9 +230,9 @@ struct Backend {
     /// Channel for communication with the main loop.
     events_tx: TokioUnboundedSender<Event>,
 
-    /// Handle to main loop. Drop it to cancel the loop, all associated tasks,
-    /// and drop all owned state.
-    _main_loop: tokio::task::JoinSet<()>,
+    /// Handle to all tokio tasks (main loop, auxiliary loop, package sources loop). Drop
+    /// it to cancel the loops, all associated tasks, and drop all owned state.
+    _tokio_tasks_handle: tokio::task::JoinSet<()>,
 }
 
 impl Backend {
@@ -557,11 +559,15 @@ pub(crate) fn start_lsp(
         let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         let init = |client: Client| {
-            let state = GlobalState::new(client, r_home, console_notification_tx);
-            let events_tx = state.events_tx();
+            let auxiliary = AuxiliaryState::new(client.clone());
+            let (package_sources, package_sources_event_tx) = PackageSourcesState::new();
 
-            // Start main loop and hold onto the handle that keeps it alive
-            let main_loop = state.start();
+            let (state, events_tx) = GlobalState::new(
+                client,
+                r_home,
+                console_notification_tx,
+                package_sources_event_tx,
+            );
 
             // Forward event channel along to `Console`.
             // This also updates an outdated channel after a reconnect.
@@ -576,10 +582,24 @@ pub(crate) fn start_lsp(
                 }
             });
 
+            // The handle that keeps all tokio tasks alive!
+            // Drop it to cancel everything and shut down the service.
+            let mut tokio_tasks_handle = tokio::task::JoinSet::<()>::new();
+
+            // Spawn latency-sensitive auxiliary loop. Must be first to initialise
+            // global transmission channel.
+            tokio_tasks_handle.spawn(async move { auxiliary.start().await });
+
+            // Spawn package sources event loop
+            tokio_tasks_handle.spawn(async move { package_sources.start().await });
+
+            // Spawn main loop
+            tokio_tasks_handle.spawn(async move { state.start().await });
+
             Backend {
                 shutdown_tx,
                 events_tx,
-                _main_loop: main_loop,
+                _tokio_tasks_handle: tokio_tasks_handle,
             }
         };
 

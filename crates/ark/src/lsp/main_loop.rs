@@ -45,6 +45,7 @@ use crate::lsp::diagnostics::generate_diagnostics;
 use crate::lsp::document::Document;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
+use crate::lsp::package_sources::PackageSourcesEvent;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -164,12 +165,13 @@ pub(crate) struct GlobalState {
     /// LSP client shared with tower-lsp and the log loop
     client: Client,
 
-    /// Event channels for the main loop. The tower-lsp methods forward
+    /// Event channel for recieving on the main loop. The tower-lsp methods forward
     /// notifications and requests here via `Event::Lsp`. We also receive
-    /// messages from the kernel via `Event::Kernel`, and from ourselves via
-    /// `Event::Task`.
-    events_tx: TokioUnboundedSender<Event>,
+    /// messages from the kernel via `Event::Kernel`.
     events_rx: TokioUnboundedReceiver<Event>,
+
+    /// Event channel for sending populate requests to the package sources event loop
+    package_sources_event_tx: TokioUnboundedSender<PackageSourcesEvent>,
 }
 
 /// Unlike `WorldState`, `ParserState` cannot be cloned and is only accessed by
@@ -194,7 +196,7 @@ pub(crate) struct LspState {
 /// The auxiliary loop currently handles:
 /// - Log messages.
 /// - Joining of spawned blocking tasks to relay any errors or panics to the LSP log.
-struct AuxiliaryState {
+pub(crate) struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     tasks: TaskList<Option<AuxiliaryEvent>>,
@@ -207,17 +209,13 @@ enum ProgressSupport {
 }
 
 impl GlobalState {
-    /// Create a new global state
-    ///
-    /// # Arguments
-    ///
-    /// * `client`: The tower-lsp client shared with the tower-lsp backend
-    ///   and auxiliary loop.
+    /// Create a new global state and its `events_tx` sender
     pub(crate) fn new(
         client: Client,
         r_home: PathBuf,
         console_notification_tx: TokioUnboundedSender<ConsoleNotification>,
-    ) -> Self {
+        package_sources_event_tx: TokioUnboundedSender<PackageSourcesEvent>,
+    ) -> (Self, TokioUnboundedSender<Event>) {
         // Transmission channel for the main loop events. Shared with the
         // tower-lsp backend and the Jupyter kernel.
         let (events_tx, events_rx) = tokio_unbounded_channel::<Event>();
@@ -252,43 +250,23 @@ impl GlobalState {
 
         let library = Library::new(library_paths, package_sources);
 
-        Self {
-            world: WorldState::new(library),
-            lsp_state,
-            client,
+        (
+            Self {
+                world: WorldState::new(library),
+                lsp_state,
+                client,
+                events_rx,
+                package_sources_event_tx,
+            },
             events_tx,
-            events_rx,
-        }
-    }
-
-    /// Get `Event` transmission channel
-    pub(crate) fn events_tx(&self) -> TokioUnboundedSender<Event> {
-        self.events_tx.clone()
-    }
-
-    /// Start the main and auxiliary loops
-    ///
-    /// Returns a `JoinSet` that holds onto all tasks and state owned by the
-    /// event loop. Drop it to cancel everything and shut down the service.
-    pub(crate) fn start(self) -> tokio::task::JoinSet<()> {
-        let mut set = tokio::task::JoinSet::<()>::new();
-
-        // Spawn latency-sensitive auxiliary loop. Must be first to initialise
-        // global transmission channel.
-        let aux = AuxiliaryState::new(self.client.clone());
-        set.spawn(async move { aux.start().await });
-
-        // Spawn main loop
-        set.spawn(async move { self.main_loop().await });
-
-        set
+        )
     }
 
     /// Run main loop
     ///
     /// This takes ownership of all global state and handles one by one LSP
     /// requests, notifications, and other internal events.
-    async fn main_loop(mut self) {
+    pub(crate) async fn start(mut self) {
         loop {
             let event = self.next_event().await;
             if let Err(err) = self.handle_event(event).await {
@@ -544,7 +522,7 @@ fn respond<T>(
 unsafe impl Sync for AuxiliaryState {}
 
 impl AuxiliaryState {
-    fn new(client: Client) -> Self {
+    pub(crate) fn new(client: Client) -> Self {
         // Channels for communication with the auxiliary loop
         let (auxiliary_event_tx, auxiliary_event_rx) = tokio_unbounded_channel::<AuxiliaryEvent>();
 
@@ -587,7 +565,7 @@ impl AuxiliaryState {
     ///
     /// Takes ownership of auxiliary state and start the low-latency auxiliary
     /// loop.
-    async fn start(mut self) {
+    pub(crate) async fn start(mut self) {
         loop {
             match self.next_event().await {
                 AuxiliaryEvent::Log(level, message) => self.log(level, message).await,
