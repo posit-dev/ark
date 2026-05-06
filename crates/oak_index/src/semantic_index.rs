@@ -164,11 +164,14 @@ impl SemanticIndex {
     /// Find the definition site at `offset`, if any.
     pub fn definition_at_offset(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId)> {
         let (scope, _) = self.scope_at(offset);
+
+        // Definitions with empty ranges (e.g. imports) are naturally excluded
+        // here since they can't contain the offset
         let def_id = self
             .definitions(scope)
             .iter()
-            .filter(|(_id, def)| !matches!(def.kind(), DefinitionKind::Import { .. }))
             .find_map(|(id, d)| d.range().contains(offset).then_some(id));
+
         Some((scope, def_id?))
     }
 

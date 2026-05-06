@@ -839,6 +839,11 @@ impl<'a> SemanticIndexBuilder<'a> {
         let file = resolution.file;
 
         for name in resolution.names {
+            // Empty range: R's `source()` imports names implicitly (unlike
+            // Python's `from x import y` where `y` appears in the text).
+            // There's no text span to assign to these definitions.
+            let range = TextRange::empty(call_offset);
+
             self.add_definition(
                 &name,
                 SymbolFlags::IS_BOUND,
@@ -847,9 +852,10 @@ impl<'a> SemanticIndexBuilder<'a> {
                     file: file.clone(),
                     name: name.clone(),
                 },
-                TextRange::empty(call_offset),
+                range,
             );
         }
+
         for pkg in resolution.packages {
             self.directives.push(Directive {
                 kind: DirectiveKind::Attach(pkg),

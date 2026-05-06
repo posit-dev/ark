@@ -37,13 +37,10 @@ impl Identifier {
     pub fn classify(root: &RSyntaxNode, index: &SemanticIndex, offset: TextSize) -> Option<Self> {
         let (scope_id, _) = index.scope_at(offset);
 
-        if let Some((def_id, def)) = index.definitions(scope_id).contains(offset) {
-            if !matches!(
-                def.kind(),
-                oak_index::semantic_index::DefinitionKind::Import { .. }
-            ) {
-                return Some(Identifier::Definition { scope_id, def_id });
-            }
+        // Definitions with empty ranges (e.g. imports) are naturally excluded
+        // here since they can't contain the offset
+        if let Some((def_id, _def)) = index.definitions(scope_id).contains(offset) {
+            return Some(Identifier::Definition { scope_id, def_id });
         }
 
         if let Some((use_id, _)) = index.uses(scope_id).contains(offset) {
