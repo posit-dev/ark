@@ -26,7 +26,7 @@ pub(crate) fn goto_definition(
 
     let (index, scope) = state.file_analysis(&uri, document);
     let root = document.syntax()?;
-    let targets = oak_ide::goto_definition(offset, &uri, &root, &index, &scope, &state.library);
+    let targets = oak_ide::goto_definition(state, offset, &uri, &root, &index, &scope);
 
     if targets.is_empty() {
         return Ok(None);
@@ -1161,39 +1161,39 @@ mod tests {
     }
 
     #[test]
-    fn test_script_source_local_false_does_not_shadow_local_def() {
-        // `source()` (default `local = FALSE`) in a function scope does
-        // not shadow a prior local binding.
+    fn test_script_source_shadows_local_def() {
+        // A local definition followed by source() of a file that also
+        // defines the same name: the use after source() should resolve
+        // to the sourced file's definition (later shadows earlier).
         let dir = tempfile::tempdir().unwrap();
 
-        std::fs::write(dir.path().join("helpers.R"), "foo <- function() 1\n").unwrap();
+        std::fs::write(dir.path().join("helpers.R"), "helper <- function() 1\n").unwrap();
 
-        //  Line 0: "f <- function() {\n"
-        //  Line 1: "  foo <- \"local\"\n"
-        //  Line 2: "  source(\"helpers.R\")\n"
-        //  Line 3: "  foo\n"
-        //  Line 4: "}\n"
-        let script_source =
-            "f <- function() {\n  foo <- \"local\"\n  source(\"helpers.R\")\n  foo\n}\n";
+        //  Line 0: "helper <- 'local'\n"
+        //  Line 1: "source(\"helpers.R\")\n"
+        //  Line 2: "helper\n"
+        let script_source = "helper <- 'local'\nsource(\"helpers.R\")\nhelper\n";
         let script_doc = Document::new(script_source, None);
         let script_uri = lsp_types::Url::from_file_path(dir.path().join("script.R")).unwrap();
+
+        let helpers_uri = lsp_types::Url::from_file_path(dir.path().join("helpers.R")).unwrap();
 
         let mut state = WorldState::default();
         state
             .documents
             .insert(script_uri.clone(), script_doc.clone());
 
-        // `foo` on line 3 resolves to the local definition on line 1
-        let params = make_params(script_uri.clone(), 3, 2);
+        // `helper` on line 2 should resolve to helpers.R (source() shadows local)
+        let params = make_params(script_uri, 2, 0);
         assert_matches!(
             goto_definition(&script_doc, params, &state).unwrap(),
             Some(GotoDefinitionResponse::Link(ref links)) => {
-                assert_eq!(links[0].target_uri, script_uri);
+                assert_eq!(links[0].target_uri, helpers_uri);
                 assert_eq!(
                     links[0].target_range,
                     lsp_types::Range {
-                        start: lsp_types::Position::new(1, 2),
-                        end: lsp_types::Position::new(1, 5),
+                        start: lsp_types::Position::new(0, 0),
+                        end: lsp_types::Position::new(0, 6),
                     }
                 );
             }

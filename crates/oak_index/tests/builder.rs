@@ -1,8 +1,6 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxKind;
-use biome_rowan::TextRange;
-use biome_rowan::TextSize;
 use oak_index::semantic_index;
 use oak_index::semantic_index::DefinitionId;
 use oak_index::semantic_index::DefinitionKind;
@@ -14,7 +12,6 @@ use oak_index::semantic_index::SymbolFlags;
 use oak_index::semantic_index::UseId;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::SourceResolution;
-use oak_index::FileDefinition;
 use url::Url;
 
 fn index(source: &str) -> SemanticIndex {
@@ -24,7 +21,7 @@ fn index(source: &str) -> SemanticIndex {
         panic!("source has syntax errors: {source}");
     }
 
-    semantic_index(&parsed.tree())
+    semantic_index(&parsed.tree(), &Url::parse("file:///test/test.R").unwrap())
 }
 
 fn directive_kinds(index: &SemanticIndex) -> Vec<&DirectiveKind> {
@@ -91,11 +88,11 @@ fn test_rhs_collected_before_lhs() {
     let file = ScopeId::from(0);
 
     let use_site = &index.uses(file)[UseId::from(0)];
-    let use_sym = index.symbols(file).symbol(use_site.symbol());
+    let use_sym = index.symbols(file).symbol_id(use_site.symbol());
     assert_eq!(use_sym.name(), "y");
 
     let def_site = &index.definitions(file)[DefinitionId::from(0)];
-    let def_sym = index.symbols(file).symbol(def_site.symbol());
+    let def_sym = index.symbols(file).symbol_id(def_site.symbol());
     assert_eq!(def_sym.name(), "x");
 }
 
@@ -462,11 +459,11 @@ fn test_right_assignment_rhs_collected_before_lhs() {
     let file = ScopeId::from(0);
 
     let use_site = &index.uses(file)[UseId::from(0)];
-    let use_sym = index.symbols(file).symbol(use_site.symbol());
+    let use_sym = index.symbols(file).symbol_id(use_site.symbol());
     assert_eq!(use_sym.name(), "y");
 
     let def_site = &index.definitions(file)[DefinitionId::from(0)];
-    let def_sym = index.symbols(file).symbol(def_site.symbol());
+    let def_sym = index.symbols(file).symbol_id(def_site.symbol());
     assert_eq!(def_sym.name(), "x");
 }
 
@@ -667,7 +664,7 @@ fn test_super_assignment_does_not_pollute_ancestor() {
     let x_file_defs: Vec<_> = index
         .definitions(file)
         .iter()
-        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(file).symbol_id(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_file_defs.len(), 2);
     assert!(matches!(
@@ -711,7 +708,7 @@ fn test_super_assignment_nested_recorded_in_inner_scope() {
     let x_outer_defs: Vec<_> = index
         .definitions(outer)
         .iter()
-        .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(outer).symbol_id(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_outer_defs.len(), 2);
     assert!(matches!(
@@ -751,7 +748,7 @@ fn test_super_assignment_nested_skips_super_bound_scope() {
     let x_file_defs: Vec<_> = index
         .definitions(file)
         .iter()
-        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(file).symbol_id(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_file_defs.len(), 3);
     assert!(matches!(
@@ -1547,23 +1544,24 @@ fn index_with_resolver(
     if parsed.has_error() {
         panic!("source has syntax errors: {source}");
     }
-    semantic_index_with_source_resolver(&parsed.tree(), resolver)
+    semantic_index_with_source_resolver(
+        &parsed.tree(),
+        &Url::parse("file:///test/test.R").unwrap(),
+        resolver,
+    )
 }
 
 fn helper_resolution() -> SourceResolution {
     SourceResolution {
-        definitions: vec![FileDefinition {
-            name: "helper".into(),
-            file: Url::parse("file:///test/helpers.R").unwrap(),
-            range: TextRange::new(TextSize::from(0), TextSize::from(6)),
-        }],
+        file: Url::parse("file:///test/helpers.R").unwrap(),
+        names: vec!["helper".into()],
         packages: vec![],
     }
 }
 
 #[test]
 fn test_source_resolver_injects_definitions() {
-    // At file scope, source() injects Sourced definitions into the use-def map.
+    // At file scope, source() injects Import definitions into the use-def map.
     let code = "source(\"helpers.R\")\nhelper\n";
     let index = index_with_resolver(code, |_| Some(helper_resolution()));
     let file = ScopeId::from(0);
@@ -1575,22 +1573,20 @@ fn test_source_resolver_injects_definitions() {
 
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced));
-    let url = def.file().unwrap();
-    assert_eq!(url.as_str(), "file:///test/helpers.R");
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+    // def.file() is the owning file; the target is in the kind
+    assert_eq!(def.file().as_str(), "file:///test/test.R");
+    match def.kind() {
+        DefinitionKind::Import { file, name, .. } => {
+            assert_eq!(file.as_str(), "file:///test/helpers.R");
+            assert_eq!(name, "helper");
+        },
+        _ => panic!("expected Import kind"),
+    }
 
-    // file_exports() excludes sourced definitions
+    // file_exports() includes Import-kind definitions
     let exports = index.file_exports();
-    assert!(!exports.iter().any(|(name, _)| *name == "helper"));
-
-    // file_source_exports() includes sourced definitions
-    let own_url = Url::parse("file:///test/main.R").unwrap();
-    let all_defs = index.file_source_exports(&own_url);
-    let sourced = all_defs
-        .iter()
-        .find(|(name, _, _)| *name == "helper")
-        .unwrap();
-    assert_eq!(sourced.1.as_str(), "file:///test/helpers.R");
+    assert!(exports.iter().any(|(name, _)| *name == "helper"));
 }
 
 #[test]
@@ -1610,32 +1606,30 @@ fn test_source_resolver_offset_visibility() {
     assert!(!second.definitions().is_empty());
     let def_id = second.definitions()[0];
     let def = &index.definitions(file)[def_id];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced));
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
 }
 
 #[test]
 fn test_source_resolver_in_function_scope() {
+    // source() in a function scope injects Import-kind defs into
+    // the function scope's use-def map.
     let code = "f <- function() {\n  source(\"helpers.R\")\n  helper\n}\nhelper\n";
     let index = index_with_resolver(code, |_| Some(helper_resolution()));
     let fun = ScopeId::from(1);
     let file = ScopeId::from(0);
 
+    // Function scope: source(0), helper(1)
     let fun_map = index.use_def_map(fun);
     let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
-    assert!(inner_bindings.definitions().is_empty());
-    assert!(inner_bindings.may_be_unbound());
+    assert_eq!(inner_bindings.definitions().len(), 1);
+    let def = &index.definitions(fun)[inner_bindings.definitions()[0]];
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
 
+    // File scope: `helper` does not resolve
     let file_map = index.use_def_map(file);
     let outer_bindings = file_map.bindings_at_use(UseId::from(0));
     assert!(outer_bindings.definitions().is_empty());
     assert!(outer_bindings.may_be_unbound());
-
-    let source_directive = index
-        .file_directives()
-        .iter()
-        .find(|d| matches!(d.kind(), DirectiveKind::Source { .. }));
-    assert!(source_directive.is_some());
-    assert_eq!(source_directive.unwrap().scope(), ScopeId::from(1));
 }
 
 #[test]
@@ -1643,7 +1637,8 @@ fn test_source_resolver_packages_become_directives() {
     let code = "source(\"helpers.R\")\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
-            definitions: vec![],
+            file: Url::parse("file:///test/helpers.R").unwrap(),
+            names: vec![],
             packages: vec!["dplyr".into()],
         })
     });
@@ -1655,7 +1650,7 @@ fn test_source_resolver_packages_become_directives() {
 
 #[test]
 fn test_source_resolver_later_shadows_earlier() {
-    // At file scope, both source() calls inject Sourced definitions
+    // At file scope, both source() calls inject Import definitions
     // into the use-def map. The later one shadows the earlier.
     let code = "source(\"a.R\")\nsource(\"b.R\")\nfoo\n";
     let parsed = parse(code, RParserOptions::default());
@@ -1665,27 +1660,22 @@ fn test_source_resolver_later_shadows_earlier() {
     let a_url_clone = a_url.clone();
     let b_url_clone = b_url.clone();
 
-    let index = semantic_index_with_source_resolver(&parsed.tree(), move |path| {
-        let (url, range) = match path {
-            "a.R" => (
-                a_url_clone.clone(),
-                TextRange::new(TextSize::from(0), TextSize::from(3)),
-            ),
-            "b.R" => (
-                b_url_clone.clone(),
-                TextRange::new(TextSize::from(0), TextSize::from(3)),
-            ),
-            _ => return None,
-        };
-        Some(SourceResolution {
-            definitions: vec![FileDefinition {
-                name: "foo".to_string(),
+    let index = semantic_index_with_source_resolver(
+        &parsed.tree(),
+        &Url::parse("file:///test/test.R").unwrap(),
+        move |path| {
+            let url = match path {
+                "a.R" => a_url_clone.clone(),
+                "b.R" => b_url_clone.clone(),
+                _ => return None,
+            };
+            Some(SourceResolution {
                 file: url,
-                range,
-            }],
-            packages: Vec::new(),
-        })
-    });
+                names: vec!["foo".into()],
+                packages: Vec::new(),
+            })
+        },
+    );
 
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
@@ -1696,15 +1686,17 @@ fn test_source_resolver_later_shadows_earlier() {
 
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced));
-    let url = def.file().unwrap();
-    assert_eq!(*url, b_url);
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+    match def.kind() {
+        DefinitionKind::Import { file, .. } => assert_eq!(*file, b_url),
+        _ => panic!("expected Import kind"),
+    }
 }
 
 #[test]
 fn test_source_resolver_local_true_in_function_scope() {
-    // `local = TRUE` injects Sourced definitions into the function
-    // scope's use-def map, not into directives.
+    // `local = TRUE` injects Import definitions into the function
+    // scope's use-def map.
     let code = "f <- function() {\n  source(\"helpers.R\", local = TRUE)\n  helper\n}\nhelper\n";
     let index = index_with_resolver(code, |_| Some(helper_resolution()));
     let fun = ScopeId::from(1);
@@ -1715,7 +1707,7 @@ fn test_source_resolver_local_true_in_function_scope() {
     let inner_bindings = fun_map.bindings_at_use(UseId::from(1));
     assert_eq!(inner_bindings.definitions().len(), 1);
     let def = &index.definitions(fun)[inner_bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced));
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
 
     // File scope: `helper` does not resolve
     let file_map = index.use_def_map(file);
@@ -1730,11 +1722,8 @@ fn test_source_resolver_local_true_shadows_local_def() {
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\", local = TRUE)\n  foo\n}\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
-            definitions: vec![FileDefinition {
-                name: "foo".into(),
-                file: Url::parse("file:///test/helpers.R").unwrap(),
-                range: TextRange::new(TextSize::from(0), TextSize::from(3)),
-            }],
+            file: Url::parse("file:///test/helpers.R").unwrap(),
+            names: vec!["foo".into()],
             packages: vec![],
         })
     });
@@ -1745,22 +1734,18 @@ fn test_source_resolver_local_true_shadows_local_def() {
     let bindings = fun_map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions().len(), 1);
     let def = &index.definitions(fun)[bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Sourced));
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
 }
 
 #[test]
 fn test_source_resolver_local_false_does_not_shadow_local_def() {
-    // `source(local = FALSE)` (the default) in a function scope does not
-    // shadow a prior local binding: the sourced definition becomes a
-    // directive scoped to the function, leaving the local one intact.
+    // source() without `local = TRUE` in a function scope now also
+    // injects Import definitions, shadowing the local binding.
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
-            definitions: vec![FileDefinition {
-                name: "foo".into(),
-                file: Url::parse("file:///test/helpers.R").unwrap(),
-                range: TextRange::new(TextSize::from(0), TextSize::from(3)),
-            }],
+            file: Url::parse("file:///test/helpers.R").unwrap(),
+            names: vec!["foo".into()],
             packages: vec![],
         })
     });
@@ -1771,5 +1756,22 @@ fn test_source_resolver_local_false_does_not_shadow_local_def() {
     let bindings = fun_map.bindings_at_use(UseId::from(1));
     assert_eq!(bindings.definitions().len(), 1);
     let def = &index.definitions(fun)[bindings.definitions()[0]];
-    assert!(matches!(def.kind(), DefinitionKind::Assignment(_)));
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
+}
+
+#[test]
+fn test_source_resolver_local_def_shadowed_by_source() {
+    // A local definition followed by source() at file scope:
+    // the source() shadows the local def.
+    let code = "helper <- 1\nsource(\"helpers.R\")\nhelper\n";
+    let index = index_with_resolver(code, |_| Some(helper_resolution()));
+    let file = ScopeId::from(0);
+    let map = index.use_def_map(file);
+
+    // Uses: source(0), helper(1)
+    let bindings = map.bindings_at_use(UseId::from(1));
+    assert_eq!(bindings.definitions().len(), 1);
+    let def_id = bindings.definitions()[0];
+    let def = &index.definitions(file)[def_id];
+    assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
 }

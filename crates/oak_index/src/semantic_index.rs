@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Range;
 
 use aether_syntax::RSyntaxNode;
@@ -117,54 +116,25 @@ impl SemanticIndex {
     }
 
     /// Top-level definitions exported by this file (definitions in the file scope).
+    /// Includes `Import`-kind forwarding definitions from `source()` calls.
     pub fn file_exports(&self) -> Vec<(&str, TextRange)> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
         self.definitions[file_scope]
             .iter()
-            .filter(|(_id, def)| def.file().is_none())
             .map(|(_id, def)| {
-                let name = symbols.symbol(def.symbol()).name();
+                let name = symbols.symbol_id(def.symbol()).name();
                 (name, def.range())
             })
             .collect()
-    }
-
-    /// All definitions that a `source()` caller would see from this file:
-    /// own file-scope definitions, `Sourced` definitions injected into the
-    /// use-def map, and exports from `Source` directives (transitive
-    /// `source()` calls with `local = FALSE` in nested scopes).
-    pub fn file_source_exports(&self, file_url: &Url) -> Vec<(&str, Url, TextRange)> {
-        let file_scope = ScopeId::from(0);
-        let symbols = &self.symbol_tables[file_scope];
-
-        let mut defs: Vec<(&str, Url, TextRange)> = self.definitions[file_scope]
-            .iter()
-            .map(|(_id, def)| {
-                let name = symbols.symbol(def.symbol()).name();
-                let url = def.file().cloned().unwrap_or_else(|| file_url.clone());
-                (name, url, def.range())
-            })
-            .collect();
-
-        for directive in &self.directives {
-            if let DirectiveKind::Source { file, exports } = &directive.kind {
-                for (name, range) in exports {
-                    defs.push((name.as_str(), file.clone(), *range));
-                }
-            }
-        }
-
-        defs
     }
 
     /// Package names from `library()` / `require()` directives in this file.
     pub fn file_attached_packages(&self) -> Vec<&str> {
         self.directives
             .iter()
-            .filter_map(|d| match &d.kind {
-                DirectiveKind::Attach(pkg) => Some(pkg.as_str()),
-                _ => None,
+            .map(|d| match &d.kind {
+                DirectiveKind::Attach(pkg) => pkg.as_str(),
             })
             .collect()
     }
@@ -195,7 +165,7 @@ impl SemanticIndex {
         let def_id = self
             .definitions(scope)
             .iter()
-            .filter(|(_id, def)| def.file().is_none())
+            .filter(|(_id, def)| !matches!(def.kind(), DefinitionKind::Import { .. }))
             .find_map(|(id, d)| d.range().contains(offset).then_some(id));
         Some((scope, def_id?))
     }
@@ -233,7 +203,7 @@ impl SemanticIndex {
         for ancestor in self.ancestor_scopes(scope) {
             if let Some(id) = self.symbol_tables[ancestor].id(name) {
                 if self.symbol_tables[ancestor]
-                    .symbol(id)
+                    .symbol_id(id)
                     .flags()
                     .contains(SymbolFlags::IS_BOUND)
                 {
@@ -357,7 +327,7 @@ impl SymbolTable {
         self.by_name.get(name).copied()
     }
 
-    pub fn symbol(&self, id: SymbolId) -> &Symbol {
+    pub fn symbol_id(&self, id: SymbolId) -> &Symbol {
         &self.symbols[id]
     }
 
@@ -524,7 +494,11 @@ impl SymbolFlags {
 #[derive(Debug)]
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
-    pub(crate) file: Option<Url>,
+    /// The file that owns this definition's index.
+    pub(crate) file: Url,
+    /// The scope within the file's index where this definition lives.
+    pub(crate) scope: ScopeId,
+    // TODO(salsa): Should become a PlaceId (like ty's `ScopedPlaceId`).
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
 }
@@ -535,8 +509,13 @@ pub enum DefinitionKind {
     SuperAssignment(RSyntaxNode),
     Parameter(RSyntaxNode),
     ForVariable(RSyntaxNode),
-    /// Injected from a `source()` call. The range belongs to `Definition::file`.
-    Sourced,
+    /// A forwarding binding that resolves to a definition in another file.
+    /// Consumers must chase the `file`/`name` chain to reach the actual origin.
+    Import {
+        call: RSyntaxNode,
+        file: Url,
+        name: String,
+    },
 }
 
 impl Definition {
@@ -552,8 +531,12 @@ impl Definition {
         self.range
     }
 
-    pub fn file(&self) -> Option<&Url> {
-        self.file.as_ref()
+    pub fn file(&self) -> &Url {
+        &self.file
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
     }
 }
 
@@ -602,11 +585,6 @@ pub struct Directive {
 pub enum DirectiveKind {
     /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
     Attach(String),
-    /// `source(file)`: brings exports from another file into scope.
-    Source {
-        file: Url,
-        exports: HashMap<String, TextRange>,
-    },
 }
 
 impl Directive {

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
+use oak_db::Db;
 use oak_ide::ExternalScope;
 use oak_index::library::Library;
 use oak_index::scope_layer::directive_layers;
@@ -15,13 +16,33 @@ use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index_with_source_resolver;
 use oak_index::SourceResolution;
-use oak_index::FileDefinition;
 use stdext::result::ResultExt;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
+
+impl Db for WorldState {
+    fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
+        let doc = self.workspace_document(file)?;
+        let source_root = self.source_root(file);
+
+        let mut stack = HashSet::new();
+        stack.insert(file.clone());
+
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), file, |path| {
+            let dir = source_root.as_ref()?;
+            self.resolve_source(dir, path, &mut stack)
+        });
+
+        Some(index)
+    }
+
+    fn library(&self) -> &Library {
+        &self.library
+    }
+}
 
 #[derive(Clone, Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
@@ -106,9 +127,9 @@ impl WorldState {
     /// Look up a document by URL: returns an open document if available,
     /// otherwise reads from disk.
     ///
-    /// TODO: Replace with a proper VFS so non-opened workspace documents
+    /// TODO(salsa): Replace with a proper VFS so non-opened workspace documents
     /// are cached rather than re-read on every query.
-    fn workspace_document(&self, uri: &Url) -> Option<Cow<'_, Document>> {
+    pub(crate) fn workspace_document(&self, uri: &Url) -> Option<Cow<'_, Document>> {
         if let Some(doc) = self.documents.get(uri) {
             return Some(Cow::Borrowed(doc));
         }
@@ -116,6 +137,22 @@ impl WorldState {
         let path = uri.to_file_path().log_err()?;
         let contents = std::fs::read_to_string(&path).log_err()?;
         Some(Cow::Owned(Document::new(&contents, None)))
+    }
+
+    /// Resolve from the workspace root, falling back to the file's directory.
+    /// This matches RStudio behaviour. Potential improvements: support
+    /// `setwd()` calls and find the workspace containing the file if there are
+    /// multiple.
+    fn source_root(&self, file: &Url) -> Option<PathBuf> {
+        self.workspace
+            .folders
+            .first()
+            .and_then(|url| url.to_file_path().ok())
+            .or_else(|| {
+                file.to_file_path()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            })
     }
 
     /// Create the semantic index and scope chain for a particular file.
@@ -135,6 +172,11 @@ impl WorldState {
         }
     }
 
+    // TODO(salsa): Align with the deferred-resolution model used for scripts. Package
+    // files should produce Import-kind forwarding definitions and resolve
+    // through `resolve_definition()`, rather than pre-resolving through the
+    // scope chain. This will happen naturally once Salsa provides cheap
+    // cross-file index access.
     fn package_file_analysis(
         &self,
         file: &Url,
@@ -163,7 +205,7 @@ impl WorldState {
             });
 
         let Some(file_path) = file.to_file_path().ok() else {
-            return (doc.semantic_index(), ExternalScope::default());
+            return (doc.semantic_index(file), ExternalScope::default());
         };
 
         // Iterate in reverse collation order so later files (which shadow
@@ -186,7 +228,7 @@ impl WorldState {
                 continue;
             };
 
-            let layers = file_layers(uri, &doc.semantic_index());
+            let layers = file_layers(uri.clone(), &doc.semantic_index(&uri));
             lazy.extend(layers.clone());
             if past_current {
                 top_level.extend(layers);
@@ -197,31 +239,18 @@ impl WorldState {
         lazy.extend(root_layers);
 
         (
-            doc.semantic_index(),
+            doc.semantic_index(file),
             ExternalScope::package(top_level, lazy),
         )
     }
 
     fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, ExternalScope) {
-        // Resolve `source()` paths relative to the workspace root,
-        // matching RStudio's behaviour of setting the working directory
-        // to the project root. Fall back to the file's own directory
-        // when no workspace folder is open.
-        let source_root = self
-            .workspace
-            .folders
-            .first()
-            .and_then(|url| url.to_file_path().ok())
-            .or_else(|| {
-                file.to_file_path()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            });
+        let source_root = self.source_root(file);
 
         let mut stack = HashSet::new();
         stack.insert(file.clone());
 
-        let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), file, |path| {
             let dir = source_root.as_ref()?;
             self.resolve_source(dir, path, &mut stack)
         });
@@ -234,7 +263,7 @@ impl WorldState {
     }
 
     /// Resolve a `source()` call into a [`SourceResolution`] containing the
-    /// sourced file's exported definitions and `library()` package attachments.
+    /// sourced file's exported names and `library()` package attachments.
     ///
     /// `stack` tracks files currently being resolved (grey set) to break
     /// cycles. A file is added when resolution starts and removed when it
@@ -261,18 +290,15 @@ impl WorldState {
         // Build the sourced file's index with a nested resolver so that
         // transitive `source()` calls are also resolved. The base
         // directory stays the same (workspace root) throughout the chain.
-        let index = semantic_index_with_source_resolver(&sourced_doc.parse.tree(), |nested_path| {
-            self.resolve_source(base_dir, nested_path, stack)
-        });
+        let index =
+            semantic_index_with_source_resolver(&sourced_doc.parse.tree(), &url, |nested_path| {
+                self.resolve_source(base_dir, nested_path, stack)
+            });
 
-        let definitions: Vec<FileDefinition> = index
-            .file_source_exports(&url)
+        let names: Vec<String> = index
+            .file_exports()
             .into_iter()
-            .map(|(name, file, range)| FileDefinition {
-                name: name.to_string(),
-                file,
-                range,
-            })
+            .map(|(name, _range)| name.to_string())
             .collect();
 
         let packages: Vec<String> = index
@@ -284,7 +310,8 @@ impl WorldState {
         stack.remove(&url);
 
         Some(SourceResolution {
-            definitions,
+            file: url,
+            names,
             packages,
         })
     }

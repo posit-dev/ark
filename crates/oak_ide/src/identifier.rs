@@ -38,7 +38,10 @@ impl Identifier {
         let (scope_id, _) = index.scope_at(offset);
 
         if let Some((def_id, def)) = index.definitions(scope_id).contains(offset) {
-            if def.file().is_none() {
+            if !matches!(
+                def.kind(),
+                oak_index::semantic_index::DefinitionKind::Import { .. }
+            ) {
                 return Some(Identifier::Definition { scope_id, def_id });
             }
         }

@@ -303,7 +303,10 @@ fn test_resolve_file_exports_last_definition_wins() {
 
 fn index_source(source: &str) -> oak_index::semantic_index::SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    semantic_index(&parsed.tree())
+    semantic_index(
+        &parsed.tree(),
+        &url::Url::parse("file:///test/test.R").unwrap(),
+    )
 }
 
 #[test]
