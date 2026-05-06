@@ -7,12 +7,10 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
 use harp::command::r_command;
-use harp::command::r_home_setup;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
@@ -56,7 +54,8 @@ pub fn detect_r() -> anyhow::Result<RVersion> {
         .trim()
         .to_string();
 
-    let (version, path) = output.split_once(":")
+    let (version, path) = output
+        .split_once(":")
         .context("Expected `:` delimiter in string")?;
 
     let version = version.split(".").map(|x| x.parse::<u32>());
