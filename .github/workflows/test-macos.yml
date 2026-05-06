@@ -40,6 +40,16 @@ jobs:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
 
+      # This configures Makevars to look for brew headers and libraries. Useful
+      # to compile packages used in tests when they have just been released to
+      # CRAN and there is no binary we can download yet. We've needed this for
+      # data.table.
+      - name: Configure R compilation flags
+        run: |
+          mkdir -p ~/.R
+          echo "CPPFLAGS += -I$(brew --prefix gettext)/include" >> ~/.R/Makevars
+          echo "LDFLAGS += -L$(brew --prefix gettext)/lib" >> ~/.R/Makevars
+
       - name: Install R Packages Required For Tests
         uses: r-lib/actions/setup-r-dependencies@v2
         with:
