@@ -13,7 +13,6 @@ use oak_ide::ExternalScope;
 use oak_ide::NavigationTarget;
 use oak_index::library::Library;
 use oak_index::package::Package;
-use oak_index::scope_layer::directive_layers;
 use oak_index::scope_layer::file_layers;
 use oak_index::scope_layer::ScopeLayer;
 use oak_index::semantic_index;
@@ -1379,7 +1378,7 @@ fn test_source_directive_resolves_to_sourced_file() {
             })
         });
 
-    let dir_layers = directive_layers(script_idx.file_directives());
+    let dir_layers = script_idx.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1452,7 +1451,7 @@ fn test_source_directive_resolves_nested_library() {
             })
         });
 
-    let dir_layers = directive_layers(script_idx.file_directives());
+    let dir_layers = script_idx.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1487,7 +1486,7 @@ fn test_source_directive_resolves_nested_library() {
             })
         });
 
-    let dir_layers = directive_layers(script_idx2.file_directives());
+    let dir_layers = script_idx2.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let use_offset = source_with_helper.rfind("helper").unwrap() as u32;
@@ -1550,7 +1549,7 @@ fn test_directive_not_visible_before_call_site() {
             })
         });
 
-    let dir_layers = directive_layers(script_idx.file_directives());
+    let dir_layers = script_idx.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1634,7 +1633,7 @@ fn test_directives_in_function_body_are_scoped() {
     assert_eq!(directives[0].kind(), &DirectiveKind::Attach("dplyr".into()));
     assert_ne!(directives[0].scope(), ScopeId::from(0));
 
-    let dir_layers = directive_layers(script_idx.file_directives());
+    let dir_layers = script_idx.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     // `mutate` inside f (after library()) — resolves via scoped dplyr
@@ -1705,7 +1704,7 @@ fn test_source_in_function_body_scoping() {
             })
         });
 
-    let dir_layers = directive_layers(script_idx.file_directives());
+    let dir_layers = script_idx.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1774,7 +1773,7 @@ fn test_resolve_import_last_def_wins() {
         })
     });
 
-    let dir_layers = directive_layers(script_idx.file_directives());
+    let dir_layers = script_idx.file_directives().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let use_offset = script_source.rfind("foo").unwrap() as u32;

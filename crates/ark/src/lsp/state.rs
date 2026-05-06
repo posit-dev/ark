@@ -9,7 +9,6 @@ use oak_core::file::list_r_files;
 use oak_db::Db;
 use oak_ide::ExternalScope;
 use oak_index::library::Library;
-use oak_index::scope_layer::directive_layers;
 use oak_index::scope_layer::file_layers;
 use oak_index::scope_layer::package_root_layers;
 use oak_index::scope_layer::ScopeLayer;
@@ -255,7 +254,7 @@ impl WorldState {
             self.resolve_source(dir, path, &mut stack)
         });
 
-        let directives = directive_layers(index.file_directives());
+        let directives = index.file_directives().to_vec();
         (
             index,
             ExternalScope::search_path(directives, default_search_path()),

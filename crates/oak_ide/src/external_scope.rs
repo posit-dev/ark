@@ -2,6 +2,8 @@ use std::borrow::Cow;
 
 use biome_rowan::TextSize;
 use oak_index::scope_layer::ScopeLayer;
+use oak_index::semantic_index::Directive;
+use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::ScopeId;
@@ -30,7 +32,7 @@ pub enum ExternalScope {
     /// called after the full script has been sourced.
     SearchPath {
         base: Vec<ScopeLayer>,
-        directives: Vec<(TextSize, ScopeId, ScopeLayer)>,
+        directives: Vec<Directive>,
     },
 }
 
@@ -48,10 +50,7 @@ impl ExternalScope {
         Self::Package { top_level, lazy }
     }
 
-    pub fn search_path(
-        directives: Vec<(TextSize, ScopeId, ScopeLayer)>,
-        base: Vec<ScopeLayer>,
-    ) -> Self {
+    pub fn search_path(directives: Vec<Directive>, base: Vec<ScopeLayer>) -> Self {
         Self::SearchPath { base, directives }
     }
 
@@ -76,17 +75,20 @@ impl ExternalScope {
                 let layers: Vec<_> = directives
                     .iter()
                     .rev()
-                    .filter(|(off, dir_scope, _)| {
+                    .filter(|d| {
+                        let dir_scope = d.scope();
                         // File-scope directives are always visible inside
                         // function bodies (the function is typically called
                         // after the full script has been sourced).
-                        if in_function && *dir_scope == file_scope {
+                        if in_function && dir_scope == file_scope {
                             return true;
                         }
-                        *off < offset &&
-                            index.ancestor_scopes(cursor_scope).any(|s| s == *dir_scope)
+                        d.offset() < offset &&
+                            index.ancestor_scopes(cursor_scope).any(|s| s == dir_scope)
                     })
-                    .map(|(_, _, b)| b.clone())
+                    .map(|d| match d.kind() {
+                        DirectiveKind::Attach(pkg) => ScopeLayer::PackageExports(pkg.clone()),
+                    })
                     .chain(base.iter().cloned())
                     .collect();
                 Cow::Owned(layers)
@@ -106,8 +108,10 @@ impl ExternalScope {
                 let mut layers: Vec<ScopeLayer> = directives
                     .iter()
                     .rev()
-                    .filter(|(_, scope, _)| *scope == file_scope)
-                    .map(|(_, _, l)| l.clone())
+                    .filter(|d| d.scope() == file_scope)
+                    .map(|d| match d.kind() {
+                        DirectiveKind::Attach(pkg) => ScopeLayer::PackageExports(pkg.clone()),
+                    })
                     .collect();
                 layers.extend(base.iter().cloned());
                 Cow::Owned(layers)
