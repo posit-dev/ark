@@ -1,5 +1,5 @@
-use oak_index::library::Library;
-use oak_index::semantic_index::SemanticIndex;
+use oak_semantic::library::Library;
+use oak_semantic::semantic_index::SemanticIndex;
 use url::Url;
 
 /// Database trait for cross-file queries.

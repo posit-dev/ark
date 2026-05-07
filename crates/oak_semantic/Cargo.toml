@@ -1,5 +1,5 @@
 [package]
-name = "oak_index"
+name = "oak_semantic"
 version = "0.1.0"
 description = """
 Per-file semantic index for R: scopes, symbols, bindings, and uses.
@@ -40,6 +40,6 @@ optional = true
 
 [dev-dependencies]
 assert_matches.workspace = true
-oak_index = { workspace = true, features = ["testing"] }
+oak_semantic = { workspace = true, features = ["testing"] }
 oak_sources = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

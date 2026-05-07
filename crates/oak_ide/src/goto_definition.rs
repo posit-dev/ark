@@ -3,16 +3,16 @@ use std::collections::HashSet;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextSize;
 use oak_db::Db;
-use oak_index::external::resolve_external_name;
-use oak_index::external::resolve_in_package;
-use oak_index::package_definitions::PackageDefinitionVisibility;
-use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index::DefinitionKind;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index::Use;
-use oak_index::DefinitionId;
-use oak_index::ScopeId;
-use oak_index::UseId;
+use oak_semantic::external::resolve_external_name;
+use oak_semantic::external::resolve_in_package;
+use oak_semantic::package_definitions::PackageDefinitionVisibility;
+use oak_semantic::scope_layer::ScopeLayer;
+use oak_semantic::semantic_index::DefinitionKind;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index::Use;
+use oak_semantic::DefinitionId;
+use oak_semantic::ScopeId;
+use oak_semantic::UseId;
 use url::Url;
 
 use crate::ExternalScope;
@@ -150,7 +150,7 @@ fn resolve_use(
 /// definition in the target file. Recurses through chains of Import
 /// definitions (e.g., a.R sources b.R sources c.R).
 ///
-/// TODO(salsa): Move to `oak_index` once it depends on `oak_db`.
+/// TODO(salsa): Move to `oak_semantic` once it depends on `oak_db`.
 fn resolve_import(db: &dyn Db, file: &Url, name: &str) -> Option<NavigationTarget> {
     let mut visited = HashSet::new();
     resolve_import_inner(db, file, name, &mut visited)

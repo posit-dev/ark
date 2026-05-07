@@ -5,7 +5,7 @@
 //
 //
 
-use oak_index::package::Package;
+use oak_semantic::package::Package;
 
 /// The root of a source tree.
 /// Currently only supports packages, but can be extended to scripts.

@@ -77,11 +77,11 @@ mod tests {
     use std::process::Command;
 
     use assert_matches::assert_matches;
-    use oak_index::library::Library;
-    use oak_index::package::Package;
     use oak_package_metadata::description::Description;
     use oak_package_metadata::namespace::Import;
     use oak_package_metadata::namespace::Namespace;
+    use oak_semantic::library::Library;
+    use oak_semantic::package::Package;
     use tower_lsp::lsp_types;
 
     use super::*;
@@ -1040,8 +1040,8 @@ mod tests {
 
         let (index, file_scope) = state.file_analysis(&script_uri, &script_doc);
 
-        let has_dplyr = |layers: &[oak_index::scope_layer::ScopeLayer]| -> bool {
-            layers.iter().any(|l| matches!(l, oak_index::scope_layer::ScopeLayer::PackageExports(pkg) if pkg == "dplyr"))
+        let has_dplyr = |layers: &[oak_semantic::scope_layer::ScopeLayer]| -> bool {
+            layers.iter().any(|l| matches!(l, oak_semantic::scope_layer::ScopeLayer::PackageExports(pkg) if pkg == "dplyr"))
         };
 
         // Before f (offset 0, on "mutate"): dplyr is NOT visible because the
