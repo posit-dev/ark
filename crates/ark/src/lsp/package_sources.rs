@@ -54,6 +54,14 @@ impl PackageSourcesState {
         // We don't populate packages concurrently, so we don't need per package ids
         let id = String::from("package-sources");
 
+        // TODO: This currently reports progress when its already in the cache (i.e. dplyr
+        // was discovered, we got a request to ensure it is populated, but it's already
+        // populated), we should probably also consider passing the `reader` through here
+        // as well, so we can check `self.reader.get(package)` and if that returns
+        // `Some()` then we just return early without reporting any progress at all! We
+        // can hook that up correctly when we actually turn this feature on after getting
+        // Salsa integrated.
+
         report_progress(Progress::new(
             id.clone(),
             ProgressEvent::Begin(ProgressEventBegin::new(format!(
