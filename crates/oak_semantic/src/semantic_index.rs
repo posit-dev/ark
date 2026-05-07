@@ -1,6 +1,10 @@
 use std::ops::Range;
 
-use aether_syntax::RSyntaxNode;
+use aether_syntax::RBinaryExpression;
+use aether_syntax::RCall;
+use aether_syntax::RForStatement;
+use aether_syntax::RParameter;
+use biome_rowan::AstPtr;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::range::Ranged;
@@ -36,7 +40,7 @@ define_index!(EnclosingSnapshotId);
 // (all indexed by `ScopeId`) rather than bundled into a single struct, so
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 
@@ -265,7 +269,7 @@ pub struct EnclosingSnapshotKey {
 // Currently only `function()` creates a new scope. In the future, constructs
 // like `local()`, `with()`, `within()` may also create scopes (determined
 // by function declarations resolved via salsa queries).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
     pub(crate) kind: ScopeKind,
@@ -308,7 +312,7 @@ impl Ranged for Scope {
 // --- Symbol table (per scope) ---
 
 // Read-only after construction. The builder uses `SymbolTableBuilder`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SymbolTable {
     symbols: IndexVec<SymbolId, Symbol>,
 
@@ -395,7 +399,7 @@ impl std::ops::Deref for SymbolTableBuilder {
 // access like `x.y`). `resolve_symbol()` walks the scope chain looking for a
 // symbol with `IS_BOUND`. Future type inference will look up the symbol's
 // definitions and infer a type from them.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Symbol {
     pub(crate) name: String,
     pub(crate) flags: SymbolFlags,
@@ -489,7 +493,7 @@ impl SymbolFlags {
 // implicitly declarations (they declare a name as a function with a specific
 // signature). Future `declare()` annotations will also produce pure
 // declarations.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
     /// The file that owns this definition's index.
@@ -502,16 +506,16 @@ pub struct Definition {
     pub(crate) range: TextRange,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefinitionKind {
-    Assignment(RSyntaxNode),
-    SuperAssignment(RSyntaxNode),
-    Parameter(RSyntaxNode),
-    ForVariable(RSyntaxNode),
+    Assignment(AstPtr<RBinaryExpression>),
+    SuperAssignment(AstPtr<RBinaryExpression>),
+    Parameter(AstPtr<RParameter>),
+    ForVariable(AstPtr<RForStatement>),
     /// A forwarding binding that resolves to a definition in another file.
     /// Consumers must chase the `file`/`name` chain to reach the actual origin.
     Import {
-        call: RSyntaxNode,
+        call: AstPtr<RCall>,
         file: Url,
         name: String,
     },
@@ -550,7 +554,7 @@ impl Ranged for Definition {
 // node positions to use IDs). Our flat list serves the same purpose: the
 // `UseDefMap` will reference `UseId` indices into this list to connect each
 // use to its reaching definitions.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Use {
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
@@ -573,7 +577,7 @@ impl Ranged for Use {
 }
 
 /// A directive that affects the file's imports (e.g. `library()` calls).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Directive {
     pub(crate) kind: DirectiveKind,
     pub(crate) offset: TextSize,

@@ -13,6 +13,7 @@ use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
+use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
@@ -431,7 +432,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         &variable.name_text(),
                         SymbolFlags::IS_BOUND,
-                        DefinitionKind::ForVariable(stmt.syntax().clone()),
+                        DefinitionKind::ForVariable(AstPtr::new(stmt)),
                         variable.syntax().text_trimmed_range(),
                     );
                 }
@@ -637,7 +638,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         &ident.name_text(),
                         flags,
-                        DefinitionKind::Parameter(param.syntax().clone()),
+                        DefinitionKind::Parameter(AstPtr::new(param)),
                         ident.syntax().text_trimmed_range(),
                     );
                 },
@@ -645,7 +646,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         "...",
                         flags,
-                        DefinitionKind::Parameter(param.syntax().clone()),
+                        DefinitionKind::Parameter(AstPtr::new(param)),
                         dots.syntax().text_trimmed_range(),
                     );
                 },
@@ -653,7 +654,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         &ddi.syntax().text_trimmed().to_string(),
                         flags,
-                        DefinitionKind::Parameter(param.syntax().clone()),
+                        DefinitionKind::Parameter(AstPtr::new(param)),
                         ddi.syntax().text_trimmed_range(),
                     );
                 },
@@ -692,14 +693,14 @@ impl<'a> SemanticIndexBuilder<'a> {
         if super_assign {
             self.add_super_definition(
                 &name,
-                DefinitionKind::SuperAssignment(op.syntax().clone()),
+                DefinitionKind::SuperAssignment(AstPtr::new(op)),
                 range,
             );
         } else {
             self.add_definition(
                 &name,
                 SymbolFlags::IS_BOUND,
-                DefinitionKind::Assignment(op.syntax().clone()),
+                DefinitionKind::Assignment(AstPtr::new(op)),
                 range,
             );
         }
@@ -850,7 +851,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                 &name,
                 SymbolFlags::IS_BOUND,
                 DefinitionKind::Import {
-                    call: call.syntax().clone(),
+                    call: AstPtr::new(call),
                     file: file.clone(),
                     name: name.clone(),
                 },

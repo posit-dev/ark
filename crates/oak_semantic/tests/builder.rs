@@ -51,7 +51,10 @@ fn test_simple_assignment() {
     else {
         panic!("expected Assignment");
     };
-    assert_eq!(node.kind(), RSyntaxKind::R_BINARY_EXPRESSION);
+    assert_eq!(
+        node.syntax_node_ptr().kind(),
+        RSyntaxKind::R_BINARY_EXPRESSION
+    );
     assert_eq!(index.uses(file).len(), 0);
 }
 
@@ -138,7 +141,7 @@ fn test_function_creates_scope() {
     else {
         panic!("expected Parameter");
     };
-    assert_eq!(node.kind(), RSyntaxKind::R_PARAMETER);
+    assert_eq!(node.syntax_node_ptr().kind(), RSyntaxKind::R_PARAMETER);
     assert_eq!(index.uses(fun_scope).len(), 1);
 }
 
@@ -302,7 +305,7 @@ fn test_for_loop_body() {
     else {
         panic!("expected ForVariable");
     };
-    assert_eq!(node.kind(), RSyntaxKind::R_FOR_STATEMENT);
+    assert_eq!(node.syntax_node_ptr().kind(), RSyntaxKind::R_FOR_STATEMENT);
 }
 
 #[test]
