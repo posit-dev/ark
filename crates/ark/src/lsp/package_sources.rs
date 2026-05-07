@@ -10,6 +10,8 @@ use crate::lsp::main_loop::TokioUnboundedReceiver;
 
 #[derive(Debug)]
 pub(crate) enum PackageSourcesEvent {
+    /// FIXME: Use this to send populate requests. Blocked on Salsa integration.
+    #[expect(dead_code)]
     Populate(Populate),
 }
 

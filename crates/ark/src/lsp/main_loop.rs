@@ -183,7 +183,9 @@ pub(crate) struct GlobalState {
     events_rx: TokioUnboundedReceiver<Event>,
 
     /// Event channel for sending populate requests to the package sources event loop
-    package_sources_event_tx: Option<TokioUnboundedSender<PackageSourcesEvent>>,
+    ///
+    /// FIXME: Use this to send populate requests. Blocked on Salsa integration.
+    _package_sources_event_tx: Option<TokioUnboundedSender<PackageSourcesEvent>>,
 }
 
 /// Unlike `WorldState`, `ParserState` cannot be cloned and is only accessed by
@@ -244,7 +246,7 @@ impl GlobalState {
                 lsp_state,
                 client,
                 events_rx,
-                package_sources_event_tx,
+                _package_sources_event_tx: package_sources_event_tx,
             },
             events_tx,
         )
