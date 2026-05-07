@@ -396,27 +396,10 @@ impl Console {
             startup::push_ignore_user_r_profile(&mut r_args);
         }
 
-        let r_version = match crate::version::detect_r() {
-            Ok(r_version) => r_version,
-            Err(err) => panic!("Can't detect R version: {err:?}"),
-        };
-
-        if !r_version.is_supported() {
-            panic!(
-                "Unsupported R version {}.{}.{}. Ark requires R >= {}.{}.0",
-                r_version.major,
-                r_version.minor,
-                r_version.patch,
-                crate::version::MIN_R_MAJOR,
-                crate::version::MIN_R_MINOR,
-            );
-        };
-
-        // `R_HOME` is now defined no matter what and will be used by
-        // `r_command()`. Let's discover the other important environment
-        // variables set by R's shell script frontend.
+        // Let's discover the other important environment variables set by R's shell
+        // script frontend.
         // https://github.com/posit-dev/positron/issues/3637
-        match r_command(|command| {
+        match r_command(console.r_home(), |command| {
             // From https://github.com/rstudio/rstudio/blob/74696236/src/cpp/core/r_util/REnvironmentPosix.cpp#L506-L515
             command
                 .arg("--vanilla")
