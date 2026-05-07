@@ -3,10 +3,10 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::lsp::main_loop::report_progress;
-use crate::lsp::main_loop::Progress;
-use crate::lsp::main_loop::ProgressEvent;
-use crate::lsp::main_loop::ProgressEventBegin;
 use crate::lsp::main_loop::TokioUnboundedReceiver;
+use crate::lsp::progress::Progress;
+use crate::lsp::progress::ProgressEvent;
+use crate::lsp::progress::ProgressEventBegin;
 
 #[derive(Debug)]
 pub(crate) enum PackageSourcesEvent {

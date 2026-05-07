@@ -42,6 +42,7 @@ use crate::lsp::document::Document;
 use crate::lsp::handlers;
 use crate::lsp::indexer;
 use crate::lsp::package_sources::PackageSourcesEvent;
+use crate::lsp::progress::ProgressSupport;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers;
 use crate::lsp::state_handlers::ConsoleInputs;
@@ -118,42 +119,8 @@ pub(crate) enum AuxiliaryEvent {
     PublishDiagnostics(Url, Vec<Diagnostic>, Option<i32>),
     SpawnedTask(JoinHandle<anyhow::Result<Option<AuxiliaryEvent>>>),
     EnableProgress,
-    Progress(Progress),
+    Progress(lsp::progress::Progress),
     Shutdown,
-}
-
-#[derive(Debug)]
-pub(crate) struct Progress {
-    /// Identifier for the kind of progress being reported
-    ///
-    /// If we understand correctly, this allows different identifiers to show up as
-    /// different spinners that all report progress concurrently
-    id: String,
-
-    event: ProgressEvent,
-}
-
-impl Progress {
-    pub(crate) fn new(id: String, event: ProgressEvent) -> Self {
-        Self { id, event }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum ProgressEvent {
-    Begin(ProgressEventBegin),
-    End,
-}
-
-#[derive(Debug)]
-pub(crate) struct ProgressEventBegin {
-    title: String,
-}
-
-impl ProgressEventBegin {
-    pub(crate) fn new(title: String) -> Self {
-        Self { title }
-    }
 }
 
 /// Global state for the main loop
@@ -214,12 +181,7 @@ pub(crate) struct AuxiliaryState {
     client: Client,
     auxiliary_event_rx: TokioUnboundedReceiver<AuxiliaryEvent>,
     tasks: TaskList<Option<AuxiliaryEvent>>,
-    progress_support: ProgressSupport,
-}
-
-enum ProgressSupport {
-    Enabled,
-    Disabled,
+    progress_support: lsp::progress::ProgressSupport,
 }
 
 impl GlobalState {
@@ -565,7 +527,7 @@ impl AuxiliaryState {
                         .publish_diagnostics(uri, diagnostics, version)
                         .await
                 },
-                AuxiliaryEvent::EnableProgress => self.enable_progress(),
+                AuxiliaryEvent::EnableProgress => self.handle_enable_progress(),
                 AuxiliaryEvent::Progress(progress) => self.handle_progress(progress).await,
                 AuxiliaryEvent::Shutdown => break,
             }
@@ -607,55 +569,15 @@ impl AuxiliaryState {
         self.client.log_message(MessageType::ERROR, message).await
     }
 
-    fn enable_progress(&mut self) {
-        log::info!("Enabling work done progress support");
-        self.progress_support = ProgressSupport::Enabled;
+    pub(crate) fn client(&self) -> &Client {
+        &self.client
     }
 
-    async fn handle_progress(&self, progress: Progress) {
-        if matches!(self.progress_support, ProgressSupport::Disabled) {
-            return;
-        }
-
-        let token = lsp_types::ProgressToken::String(format!("ark/progress/{}", progress.id));
-
-        let work_done_progress = match progress.event {
-            ProgressEvent::Begin(begin) => {
-                tracing::trace!("handle_progress(begin): token {token:?}");
-
-                let result = self
-                    .client
-                    .send_request::<lsp_types::request::WorkDoneProgressCreate>(
-                        lsp_types::WorkDoneProgressCreateParams {
-                            token: token.clone(),
-                        },
-                    )
-                    .await;
-
-                if let Err(error) = result {
-                    log::warn!("Client rejected progress token: {error:?}");
-                    return;
-                };
-
-                lsp_types::WorkDoneProgress::Begin(lsp_types::WorkDoneProgressBegin {
-                    title: begin.title,
-                    cancellable: None,
-                    message: None,
-                    percentage: None,
-                })
-            },
-            ProgressEvent::End => {
-                tracing::trace!("handle_progress(end): token {token:?}");
-                lsp_types::WorkDoneProgress::End(lsp_types::WorkDoneProgressEnd { message: None })
-            },
-        };
-
-        self.client
-            .send_notification::<lsp_types::notification::Progress>(lsp_types::ProgressParams {
-                token,
-                value: lsp_types::ProgressParamsValue::WorkDone(work_done_progress),
-            })
-            .await;
+    pub(crate) fn progress_support(&self) -> ProgressSupport {
+        self.progress_support
+    }
+    pub(crate) fn set_progress_support(&mut self, progress_support: ProgressSupport) {
+        self.progress_support = progress_support;
     }
 }
 
@@ -744,7 +666,7 @@ pub(crate) fn enable_progress() {
     send_auxiliary(AuxiliaryEvent::EnableProgress);
 }
 
-pub(crate) fn report_progress(progress: Progress) {
+pub(crate) fn report_progress(progress: lsp::progress::Progress) {
     send_auxiliary(AuxiliaryEvent::Progress(progress));
 }
 

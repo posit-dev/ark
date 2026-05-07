@@ -32,6 +32,7 @@ pub mod inputs;
 pub mod main_loop;
 pub mod markdown;
 pub mod package_sources;
+pub mod progress;
 
 pub mod references;
 pub mod selection_range;
