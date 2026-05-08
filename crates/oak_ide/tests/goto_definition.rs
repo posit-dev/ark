@@ -7,7 +7,7 @@ use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_db::Db;
+use oak_db::LegacyDb;
 use oak_ide::goto_definition;
 use oak_ide::ExternalScope;
 use oak_ide::NavigationTarget;
@@ -39,7 +39,7 @@ struct TestDb {
     sources: HashMap<Url, String>,
 }
 
-impl Db for TestDb {
+impl LegacyDb for TestDb {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
         // Rebuild from source for tests. We store the source instead.
         self.sources.get(file).map(|source| {

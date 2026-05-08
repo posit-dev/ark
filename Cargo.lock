@@ -431,6 +431,7 @@ dependencies = [
  "reqwest-retry",
  "rust-embed",
  "rustc-hash",
+ "salsa",
  "scraper",
  "serde",
  "serde_json",
@@ -2515,7 +2516,11 @@ dependencies = [
 name = "oak_db"
 version = "0.1.0"
 dependencies = [
+ "air_r_parser",
+ "air_r_syntax",
+ "biome_rowan",
  "oak_semantic",
+ "salsa",
  "url",
 ]
 

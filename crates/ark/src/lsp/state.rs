@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
-use oak_db::Db;
+use oak_db::LegacyDb;
 use oak_ide::ExternalScope;
 use oak_semantic::library::Library;
 use oak_semantic::scope_layer::default_search_path;
@@ -22,7 +22,26 @@ use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
 
-impl Db for WorldState {
+/// Concrete Salsa database that owns the storage for all LSP inputs.
+#[salsa::db]
+#[derive(Clone, Default)]
+pub struct OakDatabase {
+    storage: salsa::Storage<Self>,
+}
+
+impl OakDatabase {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[salsa::db]
+impl salsa::Database for OakDatabase {}
+
+#[salsa::db]
+impl oak_db::Db for OakDatabase {}
+
+impl LegacyDb for WorldState {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
         let doc = self.workspace_document(file)?;
         let source_root = self.source_root(file);

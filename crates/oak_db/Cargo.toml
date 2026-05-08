@@ -14,5 +14,9 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+aether_parser.workspace = true
+aether_syntax.workspace = true
+biome_rowan.workspace = true
 oak_semantic.workspace = true
+salsa.workspace = true
 url.workspace = true
