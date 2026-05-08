@@ -1,0 +1,40 @@
+version: 2
+
+updates:
+  # Update Cargo dependencies
+  - package-ecosystem: cargo
+    directory: "/"
+    # Release weekly, a day after (potential) releases on Wednesdays
+    schedule:
+      interval: weekly
+      day: thursday
+      time: "08:00"
+      timezone: Europe/Brussels
+    # Wait 14 days before proposing an update to limit supply-chain risk
+    # and let rapid follow-up releases collapse into a single bump
+    cooldown:
+      default-days: 14
+    # Only bump Cargo.toml specifiers for major changes, let
+    # minor/patch versions drift in the lockfile
+    versioning-strategy: increase-if-necessary
+    open-pull-requests-limit: 10
+    groups:
+      # Group all crate updates into one weekly PR. Major updates get
+      # their own PR so they're easy to spot.
+      rust-crates:
+        patterns: ["*"]
+        update-types:
+          - minor
+          - patch
+
+  # Track Rust toolchain updates from `rust-toolchain.toml`
+  - package-ecosystem: rust-toolchain
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: thursday
+      time: "08:00"
+      timezone: Europe/Brussels
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 10
