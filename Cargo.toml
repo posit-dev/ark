@@ -25,10 +25,10 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 actix-web = "4.13.0"
-aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
-aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "4cbd36d552e27d8930cff1602d56bfd9ce4c1ed1" }
+aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
+aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
+aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
+aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }
@@ -36,9 +36,9 @@ ark_test = { path = "crates/ark_test" }
 assert_matches = "1.5.0"
 async-trait = "0.1.89"
 base64 = "0.22.1"
-biome_line_index = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
-biome_rowan = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
-biome_text_size = { git = "https://github.com/lionel-/biome", rev = "41d799cfa4cedd25625fc3f6bd7898532873f051" }
+biome_line_index = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9" }
+biome_rowan = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9" }
+biome_text_size = { git = "https://github.com/lionel-/biome", rev = "a1296ea6ba363d8b8d8f02181b2a4ce9315c5ef9" }
 blake3 = "1.8.5"
 bus = "2.4.1"
 cc = "1.2.61"
