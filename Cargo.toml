@@ -25,10 +25,10 @@ too_many_arguments = "allow"
 
 [workspace.dependencies]
 actix-web = "4.13.0"
-aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
-aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
-aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
-aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "58b1a8fc651d9106c9989f4250c690bdf7c4004b" }
+aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_factory", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }
