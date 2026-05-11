@@ -31,13 +31,13 @@ use url::Url;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
-use crate::semantic_index::Directive;
-use crate::semantic_index::DirectiveKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
+use crate::semantic_index::SemanticCall;
+use crate::semantic_index::SemanticCallKind;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolTableBuilder;
@@ -101,7 +101,7 @@ struct SemanticIndexBuilder<'a> {
     current_scope: ScopeId,
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-    directives: Vec<Directive>,
+    semantic_calls: Vec<SemanticCall>,
     file: Url,
     source_resolver: Option<SourceResolver<'a>>,
 }
@@ -143,7 +143,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             current_scope: file_scope,
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
-            directives: Vec::new(),
+            semantic_calls: Vec::new(),
             file,
             source_resolver,
         }
@@ -394,7 +394,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                 // also consider nested scopes as long as they're not lazy (e.g.
                 // function definitions or NSE calls that don't evaluate
                 // immediately.
-                self.collect_directive(call);
+                self.collect_semantic_call(call);
             },
             AnyRExpression::RSubset(subset) => {
                 if let Ok(object) = subset.function() {
@@ -717,28 +717,28 @@ impl<'a> SemanticIndexBuilder<'a> {
         }
     }
 
-    fn collect_directive(&mut self, call: &aether_syntax::RCall) {
+    fn collect_semantic_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
         };
 
         let fn_name = ident.name_text();
         if fn_name == "library" || fn_name == "require" {
-            self.collect_attach_directive(call);
+            self.collect_attach_call(call);
         } else if fn_name == "source" {
-            self.collect_source_directive(call);
+            self.collect_source_call(call);
         }
     }
 
     // ## `library()` / `require()` scoping
     //
     // In R, `library()` always modifies the global search path regardless
-    // of where it's called. Statically, we scope the directive to
+    // of where it's called. Statically, we scope the call to
     // `self.current_scope`: at file scope it's visible everywhere (sequential
     // execution is guaranteed), but inside a function it's only visible
     // within that function and its children, since the function might never
-    // be called. Same reasoning as `source()` directives.
-    fn collect_attach_directive(&mut self, call: &aether_syntax::RCall) {
+    // be called. Same reasoning as `source()` calls.
+    fn collect_attach_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -767,8 +767,8 @@ impl<'a> SemanticIndexBuilder<'a> {
         };
 
         let call_offset = call.syntax().text_trimmed_range().start();
-        self.directives.push(Directive {
-            kind: DirectiveKind::Attach(pkg_name),
+        self.semantic_calls.push(SemanticCall {
+            kind: SemanticCallKind::Attach { package: pkg_name },
             offset: call_offset,
             scope: self.current_scope,
         });
@@ -790,7 +790,7 @@ impl<'a> SemanticIndexBuilder<'a> {
     // global environment. We currently inject into the calling scope
     // regardless to keep the sourcing mechanism simple. A future diagnostic
     // should suggest `local = TRUE` in nested contexts.
-    fn collect_source_directive(&mut self, call: &aether_syntax::RCall) {
+    fn collect_source_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -837,6 +837,20 @@ impl<'a> SemanticIndexBuilder<'a> {
 
         let call_offset = call.syntax().text_trimmed_range().start();
 
+        // Always record the source() call site. Downstream consumers
+        // (oak_db's `exports` query) translate the path to a `Script`
+        // and inject the target's exports into this file's exports.
+        self.semantic_calls.push(SemanticCall {
+            kind: SemanticCallKind::Source { path: path.clone() },
+            offset: call_offset,
+            scope: self.current_scope,
+        });
+
+        // Legacy `_with_source_resolver` path: when a resolver is
+        // present and resolves, eagerly synthesise `Import` definitions
+        // and transitive `Attach` semantic calls for the resolved
+        // names/packages. Retires once the new pipeline takes over
+        // (PR 3/4).
         let Some(resolution) = self.resolve_source(&path) else {
             return;
         };
@@ -862,8 +876,8 @@ impl<'a> SemanticIndexBuilder<'a> {
         }
 
         for pkg in resolution.packages {
-            self.directives.push(Directive {
-                kind: DirectiveKind::Attach(pkg),
+            self.semantic_calls.push(SemanticCall {
+                kind: SemanticCallKind::Attach { package: pkg },
                 offset: call_offset,
                 scope: self.current_scope,
             });
@@ -897,7 +911,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             self.uses,
             use_def_maps,
             self.enclosing_snapshots,
-            self.directives,
+            self.semantic_calls,
         )
     }
 }

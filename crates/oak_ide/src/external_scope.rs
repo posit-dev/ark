@@ -2,9 +2,9 @@ use std::borrow::Cow;
 
 use biome_rowan::TextSize;
 use oak_semantic::scope_layer::ScopeLayer;
-use oak_semantic::semantic_index::Directive;
-use oak_semantic::semantic_index::DirectiveKind;
 use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticCall;
+use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::ScopeId;
 
@@ -26,13 +26,14 @@ pub enum ExternalScope {
     /// search path: `library()` attachments from the file itself,
     /// default packages (stats, graphics, etc.), and base.
     ///
-    /// At top-level, only directives that appear before the cursor are
-    /// visible (R executes scripts sequentially). Inside function bodies
-    /// all directives are visible because the function will typically be
-    /// called after the full script has been sourced.
+    /// At top-level, only `Attach` semantic calls that appear before
+    /// the cursor are visible (R executes scripts sequentially).
+    /// Inside function bodies all visible attachments are exposed
+    /// because the function will typically be called after the full
+    /// script has been sourced.
     SearchPath {
         base: Vec<ScopeLayer>,
-        directives: Vec<Directive>,
+        semantic_calls: Vec<SemanticCall>,
     },
 }
 
@@ -40,7 +41,7 @@ impl Default for ExternalScope {
     fn default() -> Self {
         Self::SearchPath {
             base: Vec::new(),
-            directives: Vec::new(),
+            semantic_calls: Vec::new(),
         }
     }
 }
@@ -50,15 +51,18 @@ impl ExternalScope {
         Self::Package { top_level, lazy }
     }
 
-    pub fn search_path(directives: Vec<Directive>, base: Vec<ScopeLayer>) -> Self {
-        Self::SearchPath { base, directives }
+    pub fn search_path(semantic_calls: Vec<SemanticCall>, base: Vec<ScopeLayer>) -> Self {
+        Self::SearchPath {
+            base,
+            semantic_calls,
+        }
     }
 
     /// Return the scope chain appropriate for the given offset. For
     /// packages, top-level scope uses predecessors only while lazy
     /// (function) scopes see all files. For scripts, top-level code
     /// only sees `library()` calls that precede the cursor while
-    /// function bodies see all directives.
+    /// function bodies see all attachments.
     pub fn at(&self, index: &SemanticIndex, offset: TextSize) -> Cow<'_, [ScopeLayer]> {
         match self {
             Self::Package { top_level, lazy } => {
@@ -68,26 +72,32 @@ impl ExternalScope {
                     ScopeKind::Function => Cow::Borrowed(lazy),
                 }
             },
-            Self::SearchPath { base, directives } => {
+            Self::SearchPath {
+                base,
+                semantic_calls,
+            } => {
                 let (cursor_scope, _) = index.scope_at(offset);
                 let file_scope = ScopeId::from(0);
                 let in_function = cursor_scope != file_scope;
-                let layers: Vec<_> = directives
+                let layers: Vec<_> = semantic_calls
                     .iter()
                     .rev()
-                    .filter(|d| {
-                        let dir_scope = d.scope();
-                        // File-scope directives are always visible inside
+                    .filter(|c| {
+                        let call_scope = c.scope();
+                        // File-scope attachments are always visible inside
                         // function bodies (the function is typically called
                         // after the full script has been sourced).
-                        if in_function && dir_scope == file_scope {
+                        if in_function && call_scope == file_scope {
                             return true;
                         }
-                        d.offset() < offset &&
-                            index.ancestor_scopes(cursor_scope).any(|s| s == dir_scope)
+                        c.offset() < offset &&
+                            index.ancestor_scopes(cursor_scope).any(|s| s == call_scope)
                     })
-                    .map(|d| match d.kind() {
-                        DirectiveKind::Attach(pkg) => ScopeLayer::PackageExports(pkg.clone()),
+                    .filter_map(|c| match c.kind() {
+                        SemanticCallKind::Attach { package } => {
+                            Some(ScopeLayer::PackageExports(package.clone()))
+                        },
+                        SemanticCallKind::Source { .. } => None,
                     })
                     .chain(base.iter().cloned())
                     .collect();
@@ -102,15 +112,20 @@ impl ExternalScope {
         match self {
             Self::Package { lazy, .. } => Cow::Borrowed(lazy),
             Self::SearchPath {
-                directives, base, ..
+                semantic_calls,
+                base,
+                ..
             } => {
                 let file_scope = ScopeId::from(0);
-                let mut layers: Vec<ScopeLayer> = directives
+                let mut layers: Vec<ScopeLayer> = semantic_calls
                     .iter()
                     .rev()
-                    .filter(|d| d.scope() == file_scope)
-                    .map(|d| match d.kind() {
-                        DirectiveKind::Attach(pkg) => ScopeLayer::PackageExports(pkg.clone()),
+                    .filter(|c| c.scope() == file_scope)
+                    .filter_map(|c| match c.kind() {
+                        SemanticCallKind::Attach { package } => {
+                            Some(ScopeLayer::PackageExports(package.clone()))
+                        },
+                        SemanticCallKind::Source { .. } => None,
                     })
                     .collect();
                 layers.extend(base.iter().cloned());

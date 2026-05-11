@@ -75,8 +75,9 @@ pub struct SemanticIndex {
     // snapshot where that symbol is bound.
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
 
-    // Scope-chain directives called at top-level, such as `library()` or `require()`.
-    directives: Vec<Directive>,
+    // Cross-file call sites recorded during indexing, such as `library()`
+    // attachments or `source()` injections.
+    semantic_calls: Vec<SemanticCall>,
 }
 
 impl SemanticIndex {
@@ -87,7 +88,7 @@ impl SemanticIndex {
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-        directives: Vec<Directive>,
+        semantic_calls: Vec<SemanticCall>,
     ) -> Self {
         Self {
             scopes,
@@ -96,7 +97,7 @@ impl SemanticIndex {
             uses,
             use_def_maps,
             enclosing_snapshots,
-            directives,
+            semantic_calls,
         }
     }
 
@@ -136,19 +137,21 @@ impl SemanticIndex {
         exports
     }
 
-    /// Package names from `library()` / `require()` directives in this file.
+    /// Package names from `library()` / `require()` calls in this file.
     pub fn file_attached_packages(&self) -> Vec<&str> {
-        self.directives
+        self.semantic_calls
             .iter()
-            .map(|d| match &d.kind {
-                DirectiveKind::Attach(pkg) => pkg.as_str(),
+            .filter_map(|c| match &c.kind {
+                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Source { .. } => None,
             })
             .collect()
     }
 
-    /// File-level directives (e.g. `library()` calls) recorded during indexing.
-    pub fn file_directives(&self) -> &[Directive] {
-        &self.directives
+    /// Cross-file call sites (`library()`, `source()`, …) recorded
+    /// during indexing.
+    pub fn semantic_calls(&self) -> &[SemanticCall] {
+        &self.semantic_calls
     }
 
     /// Find the innermost scope containing `offset`.
@@ -577,22 +580,29 @@ impl Ranged for Use {
     }
 }
 
-/// A directive that affects the file's imports (e.g. `library()` calls).
+/// A cross-file call site recorded at parse time (`library()`,
+/// `source()`, ...). Different kinds carry different downstream
+/// semantics, see [`SemanticCallKind`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Directive {
-    pub(crate) kind: DirectiveKind,
+pub struct SemanticCall {
+    pub(crate) kind: SemanticCallKind,
     pub(crate) offset: TextSize,
     pub(crate) scope: ScopeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DirectiveKind {
-    /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
-    Attach(String),
+pub enum SemanticCallKind {
+    /// `library(pkg)` or `require(pkg)`: attaches a package to the
+    /// search path. Contributes a fallback layer for unbound symbols.
+    Attach { package: String },
+    /// `source("path")`: injects the sourced file's top-level
+    /// bindings into the current scope. Local-scope semantics, not
+    /// search-path semantics.
+    Source { path: String },
 }
 
-impl Directive {
-    pub fn kind(&self) -> &DirectiveKind {
+impl SemanticCall {
+    pub fn kind(&self) -> &SemanticCallKind {
         &self.kind
     }
 
