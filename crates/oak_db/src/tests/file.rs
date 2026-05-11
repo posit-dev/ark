@@ -1,62 +1,6 @@
-use std::sync::Arc;
-use std::sync::Mutex;
-
-use url::Url;
-
-use crate::Db;
+use crate::tests::test_db::file_url;
+use crate::tests::test_db::TestDb;
 use crate::File;
-
-type Events = Arc<Mutex<Vec<salsa::Event>>>;
-
-#[salsa::db]
-#[derive(Clone)]
-struct TestDb {
-    storage: salsa::Storage<Self>,
-    events: Events,
-}
-
-impl TestDb {
-    fn new() -> Self {
-        let events = Events::default();
-        let storage = salsa::Storage::new(Some(Box::new({
-            let events = events.clone();
-            move |event| {
-                events.lock().unwrap().push(event);
-            }
-        })));
-        Self { storage, events }
-    }
-
-    /// Count `WillExecute` events whose `database_key`'s Debug form
-    /// contains `name`. Salsa's `DatabaseKeyIndex::fmt` resolves the
-    /// underlying function name only when a database is attached to the
-    /// current thread, so we wrap the scan in `salsa::attach`.
-    fn executions(&self, name: &str) -> usize {
-        salsa::attach(self, || {
-            self.events
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|event| match &event.kind {
-                    salsa::EventKind::WillExecute { database_key } => {
-                        format!("{database_key:?}").contains(name)
-                    },
-                    _ => false,
-                })
-                .count()
-        })
-    }
-}
-
-#[salsa::db]
-impl salsa::Database for TestDb {}
-
-#[salsa::db]
-impl Db for TestDb {}
-
-fn file_url(name: &str) -> Url {
-    Url::parse(&format!("file:///{name}")).unwrap()
-}
 
 #[test]
 fn parse_is_cached_across_calls() {

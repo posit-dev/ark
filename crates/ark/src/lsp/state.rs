@@ -31,7 +31,9 @@ pub struct OakDatabase {
 
 impl OakDatabase {
     pub fn new() -> Self {
-        Self::default()
+        let db = Self::default();
+        oak_db::SourceGraph::new(&db, vec![], vec![], vec![]);
+        db
     }
 }
 
