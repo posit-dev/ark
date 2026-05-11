@@ -2519,6 +2519,7 @@ dependencies = [
  "air_r_parser",
  "air_r_syntax",
  "biome_rowan",
+ "oak_package_metadata",
  "oak_semantic",
  "salsa",
  "url",

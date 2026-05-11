@@ -14,7 +14,7 @@ use crate::Db;
 /// Content is pushed into Salsa by the LSP layer, the database never does I/O.
 /// This matches rust-analyzer's push model and avoids tying parsing to
 /// disk/network I/O inside a Salsa query.
-#[salsa::input]
+#[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
     pub url: Url,
