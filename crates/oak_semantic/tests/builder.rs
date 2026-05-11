@@ -4,9 +4,9 @@ use aether_syntax::RSyntaxKind;
 use oak_semantic::semantic_index;
 use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::DefinitionKind;
-use oak_semantic::semantic_index::DirectiveKind;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
@@ -24,8 +24,8 @@ fn index(source: &str) -> SemanticIndex {
     semantic_index(&parsed.tree(), &Url::parse("file:///test/test.R").unwrap())
 }
 
-fn directive_kinds(index: &SemanticIndex) -> Vec<&DirectiveKind> {
-    index.file_directives().iter().map(|d| d.kind()).collect()
+fn semantic_call_kinds(index: &SemanticIndex) -> Vec<&SemanticCallKind> {
+    index.semantic_calls().iter().map(|c| c.kind()).collect()
 }
 
 #[test]
@@ -1308,86 +1308,194 @@ fn test_file_exports_multiple_defs_same_symbol() {
 #[test]
 fn test_directive_library_identifier() {
     let index = index("library(dplyr)");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "dplyr".into()
-    )]);
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
 }
 
 #[test]
 fn test_directive_library_string() {
     let index = index("library(\"tidyr\")");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "tidyr".into()
-    )]);
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "tidyr".into()
+    }]);
 }
 
 #[test]
 fn test_directive_library_single_quoted_string() {
     let index = index("library('ggplot2')");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "ggplot2".into()
-    )]);
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "ggplot2".into()
+    }]);
 }
 
 #[test]
 fn test_directive_require() {
     let index = index("require(data.table)");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "data.table".into()
-    )]);
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "data.table".into()
+    }]);
 }
 
 #[test]
 fn test_directive_multiple_libraries() {
     let index = index("library(dplyr)\nlibrary(tidyr)\nrequire(ggplot2)");
-    assert_eq!(directive_kinds(&index), [
-        &DirectiveKind::Attach("dplyr".into()),
-        &DirectiveKind::Attach("tidyr".into()),
-        &DirectiveKind::Attach("ggplot2".into()),
+    assert_eq!(semantic_call_kinds(&index), [
+        &SemanticCallKind::Attach {
+            package: "dplyr".into()
+        },
+        &SemanticCallKind::Attach {
+            package: "tidyr".into()
+        },
+        &SemanticCallKind::Attach {
+            package: "ggplot2".into()
+        },
     ]);
 }
 
 #[test]
 fn test_directive_named_argument_ignored() {
     let index = index("library(package = dplyr)");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_multiple_arguments_ignored() {
     let index = index("library(dplyr, warn.conflicts = FALSE)");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_no_arguments_ignored() {
     let index = index("library()");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_library_in_function_scope() {
     // library() in a function body now records a scoped directive
     let index = index("f <- function() { library(dplyr) }");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "dplyr".into()
-    )]);
-    let directives = index.file_directives();
-    assert_ne!(directives[0].scope(), ScopeId::from(0));
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
+    let semantic_calls = index.semantic_calls();
+    assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
 }
 
 #[test]
 fn test_directive_non_static_argument_ignored() {
     let index = index("library(get_pkg())");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_preserves_offset() {
     let index = index("x <- 1\nlibrary(dplyr)");
-    let directives = index.file_directives();
-    assert_eq!(directives.len(), 1);
-    assert_eq!(directives[0].offset(), biome_rowan::TextSize::from(7));
+    let semantic_calls = index.semantic_calls();
+    assert_eq!(semantic_calls.len(), 1);
+    assert_eq!(semantic_calls[0].offset(), biome_rowan::TextSize::from(7));
+}
+
+// --- source() semantic calls ---
+//
+// The no-resolver `semantic_index` (used by `oak_db`) always records
+// a `Source` semantic call for every `source(...)` site, even when
+// the path can't be resolved cross-file. Downstream queries in
+// `oak_db` translate the path to a `Script` and inject the target's
+// exports.
+
+#[test]
+fn test_source_call_records_path() {
+    let index = index("source(\"helpers.R\")");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
+}
+
+#[test]
+fn test_source_call_single_quoted_string() {
+    let index = index("source('helpers.R')");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
+}
+
+#[test]
+fn test_source_call_preserves_offset() {
+    let index = index("x <- 1\nsource(\"helpers.R\")");
+    let semantic_calls = index.semantic_calls();
+    assert_eq!(semantic_calls.len(), 1);
+    assert_eq!(semantic_calls[0].offset(), biome_rowan::TextSize::from(7));
+}
+
+#[test]
+fn test_source_call_records_file_scope() {
+    let index = index("source(\"helpers.R\")");
+    let semantic_calls = index.semantic_calls();
+    assert_eq!(semantic_calls.len(), 1);
+    assert_eq!(semantic_calls[0].scope(), ScopeId::from(0));
+}
+
+#[test]
+fn test_source_call_in_function_body_records_inner_scope() {
+    let index = index("f <- function() { source(\"helpers.R\") }");
+    let semantic_calls = index.semantic_calls();
+    assert_eq!(semantic_calls.len(), 1);
+    assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
+        path: "helpers.R".into()
+    });
+    assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
+}
+
+#[test]
+fn test_source_call_non_static_path_ignored() {
+    let index = index("source(get_path())");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_non_static_local_ignored() {
+    // `local = some_env()` isn't statically resolvable; we bail rather
+    // than record the call.
+    let index = index("source(\"helpers.R\", local = some_env())");
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
+}
+
+#[test]
+fn test_source_call_local_true_recorded() {
+    let index = index("source(\"helpers.R\", local = TRUE)");
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
+}
+
+#[test]
+fn test_source_and_library_calls_coexist() {
+    let index = index("library(dplyr)\nsource(\"helpers.R\")\nrequire(tidyr)");
+    assert_eq!(semantic_call_kinds(&index), [
+        &SemanticCallKind::Attach {
+            package: "dplyr".into()
+        },
+        &SemanticCallKind::Source {
+            path: "helpers.R".into()
+        },
+        &SemanticCallKind::Attach {
+            package: "tidyr".into()
+        },
+    ]);
+}
+
+#[test]
+fn test_source_call_emitted_without_resolver() {
+    // The pure `semantic_index` (no resolver) doesn't produce
+    // `DefinitionKind::Import` for sourced names — those come from
+    // the legacy `_with_source_resolver` path. But the `Source`
+    // semantic call IS recorded, so downstream queries in `oak_db`
+    // can still chase the forwarding chain.
+    let index = index("source(\"helpers.R\")");
+    let file_scope = ScopeId::from(0);
+    assert_eq!(index.definitions(file_scope).iter().count(), 0);
+    assert_eq!(index.semantic_calls().len(), 1);
 }
 
 #[test]
@@ -1402,73 +1510,34 @@ fn test_file_exports_last_def_wins() {
     assert_eq!(range.start(), biome_rowan::TextSize::from(9));
 }
 
-// --- source() directives ---
+// --- source() semantic calls: bail paths ---
+//
+// Cases where the builder can't extract a statically-resolvable
+// path, so no `Source` semantic call is emitted. The valid-path
+// cases live above ("source() semantic calls").
 
 #[test]
-fn test_directive_source_no_resolver() {
-    // Without a resolver, source() produces no directives
-    let index = index("source(\"helpers.R\")");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
-}
-
-#[test]
-fn test_directive_source_single_quoted_no_resolver() {
-    let index = index("source('utils/helpers.R')");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
-}
-
-#[test]
-fn test_directive_source_identifier_ignored() {
+fn test_source_call_identifier_path_ignored() {
     let index = index("source(my_file)");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
-fn test_directive_source_non_static_argument_ignored() {
+fn test_source_call_paste0_argument_ignored() {
     let index = index("source(paste0(\"path/\", name))");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
-fn test_directive_source_named_argument_ignored() {
+fn test_source_call_named_file_argument_ignored() {
     let index = index("source(file = \"helpers.R\")");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
-fn test_directive_source_local_true_without_resolver() {
-    // `source("helpers.R", local = TRUE)` is recognized but no resolver, so no directives
-    let index = index("source(\"helpers.R\", local = TRUE)");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
-}
-
-#[test]
-fn test_directive_source_no_arguments_ignored() {
+fn test_source_call_no_arguments_ignored() {
     let index = index("source()");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
-}
-
-#[test]
-fn test_directive_source_nested_without_resolver() {
-    // Nested `source()` is recognized but no resolver, so no directives
-    let index = index("f <- function() { source(\"helpers.R\") }");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
-}
-
-#[test]
-fn test_directive_source_no_resolver_no_directives() {
-    let index = index("x <- 1\nsource(\"helpers.R\")");
-    let directives = index.file_directives();
-    assert_eq!(directives.len(), 0);
-}
-
-#[test]
-fn test_directive_source_mixed_with_library() {
-    let index = index("library(dplyr)\nsource(\"helpers.R\")\nlibrary(tidyr)");
-    assert_eq!(directive_kinds(&index), [
-        &DirectiveKind::Attach("dplyr".into()),
-        &DirectiveKind::Attach("tidyr".into()),
-    ]);
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 // --- declare() directives ---
@@ -1476,19 +1545,25 @@ fn test_directive_source_mixed_with_library() {
 #[test]
 fn test_directive_declare_source_no_resolver() {
     let index = index("declare(source(\"helpers.R\"))");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
 }
 
 #[test]
 fn test_directive_declare_source_single_quotes_no_resolver() {
     let index = index("declare(source('utils.R'))");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "utils.R".into()
+    }]);
 }
 
 #[test]
 fn test_directive_tilde_declare_source_no_resolver() {
     let index = index("~declare(source(\"helpers.R\"))");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
 }
 
 #[test]
@@ -1497,55 +1572,75 @@ fn test_fixme_directive_declare_library_transparent() {
     // picked up as a directive.
     // FIXME: We should declare `declare()` as a quoting function.
     let index = index("declare(library(dplyr))");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "dplyr".into()
-    )]);
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Attach {
+        package: "dplyr".into()
+    }]);
 }
 
 #[test]
 fn test_directive_declare_not_at_file_scope() {
+    // declare()'s argument is walked into regardless of position, so a
+    // nested source() inside a function body is still recorded.
     let index = index("f <- function() { declare(source(\"helpers.R\")) }");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
 }
 
 #[test]
 fn test_directive_tilde_declare_not_at_file_scope() {
     let index = index("f <- function() { ~declare(source(\"helpers.R\")) }");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
+        path: "helpers.R".into()
+    }]);
 }
 
 #[test]
 fn test_directive_declare_mixed_with_bare() {
     let index = index("library(dplyr)\ndeclare(source(\"helpers.R\"))\nsource(\"utils.R\")");
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "dplyr".into()
-    ),]);
+    assert_eq!(semantic_call_kinds(&index), [
+        &SemanticCallKind::Attach {
+            package: "dplyr".into()
+        },
+        &SemanticCallKind::Source {
+            path: "helpers.R".into()
+        },
+        &SemanticCallKind::Source {
+            path: "utils.R".into()
+        },
+    ]);
 }
 
 #[test]
-fn test_directive_declare_source_no_resolver_no_directives() {
+fn test_directive_declare_source_no_resolver_records_call() {
     let index = index("x <- 1\ndeclare(source(\"helpers.R\"))");
-    let directives = index.file_directives();
-    assert_eq!(directives.len(), 0);
+    let semantic_calls = index.semantic_calls();
+    assert_eq!(semantic_calls.len(), 1);
+    assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
+        path: "helpers.R".into()
+    });
 }
 
 #[test]
-fn test_directive_tilde_declare_source_no_resolver_no_directives() {
+fn test_directive_tilde_declare_source_no_resolver_records_call() {
     let index = index("x <- 1\n~declare(source(\"helpers.R\"))");
-    let directives = index.file_directives();
-    assert_eq!(directives.len(), 0);
+    let semantic_calls = index.semantic_calls();
+    assert_eq!(semantic_calls.len(), 1);
+    assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
+        path: "helpers.R".into()
+    });
 }
 
 #[test]
 fn test_directive_declare_non_call_arg_ignored() {
     let index = index("declare(42)");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 #[test]
 fn test_directive_declare_identifier_source_arg_ignored() {
     let index = index("declare(source(my_file))");
-    assert_eq!(directive_kinds(&index), Vec::<&DirectiveKind>::new());
+    assert_eq!(semantic_call_kinds(&index), Vec::<&SemanticCallKind>::new());
 }
 
 // --- source() with resolver ---
@@ -1647,7 +1742,11 @@ fn test_source_resolver_in_function_scope() {
 }
 
 #[test]
-fn test_source_resolver_packages_become_directives() {
+fn test_source_resolver_packages_become_attach_calls() {
+    // The source() call is always recorded as a `Source` semantic call.
+    // With a resolver, packages attached transitively by the sourced
+    // file are *additionally* recorded as `Attach` semantic calls (the
+    // legacy "library() in a sourced file propagates to caller" path).
     let code = "source(\"helpers.R\")\n";
     let index = index_with_resolver(code, |_| {
         Some(SourceResolution {
@@ -1657,9 +1756,14 @@ fn test_source_resolver_packages_become_directives() {
         })
     });
 
-    assert_eq!(directive_kinds(&index), [&DirectiveKind::Attach(
-        "dplyr".into()
-    )]);
+    assert_eq!(semantic_call_kinds(&index), [
+        &SemanticCallKind::Source {
+            path: "helpers.R".into()
+        },
+        &SemanticCallKind::Attach {
+            package: "dplyr".into()
+        },
+    ]);
 }
 
 #[test]
