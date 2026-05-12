@@ -723,6 +723,7 @@ impl Console {
             let dap = Dap::new_shared(r_request_tx);
 
             CONSOLE.set(UnsafeCell::new(Console::new(
+                PathBuf::new(),
                 tasks_interrupt_rx,
                 tasks_idle_rx,
                 tasks_idle_any_rx,
