@@ -599,14 +599,14 @@ impl<'a> SemanticIndexBuilder<'a> {
                 AnyRExpression::RFunctionDefinition(_) => {
                     preorder.skip_subtree();
                 },
-                AnyRExpression::RBinaryExpression(bin) if is_assignment(bin) => {
-                    if !is_super_assignment(bin) {
-                        let right = is_right_assignment(bin);
-                        let target = if right { bin.right() } else { bin.left() };
-                        if let Ok(target) = target {
-                            if let Some((name, range)) = assignment_name(&target) {
-                                self.pre_scans[self.current_scope].add(name, range);
-                            }
+                AnyRExpression::RBinaryExpression(bin)
+                    if is_assignment(bin) && !is_super_assignment(bin) =>
+                {
+                    let right = is_right_assignment(bin);
+                    let target = if right { bin.right() } else { bin.left() };
+                    if let Ok(target) = target {
+                        if let Some((name, range)) = assignment_name(&target) {
+                            self.pre_scans[self.current_scope].add(name, range);
                         }
                     }
                 },
