@@ -119,9 +119,6 @@ struct PlotContext {
 /// Rust (e.g. via finalizers during GC), so keeping borrows short avoids
 /// `RefCell` panics.
 pub(crate) struct DeviceContext {
-    /// Whether we are running in Console, Notebook, or Background mode.
-    session_mode: SessionMode,
-
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
     iopub_tx: Sender<IOPubMessage>,
@@ -204,9 +201,8 @@ impl std::fmt::Debug for DeviceContext {
 }
 
 impl DeviceContext {
-    pub fn new(iopub_tx: Sender<IOPubMessage>, session_mode: SessionMode) -> Self {
+    pub fn new(iopub_tx: Sender<IOPubMessage>) -> Self {
         Self {
-            session_mode,
             iopub_tx,
             has_changes: Cell::new(false),
             is_new_page: Cell::new(true),
@@ -299,7 +295,7 @@ impl DeviceContext {
     /// comm is connected (i.e. we are connected to Positron) and if we are in
     /// [SessionMode::Console] mode.
     fn should_use_dynamic_plots(&self, console: &Console) -> bool {
-        self.session_mode == SessionMode::Console && console.ui_comm().is_some()
+        console.session_mode() == SessionMode::Console && console.ui_comm().is_some()
     }
 
     /// Deactivation hook
@@ -1370,11 +1366,10 @@ fn r_option_positive_f64(name: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::SessionMode;
 
     fn test_device_context() -> DeviceContext {
         let (tx, _rx) = crossbeam::channel::unbounded();
-        DeviceContext::new(tx, SessionMode::Console)
+        DeviceContext::new(tx)
     }
 
     #[test]

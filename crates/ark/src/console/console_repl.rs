@@ -626,7 +626,7 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
-        let device_context = Rc::new(DeviceContext::new(iopub_tx.clone(), session_mode));
+        let device_context = Rc::new(DeviceContext::new(iopub_tx.clone()));
 
         Self {
             r_home,
