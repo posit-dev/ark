@@ -383,8 +383,6 @@ impl DeviceContext {
     /// empty default for plots created outside of an execute request (e.g.
     /// during startup).
     fn capture_execution_context(&self) -> ExecutionContext {
-        // No execution context was pushed. This can happen for plots created
-        // outside of an execute request (e.g. during startup).
         self.execution_context.borrow().clone().unwrap_or_default()
     }
 
