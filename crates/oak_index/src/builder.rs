@@ -42,6 +42,8 @@ use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 use crate::use_def_map::UseDefMapBuilder;
 
+// TODO(salsa): Remove `semantic_index()` and variant, these are too coarse queries.
+
 /// Build a [`SemanticIndex`] from a parsed R file.
 pub fn semantic_index(root: &RRoot, file: &Url) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
