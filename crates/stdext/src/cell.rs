@@ -31,13 +31,15 @@ enum BorrowState {
 }
 
 pub struct DebugRefCell<T: ?Sized> {
-    #[cfg(debug_assertions)]
-    inner: std::cell::RefCell<T>,
-
-    #[cfg(not(debug_assertions))]
-    inner: UnsafeCell<T>,
+    // `inner` must be the last field so that `T: ?Sized` is permitted. Only
+    // the trailing field of a struct may be dynamically sized.
     #[cfg(not(debug_assertions))]
     state: Cell<BorrowState>,
+
+    #[cfg(debug_assertions)]
+    inner: std::cell::RefCell<T>,
+    #[cfg(not(debug_assertions))]
+    inner: UnsafeCell<T>,
 }
 
 // --- Construction & owned access (no guards needed) -------------------------
@@ -45,12 +47,12 @@ pub struct DebugRefCell<T: ?Sized> {
 impl<T> DebugRefCell<T> {
     pub fn new(value: T) -> Self {
         Self {
+            #[cfg(not(debug_assertions))]
+            state: Cell::new(BorrowState::Unused),
             #[cfg(debug_assertions)]
             inner: std::cell::RefCell::new(value),
             #[cfg(not(debug_assertions))]
             inner: UnsafeCell::new(value),
-            #[cfg(not(debug_assertions))]
-            state: Cell::new(BorrowState::Unused),
         }
     }
 
