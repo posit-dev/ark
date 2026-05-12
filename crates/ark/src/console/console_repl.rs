@@ -819,12 +819,8 @@ impl Console {
         &self.comm_event_tx
     }
 
-    pub(crate) fn device_context(&self) -> &DeviceContext {
+    pub(crate) fn device_context(&self) -> &Rc<DeviceContext> {
         &self.device_context
-    }
-
-    pub(crate) fn device_context_rc(&self) -> Rc<DeviceContext> {
-        Rc::clone(&self.device_context)
     }
 
     /// Run a closure while capturing console output.

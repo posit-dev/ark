@@ -4,6 +4,8 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
+use std::rc::Rc;
+
 use amalthea::comm::plot_comm::IntrinsicSize;
 use amalthea::comm::plot_comm::PlotRenderSettings;
 use amalthea::wire::execute_request::CodeLocation;
@@ -34,7 +36,7 @@ impl Console {
 
     /// Process pending graphics changes after an execute request completes.
     pub(super) fn graphics_on_did_execute_request(&self) {
-        let dc = self.device_context();
+        let dc = Rc::clone(self.device_context());
         dc.process_changes(self);
         dc.clear_execution_context();
         dc.clear_pending_origin();
