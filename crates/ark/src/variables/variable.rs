@@ -1444,14 +1444,13 @@ impl PositronVariable {
                 } else {
                     match &b.value {
                         BindingValue::Standard { object, .. } |
-                        BindingValue::Altrep { object, .. } => {
-                            if r_typeof(object.sexp) == CLOSXP {
-                                has_methods = true;
-                                false
-                            } else {
-                                true
-                            }
+                        BindingValue::Altrep { object, .. }
+                            if r_typeof(object.sexp) == CLOSXP =>
+                        {
+                            has_methods = true;
+                            false
                         },
+                        BindingValue::Standard { .. } | BindingValue::Altrep { .. } => true,
 
                         // active bindings and promises
                         _ => true,

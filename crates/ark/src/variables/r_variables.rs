@@ -626,7 +626,7 @@ impl RVariables {
             }
         }
 
-        bindings.sort_by(|a, b| a.name.cmp(&b.name));
+        bindings.sort_by_key(|a| a.name);
 
         RThreadSafe::new(bindings)
     }
