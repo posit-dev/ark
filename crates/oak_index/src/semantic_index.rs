@@ -162,27 +162,20 @@ impl SemanticIndex {
     }
 
     /// Find the definition site at `offset`, if any.
-    pub fn definition_at_offset(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId)> {
+    pub fn definition_at(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId, &Definition)> {
         let (scope, _) = self.scope_at(offset);
 
         // Definitions with empty ranges (e.g. imports) are naturally excluded
         // here since they can't contain the offset
-        let def_id = self
-            .definitions(scope)
-            .iter()
-            .find_map(|(id, d)| d.range().contains(offset).then_some(id));
-
-        Some((scope, def_id?))
+        let (id, def) = self.definitions(scope).contains(offset)?;
+        Some((scope, id, def))
     }
 
     /// Find the use site at `offset`, if any.
-    pub fn use_at_offset(&self, offset: TextSize) -> Option<(ScopeId, UseId)> {
+    pub fn use_at(&self, offset: TextSize) -> Option<(ScopeId, UseId, &Use)> {
         let (scope, _) = self.scope_at(offset);
-        let use_id = self
-            .uses(scope)
-            .iter()
-            .find_map(|(id, u)| u.range().contains(offset).then_some(id));
-        Some((scope, use_id?))
+        let (id, use_site) = self.uses(scope).contains(offset)?;
+        Some((scope, id, use_site))
     }
     /// Iterate direct child scopes of `scope`.
     pub fn child_scopes(&self, scope: ScopeId) -> ChildScopesIter<'_> {
