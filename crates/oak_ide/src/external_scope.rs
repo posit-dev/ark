@@ -2,8 +2,11 @@ use std::borrow::Cow;
 
 use biome_rowan::TextSize;
 use oak_index::scope_layer::ScopeLayer;
+use oak_index::semantic_index::Directive;
+use oak_index::semantic_index::DirectiveKind;
 use oak_index::semantic_index::ScopeKind;
 use oak_index::semantic_index::SemanticIndex;
+use oak_index::ScopeId;
 
 /// The external scope chain for a file, determined by its project context.
 #[derive(Debug)]
@@ -29,9 +32,7 @@ pub enum ExternalScope {
     /// called after the full script has been sourced.
     SearchPath {
         base: Vec<ScopeLayer>,
-        directives: Vec<(TextSize, ScopeLayer)>,
-        /// All directive layers and the base ones.
-        lazy: Vec<ScopeLayer>,
+        directives: Vec<Directive>,
     },
 }
 
@@ -40,7 +41,6 @@ impl Default for ExternalScope {
         Self::SearchPath {
             base: Vec::new(),
             directives: Vec::new(),
-            lazy: Vec::new(),
         }
     }
 }
@@ -50,17 +50,8 @@ impl ExternalScope {
         Self::Package { top_level, lazy }
     }
 
-    pub fn search_path(directives: Vec<(TextSize, ScopeLayer)>, base: Vec<ScopeLayer>) -> Self {
-        let lazy: Vec<_> = directives
-            .iter()
-            .map(|(_, b)| b.clone())
-            .chain(base.iter().cloned())
-            .collect();
-        Self::SearchPath {
-            base,
-            directives,
-            lazy,
-        }
+    pub fn search_path(directives: Vec<Directive>, base: Vec<ScopeLayer>) -> Self {
+        Self::SearchPath { base, directives }
     }
 
     /// Return the scope chain appropriate for the given offset. For
@@ -77,34 +68,54 @@ impl ExternalScope {
                     ScopeKind::Function => Cow::Borrowed(lazy),
                 }
             },
-            Self::SearchPath {
-                base,
-                directives,
-                lazy,
-            } => {
-                let (_, scope) = index.scope_at(offset);
-                match scope.kind() {
-                    ScopeKind::File => {
-                        let layers: Vec<_> = directives
-                            .iter()
-                            .filter(|(off, _)| *off < offset)
-                            .map(|(_, b)| b.clone())
-                            .chain(base.iter().cloned())
-                            .collect();
-                        Cow::Owned(layers)
-                    },
-                    ScopeKind::Function => Cow::Borrowed(lazy),
-                }
+            Self::SearchPath { base, directives } => {
+                let (cursor_scope, _) = index.scope_at(offset);
+                let file_scope = ScopeId::from(0);
+                let in_function = cursor_scope != file_scope;
+                let layers: Vec<_> = directives
+                    .iter()
+                    .rev()
+                    .filter(|d| {
+                        let dir_scope = d.scope();
+                        // File-scope directives are always visible inside
+                        // function bodies (the function is typically called
+                        // after the full script has been sourced).
+                        if in_function && dir_scope == file_scope {
+                            return true;
+                        }
+                        d.offset() < offset &&
+                            index.ancestor_scopes(cursor_scope).any(|s| s == dir_scope)
+                    })
+                    .map(|d| match d.kind() {
+                        DirectiveKind::Attach(pkg) => ScopeLayer::PackageExports(pkg.clone()),
+                    })
+                    .chain(base.iter().cloned())
+                    .collect();
+                Cow::Owned(layers)
             },
         }
     }
 
     /// The full scope for lazy contexts. Useful for features that don't
     /// have a cursor position (e.g. completions, workspace symbols).
-    pub fn lazy(&self) -> &[ScopeLayer] {
+    pub fn lazy(&self) -> Cow<'_, [ScopeLayer]> {
         match self {
-            Self::Package { lazy, .. } => lazy,
-            Self::SearchPath { lazy, .. } => lazy,
+            Self::Package { lazy, .. } => Cow::Borrowed(lazy),
+            Self::SearchPath {
+                directives, base, ..
+            } => {
+                let file_scope = ScopeId::from(0);
+                let mut layers: Vec<ScopeLayer> = directives
+                    .iter()
+                    .rev()
+                    .filter(|d| d.scope() == file_scope)
+                    .map(|d| match d.kind() {
+                        DirectiveKind::Attach(pkg) => ScopeLayer::PackageExports(pkg.clone()),
+                    })
+                    .collect();
+                layers.extend(base.iter().cloned());
+                Cow::Owned(layers)
+            },
         }
     }
 }

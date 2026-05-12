@@ -1,22 +1,47 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use biome_rowan::TextSize;
 use oak_core::file::list_r_files;
+use oak_db::Db;
 use oak_ide::ExternalScope;
 use oak_index::library::Library;
+use oak_index::scope_layer::default_search_path;
 use oak_index::scope_layer::file_layers;
 use oak_index::scope_layer::package_root_layers;
-use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index::DirectiveKind;
+use oak_index::semantic_index::SemanticIndex;
+use oak_index::semantic_index_with_source_resolver;
+use oak_index::SourceResolution;
 use stdext::result::ResultExt;
 use url::Url;
 
 use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
+
+impl Db for WorldState {
+    fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
+        let doc = self.workspace_document(file)?;
+        let source_root = self.source_root(file);
+
+        let mut stack = HashSet::new();
+        stack.insert(file.clone());
+
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), file, |path| {
+            let dir = source_root.as_ref()?;
+            self.resolve_source(dir, path, &mut stack)
+        });
+
+        Some(index)
+    }
+
+    fn library(&self) -> &Library {
+        &self.library
+    }
+}
 
 #[derive(Clone, Default, Debug)]
 /// The world state, i.e. all the inputs necessary for analysing or refactoring
@@ -98,16 +123,65 @@ impl WorldState {
         }
     }
 
-    /// Create a scope chain for a particular file, taking into account the
-    /// current project type. For packages, this creates a scope containing
-    /// imports and top-level definitions in other files, respecting the
-    /// collation order.
-    pub(crate) fn external_scope(&self, file: &Url) -> ExternalScope {
-        let Some(SourceRoot::Package(ref pkg)) = self.root else {
-            let directives = self.directive_layers(file);
-            return ExternalScope::search_path(directives, default_search_path());
-        };
+    /// Look up a document by URL: returns an open document if available,
+    /// otherwise reads from disk.
+    ///
+    /// TODO(salsa): Replace with a proper VFS so non-opened workspace documents
+    /// are cached rather than re-read on every query.
+    pub(crate) fn workspace_document(&self, uri: &Url) -> Option<Cow<'_, Document>> {
+        if let Some(doc) = self.documents.get(uri) {
+            return Some(Cow::Borrowed(doc));
+        }
 
+        let path = uri.to_file_path().log_err()?;
+        let contents = std::fs::read_to_string(&path).log_err()?;
+        Some(Cow::Owned(Document::new(&contents, None)))
+    }
+
+    /// Resolve from the workspace root, falling back to the file's directory.
+    /// This matches RStudio behaviour. Potential improvements: support
+    /// `setwd()` calls and find the workspace containing the file if there are
+    /// multiple.
+    fn source_root(&self, file: &Url) -> Option<PathBuf> {
+        self.workspace
+            .folders
+            .first()
+            .and_then(|url| url.to_file_path().ok())
+            .or_else(|| {
+                file.to_file_path()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            })
+    }
+
+    /// Create the semantic index and scope chain for a particular file.
+    ///
+    /// For scripts, the index is built with a source resolver so that
+    /// `source()` directives carry the sourced file's exports.
+    /// For packages, cross-file visibility comes from NAMESPACE imports and
+    /// collation ordering.
+    pub(crate) fn file_analysis(
+        &self,
+        file: &Url,
+        doc: &Document,
+    ) -> (SemanticIndex, ExternalScope) {
+        match self.root {
+            Some(SourceRoot::Package(ref pkg)) => self.package_file_analysis(file, doc, pkg),
+            _ => self.script_file_analysis(file, doc),
+        }
+    }
+
+    // TODO(salsa): Align with the deferred-resolution model used for scripts. Package
+    // files should produce Import-kind forwarding definitions and resolve
+    // through `resolve_definition()`, rather than pre-resolving through the
+    // scope chain. This will happen naturally once Salsa provides cheap
+    // cross-file index access.
+    fn package_file_analysis(
+        &self,
+        file: &Url,
+        doc: &Document,
+        pkg: &oak_index::package::Package,
+    ) -> (SemanticIndex, ExternalScope) {
         let root_layers = package_root_layers(pkg.namespace());
 
         // FIXME: This only works for source packages. If we do #1168, then the
@@ -130,7 +204,7 @@ impl WorldState {
             });
 
         let Some(file_path) = file.to_file_path().ok() else {
-            return ExternalScope::default();
+            return (doc.semantic_index(file), ExternalScope::default());
         };
 
         // Iterate in reverse collation order so later files (which shadow
@@ -149,19 +223,11 @@ impl WorldState {
             let Some(uri) = Url::from_file_path(path).log_err() else {
                 continue;
             };
-
-            // Use the open document if available, otherwise read from disk.
-            // TODO: Store non-opened workspace documents in VFS.
-            let doc = if let Some(open) = self.documents.get(&uri) {
-                open
-            } else {
-                let Some(contents) = std::fs::read_to_string(path).log_err() else {
-                    continue;
-                };
-                &Document::new(&contents, None)
+            let Some(doc) = self.workspace_document(&uri) else {
+                continue;
             };
 
-            let layers = file_layers(uri, &doc.semantic_index());
+            let layers = file_layers(uri.clone(), &doc.semantic_index(&uri));
             lazy.extend(layers.clone());
             if past_current {
                 top_level.extend(layers);
@@ -171,43 +237,83 @@ impl WorldState {
         top_level.extend(root_layers.clone());
         lazy.extend(root_layers);
 
-        ExternalScope::package(top_level, lazy)
+        (
+            doc.semantic_index(file),
+            ExternalScope::package(top_level, lazy),
+        )
     }
 
-    fn directive_layers(&self, file: &Url) -> Vec<(TextSize, ScopeLayer)> {
-        let Some(doc) = self.documents.get(file) else {
-            return Vec::new();
+    fn script_file_analysis(&self, file: &Url, doc: &Document) -> (SemanticIndex, ExternalScope) {
+        let source_root = self.source_root(file);
+
+        let mut stack = HashSet::new();
+        stack.insert(file.clone());
+
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), file, |path| {
+            let dir = source_root.as_ref()?;
+            self.resolve_source(dir, path, &mut stack)
+        });
+
+        let directives = index.file_directives().to_vec();
+        (
+            index,
+            ExternalScope::search_path(directives, default_search_path()),
+        )
+    }
+
+    /// Resolve a `source()` call into a [`SourceResolution`] containing the
+    /// sourced file's exported names and `library()` package attachments.
+    ///
+    /// `stack` tracks files currently being resolved (grey set) to break
+    /// cycles. A file is added when resolution starts and removed when it
+    /// finishes, so shared dependencies (diamond patterns) are resolved
+    /// independently for each parent.
+    fn resolve_source(
+        &self,
+        base_dir: &Path,
+        path: &str,
+        stack: &mut HashSet<Url>,
+    ) -> Option<SourceResolution> {
+        let resolved = base_dir.join(path);
+        let url = Url::from_file_path(&resolved).log_err()?;
+
+        if !stack.insert(url.clone()) {
+            return None;
+        }
+
+        let Some(sourced_doc) = self.workspace_document(&url) else {
+            stack.remove(&url);
+            return None;
         };
-        let index = doc.semantic_index();
-        index
-            .file_directives()
-            .iter()
-            .map(|d| match d.kind() {
-                DirectiveKind::Attach(pkg) => (d.offset(), ScopeLayer::PackageExports(pkg.clone())),
-            })
-            .collect()
-    }
-}
 
-/// The default R search path for scripts: the default packages that R
-/// attaches on startup, in search order (last attached = searched first).
-fn default_search_path() -> Vec<ScopeLayer> {
-    // R's default packages, in reverse attachment order (most recently
-    // attached first). These are always on the search path unless
-    // overridden by `R_DEFAULT_PACKAGES`.
-    let default_packages = [
-        "utils",
-        "stats",
-        "datasets",
-        "methods",
-        "grDevices",
-        "graphics",
-        "base",
-    ];
-    default_packages
-        .into_iter()
-        .map(|pkg| ScopeLayer::PackageExports(pkg.to_string()))
-        .collect()
+        // Build the sourced file's index with a nested resolver so that
+        // transitive `source()` calls are also resolved. The base
+        // directory stays the same (workspace root) throughout the chain.
+        let index =
+            semantic_index_with_source_resolver(&sourced_doc.parse.tree(), &url, |nested_path| {
+                self.resolve_source(base_dir, nested_path, stack)
+            });
+
+        let names: Vec<String> = index
+            .file_exports()
+            .keys()
+            .map(|name| name.to_string())
+            .collect();
+
+        let packages: Vec<String> = index
+            .file_attached_packages()
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        stack.remove(&url);
+
+        Some(SourceResolution {
+            file: url,
+            names,
+            packages,
+        })
+    }
 }
 
 pub(crate) fn with_document<T, F>(
@@ -280,8 +386,7 @@ mod tests {
         let uri = test_path("script.R");
         let state = make_state(&uri, &doc);
 
-        let scope = state.external_scope(&uri);
-        let index = doc.semantic_index();
+        let (index, scope) = state.file_analysis(&uri, &doc);
 
         let before = scope.at(&index, TextSize::from(0));
         assert_not!(has_package(&before, "rlang"));
@@ -289,7 +394,7 @@ mod tests {
         let after = scope.at(&index, TextSize::from(code.rfind("inform").unwrap() as u32));
         assert!(has_package(&after, "rlang"));
 
-        assert!(has_package(scope.lazy(), "rlang"));
+        assert!(has_package(&scope.lazy(), "rlang"));
     }
 
     #[test]
@@ -302,8 +407,7 @@ mod tests {
         let uri = test_path("script.R");
         let state = make_state(&uri, &doc);
 
-        let scope = state.external_scope(&uri);
-        let index = doc.semantic_index();
+        let (index, scope) = state.file_analysis(&uri, &doc);
 
         let in_function = scope.at(&index, TextSize::from(code.find("inform").unwrap() as u32));
         assert!(has_package(&in_function, "rlang"));
@@ -316,8 +420,8 @@ mod tests {
         let uri = test_path("script.R");
         let state = make_state(&uri, &doc);
 
-        let scope = state.external_scope(&uri);
+        let (_index, scope) = state.file_analysis(&uri, &doc);
         let layers = scope.lazy();
-        assert_not!(has_package(layers, "rlang"));
+        assert_not!(has_package(&layers, "rlang"));
     }
 }

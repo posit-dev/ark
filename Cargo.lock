@@ -411,6 +411,7 @@ dependencies = [
  "nix",
  "notify",
  "oak_core",
+ "oak_db",
  "oak_ide",
  "oak_index",
  "oak_package_metadata",
@@ -2448,6 +2449,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oak_db"
+version = "0.1.0"
+dependencies = [
+ "oak_index",
+ "url",
+]
+
+[[package]]
 name = "oak_fs"
 version = "0.1.0"
 dependencies = [
@@ -2467,6 +2476,7 @@ dependencies = [
  "biome_rowan",
  "log",
  "oak_core",
+ "oak_db",
  "oak_index",
  "oak_package_metadata",
  "oak_sources",

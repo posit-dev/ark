@@ -303,7 +303,10 @@ fn test_resolve_file_exports_last_definition_wins() {
 
 fn index_source(source: &str) -> oak_index::semantic_index::SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    semantic_index(&parsed.tree())
+    semantic_index(
+        &parsed.tree(),
+        &url::Url::parse("file:///test/test.R").unwrap(),
+    )
 }
 
 #[test]
@@ -361,6 +364,22 @@ fn test_file_layers_empty_file() {
     assert_eq!(layers.len(), 1);
     assert_matches!(&layers[0], ScopeLayer::FileExports { exports, .. } => {
         assert!(exports.is_empty());
+    });
+}
+
+#[test]
+fn test_file_layers_source_directive_skipped() {
+    let index = index_source("library(dplyr)\nsource(\"helpers.R\")\nx <- 1");
+    let layers = file_layers(file_url("script.R"), &index);
+
+    // FileExports + PackageExports(dplyr), source() is not emitted as a layer
+    assert_eq!(layers.len(), 2);
+    assert_matches!(&layers[0], ScopeLayer::FileExports { exports, .. } => {
+        assert_eq!(exports.len(), 1);
+        assert!(exports.contains_key("x"));
+    });
+    assert_matches!(&layers[1], ScopeLayer::PackageExports(pkg) => {
+        assert_eq!(pkg, "dplyr");
     });
 }
 

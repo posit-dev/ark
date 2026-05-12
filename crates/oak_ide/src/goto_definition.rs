@@ -1,10 +1,13 @@
+use std::collections::HashSet;
+
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextSize;
+use oak_db::Db;
 use oak_index::external::resolve_external_name;
 use oak_index::external::resolve_in_package;
-use oak_index::library::Library;
 use oak_index::package_definitions::PackageDefinitionVisibility;
 use oak_index::scope_layer::ScopeLayer;
+use oak_index::semantic_index::DefinitionKind;
 use oak_index::semantic_index::SemanticIndex;
 use oak_index::semantic_index::Use;
 use oak_index::DefinitionId;
@@ -36,12 +39,12 @@ use crate::NavigationTarget;
 /// Returns an empty `Vec` if the offset doesn't point at a known
 /// identifier, or if the symbol cannot be resolved.
 pub fn goto_definition(
+    db: &dyn Db,
     offset: TextSize,
     file: &Url,
     root: &RSyntaxNode,
     index: &SemanticIndex,
     scope: &ExternalScope,
-    library: &Library,
 ) -> Vec<NavigationTarget> {
     let Some(ident) = Identifier::classify(root, index, offset) else {
         return Vec::new();
@@ -61,9 +64,7 @@ pub fn goto_definition(
         },
         Identifier::Use { scope_id, use_id } => {
             let use_site = &index.uses(scope_id)[use_id];
-            resolve_use(
-                index, scope_id, use_id, use_site, file, offset, scope, library,
-            )
+            resolve_use(db, index, scope_id, use_id, use_site, offset, scope)
         },
         Identifier::NamespaceAccess {
             ref package,
@@ -76,20 +77,19 @@ pub fn goto_definition(
             } else {
                 PackageDefinitionVisibility::Exported
             };
-            resolve_namespace_access(symbol, package, visibility, library)
+            resolve_namespace_access(db, symbol, package, visibility)
         },
     }
 }
 
 fn resolve_use(
+    db: &dyn Db,
     index: &SemanticIndex,
     scope_id: ScopeId,
     use_id: UseId,
     use_site: &Use,
-    file: &Url,
     offset: TextSize,
     scope: &ExternalScope,
-    library: &Library,
 ) -> Vec<NavigationTarget> {
     let use_def_map = index.use_def_map(scope_id);
     let bindings = use_def_map.bindings_at_use(use_id);
@@ -100,13 +100,16 @@ fn resolve_use(
 
     let local_targets = |scope, defs: &[DefinitionId]| -> Vec<NavigationTarget> {
         defs.iter()
-            .map(|&def_id| {
+            .filter_map(|&def_id| {
                 let def = &index.definitions(scope)[def_id];
-                NavigationTarget {
-                    file: file.clone(),
-                    name: symbol_name.to_string(),
-                    full_range: def.range(),
-                    focus_range: def.range(),
+                match def.kind() {
+                    DefinitionKind::Import { file, name, .. } => resolve_import(db, file, name),
+                    _ => Some(NavigationTarget {
+                        file: def.file().clone(),
+                        name: symbol_name.to_string(),
+                        full_range: def.range(),
+                        focus_range: def.range(),
+                    }),
                 }
             })
             .collect()
@@ -114,7 +117,7 @@ fn resolve_use(
 
     let external_targets = || {
         let scope_chain = scope.at(index, offset);
-        resolve_external(symbol_name, &scope_chain, library)
+        resolve_external(db, symbol_name, &scope_chain)
     };
 
     if !definitions.is_empty() {
@@ -143,24 +146,71 @@ fn resolve_use(
     external_targets()
 }
 
+/// Chase a `DefinitionKind::Import` forwarding binding to the actual
+/// definition in the target file. Recurses through chains of Import
+/// definitions (e.g., a.R sources b.R sources c.R).
+///
+/// TODO(salsa): Move to `oak_index` once it depends on `oak_db`.
+fn resolve_import(db: &dyn Db, file: &Url, name: &str) -> Option<NavigationTarget> {
+    let mut visited = HashSet::new();
+    resolve_import_inner(db, file, name, &mut visited)
+}
+
+fn resolve_import_inner(
+    db: &dyn Db,
+    file: &Url,
+    name: &str,
+    visited: &mut HashSet<(Url, String)>,
+) -> Option<NavigationTarget> {
+    if !visited.insert((file.clone(), name.to_string())) {
+        return None;
+    }
+
+    let target_index = db.semantic_index(file)?;
+
+    // Imports always target top-level definitions in the sourced file.
+    let file_scope = ScopeId::from(0);
+    let symbols = &target_index.symbols(file_scope);
+
+    let (_def_id, def) = target_index
+        .definitions(file_scope)
+        .iter()
+        .filter(|(_id, def)| symbols.symbol(def.symbol()).name() == name)
+        .last()?;
+
+    match def.kind() {
+        DefinitionKind::Import {
+            file: next_file,
+            name: next_name,
+            ..
+        } => resolve_import_inner(db, next_file, next_name, visited),
+        _ => Some(NavigationTarget {
+            file: file.clone(),
+            name: name.to_string(),
+            full_range: def.range(),
+            focus_range: def.range(),
+        }),
+    }
+}
+
 fn resolve_namespace_access(
+    db: &dyn Db,
     symbol: &str,
     package: &str,
     visibility: PackageDefinitionVisibility,
-    library: &Library,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_in_package(symbol, package, visibility, library) else {
+    let Some(external) = resolve_in_package(db.library(), package, symbol, visibility) else {
         return Vec::new();
     };
     vec![external.into()]
 }
 
 fn resolve_external(
+    db: &dyn Db,
     symbol: &str,
     scope_chain: &[ScopeLayer],
-    library: &Library,
 ) -> Vec<NavigationTarget> {
-    let Some(external) = resolve_external_name(library, scope_chain, symbol) else {
+    let Some(external) = resolve_external_name(db.library(), scope_chain, symbol) else {
         return Vec::new();
     };
     vec![external.into()]

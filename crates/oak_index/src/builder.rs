@@ -1,3 +1,4 @@
+use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
 use aether_syntax::AnyRValue;
@@ -22,6 +23,7 @@ use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use url::Url;
 
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
@@ -40,19 +42,54 @@ use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 use crate::use_def_map::UseDefMapBuilder;
 
+// TODO(salsa): Remove `semantic_index()` and variant, these are too coarse queries.
+
 /// Build a [`SemanticIndex`] from a parsed R file.
-pub fn semantic_index(root: &RRoot) -> SemanticIndex {
+pub fn semantic_index(root: &RRoot, file: &Url) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range);
+    let mut builder = SemanticIndexBuilder::new(range, file.clone(), None);
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
     builder.finish()
 }
 
+/// Build a [`SemanticIndex`] with cross-file `source()` resolution.
+///
+/// The resolver callback is called when the builder encounters a
+/// `source("path")` call. It should return the sourced file's exported
+/// names and any `library()` package attachments.
+pub fn semantic_index_with_source_resolver<'a>(
+    root: &RRoot,
+    file: &Url,
+    resolver: impl FnMut(&str) -> Option<SourceResolution> + 'a,
+) -> SemanticIndex {
+    let range = root.syntax().text_trimmed_range();
+    let mut builder = SemanticIndexBuilder::new(range, file.clone(), Some(Box::new(resolver)));
+    builder.pre_scan_scope(root.syntax());
+    builder.collect_expression_list(&root.expressions());
+    builder.finish()
+}
+
+/// The result of resolving a `source()` call. Returned by the resolver
+/// callback passed to the builder.
+pub struct SourceResolution {
+    /// The resolved URL of the sourced file.
+    pub file: Url,
+
+    /// Names of top-level definitions in the sourced file.
+    pub names: Vec<String>,
+
+    /// Package names from `library()` directives in the sourced file
+    /// (and transitively from files it sources).
+    pub packages: Vec<String>,
+}
+
+type SourceResolver<'a> = Box<dyn FnMut(&str) -> Option<SourceResolution> + 'a>;
+
 // Maintains the preorder allocation invariant on `Scope::descendants`. The
 // parallel arrays are pushed in lockstep so they stay indexed by the same
 // `ScopeId`.
-struct SemanticIndexBuilder {
+struct SemanticIndexBuilder<'a> {
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
@@ -62,10 +99,12 @@ struct SemanticIndexBuilder {
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     directives: Vec<Directive>,
+    file: Url,
+    source_resolver: Option<SourceResolver<'a>>,
 }
 
-impl SemanticIndexBuilder {
-    fn new(range: TextRange) -> Self {
+impl<'a> SemanticIndexBuilder<'a> {
+    fn new(range: TextRange, file: Url, source_resolver: Option<SourceResolver<'a>>) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
@@ -76,7 +115,7 @@ impl SemanticIndexBuilder {
         // The descendants range starts empty (`n+1..n+1`). `pop_scope` later
         // fills in `descendants.end` with the current arena length. Everything
         // allocated between push and pop is a descendant.
-        let file = scopes.push(Scope {
+        let file_scope = scopes.push(Scope {
             parent: None,
             kind: ScopeKind::File,
             range,
@@ -98,10 +137,12 @@ impl SemanticIndexBuilder {
             definitions,
             uses,
             use_def_maps,
-            current_scope: file,
+            current_scope: file_scope,
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
             directives: Vec::new(),
+            file,
+            source_resolver,
         }
     }
 
@@ -152,6 +193,8 @@ impl SemanticIndexBuilder {
             symbol: symbol_id,
             kind,
             range,
+            file: self.file.clone(),
+            scope: self.current_scope,
         });
         self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
         self.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
@@ -172,6 +215,8 @@ impl SemanticIndexBuilder {
             symbol: symbol_id,
             kind: kind.clone(),
             range,
+            file: self.file.clone(),
+            scope: self.current_scope,
         });
 
         let target_scope = self.resolve_super_target(name);
@@ -181,6 +226,8 @@ impl SemanticIndexBuilder {
             symbol: target_symbol,
             kind,
             range,
+            file: self.file.clone(),
+            scope: target_scope,
         });
         self.use_def_maps[target_scope].ensure_symbol(target_symbol);
         self.use_def_maps[target_scope].record_deferred_definition(target_symbol, target_def_id);
@@ -340,13 +387,11 @@ impl SemanticIndexBuilder {
                 if let Ok(args) = call.arguments() {
                     self.collect_arguments(&args.items());
                 }
-                // TODO: When eager NSE scopes land (e.g. `local()`) we should
+                // TODO(nse): When eager NSE scopes land (e.g. `local()`) we should
                 // also consider nested scopes as long as they're not lazy (e.g.
                 // function definitions or NSE calls that don't evaluate
                 // immediately.
-                if self.current_scope == ScopeId::from(0) {
-                    self.collect_directive(call);
-                }
+                self.collect_directive(call);
             },
             AnyRExpression::RSubset(subset) => {
                 if let Ok(object) = subset.function() {
@@ -484,6 +529,12 @@ impl SemanticIndexBuilder {
             // quoting constructs (`~`, `quote()`, `bquote()`) are recorded as
             // uses and bindings. Refining this requires special-casing these
             // forms, which we defer as future work.
+            //
+            // Once quoting is handled, `declare()` and `~declare()` will need
+            // explicit treatment: its arguments are quoted (not evaluated) but
+            // should still be inspected for directives like `source()`.
+            // Currently this works by accident because the generic traversal is
+            // transparent to both `declare()` and `~`.
             _ => {
                 self.collect_descendants(expr.syntax());
             },
@@ -553,7 +604,7 @@ impl SemanticIndexBuilder {
                         let right = is_right_assignment(bin);
                         let target = if right { bin.right() } else { bin.left() };
                         if let Ok(target) = target {
-                            if let Some((name, range)) = assignment_target_name(&target) {
+                            if let Some((name, range)) = assignment_name(&target) {
                                 self.pre_scans[self.current_scope].add(name, range);
                             }
                         }
@@ -631,7 +682,7 @@ impl SemanticIndexBuilder {
         let target = if right { op.right() } else { op.left() };
         let Ok(target) = target else { return };
 
-        let Some((name, range)) = assignment_target_name(&target) else {
+        let Some((name, range)) = assignment_name(&target) else {
             // Complex target (`x$foo <- rhs`, `x[1] <- rhs`, etc.) does
             // not represent a binding. We recurse for uses.
             self.collect_expression(&target);
@@ -663,18 +714,28 @@ impl SemanticIndexBuilder {
         }
     }
 
-    /// Detect directives like `library(pkg)` and `require(pkg)` at the
-    /// file-level scope.
     fn collect_directive(&mut self, call: &aether_syntax::RCall) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
         };
 
         let fn_name = ident.name_text();
-        if fn_name != "library" && fn_name != "require" {
-            return;
+        if fn_name == "library" || fn_name == "require" {
+            self.collect_attach_directive(call);
+        } else if fn_name == "source" {
+            self.collect_source_directive(call);
         }
+    }
 
+    // ## `library()` / `require()` scoping
+    //
+    // In R, `library()` always modifies the global search path regardless
+    // of where it's called. Statically, we scope the directive to
+    // `self.current_scope`: at file scope it's visible everywhere (sequential
+    // execution is guaranteed), but inside a function it's only visible
+    // within that function and its children, since the function might never
+    // be called. Same reasoning as `source()` directives.
+    fn collect_attach_directive(&mut self, call: &aether_syntax::RCall) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -693,7 +754,6 @@ impl SemanticIndexBuilder {
             return;
         };
 
-        // Extract the package name from identifier or string literal
         let pkg_name = match &value {
             AnyRExpression::RIdentifier(ident) => Some(ident.name_text()),
             AnyRExpression::AnyRValue(AnyRValue::RStringValue(s)) => s.string_text(),
@@ -703,10 +763,113 @@ impl SemanticIndexBuilder {
             return;
         };
 
+        let call_offset = call.syntax().text_trimmed_range().start();
         self.directives.push(Directive {
             kind: DirectiveKind::Attach(pkg_name),
-            offset: call.syntax().text_trimmed_range().start(),
+            offset: call_offset,
+            scope: self.current_scope,
         });
+    }
+
+    // ## `source()` resolution
+    //
+    // `source("file.R")` creates `DefinitionKind::Import` forwarding
+    // bindings in the current scope for each top-level name exported by
+    // the target file. These participate in the use-def map like normal
+    // definitions (shadowing, ordering), but goto-definition chases
+    // through them via `resolve_definition` to reach the actual origin.
+    //
+    // The `local` argument is inspected only to bail: if it's set to
+    // something other than TRUE/FALSE (e.g., an environment), the call
+    // isn't statically analyzable and we skip it.
+    //
+    // TODO: In nested scopes, `local = FALSE` technically targets the
+    // global environment. We currently inject into the calling scope
+    // regardless to keep the sourcing mechanism simple. A future diagnostic
+    // should suggest `local = TRUE` in nested contexts.
+    fn collect_source_directive(&mut self, call: &aether_syntax::RCall) {
+        let Ok(args) = call.arguments() else {
+            return;
+        };
+
+        let mut path: Option<String> = None;
+        let mut bail = false;
+
+        for item in args.items().iter() {
+            let Ok(arg) = item else { continue };
+
+            if let Some(name_clause) = arg.name_clause() {
+                let Ok(AnyRArgumentName::RIdentifier(name_ident)) = name_clause.name() else {
+                    continue;
+                };
+                if name_ident.name_text() == "local" {
+                    if let Some(value) = arg.value() {
+                        match value {
+                            // TRUE/FALSE are fine, we resolve uniformly. For
+                            // the FALSE in nested context case, we'll emit a
+                            // diagnostic.
+                            AnyRExpression::RTrueExpression(_) |
+                            AnyRExpression::RFalseExpression(_) => {},
+                            // With anything else (environment, non-statically
+                            // resolvable expression) is not we need to bail.
+                            _ => bail = true,
+                        }
+                    }
+                }
+            } else if path.is_none() {
+                // First positional argument: the file path
+                if let Some(AnyRExpression::AnyRValue(AnyRValue::RStringValue(s))) = arg.value() {
+                    path = s.string_text();
+                }
+            }
+        }
+
+        if bail {
+            return;
+        }
+
+        let Some(path) = path else {
+            return;
+        };
+
+        let call_offset = call.syntax().text_trimmed_range().start();
+
+        let Some(resolution) = self.resolve_source(&path) else {
+            return;
+        };
+
+        let file = resolution.file;
+
+        for name in resolution.names {
+            // Empty range: R's `source()` imports names implicitly (unlike
+            // Python's `from x import y` where `y` appears in the text).
+            // There's no text span to assign to these definitions.
+            let range = TextRange::empty(call_offset);
+
+            self.add_definition(
+                &name,
+                SymbolFlags::IS_BOUND,
+                DefinitionKind::Import {
+                    call: call.syntax().clone(),
+                    file: file.clone(),
+                    name: name.clone(),
+                },
+                range,
+            );
+        }
+
+        for pkg in resolution.packages {
+            self.directives.push(Directive {
+                kind: DirectiveKind::Attach(pkg),
+                offset: call_offset,
+                scope: self.current_scope,
+            });
+        }
+    }
+
+    fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
+        let source_resolver = self.source_resolver.as_mut()?;
+        source_resolver(path)
     }
 
     fn finish(mut self) -> SemanticIndex {
@@ -807,7 +970,7 @@ fn is_right_assignment(bin: &RBinaryExpression) -> bool {
 /// Extract the binding name and range from an assignment target expression.
 /// Returns `None` for complex targets (`x$foo`, `x[1]`, etc.) that don't
 /// represent simple name bindings.
-fn assignment_target_name(target: &AnyRExpression) -> Option<(String, TextRange)> {
+fn assignment_name(target: &AnyRExpression) -> Option<(String, TextRange)> {
     match target {
         AnyRExpression::RIdentifier(ident) => {
             let name = ident.name_text();

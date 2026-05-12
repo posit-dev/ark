@@ -9,7 +9,10 @@ use stdext::assert_not;
 
 fn index(source: &str) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    semantic_index(&parsed.tree())
+    semantic_index(
+        &parsed.tree(),
+        &url::Url::parse("file:///test/test.R").unwrap(),
+    )
 }
 
 // --- Straight-line code ---

@@ -212,9 +212,10 @@ impl Document {
         Ok(self.parse.syntax())
     }
 
-    /// Recomputed every time for now, we'll track this with Salsa soon.
-    pub fn semantic_index(&self) -> SemanticIndex {
-        oak_index::semantic_index(&self.parse.tree())
+    /// TODO(salsa) Recomputed every time for now, but we'll track this with
+    /// Salsa soon.
+    pub fn semantic_index(&self, file: &url::Url) -> SemanticIndex {
+        oak_index::semantic_index(&self.parse.tree(), file)
     }
 
     pub fn tree_sitter_point_from_lsp_position(

@@ -1,0 +1,18 @@
+[package]
+name = "oak_db"
+version = "0.1.0"
+description = """
+Database trait for cross-file queries. Foundation for Salsa integration.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+oak_index.workspace = true
+url.workspace = true

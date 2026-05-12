@@ -14,9 +14,9 @@ updates:
     # and let rapid follow-up releases collapse into a single bump
     cooldown:
       default-days: 14
-    # Only bump Cargo.toml specifiers for major changes, let
-    # minor/patch versions drift in the lockfile
-    versioning-strategy: increase-if-necessary
+    # Cargo only supports `lockfile-only` and `auto`. `auto` lets
+    # dependabot bump Cargo.toml when ranges don't cover the new version.
+    versioning-strategy: auto
     open-pull-requests-limit: 10
     groups:
       # Group all crate updates into one weekly PR. Major updates get

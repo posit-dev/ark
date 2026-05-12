@@ -18,6 +18,7 @@ aether_syntax.workspace = true
 biome_rowan.workspace = true
 log.workspace = true
 oak_core.workspace = true
+oak_db.workspace = true
 oak_index.workspace = true
 oak_sources.workspace = true
 stdext.workspace = true

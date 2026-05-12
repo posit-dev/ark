@@ -70,6 +70,7 @@ mime_guess = "2.0.5"
 nix = { version = "0.31", features = ["fs", "poll", "process", "signal"] }
 notify = "8.2.0"
 oak_core = { path = "crates/oak_core" }
+oak_db = { path = "crates/oak_db" }
 oak_fs = { path = "crates/oak_fs" }
 oak_ide = { path = "crates/oak_ide" }
 oak_index = { path = "crates/oak_index" }
