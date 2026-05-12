@@ -245,7 +245,7 @@ impl<'a> SemanticIndexBuilder<'a> {
         loop {
             if let Some(id) = self.symbol_tables[scope].id(name) {
                 if self.symbol_tables[scope]
-                    .symbol_id(id)
+                    .symbol(id)
                     .flags()
                     .contains(SymbolFlags::IS_BOUND)
                 {
@@ -291,7 +291,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                 .id(name)
                 .is_some_and(|sym_id| {
                     self.symbol_tables[current_scope]
-                        .symbol_id(sym_id)
+                        .symbol(sym_id)
                         .flags()
                         .contains(SymbolFlags::IS_BOUND)
                 });
@@ -734,7 +734,7 @@ impl<'a> SemanticIndexBuilder<'a> {
     // `self.current_scope`: at file scope it's visible everywhere (sequential
     // execution is guaranteed), but inside a function it's only visible
     // within that function and its children, since the function might never
-    // be called. Same reasoning as `source(local = FALSE)` directives.
+    // be called. Same reasoning as `source()` directives.
     fn collect_attach_directive(&mut self, call: &aether_syntax::RCall) {
         let Ok(args) = call.arguments() else {
             return;

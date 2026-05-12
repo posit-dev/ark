@@ -53,7 +53,7 @@ pub fn goto_definition(
     match ident {
         Identifier::Definition { scope_id, def_id } => {
             let def = &index.definitions(scope_id)[def_id];
-            let name = index.symbols(scope_id).symbol_id(def.symbol()).name();
+            let name = index.symbols(scope_id).symbol(def.symbol()).name();
 
             vec![NavigationTarget {
                 file: file.clone(),
@@ -94,7 +94,7 @@ fn resolve_use(
     let use_def_map = index.use_def_map(scope_id);
     let bindings = use_def_map.bindings_at_use(use_id);
 
-    let symbol_name = index.symbols(scope_id).symbol_id(use_site.symbol()).name();
+    let symbol_name = index.symbols(scope_id).symbol(use_site.symbol()).name();
 
     let definitions = bindings.definitions();
 
@@ -175,7 +175,7 @@ fn resolve_import_inner(
     let (_def_id, def) = target_index
         .definitions(file_scope)
         .iter()
-        .filter(|(_id, def)| symbols.symbol_id(def.symbol()).name() == name)
+        .filter(|(_id, def)| symbols.symbol(def.symbol()).name() == name)
         .last()?;
 
     match def.kind() {

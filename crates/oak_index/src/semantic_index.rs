@@ -124,7 +124,7 @@ impl SemanticIndex {
 
         let mut exports = FxHashMap::default();
         for (_id, def) in self.definitions[file_scope].iter() {
-            let name = symbols.symbol_id(def.symbol()).name();
+            let name = symbols.symbol(def.symbol()).name();
             exports.insert(name, def.range());
         }
 
@@ -177,6 +177,7 @@ impl SemanticIndex {
         let (id, use_site) = self.uses(scope).contains(offset)?;
         Some((scope, id, use_site))
     }
+
     /// Iterate direct child scopes of `scope`.
     pub fn child_scopes(&self, scope: ScopeId) -> ChildScopesIter<'_> {
         let descendants = &self.scopes[scope].descendants;
@@ -201,7 +202,7 @@ impl SemanticIndex {
         for ancestor in self.ancestor_scopes(scope) {
             if let Some(id) = self.symbol_tables[ancestor].id(name) {
                 if self.symbol_tables[ancestor]
-                    .symbol_id(id)
+                    .symbol(id)
                     .flags()
                     .contains(SymbolFlags::IS_BOUND)
                 {
@@ -325,7 +326,7 @@ impl SymbolTable {
         self.by_name.get(name).copied()
     }
 
-    pub fn symbol_id(&self, id: SymbolId) -> &Symbol {
+    pub fn symbol(&self, id: SymbolId) -> &Symbol {
         &self.symbols[id]
     }
 
@@ -473,12 +474,11 @@ impl SymbolFlags {
 // definition without invalidating the definition's identity (file + scope +
 // place) or the UseDefMap.
 //
-// Our definitions don't carry file or scope because they live inside the
-// `SemanticIndex` at a known position (`definitions[scope_id][def_id]`).
-// In ty, `Definition<'db>` is a self-contained salsa tracked struct that
-// carries file + scope + place, because it gets passed around independently
-// to type inference queries and cross-file lookups. We'll add those fields
-// when salsa is introduced.
+// Definitions carry `file` and `scope` so they're self-contained when
+// passed around (e.g., through `DefinitionKind::Import` chains during
+// cross-file goto-definition). This mirrors ty's `Definition<'db>`, a
+// salsa tracked struct that carries file + scope + place for the same
+// reason.
 //
 // Type inference will eventually take a definition as input and inspect
 // the syntax node (via the kind) to determine the type.
@@ -493,6 +493,7 @@ impl SymbolFlags {
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
     /// The file that owns this definition's index.
+    // TODO(salsa): Should become a File.
     pub(crate) file: Url,
     /// The scope within the file's index where this definition lives.
     pub(crate) scope: ScopeId,
@@ -571,7 +572,7 @@ impl Ranged for Use {
     }
 }
 
-/// A file-level directive that affects the scope chain (e.g. `library()` calls).
+/// A directive that affects the file's imports (e.g. `library()` calls).
 #[derive(Debug, Clone)]
 pub struct Directive {
     pub(crate) kind: DirectiveKind,

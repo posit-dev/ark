@@ -88,11 +88,11 @@ fn test_rhs_collected_before_lhs() {
     let file = ScopeId::from(0);
 
     let use_site = &index.uses(file)[UseId::from(0)];
-    let use_sym = index.symbols(file).symbol_id(use_site.symbol());
+    let use_sym = index.symbols(file).symbol(use_site.symbol());
     assert_eq!(use_sym.name(), "y");
 
     let def_site = &index.definitions(file)[DefinitionId::from(0)];
-    let def_sym = index.symbols(file).symbol_id(def_site.symbol());
+    let def_sym = index.symbols(file).symbol(def_site.symbol());
     assert_eq!(def_sym.name(), "x");
 }
 
@@ -459,11 +459,11 @@ fn test_right_assignment_rhs_collected_before_lhs() {
     let file = ScopeId::from(0);
 
     let use_site = &index.uses(file)[UseId::from(0)];
-    let use_sym = index.symbols(file).symbol_id(use_site.symbol());
+    let use_sym = index.symbols(file).symbol(use_site.symbol());
     assert_eq!(use_sym.name(), "y");
 
     let def_site = &index.definitions(file)[DefinitionId::from(0)];
-    let def_sym = index.symbols(file).symbol_id(def_site.symbol());
+    let def_sym = index.symbols(file).symbol(def_site.symbol());
     assert_eq!(def_sym.name(), "x");
 }
 
@@ -664,7 +664,7 @@ fn test_super_assignment_does_not_pollute_ancestor() {
     let x_file_defs: Vec<_> = index
         .definitions(file)
         .iter()
-        .filter(|(_, d)| index.symbols(file).symbol_id(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_file_defs.len(), 2);
     assert!(matches!(
@@ -708,7 +708,7 @@ fn test_super_assignment_nested_recorded_in_inner_scope() {
     let x_outer_defs: Vec<_> = index
         .definitions(outer)
         .iter()
-        .filter(|(_, d)| index.symbols(outer).symbol_id(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_outer_defs.len(), 2);
     assert!(matches!(
@@ -748,7 +748,7 @@ fn test_super_assignment_nested_skips_super_bound_scope() {
     let x_file_defs: Vec<_> = index
         .definitions(file)
         .iter()
-        .filter(|(_, d)| index.symbols(file).symbol_id(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(file).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(x_file_defs.len(), 3);
     assert!(matches!(

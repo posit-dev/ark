@@ -28,9 +28,6 @@ pub enum ScopeLayer {
 /// Compute the scope layers that a single file contributes to the
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
 /// one `PackageExports` layer per `library()`/`require()` directive.
-///
-/// Offsets are discarded since all of a predecessor file's layers are
-/// unconditionally visible.
 pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 

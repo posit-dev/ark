@@ -731,7 +731,7 @@ x                                            # file: use 0 -> {def 0} only
     let outer_defs: Vec<_> = index
         .definitions(outer)
         .iter()
-        .filter(|(_, d)| index.symbols(outer).symbol_id(d.symbol()).name() == "x")
+        .filter(|(_, d)| index.symbols(outer).symbol(d.symbol()).name() == "x")
         .collect();
     assert_eq!(outer_defs.len(), 2);
 }

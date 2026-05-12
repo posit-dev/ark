@@ -37,8 +37,10 @@ impl Identifier {
     pub fn classify(root: &RSyntaxNode, index: &SemanticIndex, offset: TextSize) -> Option<Self> {
         let (scope_id, _) = index.scope_at(offset);
 
-        // Definitions with empty ranges (e.g. imports) are naturally excluded
-        // here since they can't contain the offset
+        // `Import` definitions have empty ranges (no physical text position,
+        // since `source()` injects them) so `contains()` skips them. If the
+        // cursor is on the `source` symbol, the offset classifies instead as a
+        // use of `source` via the check below.
         if let Some((def_id, _def)) = index.definitions(scope_id).contains(offset) {
             return Some(Identifier::Definition { scope_id, def_id });
         }
