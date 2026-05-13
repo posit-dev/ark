@@ -5,6 +5,7 @@ use url::Url;
 
 use crate::Db;
 use crate::File;
+use crate::Name;
 
 /// Storage for the source graph. The edges (dependencies between nodes) are
 /// encoded in `Script` and `Package` nodes.
@@ -61,6 +62,7 @@ pub enum PackageOrigin {
     Installed { version: String, libpath: PathBuf },
 }
 
+#[salsa::tracked]
 impl SourceGraph {
     /// Look up a `Script` by URL.
     ///
@@ -78,11 +80,13 @@ impl SourceGraph {
 
     /// Look up a `Package` by name. Workspace packages take precedence over
     /// installed packages of the same name.
-    pub fn package_by_name(self, db: &dyn Db, name: &str) -> Option<Package> {
+    #[salsa::tracked]
+    pub fn package_by_name(self, db: &dyn Db, name: Name<'_>) -> Option<Package> {
+        let text = name.text(db);
         self.workspace_packages(db)
             .iter()
             .chain(self.installed_packages(db).iter())
-            .find(|package| package.name(db) == name)
+            .find(|package| package.name(db) == text)
             .copied()
     }
 }
