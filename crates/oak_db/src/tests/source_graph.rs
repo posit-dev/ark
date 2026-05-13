@@ -3,8 +3,6 @@ use std::path::PathBuf;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::package_by_name;
-use crate::script_by_url;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::TestDb;
 use crate::Db;
@@ -43,7 +41,7 @@ fn package_by_name_finds_workspace_package() {
     let source_graph = db.source_graph();
     source_graph.set_workspace_packages(&mut db).to(vec![pkg]);
 
-    assert_eq!(package_by_name(&db, "rlang"), Some(pkg));
+    assert_eq!(source_graph.package_by_name(&db, "rlang"), Some(pkg));
 }
 
 #[test]
@@ -53,7 +51,7 @@ fn package_by_name_falls_back_to_installed() {
     let source_graph = db.source_graph();
     source_graph.set_installed_packages(&mut db).to(vec![pkg]);
 
-    assert_eq!(package_by_name(&db, "dplyr"), Some(pkg));
+    assert_eq!(source_graph.package_by_name(&db, "dplyr"), Some(pkg));
 }
 
 #[test]
@@ -69,13 +67,16 @@ fn package_by_name_workspace_shadows_installed() {
         .set_installed_packages(&mut db)
         .to(vec![installed_pkg]);
 
-    assert_eq!(package_by_name(&db, "rlang"), Some(workspace_pkg));
+    assert_eq!(
+        source_graph.package_by_name(&db, "rlang"),
+        Some(workspace_pkg),
+    );
 }
 
 #[test]
 fn package_by_name_returns_none_when_absent() {
     let db = TestDb::new();
-    assert_eq!(package_by_name(&db, "ggplot2"), None);
+    assert_eq!(db.source_graph().package_by_name(&db, "ggplot2"), None);
 }
 
 #[test]
@@ -85,13 +86,19 @@ fn script_by_url_finds_registered_script() {
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![script]);
 
-    assert_eq!(script_by_url(&db, &file_url("analysis.R")), Some(script));
+    assert_eq!(
+        source_graph.script_by_url(&db, &file_url("analysis.R")),
+        Some(script),
+    );
 }
 
 #[test]
 fn script_by_url_returns_none_for_unknown_url() {
     let db = TestDb::new();
-    assert_eq!(script_by_url(&db, &file_url("missing.R")), None);
+    assert_eq!(
+        db.source_graph().script_by_url(&db, &file_url("missing.R")),
+        None,
+    );
 }
 
 #[test]

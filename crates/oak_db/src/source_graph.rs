@@ -45,11 +45,11 @@ pub struct Package {
     #[returns(ref)]
     pub name: String,
     #[returns(ref)]
+    pub kind: PackageOrigin,
+    #[returns(ref)]
     pub namespace: Namespace,
     #[returns(ref)]
     pub collation: Vec<File>,
-    #[returns(ref)]
-    pub kind: PackageOrigin,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -58,29 +58,24 @@ pub enum PackageOrigin {
     Installed { version: String, libpath: PathBuf },
 }
 
-/// Look up a `Script` by URL.
-///
-/// Plain function (not `#[salsa::tracked]`) because `Url` isn't indexable
-/// without interning.
-pub fn script_by_url(db: &dyn Db, url: &Url) -> Option<Script> {
-    db.source_graph()
-        .scripts(db)
-        .iter()
-        .find(|script| script.file(db).url(db) == url)
-        .copied()
-}
+impl SourceGraph {
+    /// Look up a `Script` by URL.
+    ///
+    /// Not `#[salsa::tracked]` because `Url` isn't indexable without interning.
+    pub fn script_by_url(self, db: &dyn Db, url: &Url) -> Option<Script> {
+        self.scripts(db)
+            .iter()
+            .find(|script| script.file(db).url(db) == url)
+            .copied()
+    }
 
-/// Look up a `Package` by name. Workspace packages take precedence over
-/// installed packages of the same name.
-pub fn package_by_name(db: &dyn Db, name: &str) -> Option<Package> {
-    let source_graph = db.source_graph();
-    find_named(db, source_graph.workspace_packages(db), name)
-        .or_else(|| find_named(db, source_graph.installed_packages(db), name))
-}
-
-fn find_named(db: &dyn Db, packages: &[Package], name: &str) -> Option<Package> {
-    packages
-        .iter()
-        .find(|package| package.name(db) == name)
-        .copied()
+    /// Look up a `Package` by name. Workspace packages take precedence over
+    /// installed packages of the same name.
+    pub fn package_by_name(self, db: &dyn Db, name: &str) -> Option<Package> {
+        self.workspace_packages(db)
+            .iter()
+            .chain(self.installed_packages(db).iter())
+            .find(|package| package.name(db) == name)
+            .copied()
+    }
 }
