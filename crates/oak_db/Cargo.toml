@@ -19,6 +19,7 @@ aether_syntax.workspace = true
 aether_url.workspace = true
 biome_rowan.workspace = true
 compact_str.workspace = true
+log.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic.workspace = true
 rustc-hash.workspace = true

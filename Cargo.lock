@@ -2557,6 +2557,7 @@ dependencies = [
  "air_r_syntax",
  "biome_rowan",
  "compact_str",
+ "log",
  "oak_package_metadata",
  "oak_semantic",
  "rustc-hash",

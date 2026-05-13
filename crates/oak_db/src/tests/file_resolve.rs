@@ -1,10 +1,15 @@
+use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::intern_file;
 use crate::tests::test_db::file_url;
+use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
+use crate::Db;
 use crate::File;
 use crate::Name;
+use crate::Package;
+use crate::PackageOrigin;
 use crate::Script;
 use crate::SourceNode;
 
@@ -102,4 +107,86 @@ fn resolve_in_cyclic_source_returns_none_without_panicking() {
     // than panicking.
     assert!(a_file.resolve(&db, name(&db, "a_local")).is_none());
     assert!(b_file.resolve(&db, name(&db, "b_local")).is_none());
+}
+
+#[test]
+fn resolve_unbound_name_in_package_does_not_cycle() {
+    // Without exports-only sibling chase, A's `resolve` would walk into
+    // B's `resolve`, which would walk back into A via B's imports
+    // (sibling exclusion is per-file), and salsa would panic on the
+    // unbound name. Test that we return None cleanly.
+    let mut db = TestDb::new();
+    let pkg = Package::new(
+        &db,
+        "pkg".to_string(),
+        PackageOrigin::Workspace {
+            root: workspace_root(&db, "w/pkg"),
+        },
+        Namespace::default(),
+        Vec::new(),
+    );
+    db.source_graph()
+        .set_workspace_packages(&mut db)
+        .to(vec![pkg]);
+
+    let a = intern_file(
+        &mut db,
+        file_url("/w/pkg/R/a.R"),
+        "x <- 1\n".to_string(),
+        Some(SourceNode::Package(pkg)),
+    );
+    let b = intern_file(
+        &mut db,
+        file_url("/w/pkg/R/b.R"),
+        "y <- 2\n".to_string(),
+        Some(SourceNode::Package(pkg)),
+    );
+    pkg.set_collation(&mut db).to(vec![a, b]);
+
+    assert!(a.resolve(&db, name(&db, "nope")).is_none());
+    assert!(b.resolve(&db, name(&db, "nope")).is_none());
+}
+
+#[test]
+fn resolve_walks_package_collation_for_lazy_lookups() {
+    // `resolve` is the lazy / EOF-state lookup. By the time a function
+    // in `b.R` runs, the whole package has been sourced, so `b.R`'s
+    // function bodies see definitions from any collation file. Test
+    // directly on `resolve` (not `resolve_at`) to nail down the
+    // imports walk.
+    let mut db = TestDb::new();
+
+    let pkg = Package::new(
+        &db,
+        "pkg".to_string(),
+        PackageOrigin::Workspace {
+            root: workspace_root(&db, "w/pkg"),
+        },
+        Namespace::default(),
+        Vec::new(),
+    );
+    db.source_graph()
+        .set_workspace_packages(&mut db)
+        .to(vec![pkg]);
+
+    let a = intern_file(
+        &mut db,
+        file_url("/w/pkg/R/a.R"),
+        "shared <- 1\n".to_string(),
+        Some(SourceNode::Package(pkg)),
+    );
+    let b = intern_file(
+        &mut db,
+        file_url("/w/pkg/R/b.R"),
+        "use_shared <- function() shared\n".to_string(),
+        Some(SourceNode::Package(pkg)),
+    );
+    pkg.set_collation(&mut db).to(vec![a, b]);
+
+    // `b` has no top-level `shared`, but `a` (a collation entry in the
+    // same package) does. `b.resolve("shared")` should find it via the
+    // imports walk.
+    let resolution = b.resolve(&db, name(&db, "shared")).expect("should resolve");
+    assert_eq!(resolution.file, a);
+    assert_eq!(resolution.name, "shared");
 }

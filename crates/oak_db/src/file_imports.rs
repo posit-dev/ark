@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
+use biome_rowan::TextSize;
+use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
+use oak_semantic::ScopeId;
 
 use crate::Db;
 use crate::File;
@@ -42,11 +45,21 @@ const DEFAULT_SEARCH_PATH: [&str; 7] = [
 
 #[salsa::tracked]
 impl File {
-    /// The import layers that exist for this file, in priority order.
+    /// The import layers visible to this file at end-of-file, in R's
+    /// lookup (LIFO) priority order. Symbols that don't have local
+    /// bindings (are unbound in the file's semantic index) can be
+    /// resolved against these imports.
+    ///
+    /// **Order is "most recent first".** The last `library()` call
+    /// comes before the first and the latest collation file comes
+    /// before the earliest. This makes the first hit in a forward
+    /// search match R's runtime semantics (last attached / latest
+    /// sourced wins).
     ///
     /// Offset-independent and stable across cursor moves. Recomputed
     /// only when the source graph, NAMESPACE, or this file's semantic
-    /// calls actually change.
+    /// calls actually change. See [`File::imports_at`] for the
+    /// offset-narrowed subset of imports.
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         match self.parent(db) {
@@ -54,31 +67,130 @@ impl File {
             _ => script_layers(self, db),
         }
     }
+
+    /// Import layers visible at an `offset` in a file:
+    ///
+    /// - **Cursor in lazy context**: returns the full lazy view. Lazy
+    ///   contexts like functions are treated as if they run after the
+    ///   file is fully sourced (over-approximation). Any `library()` /
+    ///   collation entry is potentially visible regardless of where it
+    ///   appears relative to the cursor.
+    ///
+    /// - **Top-level cursor (script)**: only `library()` calls that
+    ///   have run by `offset` (file-scope calls before the cursor).
+    ///   LIFO order, latest-attached comes first.
+    ///
+    /// - **Top-level cursor (package)**: only collation predecessors
+    ///   of this file. LIFO order, latest-sourced predecessor comes
+    ///   first. The package imports and base namespace come last.
+    ///
+    /// Plain method rather than `#[salsa::tracked]`. Tracking would
+    /// key the cache on `(self, offset)`, creating one entry per
+    /// cursor position. Skipping the cache is fine because the body
+    /// just reads already-cached subqueries (`imports`,
+    /// `semantic_index`) and applies an O(n) filter.
+    pub fn imports_at(self, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
+        let index = self.semantic_index(db);
+        let file_scope = ScopeId::from(0);
+        let (cursor_scope, _) = index.scope_at(offset);
+
+        // Cursor in lazy context. EOF view, same as `imports()`.
+        if cursor_scope != file_scope {
+            return self.imports(db).clone();
+        }
+
+        // Top-level cursor: sequential narrowing.
+        match self.parent(db) {
+            Some(SourceNode::Package(package)) => narrow_package_top_level(self, db, package),
+            _ => narrow_script_top_level(self, db, offset),
+        }
+    }
+}
+
+fn narrow_script_top_level(file: File, db: &dyn Db, offset: TextSize) -> Vec<ImportLayer> {
+    let index = file.semantic_index(db);
+    let file_scope = ScopeId::from(0);
+
+    // Keep file-scope `library()` calls that have run by `offset`, in
+    // LIFO order (latest-attached first).
+    let mut layers: Vec<_> = index
+        .semantic_calls()
+        .iter()
+        .rev()
+        .filter(|call| call.scope() == file_scope && call.offset() < offset)
+        .filter_map(|call| attach_layer(db, call))
+        .collect();
+
+    extend_with_default_search_path(db, &mut layers);
+    layers
+}
+
+fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
+    let collation = package.collation(db);
+    let Some(file_pos) = collation.iter().position(|f| *f == file) else {
+        // File claims membership but isn't in the collation. Populator
+        // inconsistency. The package's `collation` and the file's
+        // `parent` back-pointer drifted apart. Conservative fallback
+        // with full imports.
+        log::warn!(
+            "File {} has package back-pointer to {} but is not in its collation",
+            file.url(db),
+            package.name(db),
+        );
+        return file.imports(db).clone();
+    };
+
+    let imports = file.imports(db);
+    let Some(start) = imports
+        .iter()
+        .position(|l| matches!(l, ImportLayer::File(_)))
+    else {
+        // No File layers in `imports()` for a file that claims package
+        // membership. Either the collation has only this file (and
+        // self is excluded from imports, so the File block is empty)
+        // or the populator is inconsistent. Conservative fallback:
+        // full imports.
+        return imports.clone();
+    };
+
+    // `imports()` emits the `collation.len() - 1` non-self collation
+    // entries in a contiguous File block, in *reverse* collation
+    // order (latest-sourced first). Successors of this file occupy
+    // the first `(collation.len() - 1 - file_pos)` slots of that
+    // block; predecessors occupy the remainder, in LIFO order. For a
+    // top-level cursor we drop the successor prefix and keep
+    // predecessors + the surrounding namespace / base layers.
+    let drop_count = collation.len() - 1 - file_pos;
+    imports[..start]
+        .iter()
+        .chain(&imports[start + drop_count..])
+        .cloned()
+        .collect()
+}
+
+fn attach_layer(db: &dyn Db, call: &SemanticCall) -> Option<ImportLayer> {
+    let SemanticCallKind::Attach { package: name } = call.kind() else {
+        return None;
+    };
+    package_by_name(db, name).map(ImportLayer::PackageExports)
 }
 
 fn script_layers(file: File, db: &dyn Db) -> Vec<ImportLayer> {
-    let mut layers = Vec::new();
     let index = file.semantic_index(db);
 
-    // `library()` / `require()` calls in source order. We keep all of
-    // them; callers that need offset-based narrowing filter at query
-    // time.
-    for call in index.semantic_calls() {
-        let SemanticCallKind::Attach { package: name } = call.kind() else {
-            continue;
-        };
-        if let Some(package) = package_by_name(db, name) {
-            layers.push(ImportLayer::PackageExports(package));
-        }
-    }
-
-    // Default search path (R always attaches these at startup).
+    // Reverse: R searches LIFO, so latest-attached comes first.
+    let mut layers: Vec<_> = index
+        .semantic_calls()
+        .iter()
+        .rev()
+        .filter_map(|call| attach_layer(db, call))
+        .collect();
     extend_with_default_search_path(db, &mut layers);
 
     layers
 }
 
-fn package_layers(_file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
+fn package_layers(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
     let mut layers = Vec::new();
     let namespace = package.namespace(db);
 
@@ -101,10 +213,14 @@ fn package_layers(_file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer
         }
     }
 
-    // All collation files in declaration order. These can be narrowed
-    // at query time to match a particular R file scope where only its
-    // predecessors in the collation order are visible.
-    for collation_file in package.collation(db) {
+    // Other collation files in *reverse* declaration order (LIFO,
+    // latest-sourced first). Self is excluded: a file's own top-level
+    // bindings come from `exports`, and including self here would
+    // create a cycle in `resolve` for unbound names.
+    for collation_file in package.collation(db).iter().rev() {
+        if *collation_file == file {
+            continue;
+        }
         layers.push(ImportLayer::File(*collation_file));
     }
 

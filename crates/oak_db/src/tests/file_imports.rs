@@ -87,7 +87,7 @@ fn script_with_no_attaches_returns_only_default_search_path() {
 }
 
 #[test]
-fn script_attach_produces_package_exports_layer_in_source_order() {
+fn script_attach_produces_package_exports_layer_in_lifo_order() {
     let mut db = TestDb::new();
     let dplyr = installed_package(&db, "dplyr");
     let ggplot2 = installed_package(&db, "ggplot2");
@@ -104,9 +104,9 @@ fn script_attach_produces_package_exports_layer_in_source_order() {
         })
         .collect();
 
-    // dplyr and ggplot2 appear first (in source order), then the
-    // default search path (empty in this setup, no base etc).
-    assert_eq!(attached, vec![dplyr, ggplot2]);
+    // LIFO: latest `library()` call comes first (matching R's runtime
+    // search order). Then the default search path (empty in this setup).
+    assert_eq!(attached, vec![ggplot2, dplyr]);
 }
 
 #[test]
@@ -169,8 +169,10 @@ fn package_file_emits_namespace_and_collation_layers() {
     assert_eq!(shape, vec![
         "PackageImports([(\"abort\", \"rlang\")])".to_string(),
         "PackageExports(rlang)".to_string(),
+        // Other collation files in reverse declaration order (LIFO).
+        // Self (b.R) is excluded. A file's own top-level bindings live
+        // in `exports`, not `imports`.
         "File(_a.R)".to_string(),
-        "File(b.R)".to_string(),
         "PackageExports(base)".to_string(),
     ]);
 }
