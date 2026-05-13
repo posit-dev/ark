@@ -836,22 +836,28 @@ impl<'a> SemanticIndexBuilder<'a> {
         };
 
         let call_offset = call.syntax().text_trimmed_range().start();
+        let resolution = self.resolve_source(&path);
 
-        // Always record the source() call site. Downstream consumers
-        // (oak_db's `exports` query) translate the path to a `Script`
-        // and inject the target's exports into this file's exports.
+        // Record every `source()` call site, independent of whether the resolver
+        // below resolves it. `resolved` pins the canonical URL when resolution
+        // succeeded so reflective queries (diagnostics for unresolved `source()`,
+        // file-dependency views) read the outcome without re-resolving.
         self.semantic_calls.push(SemanticCall {
-            kind: SemanticCallKind::Source { path: path.clone() },
+            kind: SemanticCallKind::Source {
+                path: path.clone(),
+                resolved: resolution.as_ref().map(|r| r.file.clone()),
+            },
             offset: call_offset,
             scope: self.current_scope,
         });
 
-        // Legacy `_with_source_resolver` path: when a resolver is
-        // present and resolves, eagerly synthesise `Import` definitions
-        // and transitive `Attach` semantic calls for the resolved
-        // names/packages. Retires once the new pipeline takes over
-        // (PR 3/4).
-        let Some(resolution) = self.resolve_source(&path) else {
+        // Eagerly inject `Import` definitions and transitive `Attach` calls
+        // via the caller-provided resolver callback.
+        //
+        // TODO(salsa): the resolver callback generalises to a
+        // `CrossFileResolver` trait. oak_db will provide a salsa-backed
+        // implementation. The injection logic stays here.
+        let Some(resolution) = resolution else {
             return;
         };
 
