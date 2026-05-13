@@ -149,6 +149,8 @@ as_named_resource <- function(x) {
 # Read a file and return a `data:<mime>;base64,...` URI. Used for inlining
 # JS/CSS dependencies. The mime types we pass in are static; charset for CSS
 # is set explicitly so non-ASCII glyphs in fonts.css etc. render correctly.
+# (base64enc is a hard dependency of htmltools, so it's guaranteed to be
+# available wherever this code path runs.)
 file_to_data_uri <- function(path, mime) {
     bytes <- readBin(path, what = "raw", n = file.info(path)$size)
     encoded <- base64enc::base64encode(bytes)

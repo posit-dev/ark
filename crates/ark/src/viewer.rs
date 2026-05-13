@@ -1,7 +1,7 @@
 //
 // viewer.rs
 //
-// Copyright (C) 2023-2024 Posit Software, PBC. All rights reserved.
+// Copyright (C) 2023-2026 Posit Software, PBC. All rights reserved.
 //
 //
 
@@ -31,7 +31,7 @@ fn emit_html_output_jupyter(
 ) -> Result<()> {
     let output = serde_json::json!({
         "text/html": contents,
-        "text/plain": format!("<{kind} HTML Widget>"),
+        "text/plain": format!("<{kind}>"),
     });
 
     let message = IOPubMessage::DisplayData(DisplayData {
