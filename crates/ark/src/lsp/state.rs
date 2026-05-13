@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
+use oak_db::semantic_index_with_source_resolver;
 use oak_db::LegacyDb;
 use oak_db::SourceGraph;
 use oak_ide::ExternalScope;
@@ -16,7 +17,6 @@ use oak_semantic::scope_layer::default_search_path;
 use oak_semantic::scope_layer::file_layers;
 use oak_semantic::scope_layer::package_root_layers;
 use oak_semantic::semantic_index::SemanticIndex;
-use oak_semantic::semantic_index_with_source_resolver;
 use oak_semantic::SourceResolution;
 use stdext::result::ResultExt;
 use url::Url;

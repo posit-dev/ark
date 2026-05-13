@@ -7,6 +7,7 @@ use oak_semantic::use_def_map::UseDefMap;
 use url::Url;
 
 use crate::parse::OakParse;
+use crate::resolver::DbResolver;
 use crate::Db;
 
 /// A source file tracked by Salsa.
@@ -45,22 +46,25 @@ impl File {
 
     /// Build this file's `SemanticIndex` from the parse tree.
     ///
-    /// Private to this file to prevent coarse Salsa queries. Consumers should
-    /// go through the narrow tracked queries below.
+    /// `pub(crate)` so [`DbResolver`] and tests can reach it. External
+    /// consumers should go through the narrow tracked queries below.
+    ///
+    /// TODO(salsa): tighten back to private once narrow cross-file
+    /// queries land (`file_exports`, `file_attached_packages`) and
+    /// `DbResolver::resolve_source` reads those instead of the full
+    /// index. The privacy reverts to file-local + `cfg(test)` for
+    /// tests at that point.
+    ///
+    /// Cross-file symbol resolution (`source()` injection, NSE resolution)
+    /// is driven by [`DbResolver`]. `cycle_result` recovers from cyclic
+    /// `source()` chains by returning an empty index for whichever side
+    /// salsa picks to break the cycle. R doesn't allow `A` sources `B`
+    /// sources `A`, so precision loss is acceptable.
     ///
     /// `no_eq` skips salsa's `values_equal` check after recomputation.
     /// Backdating at this level never triggered in practice anyway: `AstPtr`
     /// ranges inside `Definition`s typically shift on edits.
-    #[cfg(not(test))]
-    #[salsa::tracked(returns(ref), no_eq)]
-    fn semantic_index(self, db: &dyn Db) -> SemanticIndex {
-        build_semantic_index(self, db)
-    }
-
-    /// Tests use the `pub(crate)` variant gated behind `cfg(test)` so they can
-    /// call into `semantic_index` directly to verify salsa caching behaviour.
-    #[cfg(test)]
-    #[salsa::tracked(returns(ref), no_eq)]
+    #[salsa::tracked(returns(ref), no_eq, cycle_result = semantic_index_cycle_result)]
     pub(crate) fn semantic_index(self, db: &dyn Db) -> SemanticIndex {
         build_semantic_index(self, db)
     }
@@ -80,5 +84,10 @@ impl File {
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
-    oak_semantic::semantic_index(&parsed.tree(), file.url(db))
+    let mut resolver = DbResolver::new(db, file);
+    oak_semantic::build_index(&parsed.tree(), file.url(db), &mut resolver)
+}
+
+fn semantic_index_cycle_result(_db: &dyn Db, _id: salsa::Id, _file: File) -> SemanticIndex {
+    SemanticIndex::empty()
 }

@@ -28,6 +28,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use url::Url;
 
+use crate::resolver::ImportsResolver;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
@@ -45,49 +46,16 @@ use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
 use crate::use_def_map::UseDefMapBuilder;
 
-// TODO(salsa): Remove `semantic_index()` and variant, these are too coarse queries.
-
-/// Build a [`SemanticIndex`] from a parsed R file.
-pub fn semantic_index(root: &RRoot, file: &Url) -> SemanticIndex {
+/// Build a [`SemanticIndex`] from a parsed R file with cross-file
+/// information supplied by `resolver`. See [`ImportsResolver`] for the
+/// available impls.
+pub fn build_index(root: &RRoot, file: &Url, resolver: &mut dyn ImportsResolver) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range, file.clone(), None);
+    let mut builder = SemanticIndexBuilder::new(range, file.clone(), resolver);
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
     builder.finish()
 }
-
-/// Build a [`SemanticIndex`] with cross-file `source()` resolution.
-///
-/// The resolver callback is called when the builder encounters a
-/// `source("path")` call. It should return the sourced file's exported
-/// names and any `library()` package attachments.
-pub fn semantic_index_with_source_resolver<'a>(
-    root: &RRoot,
-    file: &Url,
-    resolver: impl FnMut(&str) -> Option<SourceResolution> + 'a,
-) -> SemanticIndex {
-    let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range, file.clone(), Some(Box::new(resolver)));
-    builder.pre_scan_scope(root.syntax());
-    builder.collect_expression_list(&root.expressions());
-    builder.finish()
-}
-
-/// The result of resolving a `source()` call. Returned by the resolver
-/// callback passed to the builder.
-pub struct SourceResolution {
-    /// The resolved URL of the sourced file.
-    pub file: Url,
-
-    /// Names of top-level definitions in the sourced file.
-    pub names: Vec<String>,
-
-    /// Package names from `library()` directives in the sourced file
-    /// (and transitively from files it sources).
-    pub packages: Vec<String>,
-}
-
-type SourceResolver<'a> = Box<dyn FnMut(&str) -> Option<SourceResolution> + 'a>;
 
 // Maintains the preorder allocation invariant on `Scope::descendants`. The
 // parallel arrays are pushed in lockstep so they stay indexed by the same
@@ -103,11 +71,11 @@ struct SemanticIndexBuilder<'a> {
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     file: Url,
-    source_resolver: Option<SourceResolver<'a>>,
+    resolver: &'a mut dyn ImportsResolver,
 }
 
 impl<'a> SemanticIndexBuilder<'a> {
-    fn new(range: TextRange, file: Url, source_resolver: Option<SourceResolver<'a>>) -> Self {
+    fn new(range: TextRange, file: Url, resolver: &'a mut dyn ImportsResolver) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
@@ -145,7 +113,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             enclosing_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
             file,
-            source_resolver,
+            resolver,
         }
     }
 
@@ -836,7 +804,7 @@ impl<'a> SemanticIndexBuilder<'a> {
         };
 
         let call_offset = call.syntax().text_trimmed_range().start();
-        let resolution = self.resolve_source(&path);
+        let resolution = self.resolver.resolve_source(&path);
 
         // Record every `source()` call site, independent of whether the
         // resolution was successful. `resolved` pins the canonical URL when
@@ -852,12 +820,6 @@ impl<'a> SemanticIndexBuilder<'a> {
             scope: self.current_scope,
         });
 
-        // Eagerly inject `Import` definitions and transitive `Attach` calls
-        // via the caller-provided resolver callback.
-        //
-        // TODO(salsa): the resolver callback generalises to a
-        // `CrossFileResolver` trait. oak_db will provide a salsa-backed
-        // implementation. The injection logic stays here.
         let Some(resolution) = resolution else {
             return;
         };
@@ -882,6 +844,11 @@ impl<'a> SemanticIndexBuilder<'a> {
             );
         }
 
+        // `library()` calls inside the sourced file attach packages to R's
+        // global search path at runtime, the same as a `library()` written
+        // here directly would. Emit them as `Attach` semantic calls scoped
+        // to this `source()`'s offset so scope-layer composition treats
+        // them identically to local `library()` calls.
         for pkg in resolution.packages {
             self.semantic_calls.push(SemanticCall {
                 kind: SemanticCallKind::Attach { package: pkg },
@@ -889,11 +856,6 @@ impl<'a> SemanticIndexBuilder<'a> {
                 scope: self.current_scope,
             });
         }
-    }
-
-    fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
-        let source_resolver = self.source_resolver.as_mut()?;
-        source_resolver(path)
     }
 
     fn finish(mut self) -> SemanticIndex {

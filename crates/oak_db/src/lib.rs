@@ -3,6 +3,7 @@ mod file;
 mod legacy;
 mod name;
 mod parse;
+mod resolver;
 mod source_graph;
 
 #[cfg(test)]
@@ -10,6 +11,7 @@ mod tests;
 
 pub use db::Db;
 pub use file::File;
+pub use legacy::semantic_index_with_source_resolver;
 pub use legacy::LegacyDb;
 pub use name::Name;
 pub use source_graph::Package;

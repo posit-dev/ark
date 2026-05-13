@@ -211,6 +211,20 @@ pub struct UseDefMap {
 }
 
 impl UseDefMap {
+    /// An empty use-def map, suitable for a scope with no uses and no
+    /// nested-scope snapshots. Used to construct an empty index on
+    /// `source()` cycle recovery.
+    ///
+    /// TODO(salsa): delete with `SemanticIndex::empty` once cycle
+    /// handling moves from `File::semantic_index` to `File::exports`.
+    /// Sole caller today is `SemanticIndex::empty`.
+    pub fn empty() -> Self {
+        Self {
+            bindings_by_use: IndexVec::new(),
+            enclosing_snapshots: IndexVec::new(),
+        }
+    }
+
     pub fn bindings_at_use(&self, use_id: UseId) -> &Bindings {
         &self.bindings_by_use[use_id]
     }
