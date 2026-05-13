@@ -1,3 +1,4 @@
+use crate::Files;
 use crate::SourceGraph;
 use crate::WorkspaceRoots;
 
@@ -19,4 +20,7 @@ pub trait Db: salsa::Database {
     fn workspace_roots(&self) -> WorkspaceRoots {
         WorkspaceRoots::get(self)
     }
+
+    /// URL-keyed `File` interner.
+    fn files(&self) -> &Files;
 }

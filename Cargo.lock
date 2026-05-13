@@ -2559,6 +2559,7 @@ dependencies = [
  "compact_str",
  "oak_package_metadata",
  "oak_semantic",
+ "rustc-hash",
  "salsa",
  "url",
 ]

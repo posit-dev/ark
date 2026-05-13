@@ -10,7 +10,9 @@ use crate::parse::OakParse;
 use crate::resolver::DbResolver;
 use crate::root::url_to_root;
 use crate::Db;
+use crate::PackageOrigin;
 use crate::Root;
+use crate::SourceNode;
 
 /// A source file tracked by Salsa.
 ///
@@ -20,12 +22,17 @@ use crate::Root;
 ///
 /// The `url` field is a [`UrlId`], so the type system enforces "everything
 /// inside Salsa is a canonical URL".
+///
+/// `parent` is a back-pointer to the file's owner. Inverse of
+/// `SourceGraph.scripts` and `Package.collation`, so queries answering
+/// "what owns this file?" don't walk the forward edges. `None` for orphan.
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
+    pub parent: Option<SourceNode>,
 }
 
 #[salsa::tracked]
@@ -88,18 +95,23 @@ impl File {
 
     /// The workspace root containing this file.
     ///
-    /// Returns the longest-prefix workspace root whose path is an ancestor of
-    /// `self.url`. Files outside any workspace folder return `None`.
+    /// Workspace-package files return their package's
+    /// `PackageOrigin::Workspace { root }`. Installed-package files
+    /// return `None`. Other files look up the file's URL against
+    /// `WorkspaceRoots`, returning the longest-prefix ancestor or
+    /// `None` when the URL is outside every workspace folder.
     ///
-    /// Used by `source()` resolution to anchor relative paths against the
-    /// project root, matching R's runtime semantics (paths resolve against
-    /// `getwd()`, typically the project root in an IDE).
-    ///
-    /// TODO(salsa): once `File.parent` lands, package files return their
-    /// `PackageOrigin::Workspace { root }` directly; installed-package files
-    /// return `None`. Until then, this is the script-only path.
+    /// Used by `source()` resolution to anchor relative paths against
+    /// the project root, matching R's runtime semantics (paths resolve
+    /// against `getwd()`, typically the project root in an IDE).
     #[salsa::tracked]
     pub fn workspace_root(self, db: &dyn Db) -> Option<Root> {
+        if let Some(SourceNode::Package(pkg)) = self.parent(db) {
+            return match pkg.kind(db) {
+                PackageOrigin::Workspace { root } => Some(*root),
+                PackageOrigin::Installed { .. } => None,
+            };
+        }
         url_to_root(db, self.url(db))
     }
 }

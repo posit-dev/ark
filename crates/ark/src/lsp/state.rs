@@ -27,6 +27,7 @@ use crate::lsp::inputs::source_root::SourceRoot;
 #[derive(Clone, Default)]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
+    files: oak_db::Files,
 }
 
 impl OakDatabase {
@@ -42,7 +43,11 @@ impl OakDatabase {
 impl salsa::Database for OakDatabase {}
 
 #[salsa::db]
-impl oak_db::Db for OakDatabase {}
+impl oak_db::Db for OakDatabase {
+    fn files(&self) -> &oak_db::Files {
+        &self.files
+    }
+}
 
 impl LegacyDb for WorldState {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {

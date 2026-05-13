@@ -2,22 +2,25 @@ use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
 use salsa::Setter;
 
+use crate::intern_file;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::TestDb;
 use crate::Db;
-use crate::File;
 use crate::Script;
+use crate::SourceNode;
 
-fn make_script(db: &TestDb, name: &str, contents: &str) -> Script {
-    let file = File::new(db, file_url(name), contents.to_string());
-    Script::new(db, file)
+fn make_script(db: &mut TestDb, name: &str, contents: &str) -> Script {
+    let file = intern_file(db, file_url(name), contents.to_string(), None);
+    let script = Script::new(db, file);
+    file.set_parent(db).to(Some(SourceNode::Script(script)));
+    script
 }
 
 #[test]
 fn cross_file_source_injection() {
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
-    let b = make_script(&db, "b.R", "x <- 1\n");
+    let a = make_script(&mut db, "a.R", "source(\"b.R\")\n");
+    let b = make_script(&mut db, "b.R", "x <- 1\n");
 
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![a, b]);
@@ -46,8 +49,8 @@ fn cross_file_source_injection() {
 #[test]
 fn editing_sourced_file_invalidates_caller_index() {
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
-    let b = make_script(&db, "b.R", "x <- 1\n");
+    let a = make_script(&mut db, "a.R", "source(\"b.R\")\n");
+    let b = make_script(&mut db, "b.R", "x <- 1\n");
 
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![a, b]);
@@ -75,8 +78,8 @@ fn source_cycle_terminates_with_empty_index() {
     // resolving one side to an empty index (the file scope only, no
     // definitions, no semantic calls).
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
-    let b = make_script(&db, "b.R", "source(\"a.R\")\nx_b <- 2\n");
+    let a = make_script(&mut db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
+    let b = make_script(&mut db, "b.R", "source(\"a.R\")\nx_b <- 2\n");
 
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![a, b]);
@@ -102,11 +105,11 @@ fn closure_capture_with_source_before_function() {
     // machinery, no pre-scan needed.
     let mut db = TestDb::new();
     let script = make_script(
-        &db,
+        &mut db,
         "script.R",
         "source(\"helpers.R\")\nf <- function() helper\n",
     );
-    let helpers = make_script(&db, "helpers.R", "helper <- 1\n");
+    let helpers = make_script(&mut db, "helpers.R", "helper <- 1\n");
 
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![script, helpers]);
@@ -150,11 +153,11 @@ fn closure_capture_with_source_after_function() {
     // yet, and the snapshot doesn't register.
     let mut db = TestDb::new();
     let script = make_script(
-        &db,
+        &mut db,
         "script.R",
         "f <- function() helper\nsource(\"helpers.R\")\n",
     );
-    let helpers = make_script(&db, "helpers.R", "helper <- 1\n");
+    let helpers = make_script(&mut db, "helpers.R", "helper <- 1\n");
 
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![script, helpers]);

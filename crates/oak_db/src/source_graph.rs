@@ -1,6 +1,7 @@
 use aether_url::UrlId;
 use oak_package_metadata::namespace::Namespace;
 
+use crate::root::url_to_root;
 use crate::Db;
 use crate::File;
 use crate::Name;
@@ -85,16 +86,31 @@ impl SourceGraph {
 impl SourceGraph {
     /// Look up a `Script` by URL.
     ///
-    /// Not `#[salsa::tracked]` because `UrlId` isn't indexable without interning.
-    ///
-    /// TODO(salsa): once `Files` and `File.parent: Option<SourceNode>` land,
-    /// the body collapses to O(1) via `db.files().get(url)` plus a match on
-    /// `file.parent(db)`. The walk over `self.scripts(db)` goes away.
-    pub fn script_by_url(self, db: &dyn Db, url: &UrlId) -> Option<Script> {
-        self.scripts(db)
-            .iter()
-            .find(|script| script.file(db).url(db) == url)
-            .copied()
+    /// O(1) via [`Files`](crate::Files). Reads `root.revision(db)` for the
+    /// URL's containing workspace root, or `WorkspaceRoots.roots` for orphan
+    /// URLs, so callers in tracked queries get a salsa dependency that
+    /// invalidates when files are added or removed.
+    pub(crate) fn script_by_url(self, db: &dyn Db, url: &UrlId) -> Option<Script> {
+        // Anchor on a salsa input that bumps when files are added to
+        // or removed from this root. Without it, the only dependency is
+        // on `file.parent`, which doesn't fire on `Files::intern` /
+        // `Files::remove`. A cached `None` would survive a new file
+        // being interned, and a cached `Some(s)` would survive the
+        // file being removed.
+        match url_to_root(db, url) {
+            Some(root) => {
+                let _ = root.revision(db);
+            },
+            None => {
+                let _ = db.workspace_roots().roots(db);
+            },
+        }
+
+        let file = db.files().get(url)?;
+        match file.parent(db)? {
+            SourceNode::Script(s) => Some(s),
+            SourceNode::Package(_) => None,
+        }
     }
 
     /// Look up a `Package` by name. Workspace packages take precedence over

@@ -5,6 +5,7 @@ use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
+use crate::Files;
 use crate::Root;
 use crate::RootKind;
 use crate::SourceGraph;
@@ -17,6 +18,7 @@ pub(super) type Events = Arc<Mutex<Vec<salsa::Event>>>;
 pub(super) struct TestDb {
     storage: salsa::Storage<Self>,
     events: Events,
+    files: Files,
 }
 
 impl TestDb {
@@ -28,7 +30,11 @@ impl TestDb {
                 events.lock().unwrap().push(event);
             }
         })));
-        let db = Self { storage, events };
+        let db = Self {
+            storage,
+            events,
+            files: Files::default(),
+        };
         SourceGraph::empty(&db);
         WorkspaceRoots::new(&db, vec![]);
         db
@@ -59,7 +65,11 @@ impl TestDb {
 impl salsa::Database for TestDb {}
 
 #[salsa::db]
-impl Db for TestDb {}
+impl Db for TestDb {
+    fn files(&self) -> &Files {
+        &self.files
+    }
+}
 
 pub(super) fn file_url(name: &str) -> UrlId {
     UrlId::from_canonical(Url::parse(&format!("file:///{name}")).unwrap())

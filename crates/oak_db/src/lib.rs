@@ -1,5 +1,6 @@
 mod db;
 mod file;
+mod files;
 mod legacy;
 mod name;
 mod parse;
@@ -12,6 +13,8 @@ mod tests;
 
 pub use db::Db;
 pub use file::File;
+pub use files::intern_file;
+pub use files::Files;
 pub use legacy::semantic_index_with_source_resolver;
 pub use legacy::LegacyDb;
 pub use name::Name;

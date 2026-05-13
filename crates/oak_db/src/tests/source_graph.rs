@@ -5,7 +5,6 @@ use crate::tests::test_db::file_url;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
-use crate::File;
 use crate::Name;
 use crate::Package;
 use crate::PackageOrigin;
@@ -33,9 +32,12 @@ fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
     Package::new(db, name.to_string(), kind, Namespace::default(), Vec::new())
 }
 
-fn make_script(db: &TestDb, name: &str) -> Script {
-    let file = File::new(db, file_url(name), String::new());
-    Script::new(db, file)
+fn make_script(db: &mut TestDb, name: &str) -> Script {
+    use salsa::Setter;
+    let file = crate::intern_file(db, file_url(name), String::new(), None);
+    let script = Script::new(db, file);
+    file.set_parent(db).to(Some(SourceNode::Script(script)));
+    script
 }
 
 #[test]
@@ -95,7 +97,7 @@ fn package_by_name_returns_none_when_absent() {
 #[test]
 fn script_by_url_finds_registered_script() {
     let mut db = TestDb::new();
-    let script = make_script(&db, "analysis.R");
+    let script = make_script(&mut db, "analysis.R");
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![script]);
 
@@ -133,7 +135,7 @@ fn source_node_round_trips_through_a_tracked_query() {
     let mut db = TestDb::new();
     assert_eq!(first_node(&db), None);
 
-    let script = make_script(&db, "a.R");
+    let script = make_script(&mut db, "a.R");
     let source_graph = db.source_graph();
     source_graph.set_scripts(&mut db).to(vec![script]);
     assert_eq!(first_node(&db), Some(SourceNode::Script(script)));
