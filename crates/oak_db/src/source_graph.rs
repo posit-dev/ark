@@ -48,6 +48,9 @@ pub struct Package {
     pub kind: PackageOrigin,
     #[returns(ref)]
     pub namespace: Namespace,
+    // TODO(salsa): adding any `R/` file mutates this Vec and invalidates
+    // every tracked query that read it. Future fix derives `Vec<File>`
+    // from a basename spec via `Root.revision` and a `Files` registry.
     #[returns(ref)]
     pub collation: Vec<File>,
 }
@@ -62,6 +65,10 @@ impl SourceGraph {
     /// Look up a `Script` by URL.
     ///
     /// Not `#[salsa::tracked]` because `Url` isn't indexable without interning.
+    ///
+    /// TODO(salsa): once `Files` and `File.parent: Option<SourceNode>` land,
+    /// the body collapses to O(1) via `db.files().get(url)` plus a match on
+    /// `file.parent(db)`. The walk over `self.scripts(db)` goes away.
     pub fn script_by_url(self, db: &dyn Db, url: &Url) -> Option<Script> {
         self.scripts(db)
             .iter()
