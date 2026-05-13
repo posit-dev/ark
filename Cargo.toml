@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-rust-version = "1.95"
+rust-version = "1.94"
 edition = "2021"
 license = "MIT"
 authors = ["Posit Software, PBC"]

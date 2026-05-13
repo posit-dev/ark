@@ -27,6 +27,13 @@ jobs:
           - { rust: 'stable',  r: '4.3' }
           - { rust: 'stable',  r: '4.2' }
 
+          # Builds with `workspace.package.rust-version` (the MSRV) to make sure
+          # the project is compatible with the declared minimal Rust version.
+          # The stable rows use `rust-toolchain.toml`'s dev toolchain, which can
+          # drift ahead, so they wouldn't flag incorrect use of newer features
+          # past the MSRV.
+          - { rust: 'msrv', r: 'release' }
+
           # Early warning signal for upstream changes,
           # both in Rust and R-devel
           - { rust: 'nightly',  r: 'devel' }
@@ -43,6 +50,14 @@ jobs:
       - name: Install Nightly Rust
         uses: dtolnay/rust-toolchain@nightly
         if: matrix.config.rust == 'nightly'
+
+      - name: Install MSRV Rust
+        if: matrix.config.rust == 'msrv'
+        run: |
+          msrv=$(python3 ./scripts/print-rust-version.py)
+          echo "Using MSRV toolchain: $msrv"
+          rustup toolchain install "$msrv" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$msrv" >> "$GITHUB_ENV"
 
       - name: Report Rust Toolchain
         run: rustup show
