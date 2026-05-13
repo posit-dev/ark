@@ -24,7 +24,13 @@ impl File {
     /// Crate-internal: kept `pub(crate)` so downstream crates can't take a
     /// dependency on a full parse tree. They reach the tree only through
     /// narrower public queries.
-    #[salsa::tracked(returns(ref))]
+    ///
+    /// `lru = 128` caps the number of live parse trees to 128. Matches
+    /// rust-analyzer's default for its analogous `parse(file_id)` query.
+    /// Rowan's green tree shares structure across edits, so eviction frees
+    /// memory cleanly. Derived queries (e.g. `semantic_index`) store
+    /// `AstPtr`s rather than tree nodes, so they don't pin an evicted tree.
+    #[salsa::tracked(returns(ref), lru = 128)]
     pub(crate) fn parse(self, db: &dyn Db) -> OakParse {
         OakParse::new(aether_parser::parse(
             self.contents(db),
