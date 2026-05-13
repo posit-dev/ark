@@ -372,22 +372,9 @@ fn test_plot_get_metadata() {
     // [1] "plot(1:10)"
 
     // Verify execution_id matches the msg_id of the execute_request
-    assert!(
-        result.contains(&msg_id),
-        "Metadata should contain execution_id '{msg_id}', got:\n{result}"
-    );
-
-    // Verify code matches
-    assert!(
-        result.contains(code),
-        "Metadata should contain code '{code}', got:\n{result}"
-    );
-
-    // Verify kind is "plot" for base R plots
-    assert!(
-        result.contains("$kind") && result.contains("\"plot\""),
-        "Metadata should contain kind 'plot', got:\n{result}"
-    );
+    assert!(result.contains(&format!("$execution_id\n[1] \"{msg_id}\"")));
+    assert!(result.contains(&format!("$code\n[1] \"{code}\"")));
+    assert!(result.contains("$kind\n[1] \"plot\""));
 }
 
 /// Test that plot metadata includes origin when code_location is provided.
@@ -443,10 +430,7 @@ fn test_plot_get_metadata_with_origin() {
     frontend.recv_shell_execute_reply();
 
     // Verify origin_uri is present in the metadata
-    assert!(
-        result.contains(origin_uri),
-        "Metadata should contain origin_uri '{origin_uri}', got:\n{result}"
-    );
+    assert!(result.contains(&format!("$origin_uri\n[1] \"{origin_uri}\"")));
 }
 
 /// Test that plots are emitted when created inside source().
@@ -585,16 +569,8 @@ fn test_plot_source_context_stacking() {
     frontend.recv_shell_execute_reply();
 
     // The origin_uri should point to file B, not file A
-    assert!(
-        result_b.contains(&file_b.uri_id),
-        "Plot from file B should have origin_uri pointing to file B '{}', got:\n{result_b}",
-        file_b.uri_id,
-    );
-    assert!(
-        !result_b.contains(&file_a.uri_id),
-        "Plot from file B should NOT have origin_uri pointing to file A '{}', got:\n{result_b}",
-        file_a.uri_id,
-    );
+    assert!(result_b.contains(&format!("$origin_uri\n[1] \"{}\"", file_b.uri_id)));
+    assert!(!result_b.contains(&file_a.uri_id));
 
     // Query metadata for the second plot (created by file A)
     let query_a = format!(".ps.graphics.get_metadata('{display_id_a}')");
@@ -606,11 +582,7 @@ fn test_plot_source_context_stacking() {
     frontend.recv_shell_execute_reply();
 
     // The origin_uri should point to file A
-    assert!(
-        result_a.contains(&file_a.uri_id),
-        "Plot from file A should have origin_uri pointing to file A '{}', got:\n{result_a}",
-        file_a.uri_id,
-    );
+    assert!(result_a.contains(&format!("$origin_uri\n[1] \"{}\"", file_a.uri_id)));
 }
 
 /// Test that plots rendered with fig-width/fig-height metadata produce
@@ -698,6 +670,86 @@ fn test_plot_default_size_without_metadata() {
 
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
+}
+
+/// Test that a plot created during a `frontend_ready` comm handler works.
+///
+/// Previously this deadlocked because Shell blocked on the comm_msg while
+/// the R thread blocked on the barrier in `CommEvent::Opened`. Now Shell
+/// drains comm events while waiting for the handler to complete.
+///
+/// The UI comm remains visible during its own dispatch (via nested
+/// `RefCell` on the handler), so the plot goes through the Positron
+/// `comm_open` path as usual.
+#[test]
+fn test_plot_during_frontend_ready() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    // Register a session_init hook that creates a plot.
+    frontend.send_execute_request(
+        "setHook('positron.session_init', function(start_type) plot(1:10))",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Trigger the hook via frontend_ready (an event, not an RPC — no `id` field).
+    let data = serde_json::json!({
+        "method": "frontend_ready",
+        "params": { "start_type": "new" },
+    });
+    frontend.send_shell_comm_msg(String::from(&comm_id), data);
+    frontend.recv_iopub_busy();
+
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    frontend.recv_iopub_idle();
+}
+
+/// Test that a plot created without an active execution context (e.g. from
+/// a task callback that fires between execute requests) has empty metadata.
+///
+/// This exercises the `capture_execution_context` fallback path where no
+/// context was pushed via `graphics_on_execute_request`.
+#[test]
+fn test_plot_without_execution_context_has_empty_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Spawn an idle task that creates a plot. Idle tasks run during the
+    // event loop between execute requests, so no execution context is
+    // active when the plot is produced.
+    frontend.send_execute_request(
+        r#"invisible(.Call("ps_test_spawn_eval_idle_task", "plot(1:10)"))"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // After the request completes, R re-enters the idle loop. The test
+    // thread is blocked here (not sending new requests), so `select`
+    // picks up the idle task and the display_data arrives promptly.
+    let display_id = frontend.recv_iopub_display_data_id();
+
+    // Query metadata using the display_id from the plot
+    let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query_code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // execution_id and code should be empty since the plot was created
+    // outside of any execute request
+    assert!(result.contains("$execution_id\n[1] \"\""));
+    assert!(result.contains("$code\n[1] \"\""));
 }
 
 /// Test that `dev.hold()` suppresses intermediate plot output.

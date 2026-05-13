@@ -281,6 +281,7 @@ fn test_amalthea_comm_open_from_kernel() {
         .send(CommEvent::Opened(
             test_comm.clone(),
             serde_json::Value::Null,
+            None,
         ))
         .unwrap();
 

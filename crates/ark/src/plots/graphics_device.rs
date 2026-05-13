@@ -13,6 +13,7 @@ use std::fmt::Display;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::Read;
+use std::rc::Rc;
 
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::plot_comm::IntrinsicSize;
@@ -82,10 +83,11 @@ struct WrappedDeviceCallbacks {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct PlotId(String);
+pub(crate) struct PlotId(String);
 
 /// Execution context captured when an execute request starts.
 /// Stored on the graphics device so it can be associated with plots created during execution.
+#[derive(Clone, Default)]
 struct ExecutionContext {
     execution_id: String,
     code: String,
@@ -111,6 +113,11 @@ struct PlotContext {
 /// R's callback registration layer. A future refactor could wrap the C-to-Rust
 /// bridge so that the Rust-facing hook methods receive `&mut self` explicitly,
 /// containing the `Console::get()` unsoundness in one place.
+///
+/// NOTE: Never hold a `RefCell` borrow while calling into R (`RObject::from`,
+/// `RFunction::call`, `libr::Rf_*`, etc.). Any R call can in principle re-enter
+/// Rust (e.g. via finalizers during GC), so keeping borrows short avoids
+/// `RefCell` panics.
 pub(crate) struct DeviceContext {
     /// Channel for sending [IOPubMessage::DisplayData] and
     /// [IOPubMessage::UpdateDisplayData] to Jupyter frontends when plot events occur
@@ -170,9 +177,9 @@ pub(crate) struct DeviceContext {
     /// The settings used for pre-renderings of new plots.
     prerender_settings: Cell<PlotRenderSettings>,
 
-    /// The current execution context from the active request.
-    /// Pushed here when an execute request starts via `on_execute_request()`,
-    /// cleared when the request completes.
+    /// The current execution context from the active request. Pushed here when
+    /// an execute request starts via `graphics_on_execute_request()`, cleared
+    /// when the request completes.
     execution_context: RefCell<Option<ExecutionContext>>,
 
     /// Stack of source file URIs, pushed/popped by the `source()` hook.
@@ -185,6 +192,12 @@ pub(crate) struct DeviceContext {
     /// stack may be popped before `process_changes()` runs (e.g. `source()` completes
     /// before the execute request finishes), so we snapshot the origin at drawing time.
     pending_origin: RefCell<Option<Option<PlotOrigin>>>,
+}
+
+impl std::fmt::Debug for DeviceContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceContext").finish_non_exhaustive()
+    }
 }
 
 impl DeviceContext {
@@ -219,7 +232,7 @@ impl DeviceContext {
     }
 
     /// Set the current execution context (called when an execute request starts)
-    fn set_execution_context(
+    pub(crate) fn set_execution_context(
         &self,
         execution_id: String,
         code: String,
@@ -237,7 +250,7 @@ impl DeviceContext {
     }
 
     /// Clear the current execution context (called when an execute request completes)
-    fn clear_execution_context(&self) {
+    pub(crate) fn clear_execution_context(&self) {
         *self.execution_context.borrow_mut() = None;
     }
 
@@ -264,7 +277,7 @@ impl DeviceContext {
     }
 
     /// Clear any unconsumed pending origin.
-    fn clear_pending_origin(&self) {
+    pub(crate) fn clear_pending_origin(&self) {
         self.pending_origin.replace(None);
     }
 
@@ -274,16 +287,6 @@ impl DeviceContext {
         self.is_new_page.replace(true);
         self.id.replace(Self::new_id());
         self.clear_pending_origin();
-    }
-
-    /// Should plot events be sent over [CommSocket]s to the frontend?
-    ///
-    /// This allows plots to be dynamically resized by their `id`. Only possible if the UI
-    /// comm is connected (i.e. we are connected to Positron) and if we are in
-    /// [SessionMode::Console] mode.
-    fn should_use_dynamic_plots(&self) -> bool {
-        let console = Console::get();
-        console.ui_comm().is_some() && console.session_mode() == SessionMode::Console
     }
 
     /// Deactivation hook
@@ -311,12 +314,12 @@ impl DeviceContext {
     /// ggsave("temp.png", p)
     /// ```
     #[tracing::instrument(level = "trace", skip_all)]
-    fn hook_deactivate(&self) {
-        self.process_changes();
+    fn hook_deactivate(self: &Rc<Self>, console: &Console) {
+        self.process_changes(console);
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(level = %level))]
-    fn hook_holdflush(&self, level: i32) {
+    fn hook_holdflush(self: &Rc<Self>, level: i32, console: &Console) {
         // Be extra safe and check `level <= 0` rather than just `level == 0` in case
         // our shadowed device returns a negative `level`
         let is_released = level <= 0;
@@ -324,7 +327,7 @@ impl DeviceContext {
 
         // Flush deferred changes on hold→release transition
         if !was_rendering && is_released {
-            self.process_changes();
+            self.process_changes(console);
         }
     }
 
@@ -367,37 +370,11 @@ impl DeviceContext {
 
     /// Capture the current execution context for a new plot.
     ///
-    /// First checks for context pushed via `on_execute_request()`, then falls back
-    /// to getting context from Console's active request (for backwards compatibility
-    /// and edge cases). The fallback path does not include `code_location`.
+    /// Returns the context pushed via `graphics_on_execute_request()`, or an
+    /// empty default for plots created outside of an execute request (e.g.
+    /// during startup).
     fn capture_execution_context(&self) -> ExecutionContext {
-        // Check if we have a stored execution context from on_execute_request()
-        let stored = self.execution_context.borrow();
-        if let Some(ctx) = stored.as_ref() {
-            return ExecutionContext {
-                execution_id: ctx.execution_id.clone(),
-                code: ctx.code.clone(),
-                code_location: ctx.code_location.clone(),
-                render_settings: ctx.render_settings,
-                intrinsic_size: ctx.intrinsic_size.clone(),
-            };
-        }
-        drop(stored);
-
-        // Fall back to getting context from Console (for edge cases).
-        // This path does not provide code_location or plot overrides.
-        let (execution_id, code) = Console::get().get_execution_context().unwrap_or_else(|| {
-            // No active request - might be during startup or from R code
-            (String::new(), String::new())
-        });
-
-        ExecutionContext {
-            execution_id,
-            code,
-            code_location: None,
-            render_settings: None,
-            intrinsic_size: None,
-        }
+        self.execution_context.borrow().clone().unwrap_or_default()
     }
 
     /// Determine the plot origin for a new plot.
@@ -537,7 +514,7 @@ impl DeviceContext {
                 let mime_type = Self::get_mime_type(&plot_meta.format);
 
                 Ok(PlotBackendReply::RenderReply(PlotResult {
-                    data: data.to_string(),
+                    data,
                     mime_type: mime_type.to_string(),
                     settings: Some(settings),
                 }))
@@ -559,27 +536,26 @@ impl DeviceContext {
 
         // If the currently active plot is closed, advance to a new Positron page
         // See https://github.com/posit-dev/positron/issues/6702.
-        if *self.id.borrow() == *id {
+        if self.id() == *id {
             self.new_positron_page();
         }
     }
 
-    fn get_mime_type(format: &PlotRenderFormat) -> String {
+    fn get_mime_type(format: &PlotRenderFormat) -> &'static str {
         match format {
-            PlotRenderFormat::Png => "image/png".to_string(),
-            PlotRenderFormat::Svg => "image/svg+xml".to_string(),
-            PlotRenderFormat::Pdf => "application/pdf".to_string(),
-            PlotRenderFormat::Jpeg => "image/jpeg".to_string(),
-            PlotRenderFormat::Tiff => "image/tiff".to_string(),
+            PlotRenderFormat::Png => "image/png",
+            PlotRenderFormat::Svg => "image/svg+xml",
+            PlotRenderFormat::Pdf => "application/pdf",
+            PlotRenderFormat::Jpeg => "image/jpeg",
+            PlotRenderFormat::Tiff => "image/tiff",
         }
     }
 
     /// Process outstanding plot changes
     ///
-    /// Uses execution context stored via `on_execute_request()` or falls back to
-    /// getting context from Console's active request.
+    /// Uses execution context stored via `graphics_on_execute_request()`.
     #[tracing::instrument(level = "trace", skip_all)]
-    fn process_changes(&self) {
+    pub(crate) fn process_changes(self: &Rc<Self>, console: &Console) {
         let id = self.id();
 
         if !self.has_changes.get() {
@@ -615,18 +591,24 @@ impl DeviceContext {
         self.has_changes.replace(false);
 
         if self.is_new_page.replace(false) {
-            self.process_new_plot(&id);
+            self.process_new_plot(&id, console);
         } else {
-            self.process_update_plot(&id);
+            self.process_update_plot(&id, console);
         }
     }
 
-    fn process_new_plot(&self, id: &PlotId) {
-        if self.should_use_dynamic_plots() {
-            self.process_new_plot_positron(id);
+    fn process_new_plot(self: &Rc<Self>, id: &PlotId, console: &Console) {
+        if self.should_use_dynamic_plots(console) {
+            self.process_new_plot_positron(id, console);
         } else {
             self.process_new_plot_jupyter_protocol(id);
         }
+    }
+
+    /// Dynamic plots require both Console mode and a connected UI comm so the
+    /// frontend can issue resize/render RPCs against the per-plot comm.
+    fn should_use_dynamic_plots(&self, console: &Console) -> bool {
+        console.session_mode() == SessionMode::Console && console.ui_comm().is_some()
     }
 
     /// Convert a `CodeLocation` to a `PlotOrigin` for the plot metadata.
@@ -643,7 +625,7 @@ impl DeviceContext {
     }
 
     #[tracing::instrument(level = "trace", skip_all, fields(id = %id))]
-    fn process_new_plot_positron(&self, id: &PlotId) {
+    fn process_new_plot_positron(self: &Rc<Self>, id: &PlotId, console: &Console) {
         log::trace!("Notifying Positron of new plot");
 
         let ctx = self.capture_execution_context();
@@ -660,7 +642,7 @@ impl DeviceContext {
                 let mime_type = Self::get_mime_type(&PlotRenderFormat::Png);
 
                 let pre_render = PlotResult {
-                    data: pre_render.to_string(),
+                    data: pre_render,
                     mime_type: mime_type.to_string(),
                     settings: Some(settings),
                 };
@@ -676,9 +658,10 @@ impl DeviceContext {
         let plot_comm = PlotComm {
             id: id.clone(),
             open_data,
+            device_context: Rc::clone(self),
         };
 
-        match Console::get_mut().comm_open_backend(PLOT_COMM_NAME, Box::new(plot_comm)) {
+        match console.comm_open_backend(PLOT_COMM_NAME, Box::new(plot_comm)) {
             Ok(comm_id) => {
                 self.comm_ids.borrow_mut().insert(id.clone(), comm_id);
             },
@@ -710,9 +693,11 @@ impl DeviceContext {
             display_id: id.to_string(),
             data: None,
         };
-        let transient = serde_json::to_value(transient).unwrap();
+        let Some(transient) = serde_json::to_value(transient).log_err() else {
+            return;
+        };
 
-        log::info!("Sending display data to IOPub.");
+        log::trace!("Sending display data to IOPub.");
 
         self.iopub_tx
             .send(IOPubMessage::DisplayData(DisplayData {
@@ -743,8 +728,8 @@ impl DeviceContext {
             });
     }
 
-    fn process_update_plot(&self, id: &PlotId) {
-        if self.should_use_dynamic_plots() {
+    fn process_update_plot(&self, id: &PlotId, console: &Console) {
+        if self.should_use_dynamic_plots(console) {
             self.process_update_plot_positron(id);
         } else {
             self.process_update_plot_jupyter_protocol(id);
@@ -769,7 +754,7 @@ impl DeviceContext {
                 let mime_type = Self::get_mime_type(&settings.format);
 
                 let pre_render = PlotResult {
-                    data: pre_render.to_string(),
+                    data: pre_render,
                     mime_type: mime_type.to_string(),
                     settings: Some(settings),
                 };
@@ -784,7 +769,10 @@ impl DeviceContext {
             },
         };
 
-        let value = serde_json::to_value(PlotFrontendEvent::Update(update_params)).unwrap();
+        let Some(value) = serde_json::to_value(PlotFrontendEvent::Update(update_params)).log_err()
+        else {
+            return;
+        };
 
         let outgoing_tx = CommOutgoingTx::new(comm_id, self.iopub_tx.clone());
         outgoing_tx
@@ -810,7 +798,7 @@ impl DeviceContext {
             data: None,
         };
 
-        log::info!("Sending update display data to IOPub for `id` {id}.");
+        log::trace!("Sending update display data to IOPub for `id` {id}.");
 
         self.iopub_tx
             .send(IOPubMessage::UpdateDisplayData(UpdateDisplayData {
@@ -854,7 +842,7 @@ impl DeviceContext {
         });
 
         let mut map = serde_json::Map::new();
-        map.insert("image/png".to_string(), serde_json::to_value(data).unwrap());
+        map.insert("image/png".to_string(), serde_json::to_value(data)?);
 
         Ok(serde_json::Value::Object(map))
     }
@@ -913,6 +901,7 @@ impl DeviceContext {
 struct PlotComm {
     id: PlotId,
     open_data: serde_json::Value,
+    device_context: Rc<DeviceContext>,
 }
 
 impl CommHandler for PlotComm {
@@ -920,15 +909,14 @@ impl CommHandler for PlotComm {
         self.open_data.clone()
     }
 
-    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext, console: &Console) {
-        let dc = console.device_context();
+    fn handle_msg(&mut self, msg: CommMsg, ctx: &CommHandlerContext) {
         handle_rpc_request(&ctx.outgoing_tx, PLOT_COMM_NAME, msg, |req| {
-            dc.handle_rpc(req, &self.id)
+            self.device_context.handle_rpc(req, &self.id)
         });
     }
 
-    fn handle_close(&mut self, _ctx: &CommHandlerContext, console: &Console) {
-        console.device_context().on_plot_closed(&self.id);
+    fn handle_close(&mut self, _ctx: &CommHandlerContext) {
+        self.device_context.on_plot_closed(&self.id);
     }
 }
 
@@ -1098,57 +1086,6 @@ pub(crate) fn compute_plot_overrides(
     )
 }
 
-/// Hook applied when an execute request starts
-///
-/// Pushes the execution context (execution_id, code, code_location) to the graphics device
-/// so it can be captured when new plots are created. This allows plots to be
-/// correctly attributed to the code that generated them.
-///
-/// Called from `handle_execute_request()` after setting the active request.
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_execute_request(
-    execution_id: String,
-    code: String,
-    code_location: Option<CodeLocation>,
-    render_settings: Option<PlotRenderSettings>,
-    intrinsic_size: Option<IntrinsicSize>,
-) {
-    log::trace!("Entering on_execute_request");
-    Console::get().device_context().set_execution_context(
-        execution_id,
-        code,
-        code_location,
-        render_settings,
-        intrinsic_size,
-    );
-}
-
-/// Hook applied after a code chunk has finished executing
-///
-/// Not an official graphics device hook, instead we run this manually after
-/// completing execution of a chunk of R code.
-///
-/// This is particularly useful for recording "partial" states within a single
-/// page, for example:
-///
-/// ```r
-/// # Run this line by line
-/// par(mfrow = c(2, 1))
-/// plot(1:10)
-/// ```
-///
-/// After `plot(1:10)`, we've only plotted 1 of 2 potential plots on the page,
-/// but we can still render this intermediate state and show it to the user until
-/// they add more plots or advance to another new page.
-#[tracing::instrument(level = "trace", skip_all)]
-pub(crate) fn on_did_execute_request() {
-    log::trace!("Entering on_did_execute_request");
-    let dc = Console::get().device_context();
-    dc.process_changes();
-    dc.clear_execution_context();
-    dc.clear_pending_origin();
-}
-
 /// Activation callback
 ///
 /// Only used for logging
@@ -1173,10 +1110,12 @@ unsafe extern "C-unwind" fn callback_activate(dev: pDevDesc) {
 unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
     log::trace!("Entering callback_deactivate");
 
-    let dc = Console::get().device_context();
+    let console = Console::get();
+    let dc = Rc::clone(console.device_context());
+
     // We run our hook first to record before we deactivate the underlying device,
     // in case device deactivation messes with the display list
-    dc.hook_deactivate();
+    dc.hook_deactivate(console);
     if let Some(callback) = dc.wrapped_callbacks.deactivate.get() {
         callback(dev);
     }
@@ -1186,7 +1125,8 @@ unsafe extern "C-unwind" fn callback_deactivate(dev: pDevDesc) {
 unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) -> i32 {
     log::trace!("Entering callback_holdflush");
 
-    let dc = Console::get().device_context();
+    let console = Console::get();
+    let dc = Rc::clone(console.device_context());
     // If our wrapped device has a `holdflush()` method, we rely on it to apply
     // the `level_delta` (typically `+1` or `-1`) and return the new level. Otherwise
     // we follow the lead of `devholdflush()` in R and use a resolved `level` of `0`.
@@ -1205,7 +1145,7 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
             level
         },
     };
-    dc.hook_holdflush(level);
+    dc.hook_holdflush(level, console);
     level
 }
 
@@ -1216,7 +1156,8 @@ unsafe extern "C-unwind" fn callback_holdflush(dev: pDevDesc, level_delta: i32) 
 unsafe extern "C-unwind" fn callback_mode(mode: i32, dev: pDevDesc) {
     log::trace!("Entering callback_mode");
 
-    let dc = Console::get().device_context();
+    let console = Console::get();
+    let dc = console.device_context();
     if let Some(callback) = dc.wrapped_callbacks.mode.get() {
         callback(mode, dev);
     }
@@ -1310,13 +1251,13 @@ unsafe extern "C-unwind" fn ps_graphics_device() -> anyhow::Result<SEXP> {
 /// that intermediate plot since we are still on the same plot page with the same plot
 /// `id`.
 #[tracing::instrument(level = "trace", skip_all)]
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::Result<SEXP> {
+#[ark::register]
+fn ps_graphics_before_plot_new(console: &Console, _name: SEXP) -> anyhow::Result<SEXP> {
     log::trace!("Entering ps_graphics_before_plot_new");
 
     // Process changes related to the last plot before opening a new page.
     // Particularly important if we make multiple plots in a single chunk.
-    Console::get().device_context().process_changes();
+    Rc::clone(console.device_context()).process_changes(console);
 
     Ok(harp::r_null())
 }
@@ -1326,66 +1267,70 @@ unsafe extern "C-unwind" fn ps_graphics_before_plot_new(_name: SEXP) -> anyhow::
 /// Returns a named list with fields: name, kind, execution_id, code, origin_uri.
 /// Returns NULL if no metadata is found for the given ID.
 #[tracing::instrument(level = "trace", skip_all)]
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_get_metadata(id: SEXP) -> anyhow::Result<SEXP> {
+#[ark::register]
+fn ps_graphics_get_metadata(console: &Console, id: SEXP) -> anyhow::Result<SEXP> {
     let id_str: String = RObject::view(id).try_into()?;
     let plot_id = PlotId(id_str);
 
-    let contexts = Console::get().device_context().plot_contexts.borrow();
-    match contexts.get(&plot_id) {
-        Some(ctx) => {
-            let info = &ctx.metadata;
-            let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
+    // Clone metadata out of the borrow before calling into R. R allocations
+    // (`RObject::from()`, `Rf_setAttrib()`, etc.) can trigger finalizers or
+    // error handlers that re-enter `plot_contexts.borrow_mut()`, which would
+    // panic if the shared borrow were still held.
+    let metadata = {
+        let contexts = console.device_context().plot_contexts.borrow();
+        contexts.get(&plot_id).map(|ctx| ctx.metadata.clone())
+    };
 
-            // Create a list with the metadata values
-            let values: Vec<RObject> = vec![
-                RObject::from(info.name.as_str()),
-                RObject::from(info.kind.as_str()),
-                RObject::from(info.execution_id.as_str()),
-                RObject::from(info.code.as_str()),
-                RObject::from(origin_uri),
-            ];
-            let list = RObject::try_from(values)?;
+    let Some(info) = metadata else {
+        return Ok(harp::r_null());
+    };
 
-            // Set the names attribute
-            let names: Vec<String> = vec![
-                "name".to_string(),
-                "kind".to_string(),
-                "execution_id".to_string(),
-                "code".to_string(),
-                "origin_uri".to_string(),
-            ];
-            let names = RObject::from(names);
-            libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+    let origin_uri = info.origin.as_ref().map(|o| o.uri.as_str()).unwrap_or("");
 
-            Ok(list.sexp)
-        },
-        None => Ok(harp::r_null()),
-    }
+    let values: Vec<RObject> = vec![
+        RObject::from(info.name.as_str()),
+        RObject::from(info.kind.as_str()),
+        RObject::from(info.execution_id.as_str()),
+        RObject::from(info.code.as_str()),
+        RObject::from(origin_uri),
+    ];
+    let list = RObject::try_from(values)?;
+
+    let names: Vec<String> = vec![
+        "name".to_string(),
+        "kind".to_string(),
+        "execution_id".to_string(),
+        "code".to_string(),
+        "origin_uri".to_string(),
+    ];
+    let names = RObject::from(names);
+    libr::Rf_setAttrib(list.sexp, libr::R_NamesSymbol, names.sexp);
+
+    Ok(list.sexp)
 }
 
 /// Return the current plot ID. Used by tests to verify that layout panels
 /// share the same page (same ID) and that overflow creates a new page.
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_current_plot_id() -> anyhow::Result<SEXP> {
-    let id = Console::get().device_context().id();
+#[ark::register]
+fn ps_graphics_current_plot_id(console: &Console) -> anyhow::Result<SEXP> {
+    let id = console.device_context().id();
     Ok(RObject::from(&id).sexp)
 }
 
 /// Push a source file URI onto the source context stack.
 /// Called from the `source()` hook when entering a sourced file.
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_push_source_context(uri: SEXP) -> anyhow::Result<SEXP> {
+#[ark::register]
+fn ps_graphics_push_source_context(console: &Console, uri: SEXP) -> anyhow::Result<SEXP> {
     let uri_str: String = RObject::view(uri).try_into()?;
-    Console::get().device_context().push_source_context(uri_str);
+    console.device_context().push_source_context(uri_str);
     Ok(harp::r_null())
 }
 
 /// Pop a source file URI from the source context stack.
 /// Called from the `source()` hook when leaving a sourced file.
-#[harp::register]
-unsafe extern "C-unwind" fn ps_graphics_pop_source_context() -> anyhow::Result<SEXP> {
-    Console::get().device_context().pop_source_context();
+#[ark::register]
+fn ps_graphics_pop_source_context(console: &Console) -> anyhow::Result<SEXP> {
+    console.device_context().pop_source_context();
     Ok(harp::r_null())
 }
 
@@ -1408,5 +1353,59 @@ fn r_option_positive_f64(name: &str) -> Option<f64> {
     match value {
         Ok(v) if v > 0.0 => Some(v),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_device_context() -> DeviceContext {
+        let (tx, _rx) = crossbeam::channel::unbounded();
+        DeviceContext::new(tx)
+    }
+
+    #[test]
+    fn test_capture_execution_context_default_when_empty() {
+        let dc = test_device_context();
+        let ctx = dc.capture_execution_context();
+        assert_eq!(ctx.execution_id, "");
+        assert_eq!(ctx.code, "");
+        assert!(ctx.code_location.is_none());
+        assert!(ctx.render_settings.is_none());
+        assert!(ctx.intrinsic_size.is_none());
+    }
+
+    #[test]
+    fn test_capture_execution_context_returns_stored() {
+        let dc = test_device_context();
+        dc.set_execution_context(
+            String::from("msg-123"),
+            String::from("plot(1:10)"),
+            None,
+            None,
+            None,
+        );
+
+        let ctx = dc.capture_execution_context();
+        assert_eq!(ctx.execution_id, "msg-123");
+        assert_eq!(ctx.code, "plot(1:10)");
+    }
+
+    #[test]
+    fn test_capture_execution_context_after_clear() {
+        let dc = test_device_context();
+        dc.set_execution_context(
+            String::from("msg-123"),
+            String::from("plot(1:10)"),
+            None,
+            None,
+            None,
+        );
+        dc.clear_execution_context();
+
+        let ctx = dc.capture_execution_context();
+        assert_eq!(ctx.execution_id, "");
+        assert_eq!(ctx.code, "");
     }
 }

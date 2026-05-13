@@ -13,7 +13,7 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
-    name: "Rust: ${{ matrix.config.rust }}, R: ${{ matrix.config.r }}"
+    name: "Rust: ${{ matrix.config.rust }}${{ matrix.config.flavor == 'release' && ' + release' || '' }}, R: ${{ matrix.config.r }}"
     strategy:
       fail-fast: false
       matrix:
@@ -21,7 +21,7 @@ jobs:
           # Test on all supported R versions
           # (Particularly important to do this on at least one OS for
           # version dependent R hook override checks, like `utils::View()`)
-          - { rust: 'stable',  r: 'release' }
+          - { rust: 'stable',  r: 'release', flavor: 'release' }
           - { rust: 'stable',  r: '4.5' }
           - { rust: 'stable',  r: '4.4' }
           - { rust: 'stable',  r: '4.3' }
@@ -89,10 +89,10 @@ jobs:
 
       - name: Build
         run: |
-          cargo build
+          cargo build ${{ matrix.config.flavor == 'release' && '--release' || '' }}
 
       - name: Run Tests
         env:
           NEXTEST_PROFILE: "ci"
         run: |
-          cargo nextest run
+          cargo nextest run ${{ matrix.config.flavor == 'release' && '--release' || '' }}

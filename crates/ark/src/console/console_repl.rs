@@ -11,6 +11,9 @@
 //! ReadConsole, WriteConsole, and R frontend callbacks.
 
 use std::path::Path;
+use std::rc::Rc;
+
+use stdext::DebugRefCell;
 
 use super::*;
 use crate::dap::dap_notebook;
@@ -28,6 +31,18 @@ const DEBUG_COMMANDS: &[&str] = &["c", "cont", "f", "help", "n", "s", "where", "
 // execution past the current prompt, `Q` exits all nested browsers entirely.
 // These are not transient evals: they represent deliberate debugger navigation.
 const DEBUG_COMMANDS_CONTINUE: &[&str] = &["n", "f", "c", "cont", "Q"];
+
+thread_local! {
+    /// When `true`, the global panic hook should return early instead of
+    /// aborting, so that `catch_unwind` can catch the panic in `Console::with`.
+    static CATCHING_PANICS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Returns `true` when we are inside a `Console::with` catch boundary.
+/// Checked by the global panic hook to decide whether to abort.
+pub fn catching_panics() -> bool {
+    CATCHING_PANICS.get()
+}
 
 /// Used to wait for complete R startup in `Console::wait_initialized()` or
 /// check for it in `Console::is_initialized()`.
@@ -611,7 +626,7 @@ impl Console {
         dap: Arc<Mutex<Dap>>,
         session_mode: SessionMode,
     ) -> Self {
-        let device_context = DeviceContext::new(iopub_tx.clone());
+        let device_context = Rc::new(DeviceContext::new(iopub_tx.clone()));
 
         Self {
             r_home,
@@ -625,7 +640,7 @@ impl Console {
             comm_msg_originator: None,
             execution_count: 0,
             autoprint_output: String::new(),
-            ui_comm_id: None,
+            ui_comm: DebugRefCell::new(None),
             last_error: None,
             help_event_tx: None,
             help_port: None,
@@ -656,10 +671,10 @@ impl Console {
             read_console_nested_return: Cell::new(false),
             read_console_threw_error: Cell::new(false),
             read_console_pending_action: Cell::new(ReadConsolePendingAction::None),
-            read_console_env_stack: RefCell::new(Vec::new()),
+            read_console_env_stack: DebugRefCell::new(Vec::new()),
             read_console_shutdown: Cell::new(false),
             debug_filter: ConsoleFilter::new(),
-            comms: HashMap::new(),
+            comms: DebugRefCell::new(HashMap::new()),
             device_context,
         }
     }
@@ -680,6 +695,37 @@ impl Console {
     /// SAFETY: Accesses must occur after `Console::start()` initializes it.
     pub fn get() -> &'static Self {
         Console::get_mut()
+    }
+
+    /// Run a closure with `&Console`, catching panics at the boundary.
+    ///
+    /// Intended for use in `#[ark::register]` entry points and C callbacks
+    /// where a panic would unwind through R's C call stack. Panics are
+    /// caught and converted to `anyhow::Error`, which `harp::register`'s
+    /// `r_unwrap()` then surfaces as a clean R error.
+    pub fn with<T>(f: impl FnOnce(&Console) -> anyhow::Result<T>) -> anyhow::Result<T> {
+        if cfg!(debug_assertions) {
+            return f(Console::get());
+        }
+
+        CATCHING_PANICS.set(true);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(Console::get())));
+        CATCHING_PANICS.set(false);
+
+        match result {
+            Ok(result) => result,
+            Err(panic) => {
+                let msg = match panic.downcast_ref::<&str>() {
+                    Some(s) => s.to_string(),
+                    None => match panic.downcast_ref::<String>() {
+                        Some(s) => s.clone(),
+                        None => String::from("(unknown payload)"),
+                    },
+                };
+
+                Err(anyhow!("Panic in Console callback: {msg}"))
+            },
+        }
     }
 
     /// Install a minimal stopgap `Console` in the thread-local for unit tests
@@ -773,7 +819,7 @@ impl Console {
         &self.comm_event_tx
     }
 
-    pub(crate) fn device_context(&self) -> &DeviceContext {
+    pub(crate) fn device_context(&self) -> &Rc<DeviceContext> {
         &self.device_context
     }
 
@@ -805,17 +851,6 @@ impl Console {
     /// Get the active execute request, if any.
     pub(crate) fn get_active_execute_request(&self) -> Option<&ExecuteRequest> {
         self.active_request.as_ref().map(|req| &req.request)
-    }
-
-    /// Get the current execution context if an active request exists.
-    /// Returns (execution_id, code) tuple where execution_id is the Jupyter message ID.
-    pub(crate) fn get_execution_context(&self) -> Option<(String, String)> {
-        self.active_request.as_ref().map(|req| {
-            (
-                req.originator.header.msg_id.clone(),
-                req.request.code.clone(),
-            )
-        })
     }
 
     // Async messages for the Console. Processed at interrupt time.
@@ -1379,7 +1414,7 @@ impl Console {
         // Check for pending graphics updates
         // (Important that this occurs while in the "busy" state of this ExecuteRequest
         // so that the `parent` message is set correctly in any Jupyter messages)
-        graphics_device::on_did_execute_request();
+        self.graphics_on_did_execute_request();
 
         let (reply, result) = Self::prepare_execute_reply(req.exec_count, value);
 
@@ -1447,7 +1482,7 @@ impl Console {
                     .as_ref()
                     .map(graphics_device::compute_plot_overrides)
                     .unwrap_or((None, None));
-                graphics_device::on_execute_request(
+                self.graphics_on_execute_request(
                     originator.header.msg_id.clone(),
                     exec_req.code.clone(),
                     code_location,

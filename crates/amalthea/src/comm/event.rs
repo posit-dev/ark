@@ -13,8 +13,12 @@ use crate::socket::comm::CommSocket;
 
 /// Comm events sent to the frontend via Shell.
 pub enum CommEvent {
-    /// A new Comm was opened
-    Opened(CommSocket, Value),
+    /// A new Comm was opened. The optional `Sender` is a synchronisation
+    /// barrier: if provided, Shell signals it after processing the open
+    /// (sending `comm_open` on IOPub). The caller blocks on the paired
+    /// receiver to guarantee that the `comm_open` message has been sent
+    /// before any subsequent messages.
+    Opened(CommSocket, Value, Option<Sender<()>>),
 
     /// A message was received on a Comm; the first value is the comm ID, and the
     /// second value is the message.
@@ -22,10 +26,4 @@ pub enum CommEvent {
 
     /// A Comm was closed
     Closed(String),
-
-    /// Synchronisation barrier. Shell signals the sender after processing all
-    /// preceding events. The caller blocks on the paired receiver to guarantee
-    /// that earlier events (e.g. `Opened`) have been fully handled before
-    /// continuing.
-    Barrier(Sender<()>),
 }

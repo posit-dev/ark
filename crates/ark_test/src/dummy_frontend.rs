@@ -766,6 +766,32 @@ impl DummyArkFrontend {
         }
     }
 
+    /// Receive from IOPub and assert DisplayData message, returning the
+    /// display_id from the transient field.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_display_data_id(&self) -> String {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::DisplayData(data) => data.content.transient["display_id"]
+                .as_str()
+                .expect("display_id should be a string")
+                .to_string(),
+            other => panic!("Expected DisplayData, got {:?}", other),
+        }
+    }
+
+    /// Receive from IOPub and assert UpdateDisplayData message.
+    /// Automatically skips any Stream messages.
+    #[track_caller]
+    pub fn recv_iopub_update_display_data(&self) {
+        let msg = self.recv_iopub_next();
+        match msg {
+            Message::UpdateDisplayData(_) => {},
+            other => panic!("Expected UpdateDisplayData, got {:?}", other),
+        }
+    }
+
     /// Receive from IOPub and assert CommMsg message.
     /// Automatically skips any Stream messages.
     #[track_caller]
