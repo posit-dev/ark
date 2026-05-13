@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use aether_url::UrlId;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -38,7 +39,6 @@ use crate::dap::dap_variables::object_variable;
 use crate::dap::dap_variables::RVariable;
 use crate::request::RRequest;
 use crate::thread::RThreadSafe;
-use crate::url::UrlId;
 
 /// Thread ID used in DAP events. R is single-threaded so there's only one.
 pub(crate) const THREAD_ID: i64 = -1;

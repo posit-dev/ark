@@ -5,6 +5,7 @@
 //
 //
 
+use aether_url::UrlId;
 use anyhow::anyhow;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
@@ -58,7 +59,6 @@ use crate::lsp::main_loop::DidOpenVirtualDocumentParams;
 use crate::lsp::main_loop::LspState;
 use crate::lsp::state::workspace_uris;
 use crate::lsp::state::WorldState;
-use crate::url::UrlId;
 
 // Handlers that mutate the world state
 

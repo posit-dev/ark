@@ -216,6 +216,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aether_url"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "stdext",
+ "tempfile",
+ "url",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -383,6 +394,7 @@ version = "0.1.251"
 dependencies = [
  "actix-web",
  "aether_lsp_utils",
+ "aether_url",
  "air_r_factory",
  "air_r_parser",
  "air_r_syntax",
@@ -468,6 +480,7 @@ dependencies = [
 name = "ark_test"
 version = "0.1.0"
 dependencies = [
+ "aether_url",
  "amalthea",
  "anyhow",
  "ark",
@@ -2539,6 +2552,7 @@ dependencies = [
 name = "oak_db"
 version = "0.1.0"
 dependencies = [
+ "aether_url",
  "air_r_parser",
  "air_r_syntax",
  "biome_rowan",
