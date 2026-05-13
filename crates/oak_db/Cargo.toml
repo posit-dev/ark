@@ -13,12 +13,16 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [dependencies]
 aether_parser.workspace = true
 aether_syntax.workspace = true
 aether_url.workspace = true
 biome_rowan.workspace = true
 compact_str.workspace = true
+ignore.workspace = true
 log.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic.workspace = true

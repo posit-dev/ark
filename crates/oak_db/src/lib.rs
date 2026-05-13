@@ -1,3 +1,4 @@
+mod collation;
 mod db;
 mod file;
 mod file_exports;
@@ -10,10 +11,13 @@ mod parse;
 mod resolver;
 mod root;
 mod source_graph;
+mod vfs;
+pub mod vfs_scan;
 
 #[cfg(test)]
 mod tests;
 
+pub use collation::collation_files;
 pub use db::Db;
 pub use file::File;
 pub use file_exports::ExportEntry;
@@ -34,3 +38,4 @@ pub use source_graph::Script;
 pub use source_graph::SourceGraph;
 pub use source_graph::SourceNode;
 pub use source_graph::WorkspaceRoots;
+pub use vfs::Vfs;

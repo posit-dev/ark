@@ -19,13 +19,11 @@ use crate::SourceNode;
 /// thread, the clone shares the same interner.
 ///
 /// The struct itself is `pub` because [`crate::Db`] implementors hold a `Files`
-/// field. Its primitives (`get`, `intern`) are `pub(crate)`. External callers
-/// go through [`intern_file`] for upserts. Reads happen through role-aware
-/// helpers (such as `SourceGraph::script_by_url`) that anchor properly for
-/// tracked queries.
-///
-/// TODO(salsa): `remove` (for the Vfs) and `entries` (for
-/// `collation_files()`) will land alongside their consumers.
+/// field. Its primitives (`get`, `intern`, `remove`, `entries`) are
+/// `pub(crate)`. External callers go through [`intern_file`] for upserts.
+/// Reads happen through role-aware helpers (such as
+/// `SourceGraph::script_by_url` and [`collation_files`]) that anchor properly
+/// for tracked queries.
 ///
 /// # Salsa invalidation
 ///
@@ -55,6 +53,29 @@ impl Files {
     /// [`intern_file`].
     pub(crate) fn intern(&self, url: UrlId, file: File) {
         self.inner.write().unwrap().insert(url, file);
+    }
+
+    /// Drop the mapping for `url`. The salsa `File` entity stays
+    /// allocated; only the URL-to-File index loses the row. Callers
+    /// that need invalidation in tracked queries should also bump
+    /// `Root.revision` for the file's containing root (or
+    /// `WorkspaceRoots` for orphans), since the anchor on
+    /// `script_by_url` / `collation_files` reads those.
+    pub(crate) fn remove(&self, url: &UrlId) -> Option<File> {
+        self.inner.write().unwrap().remove(url)
+    }
+
+    /// Snapshot the URL-to-File mapping. Returns a fresh `Vec` rather
+    /// than a borrow so the caller doesn't hold the read lock. Used by
+    /// `collation_files`'s default-alphabetical branch to enumerate
+    /// `R/` files under a package root.
+    pub(crate) fn entries(&self) -> Vec<(UrlId, File)> {
+        self.inner
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(url, file)| (url.clone(), *file))
+            .collect()
     }
 }
 

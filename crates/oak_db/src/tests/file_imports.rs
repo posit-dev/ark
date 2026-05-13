@@ -35,7 +35,7 @@ fn installed_package(db: &TestDb, name: &str) -> Package {
             libpath: file_url(&format!("libs/{name}")),
         },
         Namespace::default(),
-        Vec::new(),
+        None,
     )
 }
 
@@ -43,7 +43,7 @@ fn workspace_package(
     db: &TestDb,
     name: &str,
     namespace: Namespace,
-    collation: Vec<File>,
+    collation: Option<Vec<String>>,
 ) -> Package {
     Package::new(
         db,
@@ -135,13 +135,17 @@ fn package_file_emits_namespace_and_collation_layers() {
         ..Default::default()
     };
 
-    // Build the package with two collation files. The second is the one
-    // we query, so the first appears as a predecessor.
-    let pkg = workspace_package(&db, "pkg", namespace, vec![]);
+    // Build the package with an explicit collation spec. The second
+    // file is the one we query, so the first appears as a predecessor.
+    let pkg = workspace_package(
+        &db,
+        "pkg",
+        namespace,
+        Some(vec!["_a.R".to_string(), "b.R".to_string()]),
+    );
     register_workspace(&mut db, vec![pkg]);
-    let first = make_package_file(&mut db, "/w/pkg/R/_a.R", "first <- 1\n", pkg);
-    let second = make_package_file(&mut db, "/w/pkg/R/b.R", "second <- 2\n", pkg);
-    pkg.set_collation(&mut db).to(vec![first, second]);
+    let _first = make_package_file(&mut db, "/workspace/pkg/R/_a.R", "first <- 1\n", pkg);
+    let second = make_package_file(&mut db, "/workspace/pkg/R/b.R", "second <- 2\n", pkg);
 
     let layers = second.imports(&db);
 

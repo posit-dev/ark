@@ -70,7 +70,7 @@ fn script_by_url_ignores_package_files() {
             root: workspace_root(&db, "workspace/mypkg"),
         },
         Namespace::default(),
-        vec![file],
+        None,
     );
     file.set_parent(&mut db).to(Some(SourceNode::Package(pkg)));
 

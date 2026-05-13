@@ -35,11 +35,11 @@ fn installed_package(db: &TestDb, name: &str) -> Package {
             libpath: file_url(&format!("libs/{name}")),
         },
         Namespace::default(),
-        Vec::new(),
+        None,
     )
 }
 
-fn workspace_package(db: &TestDb, name: &str) -> Package {
+fn workspace_package(db: &TestDb, name: &str, collation: Option<Vec<String>>) -> Package {
     Package::new(
         db,
         name.to_string(),
@@ -47,7 +47,7 @@ fn workspace_package(db: &TestDb, name: &str) -> Package {
             root: workspace_root(db, &format!("workspace/{name}")),
         },
         Namespace::default(),
-        Vec::new(),
+        collation,
     )
 }
 
@@ -150,15 +150,22 @@ fn package_top_level_sees_predecessor_collation_only() {
         .set_installed_packages(&mut db)
         .to(vec![base]);
 
-    let pkg = workspace_package(&db, "pkg");
+    let pkg = workspace_package(
+        &db,
+        "pkg",
+        Some(vec![
+            "a.R".to_string(),
+            "b.R".to_string(),
+            "c.R".to_string(),
+        ]),
+    );
     db.source_graph()
         .set_workspace_packages(&mut db)
         .to(vec![pkg]);
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n", pkg);
+    let a = make_package_file(&mut db, "/workspace/pkg/R/a.R", "first <- 1\n", pkg);
     let b_source = "x <- 1\n";
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
-    let c = make_package_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n", pkg);
-    pkg.set_collation(&mut db).to(vec![a, b, c]);
+    let b = make_package_file(&mut db, "/workspace/pkg/R/b.R", b_source, pkg);
+    let _c = make_package_file(&mut db, "/workspace/pkg/R/c.R", "second <- 2\n", pkg);
 
     // Cursor at top-level in b. Only a (the predecessor) is visible.
     let offset = TextSize::from(b_source.find('x').unwrap() as u32);
@@ -174,15 +181,22 @@ fn package_function_body_sees_other_collation_files_in_lifo_order() {
         .set_installed_packages(&mut db)
         .to(vec![base]);
 
-    let pkg = workspace_package(&db, "pkg");
+    let pkg = workspace_package(
+        &db,
+        "pkg",
+        Some(vec![
+            "a.R".to_string(),
+            "b.R".to_string(),
+            "c.R".to_string(),
+        ]),
+    );
     db.source_graph()
         .set_workspace_packages(&mut db)
         .to(vec![pkg]);
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n", pkg);
+    let a = make_package_file(&mut db, "/workspace/pkg/R/a.R", "first <- 1\n", pkg);
     let b_source = "f <- function() {\n  x\n}\n";
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
-    let c = make_package_file(&mut db, "/w/pkg/R/c.R", "second <- 2\n", pkg);
-    pkg.set_collation(&mut db).to(vec![a, b, c]);
+    let b = make_package_file(&mut db, "/workspace/pkg/R/b.R", b_source, pkg);
+    let c = make_package_file(&mut db, "/workspace/pkg/R/c.R", "second <- 2\n", pkg);
 
     // Cursor inside f's body. Full lazy view (same as `imports()`).
     // Other collation files appear in LIFO order. Self (b) is excluded
@@ -203,15 +217,22 @@ fn package_top_level_predecessors_appear_in_lifo_order() {
         .set_installed_packages(&mut db)
         .to(vec![base]);
 
-    let pkg = workspace_package(&db, "pkg");
+    let pkg = workspace_package(
+        &db,
+        "pkg",
+        Some(vec![
+            "a.R".to_string(),
+            "b.R".to_string(),
+            "c.R".to_string(),
+        ]),
+    );
     db.source_graph()
         .set_workspace_packages(&mut db)
         .to(vec![pkg]);
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "first <- 1\n", pkg);
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", "second <- 2\n", pkg);
+    let a = make_package_file(&mut db, "/workspace/pkg/R/a.R", "first <- 1\n", pkg);
+    let b = make_package_file(&mut db, "/workspace/pkg/R/b.R", "second <- 2\n", pkg);
     let c_source = "x <- 1\n";
-    let c = make_package_file(&mut db, "/w/pkg/R/c.R", c_source, pkg);
-    pkg.set_collation(&mut db).to(vec![a, b, c]);
+    let c = make_package_file(&mut db, "/workspace/pkg/R/c.R", c_source, pkg);
 
     let offset = TextSize::from(c_source.find('x').unwrap() as u32);
     let layers = c.imports_at(&db, offset);
@@ -227,12 +248,11 @@ fn package_namespace_and_base_layers_always_visible() {
         .set_installed_packages(&mut db)
         .to(vec![base]);
 
-    let pkg = workspace_package(&db, "pkg");
+    let pkg = workspace_package(&db, "pkg", Some(vec!["a.R".to_string()]));
     db.source_graph()
         .set_workspace_packages(&mut db)
         .to(vec![pkg]);
-    let file = make_package_file(&mut db, "/w/pkg/R/a.R", "x <- 1\n", pkg);
-    pkg.set_collation(&mut db).to(vec![file]);
+    let file = make_package_file(&mut db, "/workspace/pkg/R/a.R", "x <- 1\n", pkg);
 
     let layers = file.imports_at(&db, TextSize::from(0));
     assert!(attached_packages(&layers).contains(&base));

@@ -33,7 +33,7 @@ fn make_package_file(db: &mut TestDb, path: &str, contents: &str, package: Packa
     )
 }
 
-fn workspace_package(db: &TestDb, name: &str) -> Package {
+fn workspace_package(db: &TestDb, name: &str, collation: Option<Vec<String>>) -> Package {
     Package::new(
         db,
         name.to_string(),
@@ -41,7 +41,7 @@ fn workspace_package(db: &TestDb, name: &str) -> Package {
             root: workspace_root(db, &format!("workspace/{name}")),
         },
         Namespace::default(),
-        Vec::new(),
+        collation,
     )
 }
 
@@ -129,15 +129,14 @@ fn resolves_source_forwarded_name_to_origin_file() {
 #[test]
 fn resolves_package_collation_predecessor() {
     let mut db = TestDb::new();
-    let pkg = workspace_package(&db, "pkg");
+    let pkg = workspace_package(&db, "pkg", Some(vec!["a.R".to_string(), "b.R".to_string()]));
     db.source_graph()
         .set_workspace_packages(&mut db)
         .to(vec![pkg]);
 
-    let a = make_package_file(&mut db, "/w/pkg/R/a.R", "shared <- 1\n", pkg);
+    let a = make_package_file(&mut db, "/workspace/pkg/R/a.R", "shared <- 1\n", pkg);
     let b_source = "use_shared <- function() shared\n";
-    let b = make_package_file(&mut db, "/w/pkg/R/b.R", b_source, pkg);
-    pkg.set_collation(&mut db).to(vec![a, b]);
+    let b = make_package_file(&mut db, "/workspace/pkg/R/b.R", b_source, pkg);
 
     // Cursor on `shared` inside `b`'s function body. Lexical walk finds no
     // binding in `b`, falls through to `b.resolve` which finds nothing in

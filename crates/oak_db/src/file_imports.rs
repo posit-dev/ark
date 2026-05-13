@@ -5,6 +5,7 @@ use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::ScopeId;
 
+use crate::collation::collation_files;
 use crate::Db;
 use crate::File;
 use crate::Name;
@@ -126,7 +127,7 @@ fn narrow_script_top_level(file: File, db: &dyn Db, offset: TextSize) -> Vec<Imp
 }
 
 fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
-    let collation = package.collation(db);
+    let collation = collation_files(db, package);
     let Some(file_pos) = collation.iter().position(|f| *f == file) else {
         // File claims membership but isn't in the collation. Populator
         // inconsistency. The package's `collation` and the file's
@@ -217,7 +218,7 @@ fn package_layers(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer>
     // latest-sourced first). Self is excluded: a file's own top-level
     // bindings come from `exports`, and including self here would
     // create a cycle in `resolve` for unbound names.
-    for collation_file in package.collation(db).iter().rev() {
+    for collation_file in collation_files(db, package).iter().rev() {
         if *collation_file == file {
             continue;
         }

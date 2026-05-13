@@ -62,11 +62,15 @@ pub struct Package {
     pub kind: PackageOrigin,
     #[returns(ref)]
     pub namespace: Namespace,
-    // TODO(salsa): adding any `R/` file mutates this Vec and invalidates
-    // every tracked query that read it. Future fix derives `Vec<File>`
-    // from a basename spec via `Root.revision` and a `Files` registry.
+    /// Collation spec read from `DESCRIPTION`'s `Collate` field, as a
+    /// list of `R/` basenames. `None` means the field was absent and
+    /// R loads `R/` files alphabetically. The materialised
+    /// `Vec<File>` is derived lazily via [`collation_files`]; this
+    /// field only changes when `DESCRIPTION` itself changes, so
+    /// adding or removing a single `R/` file doesn't invalidate
+    /// downstream tracked queries that read collation.
     #[returns(ref)]
-    pub collation: Vec<File>,
+    pub collation: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

@@ -123,7 +123,7 @@ fn resolve_unbound_name_in_package_does_not_cycle() {
             root: workspace_root(&db, "w/pkg"),
         },
         Namespace::default(),
-        Vec::new(),
+        Some(vec!["a.R".to_string(), "b.R".to_string()]),
     );
     db.source_graph()
         .set_workspace_packages(&mut db)
@@ -141,7 +141,6 @@ fn resolve_unbound_name_in_package_does_not_cycle() {
         "y <- 2\n".to_string(),
         Some(SourceNode::Package(pkg)),
     );
-    pkg.set_collation(&mut db).to(vec![a, b]);
 
     assert!(a.resolve(&db, name(&db, "nope")).is_none());
     assert!(b.resolve(&db, name(&db, "nope")).is_none());
@@ -163,7 +162,7 @@ fn resolve_walks_package_collation_for_lazy_lookups() {
             root: workspace_root(&db, "w/pkg"),
         },
         Namespace::default(),
-        Vec::new(),
+        Some(vec!["a.R".to_string(), "b.R".to_string()]),
     );
     db.source_graph()
         .set_workspace_packages(&mut db)
@@ -181,7 +180,6 @@ fn resolve_walks_package_collation_for_lazy_lookups() {
         "use_shared <- function() shared\n".to_string(),
         Some(SourceNode::Package(pkg)),
     );
-    pkg.set_collation(&mut db).to(vec![a, b]);
 
     // `b` has no top-level `shared`, but `a` (a collation entry in the
     // same package) does. `b.resolve("shared")` should find it via the

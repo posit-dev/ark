@@ -29,7 +29,7 @@ fn installed_origin(name: &str) -> PackageOrigin {
 }
 
 fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
-    Package::new(db, name.to_string(), kind, Namespace::default(), Vec::new())
+    Package::new(db, name.to_string(), kind, Namespace::default(), None)
 }
 
 fn make_script(db: &mut TestDb, name: &str) -> Script {

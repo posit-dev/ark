@@ -1,3 +1,4 @@
+mod collation;
 mod file;
 mod file_exports;
 mod file_imports;
@@ -10,3 +11,5 @@ mod resolver;
 mod root;
 mod source_graph;
 mod test_db;
+mod vfs;
+mod vfs_scan;
