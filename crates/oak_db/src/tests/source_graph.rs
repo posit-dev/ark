@@ -33,7 +33,6 @@ fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
 }
 
 fn make_script(db: &mut TestDb, name: &str) -> Script {
-    use salsa::Setter;
     let file = crate::intern_file(db, file_url(name), String::new(), None);
     let script = Script::new(db, file);
     file.set_parent(db).to(Some(SourceNode::Script(script)));

@@ -1,5 +1,8 @@
 mod db;
 mod file;
+mod file_exports;
+mod file_imports;
+mod file_resolve;
 mod files;
 mod legacy;
 mod name;
@@ -13,6 +16,10 @@ mod tests;
 
 pub use db::Db;
 pub use file::File;
+pub use file_exports::ExportEntry;
+pub use file_exports::FileExports;
+pub use file_imports::ImportLayer;
+pub use file_resolve::Resolution;
 pub use files::intern_file;
 pub use files::Files;
 pub use legacy::semantic_index_with_source_resolver;

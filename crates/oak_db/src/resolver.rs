@@ -13,20 +13,28 @@ use crate::File;
 /// Salsa-backed [`ImportsResolver`] consumed by the per-file semantic
 /// index builder. One instance per call to [`File::semantic_index`].
 ///
-/// Lookups go through the source graph (`script_by_url`) and through the
-/// target file's own [`File::semantic_index`] (for exported names and
-/// attached packages). Each `source("path")` call records a salsa dep
-/// on the target file's semantic index, not on its parse tree or
-/// contents. That dep is coarse today. `SemanticIndex` is not
-/// `PartialEq`-stable across internal edits (AstPtr ranges shift), so
-/// any edit to a sourced file invalidates this file's index too.
+/// Each `source("path")` call triggers two reads on the target file, both
+/// through narrow tracked queries:
 ///
-/// TODO(salsa): once `File::exports` lands and `DbResolver` reads
-/// `target.exports(db)` here instead of
-/// `target.semantic_index().file_exports()`, the dep moves to a
-/// structurally stable shape (name to `ExportEntry`, no source
-/// ranges). Body-only edits to sourced files stop invalidating
-/// callers, and salsa backdates as the design note advertises.
+/// - `target.exports(db)` for the names `source()` injects into the
+///   calling scope.
+///
+/// - `target.attached_packages(db)` for the target's file-scope
+///   `library()` calls. `source()` runs the target's top-level
+///   statements at load time, so those attaches stick in the caller's
+///   search path.
+///
+/// Both return PartialEq-stable values (a `FileExports` map and a
+/// `Vec<String>` respectively), so body-only edits to the target backdate
+/// at the narrow query layer and don't invalidate the caller.
+///
+/// Cycles in `source()` chains run through this resolver. Indexing A reads B's
+/// queries, which read B.semantic_index, which (via this resolver) reads A's
+/// queries, which read A.semantic_index. Both `File::semantic_index` and
+/// `File::exports` have `cycle_result` handlers (FallbackImmediate). Salsa
+/// breaks at whichever query it first re-enters; every cycle participant gets
+/// the fallback. Each cycling file's exports surface ends up empty and its
+/// attaches drop.
 pub(crate) struct DbResolver<'db> {
     db: &'db dyn Db,
     /// The file currently being indexed. The resolver's whole job is to
@@ -48,25 +56,15 @@ impl<'db> ImportsResolver for DbResolver<'db> {
         let script = self.db.source_graph().script_by_url(self.db, &target_url)?;
         let target = script.file(self.db);
 
-        // Reads the target's own `semantic_index`. Salsa records the dep
-        // edge; cycles in `source()` chains are caught by the cycle_result
-        // on `File::semantic_index`.
-        //
-        // TODO(salsa): switch to `target.exports(self.db)` once that
-        // tracked query lands. Same change moves the cycle handler off
-        // `semantic_index` (finer recovery) and makes the dep edge
-        // here PartialEq-stable across body-only edits.
-        let index = target.semantic_index(self.db);
-
-        let names: Vec<String> = index
-            .file_exports()
-            .keys()
-            .map(|name| name.to_string())
+        let names: Vec<String> = target
+            .exports(self.db)
+            .iter()
+            .map(|(name, _)| name.to_string())
             .collect();
-        let packages: Vec<String> = index
-            .file_attached_packages()
+        let packages: Vec<String> = target
+            .attached_packages(self.db)
             .into_iter()
-            .map(|s| s.to_string())
+            .map(|name| name.text(self.db).to_string())
             .collect();
 
         Some(SourceResolution {

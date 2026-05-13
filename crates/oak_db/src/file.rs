@@ -10,6 +10,7 @@ use crate::parse::OakParse;
 use crate::resolver::DbResolver;
 use crate::root::url_to_root;
 use crate::Db;
+use crate::Name;
 use crate::PackageOrigin;
 use crate::Root;
 use crate::SourceNode;
@@ -58,20 +59,24 @@ impl File {
 
     /// Build this file's `SemanticIndex` from the parse tree.
     ///
-    /// `pub(crate)` so [`DbResolver`] and tests can reach it. External
-    /// consumers should go through the narrow tracked queries below.
-    ///
-    /// TODO(salsa): tighten back to private once narrow cross-file
-    /// queries land (`file_exports`, `file_attached_packages`) and
-    /// `DbResolver::resolve_source` reads those instead of the full
-    /// index. The privacy reverts to file-local + `cfg(test)` for
-    /// tests at that point.
+    /// `pub(crate)` so internal modules (`file_exports`, `file_imports`,
+    /// `file_resolve`) can read slices of the aggregate to build their
+    /// own narrow tracked queries on top. External consumers must go
+    /// through the narrow queries: `exports`, `imports`, `resolve`,
+    /// `attached_packages`, `symbol_table`, `use_def_map`. Reading the
+    /// aggregate invalidates downstream on every edit (`AstPtr` ranges
+    /// inside `Definition`s shift).
     ///
     /// Cross-file symbol resolution (`source()` injection, NSE resolution)
-    /// is driven by [`DbResolver`]. `cycle_result` recovers from cyclic
-    /// `source()` chains by returning an empty index for whichever side
-    /// salsa picks to break the cycle. R doesn't allow `A` sources `B`
-    /// sources `A`, so precision loss is acceptable.
+    /// is driven by [`DbResolver`].
+    ///
+    /// `cycle_result` is required even though `File::exports` also has
+    /// one. A `source()` cycle forms a dependency graph that runs through
+    /// `semantic_index(A) -> DbResolver -> exports(B) -> semantic_index(B)
+    /// -> DbResolver -> exports(A) -> semantic_index(A)`, and salsa
+    /// panics with "set cycle_fn/cycle_initial" unless the query first
+    /// re-entered has a handler. Whichever side salsa picks gets
+    /// `SemanticIndex::empty()`.
     ///
     /// `no_eq` skips salsa's `values_equal` check after recomputation.
     /// Backdating at this level never triggered in practice anyway: `AstPtr`
@@ -91,6 +96,17 @@ impl File {
     #[salsa::tracked]
     pub fn use_def_map(self, db: &dyn Db, scope: ScopeId) -> Arc<UseDefMap> {
         Arc::clone(self.semantic_index(db).use_def_map(scope))
+    }
+
+    /// Package names from `library()` / `require()` calls in this file,
+    /// including those propagated transitively through `source()` chains.
+    #[salsa::tracked]
+    pub fn attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
+        self.semantic_index(db)
+            .file_attached_packages()
+            .into_iter()
+            .map(|s| Name::new(db, s))
+            .collect()
     }
 
     /// The workspace root containing this file.

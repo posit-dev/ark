@@ -1,5 +1,6 @@
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
+use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
 
 use crate::intern_file;
@@ -94,6 +95,57 @@ fn source_cycle_terminates_with_empty_index() {
     let empty_a = index_a.file_exports().is_empty();
     let empty_b = index_b.file_exports().is_empty();
     assert!(empty_a || empty_b);
+}
+
+#[test]
+fn library_in_sourced_file_propagates_to_caller() {
+    // R runtime: `source("helpers.R")` runs every top-level statement
+    // in `helpers.R`, including its `library()` calls. Those attaches
+    // persist in the caller's search path, so `DbResolver` plumbs the
+    // sourced file's `file_attached_packages` through `SourceResolution`
+    // and the builder re-records them as `Attach` semantic calls at the
+    // source() call's offset.
+    let mut db = TestDb::new();
+    let helpers = make_script(&mut db, "helpers.R", "library(dplyr)\n");
+    let analysis = make_script(&mut db, "analysis.R", "source(\"helpers.R\")\n");
+    db.source_graph()
+        .set_scripts(&mut db)
+        .to(vec![helpers, analysis]);
+
+    let index = analysis.file(&db).semantic_index(&db);
+    let attaches: Vec<&str> = index
+        .semantic_calls()
+        .iter()
+        .filter_map(|c| match c.kind() {
+            SemanticCallKind::Attach { package } => Some(package.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attaches, vec!["dplyr"]);
+}
+
+#[test]
+fn library_propagates_transitively_through_source_chains() {
+    // a sources b sources c; c does `library(dplyr)`. Each hop's
+    // `DbResolver` pulls the previous file's attaches through
+    // `file_attached_packages`, so `dplyr` ends up recorded as an
+    // attach in `a`'s semantic_index.
+    let mut db = TestDb::new();
+    let c = make_script(&mut db, "c.R", "library(dplyr)\n");
+    let b = make_script(&mut db, "b.R", "source(\"c.R\")\n");
+    let a = make_script(&mut db, "a.R", "source(\"b.R\")\n");
+    db.source_graph().set_scripts(&mut db).to(vec![a, b, c]);
+
+    let index = a.file(&db).semantic_index(&db);
+    let attaches: Vec<&str> = index
+        .semantic_calls()
+        .iter()
+        .filter_map(|c| match c.kind() {
+            SemanticCallKind::Attach { package } => Some(package.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attaches, vec!["dplyr"]);
 }
 
 #[test]

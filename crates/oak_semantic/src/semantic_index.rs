@@ -105,11 +105,6 @@ impl SemanticIndex {
     /// symbols, definitions, uses, or semantic calls. Used as the cycle
     /// recovery value for `source()` chains where one file (transitively)
     /// sources itself, an illegal user construct.
-    ///
-    /// TODO(salsa): delete once cycle handling moves from
-    /// `File::semantic_index` to `File::exports`. With the cycle path
-    /// running through exports, semantic_index no longer needs an
-    /// empty-recovery value.
     pub fn empty() -> Self {
         let mut scopes = IndexVec::new();
         scopes.push(Scope {

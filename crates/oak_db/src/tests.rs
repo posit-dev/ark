@@ -1,4 +1,7 @@
 mod file;
+mod file_exports;
+mod file_imports;
+mod file_resolve;
 mod file_workspace_root;
 mod files;
 mod resolver;
