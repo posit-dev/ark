@@ -6,6 +6,29 @@ use url::Url;
 use crate::Db;
 use crate::File;
 
+/// Storage for the source graph. The edges (dependencies between nodes) are
+/// encoded in `Script` and `Package` nodes.
+///
+/// - Scripts can depend on installed and workspace packages via e.g. `::`
+///   or `library()`. They can also depend on other scripts via `source()`.
+/// - Packages can import other packages, but do not depend on scripts.
+#[salsa::input(singleton)]
+pub struct SourceGraph {
+    /// Scripts in the user workspace.
+    #[returns(ref)]
+    pub scripts: Vec<Script>,
+    /// Workspace packages live in the user's workspace and are authoritative
+    /// over installed packages. We always have full sources for workspace
+    /// packages.
+    #[returns(ref)]
+    pub workspace_packages: Vec<Package>,
+    /// Installed packages live in `.libPaths()`. They start out as stubs (no
+    /// source files) and get updated by the LSP layer as sources become
+    /// available via `oak_sources`.
+    #[returns(ref)]
+    pub installed_packages: Vec<Package>,
+}
+
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum SourceNode {
     Script(Script),
@@ -33,29 +56,6 @@ pub struct Package {
 pub enum PackageOrigin {
     Workspace { root: PathBuf },
     Installed { version: String, libpath: PathBuf },
-}
-
-/// Storage for the source graph. The edges (dependencies between nodes) are
-/// encoded in `Script` and `Package` nodes.
-///
-/// - Scripts can depend on installed and workspace packages via e.g. `::`
-///   or `library()`. They can also depend on other scripts via `source()`.
-/// - Packages can import other packages, but do not depend on scripts.
-#[salsa::input(singleton)]
-pub struct SourceGraph {
-    /// Scripts in the user workspace.
-    #[returns(ref)]
-    pub scripts: Vec<Script>,
-    /// Workspace packages live in the user's workspace and are authoritative
-    /// over installed packages. We always have full sources for workspace
-    /// packages.
-    #[returns(ref)]
-    pub workspace_packages: Vec<Package>,
-    /// Installed packages live in `.libPaths()`. They start out as stubs (no
-    /// source files) and get updated by the LSP layer as sources become
-    /// available via `oak_sources`.
-    #[returns(ref)]
-    pub installed_packages: Vec<Package>,
 }
 
 /// Look up a `Script` by URL.
