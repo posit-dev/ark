@@ -43,7 +43,8 @@ impl<'db> DbResolver<'db> {
 
 impl<'db> ImportsResolver for DbResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
-        let target_url = resolve_relative_to(self.calling_file.url(self.db), path)?;
+        let anchor = anchor_dir(self.db, self.calling_file)?;
+        let target_url = resolve_relative_to(&anchor, path)?;
         let script = self.db.source_graph().script_by_url(self.db, &target_url)?;
         let target = script.file(self.db);
 
@@ -76,25 +77,27 @@ impl<'db> ImportsResolver for DbResolver<'db> {
     }
 }
 
-/// Resolve `path` (the literal `source("path")` argument) against
-/// `calling_url`'s parent directory. Returns `None` if `calling_url` has
-/// no parent (root URL), the path is non-`file:`, or the joined path
-/// can't be turned back into a file URL.
+/// Anchor directory for relative `source("path")` arguments.
 ///
-/// Applies pure `..` / `.` normalisation (no I/O). Anchoring is parent-
-/// directory only.
-///
-/// TODO(salsa): switch the anchor to `File::workspace_root(db)`'s
-/// `Root.path` once `Root` lands (PR 10), falling back to the calling
-/// file's parent directory for files outside any workspace folder.
-/// This matches RStudio's `getwd()`-relative `source()` semantics.
-fn resolve_relative_to(calling_url: &UrlId, path: &str) -> Option<UrlId> {
-    // `to_file_path` / `from_file_path` failures are expected for
-    // non-`file:` URLs (untitled buffers, custom schemes) and ill-formed
-    // paths. Drop silently rather than logging noise during discovery.
-    let calling_path = calling_url.as_url().to_file_path().ok()?;
-    let calling_dir = calling_path.parent()?;
-    let raw: PathBuf = calling_dir.join(path);
+/// Workspace root if the file is under one, else the file's parent directory. R
+/// resolves `source("foo.R")` against `getwd()`, and IDEs (RStudio, Positron)
+/// `setwd()` to the project root, so workspace-root anchoring typically matches
+/// the runtime behaviour.
+fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
+    if let Some(root) = calling_file.workspace_root(db) {
+        return root.path(db).to_file_path();
+    }
+    let calling_path = calling_file.url(db).to_file_path()?;
+    calling_path.parent().map(PathBuf::from)
+}
+
+/// Resolve `path` (the literal `source("path")` argument) against the anchor
+/// directory. Applies pure `..` / `.` normalisation (no I/O). Returns `None` if
+/// the joined path can't be turned back into a file URL.
+fn resolve_relative_to(anchor_dir: &Path, path: &str) -> Option<UrlId> {
+    // `from_file_path` failures are expected for ill-formed paths.
+    // Drop silently rather than logging noise during discovery.
+    let raw: PathBuf = anchor_dir.join(path);
     let target_path = normalise_path(&raw);
     let url = Url::from_file_path(&target_path).ok()?;
     Some(UrlId::from_canonical(url))

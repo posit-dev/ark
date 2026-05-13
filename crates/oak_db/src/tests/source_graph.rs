@@ -1,9 +1,8 @@
-use std::path::PathBuf;
-
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
 use crate::tests::test_db::file_url;
+use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
 use crate::File;
@@ -17,14 +16,17 @@ fn name<'db>(db: &'db TestDb, text: &str) -> Name<'db> {
     Name::new(db, text)
 }
 
-fn workspace_origin(name: &str) -> PackageOrigin {
+fn workspace_origin(db: &TestDb, name: &str) -> PackageOrigin {
     PackageOrigin::Workspace {
-        root: PathBuf::from(format!("/workspace/{name}")),
+        root: workspace_root(db, &format!("workspace/{name}")),
     }
 }
 
-fn installed_origin(_name: &str) -> PackageOrigin {
-    PackageOrigin::Installed
+fn installed_origin(name: &str) -> PackageOrigin {
+    PackageOrigin::Installed {
+        version: "1.0.0".to_string(),
+        libpath: file_url(&format!("libs/{name}")),
+    }
 }
 
 fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
@@ -39,7 +41,7 @@ fn make_script(db: &TestDb, name: &str) -> Script {
 #[test]
 fn package_by_name_finds_workspace_package() {
     let mut db = TestDb::new();
-    let pkg = make_package(&db, "rlang", workspace_origin("rlang"));
+    let pkg = make_package(&db, "rlang", workspace_origin(&db, "rlang"));
     let source_graph = db.source_graph();
     source_graph.set_workspace_packages(&mut db).to(vec![pkg]);
 
@@ -65,7 +67,7 @@ fn package_by_name_falls_back_to_installed() {
 #[test]
 fn package_by_name_workspace_shadows_installed() {
     let mut db = TestDb::new();
-    let workspace_pkg = make_package(&db, "rlang", workspace_origin("rlang"));
+    let workspace_pkg = make_package(&db, "rlang", workspace_origin(&db, "rlang"));
     let installed_pkg = make_package(&db, "rlang", installed_origin("rlang"));
     let source_graph = db.source_graph();
     source_graph
@@ -137,7 +139,7 @@ fn source_node_round_trips_through_a_tracked_query() {
     assert_eq!(first_node(&db), Some(SourceNode::Script(script)));
 
     source_graph.set_scripts(&mut db).to(vec![]);
-    let package = make_package(&db, "rlang", workspace_origin("rlang"));
+    let package = make_package(&db, "rlang", workspace_origin(&db, "rlang"));
     source_graph
         .set_workspace_packages(&mut db)
         .to(vec![package]);

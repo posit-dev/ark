@@ -1,4 +1,5 @@
 use crate::SourceGraph;
+use crate::WorkspaceRoots;
 
 /// Salsa Database trait.
 ///
@@ -11,4 +12,10 @@ pub trait Db: salsa::Database {
     /// recommended implementation lazily allocates it on first access
     /// via `Arc<OnceLock<SourceGraph>>`.
     fn source_graph(&self) -> SourceGraph;
+
+    /// Workspace folders opened by the editor.
+    ///
+    /// Bumps to each `Root`'s revision are the salsa-observable signal
+    /// for "the file set under this root changed."
+    fn workspace_roots(&self) -> WorkspaceRoots;
 }
