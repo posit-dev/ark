@@ -1,3 +1,4 @@
+use crate::Files;
 use crate::LibraryRoots;
 use crate::WorkspaceRoots;
 
@@ -17,4 +18,7 @@ pub trait Db: salsa::Database {
 
     /// R library roots (entries in `.libPaths()`).
     fn library_roots(&self) -> LibraryRoots;
+
+    /// URL-keyed `File` interner.
+    fn files(&self) -> &Files;
 }

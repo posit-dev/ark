@@ -2,17 +2,20 @@ use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
 use salsa::Setter;
 
+use crate::intern_file;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
-use crate::File;
+use crate::FileOwner;
 use crate::Root;
 use crate::Script;
 
-fn make_script(db: &TestDb, root: Root, name: &str, contents: &str) -> Script {
-    let file = File::new(db, file_url(name), contents.to_string());
-    Script::new(db, root, file)
+fn make_script(db: &mut TestDb, root: Root, name: &str, contents: &str) -> Script {
+    let file = intern_file(db, file_url(name), contents.to_string(), None);
+    let script = Script::new(db, root, file);
+    file.set_owner(db).to(Some(FileOwner::Script(script)));
+    script
 }
 
 /// Create a workspace root with the given scripts and register it.

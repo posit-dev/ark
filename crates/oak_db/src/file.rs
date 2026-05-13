@@ -11,6 +11,7 @@ use crate::resolver::DbResolver;
 use crate::Db;
 use crate::Package;
 use crate::Root;
+use crate::RootKind;
 use crate::Script;
 
 /// A source file tracked by Salsa.
@@ -21,12 +22,18 @@ use crate::Script;
 ///
 /// The `url` field is a [`UrlId`], so the type system enforces "everything
 /// inside Salsa is a canonical URL".
+///
+/// `owner` is a back-pointer to the [`FileOwner`] (Script or Package) this
+/// file belongs to. Inverse of `Root.scripts` and `Package.files`, so
+/// queries answering "what owns this file?" don't walk the forward edges.
+/// `None` for files that exist but aren't registered as part of either.
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
+    pub owner: Option<FileOwner>,
 }
 
 /// The entity that owns a [`File`]. Returned by `File::owner()` to return
@@ -97,21 +104,27 @@ impl File {
 
     /// The workspace root containing this file.
     ///
-    /// Returns the longest-prefix workspace root whose path is an ancestor of
-    /// `self.url`. Files outside any workspace folder return `None`.
+    /// If the file has a registered [`FileOwner`], dispatches through
+    /// the owner's `root`: workspace-owned files return `Some(root)`,
+    /// library-owned files (installed packages) return `None`. Files
+    /// without an owner fall back to a URL-prefix lookup against
+    /// [`WorkspaceRoots`].
     ///
-    /// Used by `source()` resolution to anchor relative paths against the
-    /// project root, matching R's runtime semantics (paths resolve against
-    /// `getwd()`, typically the project root in an IDE).
-    ///
-    /// TODO(salsa): once `File.owner: Option<FileOwner>` lands, owner
-    /// dispatches reach the Root via the chain `file.owner(db)?.root(db)`
-    /// (works for both `Workspace` and `Library` Roots, the latter for
-    /// installed-package files). This method then becomes the
-    /// workspace-root-only path, useful for `source()` anchoring where
-    /// library roots aren't relevant.
+    /// Used by `source()` resolution to anchor relative paths against
+    /// the project root, matching R's runtime semantics (paths resolve
+    /// against `getwd()`, typically the project root in an IDE).
     #[salsa::tracked]
     pub fn workspace_root(self, db: &dyn Db) -> Option<Root> {
+        if let Some(owner) = self.owner(db) {
+            let root = match owner {
+                FileOwner::Script(s) => s.root(db),
+                FileOwner::Package(p) => p.root(db),
+            };
+            return match root.kind(db) {
+                RootKind::Workspace => Some(root),
+                RootKind::Library => None,
+            };
+        }
         crate::root_by_url(db, self.url(db))
     }
 }
