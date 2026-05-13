@@ -7,14 +7,17 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use harp::command::r_command;
-use harp::command::r_home_setup;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
+use oak_package_metadata::description::Description;
+
+pub const MIN_R_MAJOR: u32 = 4;
+pub const MIN_R_MINOR: u32 = 2;
 
 pub struct RVersion {
     // Major version of the R installation
@@ -25,40 +28,43 @@ pub struct RVersion {
 
     // Patch version of the R installation
     pub patch: u32,
-
-    // The full path on disk to the R installation -- that is, the value R_HOME
-    // would have inside an R session: > R.home()
-    pub r_home: String,
 }
 
-pub fn detect_r() -> anyhow::Result<RVersion> {
-    let r_home: String = r_home_setup()?.to_string_lossy().to_string();
+impl RVersion {
+    pub fn is_supported(&self) -> bool {
+        self.major > MIN_R_MAJOR || (self.major == MIN_R_MAJOR && self.minor >= MIN_R_MINOR)
+    }
+}
 
-    let output = r_command(|command| {
-        command
-            .arg("--vanilla")
-            .arg("-s")
-            .arg("-e")
-            .arg("cat(version$major, \".\", version$minor, sep = \"\")");
+pub fn from_r_home(r_home: &Path) -> anyhow::Result<RVersion> {
+    let path = r_home.join("library").join("base").join("DESCRIPTION");
+
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read R version from {}", path.display()))?;
+
+    let description = Description::parse(&contents)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
+
+    parse_version_string(&description.version).with_context(|| {
+        format!(
+            "Failed to parse R version `{}` from {}",
+            description.version,
+            path.display()
+        )
     })
-    .context("Failed to execute R to determine version number")?;
+}
 
-    let version = String::from_utf8(output.stdout)
-        .context("Failed to convert R version number to a string")?
-        .trim()
-        .to_string();
+fn parse_version_string(s: &str) -> anyhow::Result<RVersion> {
+    let parts = s.trim().split('.').map(|x| x.parse::<u32>());
 
-    let version = version.split(".").map(|x| x.parse::<u32>());
-
-    if let Some((Ok(major), Ok(minor), Ok(patch))) = version.collect_tuple() {
+    if let Some((Ok(major), Ok(minor), Ok(patch))) = parts.collect_tuple() {
         Ok(RVersion {
             major,
             minor,
             patch,
-            r_home,
         })
     } else {
-        anyhow::bail!("Failed to extract R version");
+        Err(anyhow::anyhow!("expected `major.minor.patch`"))
     }
 }
 
@@ -90,4 +96,95 @@ pub unsafe extern "C-unwind" fn ps_ark_version() -> anyhow::Result<SEXP> {
 
     let result = RObject::from(info);
     Ok(result.sexp)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_version_reject_low_major() {
+        let version = RVersion {
+            major: 3,
+            minor: 9,
+            patch: 0,
+        };
+        assert!(!version.is_supported());
+    }
+
+    #[test]
+    fn test_version_reject_low_minor() {
+        let version = RVersion {
+            major: 4,
+            minor: 1,
+            patch: 0,
+        };
+        assert!(!version.is_supported());
+    }
+
+    #[test]
+    fn test_version_accept_exact() {
+        let version = RVersion {
+            major: 4,
+            minor: 2,
+            patch: 0,
+        };
+        assert!(version.is_supported());
+    }
+
+    #[test]
+    fn test_version_accept_high_minor() {
+        let version = RVersion {
+            major: 4,
+            minor: 4,
+            patch: 0,
+        };
+        assert!(version.is_supported());
+    }
+
+    #[test]
+    fn test_version_accept_high_major() {
+        let version = RVersion {
+            major: 5,
+            minor: 0,
+            patch: 0,
+        };
+        assert!(version.is_supported());
+    }
+
+    #[test]
+    fn test_parse_version_string_basic() {
+        let version = parse_version_string("4.5.1").unwrap();
+        assert_eq!(version.major, 4);
+        assert_eq!(version.minor, 5);
+        assert_eq!(version.patch, 1);
+    }
+
+    #[test]
+    fn test_parse_version_string_trims_whitespace() {
+        let version = parse_version_string("  4.5.1\n").unwrap();
+        assert_eq!(version.major, 4);
+        assert_eq!(version.minor, 5);
+        assert_eq!(version.patch, 1);
+    }
+
+    #[test]
+    fn test_parse_version_string_too_few_components() {
+        assert!(parse_version_string("4.5").is_err());
+    }
+
+    #[test]
+    fn test_parse_version_string_too_many_components() {
+        assert!(parse_version_string("4.5.1.2").is_err());
+    }
+
+    #[test]
+    fn test_parse_version_string_non_numeric() {
+        assert!(parse_version_string("4.5.x").is_err());
+    }
+
+    #[test]
+    fn test_parse_version_string_empty() {
+        assert!(parse_version_string("").is_err());
+    }
 }
