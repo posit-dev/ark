@@ -138,6 +138,15 @@ impl UrlId {
     pub fn as_url(&self) -> &Url {
         &self.0
     }
+
+    /// Filesystem path corresponding to this URL.
+    ///
+    /// Returns `None` for non-`file:` URLs (untitled buffers, custom
+    /// schemes) and for URLs whose path can't be turned back into a
+    /// `PathBuf`.
+    pub fn to_file_path(&self) -> Option<std::path::PathBuf> {
+        self.0.to_file_path().ok()
+    }
 }
 
 impl fmt::Display for UrlId {

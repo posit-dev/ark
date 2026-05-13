@@ -11,6 +11,7 @@ use oak_core::file::list_r_files;
 use oak_db::semantic_index_with_source_resolver;
 use oak_db::LegacyDb;
 use oak_db::SourceGraph;
+use oak_db::WorkspaceRoots;
 use oak_ide::ExternalScope;
 use oak_semantic::library::Library;
 use oak_semantic::scope_layer::default_search_path;
@@ -31,6 +32,7 @@ use crate::lsp::inputs::source_root::SourceRoot;
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
     source_graph: Arc<OnceLock<SourceGraph>>,
+    workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
 }
 
 impl OakDatabase {
@@ -46,6 +48,12 @@ impl salsa::Database for OakDatabase {}
 impl oak_db::Db for OakDatabase {
     fn source_graph(&self) -> SourceGraph {
         *self.source_graph.get_or_init(|| SourceGraph::empty(self))
+    }
+
+    fn workspace_roots(&self) -> WorkspaceRoots {
+        *self
+            .workspace_roots
+            .get_or_init(|| WorkspaceRoots::empty(self))
     }
 }
 
