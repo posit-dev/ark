@@ -93,32 +93,47 @@ render_dep_inline <- function(dep) {
     # Stylesheets
     for (css in as_named_resource(dep$stylesheet)) {
         if (!is.null(file_base)) {
-            parts <- c(parts, sprintf(
-                '<link rel="stylesheet" href="%s"/>',
-                file_to_data_uri(file.path(file_base, css), "text/css")
-            ))
+            parts <- c(
+                parts,
+                sprintf(
+                    '<link rel="stylesheet" href="%s"/>',
+                    file_to_data_uri(file.path(file_base, css), "text/css")
+                )
+            )
         } else if (!is.null(href_base)) {
-            parts <- c(parts, sprintf(
-                '<link rel="stylesheet" href="%s/%s"/>',
-                href_base,
-                css
-            ))
+            parts <- c(
+                parts,
+                sprintf(
+                    '<link rel="stylesheet" href="%s/%s"/>',
+                    href_base,
+                    css
+                )
+            )
         }
     }
 
     # Scripts
     for (js in as_named_resource(dep$script)) {
         if (!is.null(file_base)) {
-            parts <- c(parts, sprintf(
-                '<script src="%s"></script>',
-                file_to_data_uri(file.path(file_base, js), "application/javascript")
-            ))
+            parts <- c(
+                parts,
+                sprintf(
+                    '<script src="%s"></script>',
+                    file_to_data_uri(
+                        file.path(file_base, js),
+                        "application/javascript"
+                    )
+                )
+            )
         } else if (!is.null(href_base)) {
-            parts <- c(parts, sprintf(
-                '<script src="%s/%s"></script>',
-                href_base,
-                js
-            ))
+            parts <- c(
+                parts,
+                sprintf(
+                    '<script src="%s/%s"></script>',
+                    href_base,
+                    js
+                )
+            )
         }
     }
 
@@ -141,9 +156,13 @@ as_named_resource <- function(x) {
     if (is.character(x)) {
         return(x)
     }
-    vapply(x, function(item) {
-        if (is.character(item)) item else item[["src"]] %||% NA_character_
-    }, character(1))
+    vapply(
+        x,
+        function(item) {
+            if (is.character(item)) item else item[["src"]] %||% NA_character_
+        },
+        character(1)
+    )
 }
 
 # Read a file and return a `data:<mime>;base64,...` URI. Used for inlining
