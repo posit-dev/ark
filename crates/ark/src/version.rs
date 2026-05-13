@@ -11,10 +11,10 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use harp::command::r_command;
 use harp::object::RObject;
 use itertools::Itertools;
 use libr::SEXP;
+use oak_package_metadata::description::Description;
 
 pub const MIN_R_MAJOR: u32 = 4;
 pub const MIN_R_MINOR: u32 = 2;
@@ -37,30 +37,34 @@ impl RVersion {
 }
 
 pub fn from_r_home(r_home: &Path) -> anyhow::Result<RVersion> {
-    let output = r_command(r_home, |command| {
-        command
-            .arg("--vanilla")
-            .arg("-s")
-            .arg("-e")
-            .arg("cat(as.character(getRversion()))");
+    let path = r_home.join("library").join("base").join("DESCRIPTION");
+
+    let contents = std::fs::read_to_string(&path)
+        .with_context(|| format!("Failed to read R version from {}", path.display()))?;
+
+    let description = Description::parse(&contents)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
+
+    parse_version_string(&description.version).with_context(|| {
+        format!(
+            "Failed to parse R version `{}` from {}",
+            description.version,
+            path.display()
+        )
     })
-    .context("Failed to execute R to determine version number")?;
+}
 
-    let version = String::from_utf8(output.stdout)
-        .context("Failed to convert R version number to a string")?
-        .trim()
-        .to_string();
+fn parse_version_string(s: &str) -> anyhow::Result<RVersion> {
+    let parts = s.trim().split('.').map(|x| x.parse::<u32>());
 
-    let version = version.split(".").map(|x| x.parse::<u32>());
-
-    if let Some((Ok(major), Ok(minor), Ok(patch))) = version.collect_tuple() {
+    if let Some((Ok(major), Ok(minor), Ok(patch))) = parts.collect_tuple() {
         Ok(RVersion {
             major,
             minor,
             patch,
         })
     } else {
-        anyhow::bail!("Failed to extract R version");
+        Err(anyhow::anyhow!("expected `major.minor.patch`"))
     }
 }
 
@@ -146,5 +150,41 @@ mod tests {
             patch: 0,
         };
         assert!(version.is_supported());
+    }
+
+    #[test]
+    fn test_parse_version_string_basic() {
+        let version = parse_version_string("4.5.1").unwrap();
+        assert_eq!(version.major, 4);
+        assert_eq!(version.minor, 5);
+        assert_eq!(version.patch, 1);
+    }
+
+    #[test]
+    fn test_parse_version_string_trims_whitespace() {
+        let version = parse_version_string("  4.5.1\n").unwrap();
+        assert_eq!(version.major, 4);
+        assert_eq!(version.minor, 5);
+        assert_eq!(version.patch, 1);
+    }
+
+    #[test]
+    fn test_parse_version_string_too_few_components() {
+        assert!(parse_version_string("4.5").is_err());
+    }
+
+    #[test]
+    fn test_parse_version_string_too_many_components() {
+        assert!(parse_version_string("4.5.1.2").is_err());
+    }
+
+    #[test]
+    fn test_parse_version_string_non_numeric() {
+        assert!(parse_version_string("4.5.x").is_err());
+    }
+
+    #[test]
+    fn test_parse_version_string_empty() {
+        assert!(parse_version_string("").is_err());
     }
 }

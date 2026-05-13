@@ -46,6 +46,7 @@ notify.workspace = true
 oak_core.workspace = true
 oak_ide.workspace = true
 oak_index.workspace = true
+oak_package_metadata.workspace = true
 oak_sources.workspace = true
 once_cell.workspace = true
 regex.workspace = true
@@ -80,7 +81,6 @@ ark_test.workspace = true
 assert_matches.workspace = true
 insta.workspace = true
 oak_index = { workspace = true, features = ["testing"] }
-oak_package_metadata.workspace = true
 stdext = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 
