@@ -101,6 +101,47 @@ impl SemanticIndex {
         }
     }
 
+    /// An index containing only the file scope at `ScopeId(0)`, no
+    /// symbols, definitions, uses, or semantic calls. Used as the cycle
+    /// recovery value for `source()` chains where one file (transitively)
+    /// sources itself, an illegal user construct.
+    ///
+    /// TODO(salsa): delete once cycle handling moves from
+    /// `File::semantic_index` to `File::exports`. With the cycle path
+    /// running through exports, semantic_index no longer needs an
+    /// empty-recovery value.
+    pub fn empty() -> Self {
+        let mut scopes = IndexVec::new();
+        scopes.push(Scope {
+            parent: None,
+            kind: ScopeKind::File,
+            range: TextRange::default(),
+            descendants: ScopeId::from(1)..ScopeId::from(1),
+        });
+
+        let mut symbol_tables = IndexVec::new();
+        symbol_tables.push(Arc::new(SymbolTable::default()));
+
+        let mut definitions = IndexVec::new();
+        definitions.push(IndexVec::new());
+
+        let mut uses = IndexVec::new();
+        uses.push(IndexVec::new());
+
+        let mut use_def_maps = IndexVec::new();
+        use_def_maps.push(Arc::new(UseDefMap::empty()));
+
+        Self {
+            scopes,
+            symbol_tables,
+            definitions,
+            uses,
+            use_def_maps,
+            enclosing_snapshots: FxHashMap::default(),
+            semantic_calls: Vec::new(),
+        }
+    }
+
     pub fn scope(&self, id: ScopeId) -> &Scope {
         &self.scopes[id]
     }

@@ -10,7 +10,8 @@ use oak_package_metadata::namespace::Namespace;
 use rustc_hash::FxHashMap;
 use stdext::result::ResultExt;
 
-use crate::semantic_index;
+use crate::build_index;
+use crate::resolver::NoopResolver;
 
 define_index!(FileId);
 
@@ -88,7 +89,7 @@ fn append_definitions(
         return;
     };
 
-    let index = semantic_index(&parsed.tree(), &file_url);
+    let index = build_index(&parsed.tree(), &file_url, &mut NoopResolver);
 
     let file_id = files.push(file);
 
