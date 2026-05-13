@@ -11,11 +11,13 @@ pub mod test;
 
 use std::path::PathBuf;
 
-pub use cache::PackageCache;
+pub use cache::new_cache_pair;
+pub use cache::PackageCacheReader;
+pub use cache::PackageCacheWriter;
 
 /// Trait for an object that can retrieve package sources
 ///
-/// Implemented by the main [crate::cache::PackageCache] itself, but also by
+/// Implemented by the [crate::cache::PackageCacheReader] itself, but also by
 /// [crate::test::TestPackageCache] so that you can generate a test cache that doesn't
 /// need internet access or access to a live R session.
 pub trait PackageSources: std::fmt::Debug + Sync + Send {
