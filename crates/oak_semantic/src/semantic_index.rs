@@ -600,7 +600,11 @@ pub enum SemanticCallKind {
     /// `source("path")`: injects the sourced file's top-level
     /// bindings into the current scope. Local-scope semantics, not
     /// search-path semantics.
-    Source { path: String },
+    ///
+    /// `resolved` is the canonical URL the resolver mapped `path` to,
+    /// or `None` if no resolver was provided or the resolver couldn't
+    /// resolve the path.
+    Source { path: String, resolved: Option<Url> },
 }
 
 impl SemanticCall {

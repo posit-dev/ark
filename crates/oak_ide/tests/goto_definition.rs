@@ -1634,7 +1634,8 @@ fn test_directives_in_function_body_are_scoped() {
     let semantic_calls = script_idx.semantic_calls();
     assert_eq!(semantic_calls.len(), 2);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     });
     assert_eq!(semantic_calls[1].kind(), &SemanticCallKind::Attach {
         package: "dplyr".into()

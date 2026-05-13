@@ -1408,7 +1408,8 @@ fn test_directive_preserves_offset() {
 fn test_source_call_records_path() {
     let index = index("source(\"helpers.R\")");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1416,7 +1417,8 @@ fn test_source_call_records_path() {
 fn test_source_call_single_quoted_string() {
     let index = index("source('helpers.R')");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1442,7 +1444,8 @@ fn test_source_call_in_function_body_records_inner_scope() {
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     });
     assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
 }
@@ -1465,7 +1468,8 @@ fn test_source_call_non_static_local_ignored() {
 fn test_source_call_local_true_recorded() {
     let index = index("source(\"helpers.R\", local = TRUE)");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1477,7 +1481,8 @@ fn test_source_and_library_calls_coexist() {
             package: "dplyr".into()
         },
         &SemanticCallKind::Source {
-            path: "helpers.R".into()
+            path: "helpers.R".into(),
+            resolved: None,
         },
         &SemanticCallKind::Attach {
             package: "tidyr".into()
@@ -1546,7 +1551,8 @@ fn test_source_call_no_arguments_ignored() {
 fn test_directive_declare_source_no_resolver() {
     let index = index("declare(source(\"helpers.R\"))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1554,7 +1560,8 @@ fn test_directive_declare_source_no_resolver() {
 fn test_directive_declare_source_single_quotes_no_resolver() {
     let index = index("declare(source('utils.R'))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "utils.R".into()
+        path: "utils.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1562,7 +1569,8 @@ fn test_directive_declare_source_single_quotes_no_resolver() {
 fn test_directive_tilde_declare_source_no_resolver() {
     let index = index("~declare(source(\"helpers.R\"))");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1583,7 +1591,8 @@ fn test_directive_declare_not_at_file_scope() {
     // nested source() inside a function body is still recorded.
     let index = index("f <- function() { declare(source(\"helpers.R\")) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1591,7 +1600,8 @@ fn test_directive_declare_not_at_file_scope() {
 fn test_directive_tilde_declare_not_at_file_scope() {
     let index = index("f <- function() { ~declare(source(\"helpers.R\")) }");
     assert_eq!(semantic_call_kinds(&index), [&SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     }]);
 }
 
@@ -1603,10 +1613,12 @@ fn test_directive_declare_mixed_with_bare() {
             package: "dplyr".into()
         },
         &SemanticCallKind::Source {
-            path: "helpers.R".into()
+            path: "helpers.R".into(),
+            resolved: None,
         },
         &SemanticCallKind::Source {
-            path: "utils.R".into()
+            path: "utils.R".into(),
+            resolved: None,
         },
     ]);
 }
@@ -1617,7 +1629,8 @@ fn test_directive_declare_source_no_resolver_records_call() {
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     });
 }
 
@@ -1627,7 +1640,8 @@ fn test_directive_tilde_declare_source_no_resolver_records_call() {
     let semantic_calls = index.semantic_calls();
     assert_eq!(semantic_calls.len(), 1);
     assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
-        path: "helpers.R".into()
+        path: "helpers.R".into(),
+        resolved: None,
     });
 }
 
@@ -1758,7 +1772,8 @@ fn test_source_resolver_packages_become_attach_calls() {
 
     assert_eq!(semantic_call_kinds(&index), [
         &SemanticCallKind::Source {
-            path: "helpers.R".into()
+            path: "helpers.R".into(),
+            resolved: Some(Url::parse("file:///test/helpers.R").unwrap()),
         },
         &SemanticCallKind::Attach {
             package: "dplyr".into()
