@@ -10,6 +10,7 @@ use aether_syntax::RLanguage;
 use aether_syntax::RSyntaxElement;
 use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
+use aether_url::UrlId;
 use amalthea::wire::execute_request::CodeLocation;
 use anyhow::anyhow;
 use biome_line_index::LineIndex;
@@ -26,7 +27,6 @@ use crate::console::Console;
 use crate::dap::dap_state::Breakpoint;
 use crate::dap::dap_state::BreakpointState;
 use crate::dap::dap_state::InvalidReason;
-use crate::url::UrlId;
 
 /// Function name used for auto-stepping over injected calls such as breakpoints
 const AUTO_STEP_FUNCTION: &str = ".ark_auto_step";

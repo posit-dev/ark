@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
+use aether_url::UrlId;
 use oak_package_metadata::namespace::Namespace;
-use url::Url;
 
 use crate::Db;
 use crate::File;
@@ -73,12 +73,12 @@ impl SourceGraph {
 impl SourceGraph {
     /// Look up a `Script` by URL.
     ///
-    /// Not `#[salsa::tracked]` because `Url` isn't indexable without interning.
+    /// Not `#[salsa::tracked]` because `UrlId` isn't indexable without interning.
     ///
     /// TODO(salsa): once `Files` and `File.parent: Option<SourceNode>` land,
     /// the body collapses to O(1) via `db.files().get(url)` plus a match on
     /// `file.parent(db)`. The walk over `self.scripts(db)` goes away.
-    pub fn script_by_url(self, db: &dyn Db, url: &Url) -> Option<Script> {
+    pub fn script_by_url(self, db: &dyn Db, url: &UrlId) -> Option<Script> {
         self.scripts(db)
             .iter()
             .find(|script| script.file(db).url(db) == url)

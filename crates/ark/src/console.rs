@@ -116,6 +116,7 @@ mod console_graphics;
 mod console_integration;
 mod console_repl;
 
+use aether_url::UrlId;
 use console_annotate::annotate_input;
 pub(crate) use console_debug::DebugCallText;
 pub(crate) use console_debug::DebugStoppedReason;
@@ -177,7 +178,6 @@ use crate::srcref::ns_populate_srcref;
 use crate::srcref::resource_loaded_namespaces;
 use crate::startup;
 use crate::sys::console::console_to_utf8;
-use crate::url::UrlId;
 
 thread_local! {
     /// The `Console` singleton.

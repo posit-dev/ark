@@ -4,6 +4,7 @@
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
 
+use aether_url::UrlId;
 use amalthea::socket::iopub::IOPubMessage;
 use amalthea::wire::stream::Stream;
 use amalthea::wire::stream::StreamOutput;
@@ -28,7 +29,6 @@ use crate::console::SessionMode;
 use crate::modules::ARK_ENVS;
 use crate::srcref::ark_uri;
 use crate::thread::RThreadSafe;
-use crate::url::UrlId;
 
 /// Debug call text captured from R's debug output.
 #[derive(Clone, Debug)]

@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use std::time::Instant;
 
+use aether_url::UrlId;
 use amalthea::comm::data_explorer_comm::DataExplorerFrontendEvent;
 use amalthea::comm::variables_comm::RefreshParams;
 use amalthea::comm::variables_comm::UpdateParams;
@@ -28,7 +29,6 @@ use amalthea::wire::jupyter_message::Message;
 use amalthea::wire::stream::Stream;
 use ark::console::SessionMode;
 use ark::repos::DefaultRepos;
-use ark::url::UrlId;
 use regex::Regex;
 use tempfile::NamedTempFile;
 use url::Url;

@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 aether_parser.workspace = true
 aether_syntax.workspace = true
+aether_url.workspace = true
 biome_rowan.workspace = true
 compact_str.workspace = true
 oak_package_metadata.workspace = true

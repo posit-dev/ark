@@ -1,0 +1,20 @@
+[package]
+name = "aether_url"
+version = "0.1.0"
+description = "Canonicalised file URL identity (`UrlId`) for matching the same file across heterogeneous URI sources."
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+stdext.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
