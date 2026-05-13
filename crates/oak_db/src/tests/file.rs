@@ -53,7 +53,8 @@ fn semantic_index_matches_oak_semantic() {
     let via_salsa = file.semantic_index(&db);
 
     let parse = aether_parser::parse(source, aether_parser::RParserOptions::default());
-    let direct = oak_semantic::build_index(&parse.tree(), &url, &mut oak_semantic::NoopResolver);
+    let direct =
+        oak_semantic::build_index(&parse.tree(), url.as_url(), &mut oak_semantic::NoopResolver);
 
     assert_eq!(via_salsa, &direct);
 }

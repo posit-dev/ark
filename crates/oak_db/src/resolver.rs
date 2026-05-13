@@ -1,5 +1,8 @@
+use std::path::Component;
+use std::path::Path;
 use std::path::PathBuf;
 
+use aether_url::UrlId;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
@@ -66,7 +69,7 @@ impl<'db> ImportsResolver for DbResolver<'db> {
             .collect();
 
         Some(SourceResolution {
-            file: target_url,
+            file: target_url.as_url().clone(),
             names,
             packages,
         })
@@ -75,16 +78,46 @@ impl<'db> ImportsResolver for DbResolver<'db> {
 
 /// Resolve `path` (the literal `source("path")` argument) against
 /// `calling_url`'s parent directory. Returns `None` if `calling_url` has
-/// no parent (root URL) or the joined path can't be turned back into a
-/// file URL.
+/// no parent (root URL), the path is non-`file:`, or the joined path
+/// can't be turned back into a file URL.
 ///
-/// TODO(salsa): Workspace anchoring + URL canonicalisation
-fn resolve_relative_to(calling_url: &Url, path: &str) -> Option<Url> {
+/// Applies pure `..` / `.` normalisation (no I/O). Anchoring is parent-
+/// directory only.
+///
+/// TODO(salsa): switch the anchor to `File::workspace_root(db)`'s
+/// `Root.path` once `Root` lands (PR 10), falling back to the calling
+/// file's parent directory for files outside any workspace folder.
+/// This matches RStudio's `getwd()`-relative `source()` semantics.
+fn resolve_relative_to(calling_url: &UrlId, path: &str) -> Option<UrlId> {
     // `to_file_path` / `from_file_path` failures are expected for
     // non-`file:` URLs (untitled buffers, custom schemes) and ill-formed
     // paths. Drop silently rather than logging noise during discovery.
-    let calling_path = calling_url.to_file_path().ok()?;
+    let calling_path = calling_url.as_url().to_file_path().ok()?;
     let calling_dir = calling_path.parent()?;
-    let target_path: PathBuf = calling_dir.join(path);
-    Url::from_file_path(&target_path).ok()
+    let raw: PathBuf = calling_dir.join(path);
+    let target_path = normalise_path(&raw);
+    let url = Url::from_file_path(&target_path).ok()?;
+    Some(UrlId::from_canonical(url))
+}
+
+/// Resolve `..` and `.` components in `path` lexically, without
+/// touching the filesystem. Mirrors `Path::canonicalize` minus the
+/// symlink walk. Leading `..` against the root just drops (the root
+/// has no parent).
+fn normalise_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                if !out.pop() {
+                    // Already at the root (or before the prefix /
+                    // root component); leading `..` has nothing to
+                    // pop, so drop it.
+                }
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use aether_url::UrlId;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
-use url::Url;
 
 use crate::parse::OakParse;
 use crate::resolver::DbResolver;
@@ -15,10 +15,13 @@ use crate::Db;
 /// Content is pushed into Salsa by the LSP layer, the database never does I/O.
 /// This matches rust-analyzer's push model and avoids tying parsing to
 /// disk/network I/O inside a Salsa query.
+///
+/// The `url` field is a [`UrlId`], so the type system enforces "everything
+/// inside Salsa is a canonical URL".
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
-    pub url: Url,
+    pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
 }
@@ -85,7 +88,7 @@ impl File {
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let mut resolver = DbResolver::new(db, file);
-    oak_semantic::build_index(&parsed.tree(), file.url(db), &mut resolver)
+    oak_semantic::build_index(&parsed.tree(), file.url(db).as_url(), &mut resolver)
 }
 
 fn semantic_index_cycle_result(_db: &dyn Db, _id: salsa::Id, _file: File) -> SemanticIndex {

@@ -1514,7 +1514,7 @@ impl Console {
                 // Keep the DAP lock while we are updating breakpoints
                 let mut dap_guard = self.debug_dap.lock().unwrap();
 
-                let uri_id = loc.as_ref().map(UrlId::from_code_location);
+                let uri_id = loc.as_ref().map(crate::url::url_id_from_code_location);
 
                 // For notebook cells (`cellId` present in metadata), synthesize
                 // a `CodeLocation` pointing to the temp file that `dumpCell`

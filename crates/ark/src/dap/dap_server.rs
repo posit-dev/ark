@@ -14,6 +14,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use aether_url::UrlId;
 use amalthea::comm::comm_channel::CommMsg;
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -49,7 +50,6 @@ use crate::r_task::RTask;
 use crate::request::debug_request_command;
 use crate::request::DebugRequest;
 use crate::request::RRequest;
-use crate::url::UrlId;
 
 /// Sentinel expression sent by the frontend to notify the kernel that the user
 /// selected a different stack frame in the debugger UI. Subsequent console

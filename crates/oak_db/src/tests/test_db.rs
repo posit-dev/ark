@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::Mutex;
 
+use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
@@ -56,6 +57,6 @@ impl salsa::Database for TestDb {}
 #[salsa::db]
 impl Db for TestDb {}
 
-pub(super) fn file_url(name: &str) -> Url {
-    Url::parse(&format!("file:///{name}")).unwrap()
+pub(super) fn file_url(name: &str) -> UrlId {
+    UrlId::from_canonical(Url::parse(&format!("file:///{name}")).unwrap())
 }

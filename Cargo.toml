@@ -29,6 +29,7 @@ aether_factory = { git = "https://github.com/posit-dev/air", package = "air_r_fa
 aether_lsp_utils = { git = "https://github.com/posit-dev/air", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_parser = { git = "https://github.com/posit-dev/air", package = "air_r_parser", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
 aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syntax", rev = "d2659d5b158374bf486b594625ca50abbd0ac879" }
+aether_url = { path = "crates/aether_url" }
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }

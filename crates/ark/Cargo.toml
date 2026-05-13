@@ -23,6 +23,7 @@ ark_macros.workspace = true
 aether_lsp_utils.workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true
+aether_url.workspace = true
 amalthea.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
