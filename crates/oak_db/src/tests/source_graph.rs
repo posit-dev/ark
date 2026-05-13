@@ -7,10 +7,15 @@ use crate::tests::test_db::file_url;
 use crate::tests::test_db::TestDb;
 use crate::Db;
 use crate::File;
+use crate::Name;
 use crate::Package;
 use crate::PackageOrigin;
 use crate::Script;
 use crate::SourceNode;
+
+fn name<'db>(db: &'db TestDb, text: &str) -> Name<'db> {
+    Name::new(db, text.to_string())
+}
 
 fn workspace_origin(name: &str) -> PackageOrigin {
     PackageOrigin::Workspace {
@@ -26,7 +31,7 @@ fn installed_origin(name: &str) -> PackageOrigin {
 }
 
 fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
-    Package::new(db, name.to_string(), Namespace::default(), Vec::new(), kind)
+    Package::new(db, name.to_string(), kind, Namespace::default(), Vec::new())
 }
 
 fn make_script(db: &TestDb, name: &str) -> Script {
@@ -41,7 +46,10 @@ fn package_by_name_finds_workspace_package() {
     let source_graph = db.source_graph();
     source_graph.set_workspace_packages(&mut db).to(vec![pkg]);
 
-    assert_eq!(source_graph.package_by_name(&db, "rlang"), Some(pkg));
+    assert_eq!(
+        source_graph.package_by_name(&db, name(&db, "rlang")),
+        Some(pkg)
+    );
 }
 
 #[test]
@@ -51,7 +59,10 @@ fn package_by_name_falls_back_to_installed() {
     let source_graph = db.source_graph();
     source_graph.set_installed_packages(&mut db).to(vec![pkg]);
 
-    assert_eq!(source_graph.package_by_name(&db, "dplyr"), Some(pkg));
+    assert_eq!(
+        source_graph.package_by_name(&db, name(&db, "dplyr")),
+        Some(pkg)
+    );
 }
 
 #[test]
@@ -68,7 +79,7 @@ fn package_by_name_workspace_shadows_installed() {
         .to(vec![installed_pkg]);
 
     assert_eq!(
-        source_graph.package_by_name(&db, "rlang"),
+        source_graph.package_by_name(&db, name(&db, "rlang")),
         Some(workspace_pkg),
     );
 }
@@ -76,7 +87,10 @@ fn package_by_name_workspace_shadows_installed() {
 #[test]
 fn package_by_name_returns_none_when_absent() {
     let db = TestDb::new();
-    assert_eq!(db.source_graph().package_by_name(&db, "ggplot2"), None);
+    assert_eq!(
+        db.source_graph().package_by_name(&db, name(&db, "ggplot2")),
+        None,
+    );
 }
 
 #[test]
