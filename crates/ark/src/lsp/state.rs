@@ -31,6 +31,7 @@ use crate::lsp::inputs::source_root::SourceRoot;
 #[derive(Clone, Default)]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
+    files: oak_db::Files,
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
 }
@@ -46,6 +47,10 @@ impl salsa::Database for OakDatabase {}
 
 #[salsa::db]
 impl oak_db::Db for OakDatabase {
+    fn files(&self) -> &oak_db::Files {
+        &self.files
+    }
+
     fn workspace_roots(&self) -> WorkspaceRoots {
         *self
             .workspace_roots

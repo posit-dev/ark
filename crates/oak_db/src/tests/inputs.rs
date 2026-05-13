@@ -27,6 +27,7 @@ fn make_workspace_package(db: &TestDb, name: &str) -> (Root, Package) {
         None,
         Namespace::default(),
         Vec::new(),
+        None,
     );
     (root, pkg)
 }
@@ -40,12 +41,13 @@ fn make_installed_package(db: &TestDb, name: &str) -> (Root, Package) {
         Some("1.0.0".to_string()),
         Namespace::default(),
         Vec::new(),
+        None,
     );
     (root, pkg)
 }
 
 fn make_script(db: &TestDb, root: Root, name: &str) -> Script {
-    let file = File::new(db, file_url(name), String::new());
+    let file = File::new(db, file_url(name), String::new(), None);
     Script::new(db, root, file)
 }
 

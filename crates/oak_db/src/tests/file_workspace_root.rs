@@ -1,15 +1,15 @@
 use salsa::Setter;
 
+use crate::intern_file;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
-use crate::File;
 
 #[test]
 fn workspace_root_returns_none_for_orphan_file() {
-    let db = TestDb::new();
-    let file = File::new(&db, file_url("orphan.R"), String::new());
+    let mut db = TestDb::new();
+    let file = intern_file(&mut db, file_url("orphan.R"), String::new(), None);
 
     assert_eq!(file.workspace_root(&db), None);
 }
@@ -20,7 +20,7 @@ fn workspace_root_finds_containing_workspace() {
     let workspace = workspace_root(&db, "proj");
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
 
-    let file = File::new(&db, file_url("proj/scripts/foo.R"), String::new());
+    let file = intern_file(&mut db, file_url("proj/scripts/foo.R"), String::new(), None);
     assert_eq!(file.workspace_root(&db), Some(workspace));
 }
 
@@ -33,9 +33,9 @@ fn workspace_root_returns_longest_prefix() {
         .set_roots(&mut db)
         .to(vec![outer, inner]);
 
-    let inner_file = File::new(&db, file_url("proj/inner/foo.R"), String::new());
+    let inner_file = intern_file(&mut db, file_url("proj/inner/foo.R"), String::new(), None);
     assert_eq!(inner_file.workspace_root(&db), Some(inner));
 
-    let outer_file = File::new(&db, file_url("proj/foo.R"), String::new());
+    let outer_file = intern_file(&mut db, file_url("proj/foo.R"), String::new(), None);
     assert_eq!(outer_file.workspace_root(&db), Some(outer));
 }

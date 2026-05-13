@@ -96,11 +96,19 @@ pub struct Package {
     pub version: Option<String>,
     #[returns(ref)]
     pub namespace: Namespace,
-    // TODO(salsa): adding any `R/` file mutates this Vec and invalidates
-    // every tracked query that read it. Future fix derives `Vec<File>`
-    // from a basename spec via per-`Package` `files` and a `Files` registry.
+    /// R source files belonging to this package (the `R/*.R` files).
+    /// Per-package granularity: adding or removing a file in one
+    /// package doesn't invalidate tracked queries reading another
+    /// package's files.
     #[returns(ref)]
-    pub collation: Vec<File>,
+    pub files: Vec<File>,
+    /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
+    /// present. `None` when the field is absent (R defaults to
+    /// alphabetical load order). Changes only when `DESCRIPTION`
+    /// itself changes, so this anchor is independent of `files` (which
+    /// bumps when R/ files are added or removed).
+    #[returns(ref)]
+    pub collation: Option<Vec<String>>,
 }
 
 /// Look up the workspace root that contains `url`, longest-prefix among
@@ -123,21 +131,6 @@ pub fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
         })
         .max_by_key(|(p, _)| p.components().count())
         .map(|(_, r)| r)
-}
-
-/// Look up a `Script` by URL. Walks workspace roots looking for a script
-/// whose file URL matches.
-///
-/// TODO(salsa, PR 8): delete this function. Once `Files` and `File.parent`
-/// land, the only caller (`DbResolver::resolve_source`) inlines as
-/// `db.files().get(db, url).and_then(|f| match f.parent(db) { ... })`.
-pub fn script_by_url(db: &dyn Db, url: &UrlId) -> Option<Script> {
-    for root in db.workspace_roots().roots(db) {
-        if let Some(script) = root.scripts(db).iter().find(|s| s.file(db).url(db) == url) {
-            return Some(*script);
-        }
-    }
-    None
 }
 
 /// Look up a `Package` by name. Walks workspace roots in declaration

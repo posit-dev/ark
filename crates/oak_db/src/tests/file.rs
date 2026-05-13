@@ -1,11 +1,11 @@
+use crate::intern_file;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::TestDb;
-use crate::File;
 
 #[test]
 fn test_parse_is_cached_across_calls() {
-    let db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+    let mut db = TestDb::new();
+    let file = intern_file(&mut db, file_url("a.R"), "x <- 1\n".to_string(), None);
 
     let _ = file.parse(&db);
     assert_eq!(db.executions("parse"), 1);
@@ -16,8 +16,8 @@ fn test_parse_is_cached_across_calls() {
 
 #[test]
 fn test_semantic_index_is_cached_across_calls() {
-    let db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+    let mut db = TestDb::new();
+    let file = intern_file(&mut db, file_url("a.R"), "x <- 1\n".to_string(), None);
 
     let _ = file.semantic_index(&db);
     let _ = file.semantic_index(&db);
@@ -30,7 +30,7 @@ fn test_changing_contents_reparses() {
     use salsa::Setter;
 
     let mut db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+    let file = intern_file(&mut db, file_url("a.R"), "x <- 1\n".to_string(), None);
 
     let _ = file.semantic_index(&db);
     assert_eq!(db.executions("parse"), 1);
@@ -45,10 +45,10 @@ fn test_changing_contents_reparses() {
 
 #[test]
 fn test_semantic_index_matches_oak_semantic() {
-    let db = TestDb::new();
+    let mut db = TestDb::new();
     let source = "x <- 1\nx\n";
     let url = file_url("a.R");
-    let file = File::new(&db, url.clone(), source.to_string());
+    let file = intern_file(&mut db, url.clone(), source.to_string(), None);
 
     let via_salsa = file.semantic_index(&db);
 
@@ -67,7 +67,7 @@ fn test_semantic_index_backdates_on_equivalent_reparse() {
     use salsa::Setter;
 
     let mut db = TestDb::new();
-    let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
+    let file = intern_file(&mut db, file_url("a.R"), "x <- 1\n".to_string(), None);
 
     let _ = file.semantic_index(&db);
     assert_eq!(db.executions("parse"), 1);
@@ -89,8 +89,8 @@ fn test_editing_one_file_does_not_invalidate_another() {
     use salsa::Setter;
 
     let mut db = TestDb::new();
-    let file_a = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
-    let file_b = File::new(&db, file_url("b.R"), "y <- 2\n".to_string());
+    let file_a = intern_file(&mut db, file_url("a.R"), "x <- 1\n".to_string(), None);
+    let file_b = intern_file(&mut db, file_url("b.R"), "y <- 2\n".to_string(), None);
 
     let _ = file_a.semantic_index(&db);
     let _ = file_b.semantic_index(&db);
@@ -113,9 +113,9 @@ fn test_editing_one_file_does_not_invalidate_another() {
 
 #[test]
 fn test_distinct_files_have_distinct_semantic_indexes() {
-    let db = TestDb::new();
-    let file_a = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
-    let file_b = File::new(&db, file_url("b.R"), "x <- 1\n".to_string());
+    let mut db = TestDb::new();
+    let file_a = intern_file(&mut db, file_url("a.R"), "x <- 1\n".to_string(), None);
+    let file_b = intern_file(&mut db, file_url("b.R"), "x <- 1\n".to_string(), None);
 
     // Same contents, different `File` inputs: separate cache entries.
     assert!(file_a != file_b);
