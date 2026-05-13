@@ -1,5 +1,5 @@
 //
-// data_explorer_priority.rs
+// data_explorer_integration.rs
 //
 // Copyright (C) 2026 Posit Software, PBC. All rights reserved.
 //
@@ -103,4 +103,48 @@ fn test_kernel_request_priority_over_idle_tasks() {
         "get_schema took {schema_latency:?}, which suggests kernel requests \
          are being starved by idle tasks"
     );
+}
+
+/// The `OpenDataExplorer` RPC calls `comm_open_backend` from inside the
+/// handler to open a child explorer. This inserts into the `comms`
+/// HashMap while the parent comm has been taken out for dispatch.
+/// Without the take pattern, this would panic on a reentrant
+/// `borrow_mut()`.
+#[test]
+fn test_open_child_explorer_during_dispatch() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request(
+        "test_df <- data.frame(x = 1:3, y = letters[1:3])",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    let parent_comm_id = frontend.open_data_explorer("test_df");
+
+    // Send the OpenDataExplorer RPC to the parent explorer.
+    let request = DataExplorerBackendRequest::OpenDataExplorer;
+    let mut data = serde_json::to_value(&request).unwrap();
+    data["id"] = serde_json::Value::String(String::from("open-rpc"));
+
+    frontend.send_shell_comm_msg(parent_comm_id.clone(), data);
+    frontend.recv_iopub_busy();
+
+    // The handler calls `comm_open_backend`, which opens a new data
+    // explorer comm. Shell drains comm events during the handler, so
+    // the child's `comm_open` arrives before the RPC reply.
+    let child_open = frontend.recv_iopub_comm_open();
+    assert_eq!(child_open.target_name, "positron.dataExplorer");
+    assert_ne!(child_open.comm_id, parent_comm_id);
+
+    // The RPC reply follows.
+    let reply_msg = frontend.recv_iopub_comm_msg();
+    assert_eq!(reply_msg.comm_id, parent_comm_id);
+    let reply: DataExplorerBackendReply = serde_json::from_value(reply_msg.data).unwrap();
+    assert_eq!(reply, DataExplorerBackendReply::OpenDataExplorerReply());
+
+    frontend.recv_iopub_idle();
 }

@@ -13,6 +13,7 @@ use std::env;
 use amalthea::kernel;
 use amalthea::kernel_spec::KernelSpec;
 use anyhow::Context;
+use ark::console::catching_panics;
 use ark::console::SessionMode;
 use ark::logger;
 use ark::repos::DefaultRepos;
@@ -392,31 +393,32 @@ fn main() -> anyhow::Result<()> {
             String::from("No location information:")
         };
 
-        let append_trace = |info: &str| -> String {
-            // Top-level-exec and try-catch errors already contain a backtrace
-            // for the R thread so don't repeat it if we see one. Only perform
-            // this check on the R thread because we do want other threads'
-            // backtraces if the panic occurred elsewhere.
-            if ON_R_THREAD.get() && info.contains("\n{R_BACKTRACE_HEADER}\n") {
-                String::from("")
-            } else {
-                format!(
-                    "\n\nBacktrace:\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                )
-            }
+        let msg: String;
+        if let Some(s) = info.downcast_ref::<&str>() {
+            msg = s.to_string();
+        } else if let Some(s) = info.downcast_ref::<String>() {
+            msg = s.clone();
+        } else {
+            msg = String::from("No contextual information.");
+        }
+
+        // Top-level-exec and try-catch errors already contain a backtrace
+        // for the R thread so don't repeat it if we see one. Only perform
+        // this check on the R thread because we do want other threads'
+        // backtraces if the panic occurred elsewhere.
+        let trace = if ON_R_THREAD.get() && msg.contains("\n{R_BACKTRACE_HEADER}\n") {
+            String::new()
+        } else {
+            format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture())
         };
 
-        // Report panic to the frontend
-        if let Some(info) = info.downcast_ref::<&str>() {
-            let trace = append_trace(info);
-            log::error!("Panic! {loc} {info:}{trace}");
-        } else if let Some(info) = info.downcast_ref::<String>() {
-            let trace = append_trace(info);
-            log::error!("Panic! {loc} {info:}{trace}");
-        } else {
-            let trace = format!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
-            log::error!("Panic! {loc} No contextual information.\n{trace}");
+        log::error!("Panic! {loc} {msg}\n{trace}");
+
+        // `Console::with()` catches panics with `catch_unwind` in release
+        // builds. Return early so the catch handler can convert the panic
+        // to an `anyhow::Error`. The backtrace is already logged above.
+        if catching_panics() {
+            return;
         }
 
         // We don't want the threads managed by a Tokio runtime to `abort()` the

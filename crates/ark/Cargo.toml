@@ -10,12 +10,16 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+testing = []
+
 [lints]
 workspace = true
 
 [dependencies]
 actix-web.workspace = true
 aether_factory.workspace = true
+ark_macros.workspace = true
 aether_lsp_utils.workspace = true
 aether_parser.workspace = true
 aether_syntax.workspace = true
@@ -77,6 +81,7 @@ winsafe.workspace = true
 yaml-rust2.workspace = true
 
 [dev-dependencies]
+ark = { workspace = true, features = ["testing"] }
 ark_test.workspace = true
 assert_matches.workspace = true
 insta.workspace = true

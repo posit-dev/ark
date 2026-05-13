@@ -382,6 +382,8 @@ dependencies = [
  "air_r_syntax",
  "amalthea",
  "anyhow",
+ "ark",
+ "ark_macros",
  "ark_test",
  "assert_matches",
  "async-trait",
@@ -445,6 +447,14 @@ dependencies = [
  "winsafe",
  "xdg",
  "yaml-rust2",
+]
+
+[[package]]
+name = "ark_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -1615,7 +1625,7 @@ dependencies = [
  "cfg-if",
  "ctor",
  "embed-resource",
- "harp-macros",
+ "harp_macros",
  "itertools 0.14.0",
  "libc",
  "libloading",
@@ -1633,7 +1643,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "harp-macros"
+name = "harp_macros"
 version = "0.1.0"
 dependencies = [
  "quote",

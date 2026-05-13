@@ -9,6 +9,15 @@
 // state inside of a global `CONSOLE` singleton that implements `Console`.
 // The frontend methods called by R are forwarded to the corresponding
 // `Console` methods via `CONSOLE`.
+//
+// Interior-mutable fields on `Console` use `DebugRefCell` instead of
+// `RefCell`. During the transition away from `Console::get()`/`get_mut()`
+// (which bypass the borrow checker via `UnsafeCell`), this lets CI and
+// development builds catch reentrancy violations while release builds
+// skip the check, matching the existing `UnsafeCell` behaviour that has
+// been stable for years. Once the ownership model is fully principled
+// and tested, these can be replaced with real `RefCell`s.
+// https://github.com/posit-dev/ark/issues/1145
 
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -17,6 +26,7 @@ use std::collections::HashMap;
 use std::ffi::*;
 use std::os::raw::c_uchar;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::result::Result::Ok;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -92,6 +102,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::json;
 use stdext::result::ResultExt;
+use stdext::DebugRefCell;
 use stdext::*;
 use tokio::sync::mpsc::UnboundedReceiver as AsyncUnboundedReceiver;
 use uuid::Uuid;
@@ -101,6 +112,7 @@ mod console_comm;
 mod console_debug;
 mod console_error;
 mod console_filter;
+mod console_graphics;
 mod console_integration;
 mod console_repl;
 
@@ -113,6 +125,7 @@ pub(crate) use console_debug::FrameSource;
 use console_error::stack_overflow_occurred;
 use console_filter::strip_step_lines;
 use console_filter::ConsoleFilter;
+pub use console_repl::catching_panics;
 pub(crate) use console_repl::console_inputs;
 pub(crate) use console_repl::r_busy;
 #[cfg(unix)]
@@ -146,7 +159,7 @@ use crate::lsp::state_handlers::ConsoleInputs;
 use crate::modules;
 use crate::modules::ARK_ENVS;
 use crate::plots::graphics_device;
-use crate::plots::graphics_device::GraphicsDeviceNotification;
+use crate::plots::graphics_device::DeviceContext;
 use crate::r_task;
 use crate::r_task::BoxFuture;
 use crate::r_task::QueuedRTask;
@@ -177,7 +190,7 @@ thread_local! {
     pub static CONSOLE: RefCell<UnsafeCell<Console>> = panic!("Must access `CONSOLE` from the R thread");
 }
 
-pub(crate) struct Console {
+pub struct Console {
     r_home: PathBuf,
 
     pub(crate) positron_ns: Option<RObject>,
@@ -227,9 +240,9 @@ pub(crate) struct Console {
     tasks_idle_any_rx: Receiver<QueuedRTask>,
     pending_futures: HashMap<Uuid, (BoxFuture<'static, ()>, RTaskStartInfo, Option<String>)>,
 
-    /// Comm ID of the currently connected UI comm, if any.
-    /// The handler lives in `self.comms`; this is just an index into it.
-    ui_comm_id: Option<String>,
+    /// The UI comm, stored separately from `comms` so that `ui_comm()` can
+    /// borrow it independently of the comms map.
+    ui_comm: DebugRefCell<Option<ConsoleComm>>,
 
     /// Error captured by our global condition handler during the last iteration
     /// of the REPL.
@@ -335,9 +348,12 @@ pub(crate) struct Console {
 
     /// Stack of topmost environments while waiting for input in ReadConsole.
     /// Pushed on entry to `r_read_console()`, popped on exit.
-    /// This is a RefCell since we require `get()` for this field and `RObject` isn't `Copy`.
-    read_console_env_stack: RefCell<Vec<RObject>>,
+    /// This is a `DebugRefCell` since we require `get()` for this field and `RObject` isn't `Copy`.
+    read_console_env_stack: DebugRefCell<Vec<RObject>>,
 
     /// Comm handlers registered on the R thread (keyed by comm ID).
-    comms: HashMap<String, ConsoleComm>,
+    comms: DebugRefCell<HashMap<String, ConsoleComm>>,
+
+    /// Graphics device state (plot recording, rendering, comm management).
+    device_context: Rc<DeviceContext>,
 }

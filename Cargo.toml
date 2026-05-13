@@ -10,7 +10,7 @@
 resolver = "2"
 
 members = [
-    "crates/*"
+    "crates/*",
 ]
 
 [workspace.package]
@@ -32,6 +32,7 @@ aether_syntax = { git = "https://github.com/posit-dev/air", package = "air_r_syn
 amalthea = { path = "crates/amalthea" }
 anyhow = "1.0.102"
 ark = { path = "crates/ark" }
+ark_macros = { path = "crates/ark_macros" }
 ark_test = { path = "crates/ark_test" }
 assert_matches = "1.5.0"
 async-trait = "0.1.89"
@@ -56,7 +57,7 @@ etcetera = "0.11.0"
 flate2 = "1.1.9"
 futures = "0.3.32"
 harp = { path = "crates/harp" }
-harp-macros = { path = "crates/harp/harp-macros" }
+harp_macros = { path = "crates/harp_macros" }
 hex = "0.4.3"
 hmac = "0.13.0"
 home = "0.5.12"

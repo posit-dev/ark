@@ -343,6 +343,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     fn test_environments_are_not_locked_in_debug() {
         r_task(|| {
             let positron_exports =
@@ -362,6 +363,28 @@ mod tests {
 
             assert!(!positron_ns.is_locked());
             assert!(!rstudio_ns.is_locked());
+        })
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn test_environments_are_locked_in_release() {
+        r_task(|| {
+            let positron_exports =
+                harp::parse_eval_base("as.environment('tools:positron')").unwrap();
+            let rstudio_exports = harp::parse_eval_base("as.environment('tools:rstudio')").unwrap();
+
+            let positron_exports = Environment::new(positron_exports);
+            let rstudio_exports = Environment::new(rstudio_exports);
+
+            assert!(positron_exports.is_locked());
+            assert!(rstudio_exports.is_locked());
+
+            let positron_ns = get_namespace(positron_exports, ".ps.ark.version");
+            let rstudio_ns = get_namespace(rstudio_exports, ".rs.api.versionInfo");
+
+            assert!(positron_ns.is_locked());
+            assert!(rstudio_ns.is_locked());
         })
     }
 }

@@ -82,64 +82,8 @@ impl Shell {
             warn!("Could not prompt for input: {}", err);
         }
     }
-}
 
-#[async_trait]
-impl ShellHandler for Shell {
-    async fn handle_info_request(
-        &mut self,
-        _req: &KernelInfoRequest,
-    ) -> amalthea::Result<KernelInfoReply> {
-        let info = LanguageInfo {
-            name: String::from("Test"),
-            version: String::from("1.0"),
-            file_extension: String::from(".ech"),
-            mimetype: String::from("text/echo"),
-            pygments_lexer: None,
-            codemirror_mode: None,
-            nbconvert_exporter: None,
-            positron: None,
-        };
-        Ok(KernelInfoReply {
-            status: Status::Ok,
-            banner: format!("Amalthea Echo {}", env!("CARGO_PKG_VERSION")),
-            implementation: String::from("echo"),
-            implementation_version: String::from(env!("CARGO_PKG_VERSION")),
-            debugger: false,
-            help_links: Vec::new(),
-            language_info: info,
-            supported_features: vec![],
-        })
-    }
-
-    async fn handle_complete_request(
-        &self,
-        _req: &CompleteRequest,
-    ) -> amalthea::Result<CompleteReply> {
-        // No matches in this toy implementation.
-        Ok(CompleteReply {
-            matches: Vec::new(),
-            status: Status::Ok,
-            cursor_start: 0,
-            cursor_end: 0,
-            metadata: json!({}),
-        })
-    }
-
-    /// Handle a request to test code for completion.
-    async fn handle_is_complete_request(
-        &self,
-        _req: &IsCompleteRequest,
-    ) -> amalthea::Result<IsCompleteReply> {
-        // In this echo example, the code is always complete!
-        Ok(IsCompleteReply {
-            status: IsComplete::Complete,
-            indent: String::from(""),
-        })
-    }
-
-    /// Handles an ExecuteRequest; "executes" the code by echoing it.
-    async fn handle_execute_request(
+    fn execute(
         &mut self,
         originator: Originator,
         req: &ExecuteRequest,
@@ -228,6 +172,73 @@ impl ShellHandler for Shell {
             user_expressions: serde_json::Value::Null,
         })
     }
+}
+
+#[async_trait]
+impl ShellHandler for Shell {
+    async fn handle_info_request(
+        &mut self,
+        _req: &KernelInfoRequest,
+    ) -> amalthea::Result<KernelInfoReply> {
+        let info = LanguageInfo {
+            name: String::from("Test"),
+            version: String::from("1.0"),
+            file_extension: String::from(".ech"),
+            mimetype: String::from("text/echo"),
+            pygments_lexer: None,
+            codemirror_mode: None,
+            nbconvert_exporter: None,
+            positron: None,
+        };
+        Ok(KernelInfoReply {
+            status: Status::Ok,
+            banner: format!("Amalthea Echo {}", env!("CARGO_PKG_VERSION")),
+            implementation: String::from("echo"),
+            implementation_version: String::from(env!("CARGO_PKG_VERSION")),
+            debugger: false,
+            help_links: Vec::new(),
+            language_info: info,
+            supported_features: vec![],
+        })
+    }
+
+    async fn handle_complete_request(
+        &self,
+        _req: &CompleteRequest,
+    ) -> amalthea::Result<CompleteReply> {
+        // No matches in this toy implementation.
+        Ok(CompleteReply {
+            matches: Vec::new(),
+            status: Status::Ok,
+            cursor_start: 0,
+            cursor_end: 0,
+            metadata: json!({}),
+        })
+    }
+
+    /// Handle a request to test code for completion.
+    async fn handle_is_complete_request(
+        &self,
+        _req: &IsCompleteRequest,
+    ) -> amalthea::Result<IsCompleteReply> {
+        // In this echo example, the code is always complete!
+        Ok(IsCompleteReply {
+            status: IsComplete::Complete,
+            indent: String::from(""),
+        })
+    }
+
+    /// Handles an ExecuteRequest; "executes" the code by echoing it.
+    fn start_execute_request(
+        &mut self,
+        originator: Originator,
+        req: &ExecuteRequest,
+    ) -> crossbeam::channel::Receiver<amalthea::Result<ExecuteReply>> {
+        let (tx, rx) = crossbeam::channel::bounded(1);
+        let result = self.execute(originator, req);
+        tx.send(result).unwrap();
+        rx
+    }
 
     /// Handles an introspection request
     async fn handle_inspect_request(&self, req: &InspectRequest) -> amalthea::Result<InspectReply> {
@@ -258,19 +269,19 @@ impl ShellHandler for Shell {
         })
     }
 
-    async fn handle_comm_open(
-        &self,
+    fn handle_comm_open(
+        &mut self,
         req: Comm,
         comm: CommSocket,
         _data: serde_json::Value,
-    ) -> amalthea::Result<bool> {
+    ) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
         // Used to test error replies
         match req {
             Comm::Other(name) if name == "unknown" => {
                 return Err(amalthea::Error::Anyhow(anyhow!("unknown comm target")));
             },
             _ => {},
-        }
+        };
 
         // Open a test comm channel; this test comm channel is used for every
         // comm open request (regardless of the target name). It just echoes back any
@@ -306,6 +317,6 @@ impl ShellHandler for Shell {
                 },
             }
         });
-        Ok(true)
+        Ok((true, None))
     }
 }
