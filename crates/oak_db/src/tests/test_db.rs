@@ -5,7 +5,10 @@ use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
+use crate::Root;
+use crate::RootKind;
 use crate::SourceGraph;
+use crate::WorkspaceRoots;
 
 pub(super) type Events = Arc<Mutex<Vec<salsa::Event>>>;
 
@@ -27,6 +30,7 @@ impl TestDb {
         })));
         let db = Self { storage, events };
         SourceGraph::empty(&db);
+        WorkspaceRoots::new(&db, vec![]);
         db
     }
 
@@ -59,4 +63,11 @@ impl Db for TestDb {}
 
 pub(super) fn file_url(name: &str) -> UrlId {
     UrlId::from_canonical(Url::parse(&format!("file:///{name}")).unwrap())
+}
+
+/// Build a fresh `RootKind::Workspace` `Root` at `path` with revision 0.
+/// Each call allocates a new salsa entity; tests that need to assert
+/// on root identity should retain the returned value.
+pub(super) fn workspace_root(db: &TestDb, path: &str) -> Root {
+    Root::new(db, file_url(path), RootKind::Workspace, 0)
 }

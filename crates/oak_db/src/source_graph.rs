@@ -1,11 +1,10 @@
-use std::path::PathBuf;
-
 use aether_url::UrlId;
 use oak_package_metadata::namespace::Namespace;
 
 use crate::Db;
 use crate::File;
 use crate::Name;
+use crate::Root;
 
 /// Storage for the source graph. The edges (dependencies between nodes) are
 /// encoded in `Script` and `Package` nodes.
@@ -36,6 +35,19 @@ pub enum SourceNode {
     Package(Package),
 }
 
+/// The set of workspace folders the user has open.
+///
+/// Populated by the LSP layer from `initialize.workspaceFolders` and
+/// updated on `workspace/didChangeWorkspaceFolders`. Read by
+/// [`File::workspace_root`](crate::File::workspace_root) to find the
+/// containing workspace folder for a given URL, which `DbResolver`
+/// uses as the anchor for relative `source("path")` arguments.
+#[salsa::input(singleton)]
+pub struct WorkspaceRoots {
+    #[returns(ref)]
+    pub roots: Vec<Root>,
+}
+
 #[salsa::input(debug)]
 pub struct Script {
     pub file: File,
@@ -58,8 +70,8 @@ pub struct Package {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PackageOrigin {
-    Workspace { root: PathBuf },
-    Installed,
+    Workspace { root: Root },
+    Installed { version: String, libpath: UrlId },
 }
 
 impl SourceGraph {

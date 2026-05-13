@@ -8,7 +8,9 @@ use oak_semantic::use_def_map::UseDefMap;
 
 use crate::parse::OakParse;
 use crate::resolver::DbResolver;
+use crate::root::url_to_root;
 use crate::Db;
+use crate::Root;
 
 /// A source file tracked by Salsa.
 ///
@@ -82,6 +84,23 @@ impl File {
     #[salsa::tracked]
     pub fn use_def_map(self, db: &dyn Db, scope: ScopeId) -> Arc<UseDefMap> {
         Arc::clone(self.semantic_index(db).use_def_map(scope))
+    }
+
+    /// The workspace root containing this file.
+    ///
+    /// Returns the longest-prefix workspace root whose path is an ancestor of
+    /// `self.url`. Files outside any workspace folder return `None`.
+    ///
+    /// Used by `source()` resolution to anchor relative paths against the
+    /// project root, matching R's runtime semantics (paths resolve against
+    /// `getwd()`, typically the project root in an IDE).
+    ///
+    /// TODO(salsa): once `File.parent` lands, package files return their
+    /// `PackageOrigin::Workspace { root }` directly; installed-package files
+    /// return `None`. Until then, this is the script-only path.
+    #[salsa::tracked]
+    pub fn workspace_root(self, db: &dyn Db) -> Option<Root> {
+        url_to_root(db, self.url(db))
     }
 }
 

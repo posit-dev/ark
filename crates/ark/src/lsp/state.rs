@@ -33,6 +33,7 @@ impl OakDatabase {
     pub fn new() -> Self {
         let db = Self::default();
         oak_db::SourceGraph::empty(&db);
+        oak_db::WorkspaceRoots::new(&db, vec![]);
         db
     }
 }
