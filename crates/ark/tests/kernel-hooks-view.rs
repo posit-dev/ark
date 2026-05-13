@@ -41,8 +41,6 @@ fn test_view_namespace_function_generates_vdoc() {
     // file. We only care that it's a real position, not the start.
     assert!(params["line"].as_i64().unwrap() > 0);
 
-    frontend.recv_ui_busy(&comm_id, true);
-    frontend.recv_ui_busy(&comm_id, false);
     frontend.recv_ui_prompt_state(&comm_id);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
