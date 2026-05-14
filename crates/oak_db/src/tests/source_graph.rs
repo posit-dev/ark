@@ -14,7 +14,7 @@ use crate::Script;
 use crate::SourceNode;
 
 fn name<'db>(db: &'db TestDb, text: &str) -> Name<'db> {
-    Name::new(db, text.to_string())
+    Name::new(db, text)
 }
 
 fn workspace_origin(name: &str) -> PackageOrigin {
