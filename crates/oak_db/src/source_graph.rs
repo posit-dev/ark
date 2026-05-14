@@ -59,7 +59,7 @@ pub struct Package {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PackageOrigin {
     Workspace { root: PathBuf },
-    Installed { version: String, libpath: PathBuf },
+    Installed,
 }
 
 #[salsa::tracked]
