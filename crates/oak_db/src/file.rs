@@ -48,8 +48,9 @@ impl File {
     /// Private to this file to prevent coarse Salsa queries. Consumers should
     /// go through the narrow tracked queries below.
     ///
-    /// The full index re-runs typically on every edit (e.g. the `AstPtr` ranges
-    /// inside `Definition`s shift, so it rarely backdates).
+    /// `no_eq` skips salsa's `values_equal` check after recomputation.
+    /// Backdating at this level never triggered in practice anyway: `AstPtr`
+    /// ranges inside `Definition`s typically shift on edits.
     #[cfg(not(test))]
     #[salsa::tracked(returns(ref), no_eq)]
     fn semantic_index(self, db: &dyn Db) -> SemanticIndex {
