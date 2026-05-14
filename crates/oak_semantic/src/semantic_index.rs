@@ -1,6 +1,10 @@
 use std::ops::Range;
 
-use aether_syntax::RSyntaxNode;
+use aether_syntax::RBinaryExpression;
+use aether_syntax::RCall;
+use aether_syntax::RForStatement;
+use aether_syntax::RParameter;
+use biome_rowan::AstPtr;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::range::Ranged;
@@ -504,14 +508,14 @@ pub struct Definition {
 
 #[derive(Debug, Clone)]
 pub enum DefinitionKind {
-    Assignment(RSyntaxNode),
-    SuperAssignment(RSyntaxNode),
-    Parameter(RSyntaxNode),
-    ForVariable(RSyntaxNode),
+    Assignment(AstPtr<RBinaryExpression>),
+    SuperAssignment(AstPtr<RBinaryExpression>),
+    Parameter(AstPtr<RParameter>),
+    ForVariable(AstPtr<RForStatement>),
     /// A forwarding binding that resolves to a definition in another file.
     /// Consumers must chase the `file`/`name` chain to reach the actual origin.
     Import {
-        call: RSyntaxNode,
+        call: AstPtr<RCall>,
         file: Url,
         name: String,
     },
