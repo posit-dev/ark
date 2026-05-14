@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
@@ -876,12 +878,16 @@ impl<'a> SemanticIndexBuilder<'a> {
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
-        let symbol_tables = self.symbol_tables.into_iter().map(|b| b.build()).collect();
+        let symbol_tables = self
+            .symbol_tables
+            .into_iter()
+            .map(|b| Arc::new(b.build()))
+            .collect();
         let use_def_maps: IndexVec<ScopeId, _> = self
             .use_def_maps
             .into_iter()
             .zip(self.uses.iter())
-            .map(|(b, (_, uses))| b.finish(uses))
+            .map(|(b, (_, uses))| Arc::new(b.finish(uses)))
             .collect();
 
         SemanticIndex::new(

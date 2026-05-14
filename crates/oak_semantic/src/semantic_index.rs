@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::Arc;
 
 use aether_syntax::RBinaryExpression;
 use aether_syntax::RCall;
@@ -44,12 +45,11 @@ define_index!(EnclosingSnapshotId);
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 
-    // ty wraps per-scope tables in `Arc` so they can be returned from
-    // individual salsa tracked queries (e.g. `place_table(db, scope) ->
-    // Arc<PlaceTable>`). Salsa compares the returned `Arc` by `Eq` to skip
-    // re-running downstream queries when a scope's table hasn't changed.
-    // We defer that until salsa is introduced.
-    symbol_tables: IndexVec<ScopeId, SymbolTable>,
+    // Heavy per-scope tables are `Arc`-wrapped so narrow tracked queries
+    // (e.g. `symbol_table(db, file, scope) -> Arc<SymbolTable>`) can
+    // return them cheaply, and salsa's storage uses `Arc::ptr_eq` as a
+    // fast path during update comparisons. Matches ty's pattern.
+    symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
 
     // Flat per-scope lists of definition and use sites. These support rename
     // and go-to-definition by letting us find all sites for a given symbol
@@ -66,9 +66,10 @@ pub struct SemanticIndex {
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
 
-    // Per-scope flow-sensitive map from each use site to the set of definitions
-    // that can reach it. Built alongside the other arrays during the tree walk.
-    use_def_maps: IndexVec<ScopeId, UseDefMap>,
+    // Per-scope flow-sensitive map from each use site to the set of
+    // definitions that can reach it. Built alongside the other arrays
+    // during the tree walk. `Arc`-wrapped for fast Salsa comparisons.
+    use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
 
     // For each free variable in a nested scope, maps to the enclosing scope and
     // snapshot where that symbol is bound.
@@ -81,10 +82,10 @@ pub struct SemanticIndex {
 impl SemanticIndex {
     pub(crate) fn new(
         scopes: IndexVec<ScopeId, Scope>,
-        symbol_tables: IndexVec<ScopeId, SymbolTable>,
+        symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
         definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
-        use_def_maps: IndexVec<ScopeId, UseDefMap>,
+        use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
         directives: Vec<Directive>,
     ) -> Self {
@@ -103,7 +104,7 @@ impl SemanticIndex {
         &self.scopes[id]
     }
 
-    pub fn symbols(&self, scope: ScopeId) -> &SymbolTable {
+    pub fn symbols(&self, scope: ScopeId) -> &Arc<SymbolTable> {
         &self.symbol_tables[scope]
     }
 
@@ -115,7 +116,7 @@ impl SemanticIndex {
         &self.uses[scope]
     }
 
-    pub fn use_def_map(&self, scope: ScopeId) -> &UseDefMap {
+    pub fn use_def_map(&self, scope: ScopeId) -> &Arc<UseDefMap> {
         &self.use_def_maps[scope]
     }
 
