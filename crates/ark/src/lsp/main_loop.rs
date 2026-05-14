@@ -19,7 +19,7 @@ use std::sync::RwLock;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use oak_index::library::Library;
+use oak_semantic::library::Library;
 use oak_sources::PackageCache;
 use stdext::result::ResultExt;
 use tokio::sync::mpsc;

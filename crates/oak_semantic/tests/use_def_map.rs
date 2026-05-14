@@ -1,10 +1,10 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
-use oak_index::semantic_index;
-use oak_index::semantic_index::DefinitionId;
-use oak_index::semantic_index::ScopeId;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index::UseId;
+use oak_semantic::semantic_index;
+use oak_semantic::semantic_index::DefinitionId;
+use oak_semantic::semantic_index::ScopeId;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index::UseId;
 use stdext::assert_not;
 
 fn index(source: &str) -> SemanticIndex {

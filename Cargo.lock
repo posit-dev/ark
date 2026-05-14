@@ -415,8 +415,8 @@ dependencies = [
  "oak_core",
  "oak_db",
  "oak_ide",
- "oak_index",
  "oak_package_metadata",
+ "oak_semantic",
  "oak_sources",
  "once_cell",
  "regex",
@@ -2462,7 +2462,7 @@ dependencies = [
 name = "oak_db"
 version = "0.1.0"
 dependencies = [
- "oak_index",
+ "oak_semantic",
  "url",
 ]
 
@@ -2487,34 +2487,10 @@ dependencies = [
  "log",
  "oak_core",
  "oak_db",
- "oak_index",
  "oak_package_metadata",
+ "oak_semantic",
  "oak_sources",
  "stdext",
- "url",
-]
-
-[[package]]
-name = "oak_index"
-version = "0.1.0"
-dependencies = [
- "air_r_parser",
- "air_r_syntax",
- "anyhow",
- "assert_matches",
- "biome_rowan",
- "biome_text_size",
- "itertools 0.14.0",
- "log",
- "oak_core",
- "oak_index",
- "oak_index_vec",
- "oak_package_metadata",
- "oak_sources",
- "rustc-hash",
- "smallvec",
- "stdext",
- "tempfile",
  "url",
 ]
 
@@ -2547,6 +2523,30 @@ dependencies = [
  "anyhow",
  "log",
  "tempfile",
+]
+
+[[package]]
+name = "oak_semantic"
+version = "0.1.0"
+dependencies = [
+ "air_r_parser",
+ "air_r_syntax",
+ "anyhow",
+ "assert_matches",
+ "biome_rowan",
+ "biome_text_size",
+ "itertools 0.14.0",
+ "log",
+ "oak_core",
+ "oak_index_vec",
+ "oak_package_metadata",
+ "oak_semantic",
+ "oak_sources",
+ "rustc-hash",
+ "smallvec",
+ "stdext",
+ "tempfile",
+ "url",
 ]
 
 [[package]]

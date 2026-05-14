@@ -11,18 +11,18 @@ use oak_db::Db;
 use oak_ide::goto_definition;
 use oak_ide::ExternalScope;
 use oak_ide::NavigationTarget;
-use oak_index::library::Library;
-use oak_index::package::Package;
-use oak_index::scope_layer::file_layers;
-use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index;
-use oak_index::semantic_index::DirectiveKind;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index_with_source_resolver;
-use oak_index::ScopeId;
-use oak_index::SourceResolution;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
+use oak_semantic::library::Library;
+use oak_semantic::package::Package;
+use oak_semantic::scope_layer::file_layers;
+use oak_semantic::scope_layer::ScopeLayer;
+use oak_semantic::semantic_index;
+use oak_semantic::semantic_index::DirectiveKind;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index_with_source_resolver;
+use oak_semantic::ScopeId;
+use oak_semantic::SourceResolution;
 use oak_sources::test::TestPackageCache;
 use stdext::SortedVec;
 use url::Url;
@@ -1745,7 +1745,7 @@ fn test_source_in_function_body_scoping() {
 }
 
 // TODO(salsa): This tests `resolve_import` which is slated to move to
-// `oak_index`. Move this test alongside it and call `resolve_import` directly
+// `oak_semantic`. Move this test alongside it and call `resolve_import` directly
 // once it becomes pub.
 #[test]
 fn test_resolve_import_last_def_wins() {

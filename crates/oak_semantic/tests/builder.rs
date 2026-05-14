@@ -1,17 +1,17 @@
 use aether_parser::parse;
 use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxKind;
-use oak_index::semantic_index;
-use oak_index::semantic_index::DefinitionId;
-use oak_index::semantic_index::DefinitionKind;
-use oak_index::semantic_index::DirectiveKind;
-use oak_index::semantic_index::ScopeId;
-use oak_index::semantic_index::ScopeKind;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index::SymbolFlags;
-use oak_index::semantic_index::UseId;
-use oak_index::semantic_index_with_source_resolver;
-use oak_index::SourceResolution;
+use oak_semantic::semantic_index;
+use oak_semantic::semantic_index::DefinitionId;
+use oak_semantic::semantic_index::DefinitionKind;
+use oak_semantic::semantic_index::DirectiveKind;
+use oak_semantic::semantic_index::ScopeId;
+use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index::SymbolFlags;
+use oak_semantic::semantic_index::UseId;
+use oak_semantic::semantic_index_with_source_resolver;
+use oak_semantic::SourceResolution;
 use url::Url;
 
 fn index(source: &str) -> SemanticIndex {

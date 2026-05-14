@@ -8,13 +8,13 @@ use anyhow::anyhow;
 use oak_core::file::list_r_files;
 use oak_db::Db;
 use oak_ide::ExternalScope;
-use oak_index::library::Library;
-use oak_index::scope_layer::default_search_path;
-use oak_index::scope_layer::file_layers;
-use oak_index::scope_layer::package_root_layers;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index_with_source_resolver;
-use oak_index::SourceResolution;
+use oak_semantic::library::Library;
+use oak_semantic::scope_layer::default_search_path;
+use oak_semantic::scope_layer::file_layers;
+use oak_semantic::scope_layer::package_root_layers;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index_with_source_resolver;
+use oak_semantic::SourceResolution;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -180,7 +180,7 @@ impl WorldState {
         &self,
         file: &Url,
         doc: &Document,
-        pkg: &oak_index::package::Package,
+        pkg: &oak_semantic::package::Package,
     ) -> (SemanticIndex, ExternalScope) {
         let root_layers = package_root_layers(pkg.namespace());
 
@@ -357,7 +357,7 @@ pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
 #[cfg(test)]
 mod tests {
     use biome_rowan::TextSize;
-    use oak_index::scope_layer::ScopeLayer;
+    use oak_semantic::scope_layer::ScopeLayer;
     use stdext::assert_not;
 
     use super::*;

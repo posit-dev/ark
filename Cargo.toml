@@ -74,10 +74,10 @@ oak_core = { path = "crates/oak_core" }
 oak_db = { path = "crates/oak_db" }
 oak_fs = { path = "crates/oak_fs" }
 oak_ide = { path = "crates/oak_ide" }
-oak_index = { path = "crates/oak_index" }
 oak_index_vec = { path = "crates/oak_index_vec" }
 oak_package_metadata = { path = "crates/oak_package_metadata" }
 oak_r_process = { path = "crates/oak_r_process" }
+oak_semantic = { path = "crates/oak_semantic" }
 oak_sources = { path = "crates/oak_sources" }
 once_cell = "1.21.4"
 parking_lot = "0.12.5"

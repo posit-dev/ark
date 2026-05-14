@@ -1,12 +1,12 @@
 use std::borrow::Cow;
 
 use biome_rowan::TextSize;
-use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index::Directive;
-use oak_index::semantic_index::DirectiveKind;
-use oak_index::semantic_index::ScopeKind;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::ScopeId;
+use oak_semantic::scope_layer::ScopeLayer;
+use oak_semantic::semantic_index::Directive;
+use oak_semantic::semantic_index::DirectiveKind;
+use oak_semantic::semantic_index::ScopeKind;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::ScopeId;
 
 /// The external scope chain for a file, determined by its project context.
 #[derive(Debug)]
