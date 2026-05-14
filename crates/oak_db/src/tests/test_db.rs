@@ -25,7 +25,7 @@ impl TestDb {
             }
         })));
         let db = Self { storage, events };
-        SourceGraph::new(&db, vec![], vec![], vec![]);
+        SourceGraph::empty(&db);
         db
     }
 

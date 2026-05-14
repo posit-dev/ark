@@ -32,7 +32,7 @@ pub struct OakDatabase {
 impl OakDatabase {
     pub fn new() -> Self {
         let db = Self::default();
-        oak_db::SourceGraph::new(&db, vec![], vec![], vec![]);
+        oak_db::SourceGraph::empty(&db);
         db
     }
 }
