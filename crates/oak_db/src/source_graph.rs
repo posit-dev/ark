@@ -62,6 +62,13 @@ pub enum PackageOrigin {
     Installed,
 }
 
+impl SourceGraph {
+    /// Construct an empty `SourceGraph` with no scripts or packages.
+    pub fn empty(db: &dyn Db) -> Self {
+        Self::new(db, vec![], vec![], vec![])
+    }
+}
+
 #[salsa::tracked]
 impl SourceGraph {
     /// Look up a `Script` by URL.
