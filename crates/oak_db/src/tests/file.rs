@@ -111,7 +111,7 @@ fn semantic_index_matches_oak_semantic() {
     let parse = aether_parser::parse(source, aether_parser::RParserOptions::default());
     let direct = oak_semantic::semantic_index(&parse.tree(), &url);
 
-    assert_eq!(*via_salsa, direct);
+    assert_eq!(via_salsa, &direct);
 }
 
 #[test]
