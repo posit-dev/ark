@@ -838,10 +838,11 @@ impl<'a> SemanticIndexBuilder<'a> {
         let call_offset = call.syntax().text_trimmed_range().start();
         let resolution = self.resolve_source(&path);
 
-        // Record every `source()` call site, independent of whether the resolver
-        // below resolves it. `resolved` pins the canonical URL when resolution
-        // succeeded so reflective queries (diagnostics for unresolved `source()`,
-        // file-dependency views) read the outcome without re-resolving.
+        // Record every `source()` call site, independent of whether the
+        // resolution was successful. `resolved` pins the canonical URL when
+        // resolution succeeded so reflective queries (diagnostics for
+        // unresolved `source()`, file-dependency views) read the outcome
+        // without re-resolving.
         self.semantic_calls.push(SemanticCall {
             kind: SemanticCallKind::Source {
                 path: path.clone(),
