@@ -23,11 +23,8 @@ fn workspace_origin(name: &str) -> PackageOrigin {
     }
 }
 
-fn installed_origin(name: &str) -> PackageOrigin {
-    PackageOrigin::Installed {
-        version: "1.0.0".to_string(),
-        libpath: PathBuf::from(format!("/libs/{name}")),
-    }
+fn installed_origin(_name: &str) -> PackageOrigin {
+    PackageOrigin::Installed
 }
 
 fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
