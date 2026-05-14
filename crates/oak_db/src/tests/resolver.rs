@@ -74,10 +74,11 @@ fn editing_sourced_file_invalidates_caller_index() {
 }
 
 #[test]
-fn source_cycle_terminates_with_empty_index() {
+fn source_cycle_preserves_local_analysis() {
     // `a` sources `b`, `b` sources `a`. Salsa breaks the cycle by
-    // resolving one side to an empty index (the file scope only, no
-    // definitions, no semantic calls).
+    // rebuilding one side with `NoopResolver`, so that side keeps its
+    // own local definitions but loses the cross-file imports from the
+    // cycle partner. The other side completes normally.
     let mut db = TestDb::new();
     let a = make_script(&mut db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
     let b = make_script(&mut db, "b.R", "source(\"a.R\")\nx_b <- 2\n");
@@ -88,13 +89,10 @@ fn source_cycle_terminates_with_empty_index() {
     let index_a = a.file(&db).semantic_index(&db);
     let index_b = b.file(&db).semantic_index(&db);
 
-    // Each non-empty index has its own top-level binding; the cycling
-    // side is the empty cycle_result. We don't pin which side salsa
-    // picks, only that at least one is the empty index and that builds
-    // complete without panicking.
-    let empty_a = index_a.file_exports().is_empty();
-    let empty_b = index_b.file_exports().is_empty();
-    assert!(empty_a || empty_b);
+    // Both files keep their own local binding regardless of which side
+    // salsa picks as the cycle break point.
+    assert!(index_a.file_exports().contains_key("x_a"));
+    assert!(index_b.file_exports().contains_key("x_b"));
 }
 
 #[test]

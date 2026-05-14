@@ -75,8 +75,13 @@ impl File {
     /// `semantic_index(A) -> DbResolver -> exports(B) -> semantic_index(B)
     /// -> DbResolver -> exports(A) -> semantic_index(A)`, and salsa
     /// panics with "set cycle_fn/cycle_initial" unless the query first
-    /// re-entered has a handler. Whichever side salsa picks gets
-    /// `SemanticIndex::empty()`.
+    /// re-entered has a handler. The handler rebuilds the file with
+    /// `NoopResolver`, which drops cross-file injection. The cycling
+    /// side keeps its own local analysis (scopes, use-def maps, function
+    /// bodies); only its source-injected imports from the cycle partner
+    /// are missing. R doesn't allow cyclic `source()`, so the asymmetric
+    /// outcome (the non-cycling side still sees the cycle partner's
+    /// locals) is acceptable.
     ///
     /// `no_eq` skips salsa's `values_equal` check after recomputation.
     /// Backdating at this level never triggered in practice anyway: `AstPtr`
@@ -138,6 +143,11 @@ fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     oak_semantic::build_index(&parsed.tree(), file.url(db).as_url(), &mut resolver)
 }
 
-fn semantic_index_cycle_result(_db: &dyn Db, _id: salsa::Id, _file: File) -> SemanticIndex {
-    SemanticIndex::empty()
+fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
+    let parsed = file.parse(db);
+    oak_semantic::build_index(
+        &parsed.tree(),
+        file.url(db).as_url(),
+        &mut oak_semantic::NoopResolver,
+    )
 }
