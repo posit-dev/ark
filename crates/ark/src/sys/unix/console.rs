@@ -112,23 +112,27 @@ pub fn run_r() {
     }
 }
 
+/// Run handlers if we have data available. This is necessary
+/// for things like the HTML help server, which will listen
+/// for requests on an open socket() which would then normally
+/// be handled in a select() call when reading input from stdin.
+///
+/// https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
+///
+/// We run this in a loop just to make sure the R help server can
+/// be as responsive as possible when rendering help pages.
+///
+/// Note that the later package also adds an input handler to `R_InputHandlers`
+/// which runs the later event loop, so it's also important that we are fairly
+/// responsive for that as well (posit-dev/positron#7235).
+///
+/// Note that `R_runHandlers()` would call `R_PolledEvents()` if we give it a `NULL`
+/// `fdset` and we don't want this. `R_PolledEvents()` is where our interrupt tasks run,
+/// and that wouldn't be appropriate at the location that we run activity handlers from.
+/// https://github.com/wch/r-source/blob/0cd50b1014de382cc27cf72b0e418565f611334a/src/unix/sys-std.c#L408
 pub fn run_activity_handlers() {
     unsafe {
-        // Run handlers if we have data available. This is necessary
-        // for things like the HTML help server, which will listen
-        // for requests on an open socket() which would then normally
-        // be handled in a select() call when reading input from stdin.
-        //
-        // https://github.com/wch/r-source/blob/4ca6439c1ffc76958592455c44d83f95d5854b2a/src/unix/sys-std.c#L1084-L1086
-        //
-        // We run this in a loop just to make sure the R help server can
-        // be as responsive as possible when rendering help pages.
-        //
-        // Note that the later package also adds an input handler to `R_InputHandlers`
-        // which runs the later event loop, so it's also important that we are fairly
-        // responsive for that as well (posit-dev/positron#7235).
         let mut fdset = R_checkActivity(0, 1);
-
         while !fdset.is_null() {
             R_runHandlers(libr::get(R_InputHandlers), fdset);
             fdset = R_checkActivity(0, 1);
