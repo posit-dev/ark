@@ -50,7 +50,7 @@ fn script_by_url_uses_files_interner() {
 
     // No `Root::set_scripts` call: the lookup goes through `Files` +
     // `File.owner`, not through `Root.scripts`.
-    assert_eq!(db.files().get_script(&db, &url), Some(script));
+    assert_eq!(db.script_by_url(&url), Some(script));
 }
 
 #[test]
@@ -75,5 +75,5 @@ fn script_by_url_ignores_package_files() {
     file.set_owner(&mut db).to(Some(FileOwner::Package(pkg)));
 
     // Package files are not scripts.
-    assert_eq!(db.files().get_script(&db, &url), None);
+    assert_eq!(db.script_by_url(&url), None);
 }
