@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use url::Url;
 
@@ -13,6 +14,7 @@ pub(super) type Events = Arc<Mutex<Vec<salsa::Event>>>;
 pub(super) struct TestDb {
     storage: salsa::Storage<Self>,
     events: Events,
+    source_graph: Arc<OnceLock<SourceGraph>>,
 }
 
 impl TestDb {
@@ -24,9 +26,11 @@ impl TestDb {
                 events.lock().unwrap().push(event);
             }
         })));
-        let db = Self { storage, events };
-        SourceGraph::empty(&db);
-        db
+        Self {
+            storage,
+            events,
+            source_graph: Arc::new(OnceLock::new()),
+        }
     }
 
     /// Count `WillExecute` events whose `database_key`'s Debug form
@@ -54,7 +58,11 @@ impl TestDb {
 impl salsa::Database for TestDb {}
 
 #[salsa::db]
-impl Db for TestDb {}
+impl Db for TestDb {
+    fn source_graph(&self) -> SourceGraph {
+        *self.source_graph.get_or_init(|| SourceGraph::empty(self))
+    }
+}
 
 pub(super) fn file_url(name: &str) -> Url {
     Url::parse(&format!("file:///{name}")).unwrap()

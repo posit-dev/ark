@@ -13,7 +13,7 @@ use crate::Name;
 /// - Scripts can depend on installed and workspace packages via e.g. `::`
 ///   or `library()`. They can also depend on other scripts via `source()`.
 /// - Packages can import other packages, but do not depend on scripts.
-#[salsa::input(singleton)]
+#[salsa::input]
 pub struct SourceGraph {
     /// Scripts in the user workspace.
     #[returns(ref)]
