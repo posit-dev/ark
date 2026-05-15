@@ -1,10 +1,10 @@
 mod db;
 mod file;
+mod inputs;
 mod legacy;
 mod name;
 mod parse;
 mod resolver;
-mod source_graph;
 
 #[cfg(test)]
 mod tests;
@@ -12,15 +12,15 @@ mod tests;
 pub use db::Db;
 pub use file::File;
 pub use file::FileOwner;
+pub use inputs::package_by_name;
+pub use inputs::root_by_url;
+pub use inputs::script_by_url;
+pub use inputs::LibraryRoots;
+pub use inputs::Package;
+pub use inputs::Root;
+pub use inputs::RootKind;
+pub use inputs::Script;
+pub use inputs::WorkspaceRoots;
 pub use legacy::semantic_index_with_source_resolver;
 pub use legacy::LegacyDb;
 pub use name::Name;
-pub use source_graph::package_by_name;
-pub use source_graph::root_by_url;
-pub use source_graph::script_by_url;
-pub use source_graph::LibraryRoots;
-pub use source_graph::Package;
-pub use source_graph::Root;
-pub use source_graph::RootKind;
-pub use source_graph::Script;
-pub use source_graph::WorkspaceRoots;
