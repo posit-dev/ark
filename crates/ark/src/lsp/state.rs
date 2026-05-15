@@ -281,10 +281,10 @@ impl WorldState {
             self.resolve_source(dir, path, &mut stack)
         });
 
-        let directives = index.file_directives().to_vec();
+        let semantic_calls = index.semantic_calls().to_vec();
         (
             index,
-            ExternalScope::search_path(directives, default_search_path()),
+            ExternalScope::search_path(semantic_calls, default_search_path()),
         )
     }
 
