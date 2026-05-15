@@ -12,6 +12,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
+salsa = ["dep:salsa"]
 testing = ["dep:tempfile"]
 
 [lints]
@@ -33,6 +34,10 @@ rustc-hash.workspace = true
 smallvec.workspace = true
 stdext.workspace = true
 url.workspace = true
+
+[dependencies.salsa]
+workspace = true
+optional = true
 
 [dependencies.tempfile]
 workspace = true
