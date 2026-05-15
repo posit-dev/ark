@@ -99,8 +99,6 @@ functions::generate! {
 
     pub fn R_PreserveObject(arg1: SEXP);
 
-    pub fn R_RunPendingFinalizers();
-
     pub fn R_ToplevelExec(
         fun: Option<unsafe extern "C-unwind" fn(arg1: *mut std::ffi::c_void)>,
         data: *mut std::ffi::c_void
