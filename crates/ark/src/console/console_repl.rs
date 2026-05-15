@@ -2547,11 +2547,6 @@ impl Console {
         unsafe { R_ProcessEvents() };
 
         crate::sys::console::run_activity_handlers();
-
-        // Run pending finalizers. We need to do this eagerly as otherwise finalizers
-        // might end up being executed on the LSP thread.
-        // https://github.com/rstudio/positron/issues/431
-        unsafe { R_RunPendingFinalizers() };
     }
 
     pub(super) fn eval_env(&self) -> RObject {
