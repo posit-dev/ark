@@ -4,33 +4,42 @@ use oak_package_metadata::namespace::Namespace;
 use crate::Db;
 use crate::File;
 use crate::Name;
-use crate::Root;
 
-/// Storage for the source graph. The edges (dependencies between nodes) are
-/// encoded in `Script` and `Package` nodes.
+/// Salsa-tracked root directory.
 ///
-/// - Scripts can depend on installed and workspace packages via e.g. `::`
-///   or `library()`. They can also depend on other scripts via `source()`.
-/// - Packages can import other packages, but do not depend on scripts.
-#[salsa::input]
-pub struct SourceGraph {
-    /// Scripts in the user workspace.
+/// May contain `Script`s (typically in a Workspace root) and `Package`s (from a
+/// Workspace root or a Library root), which themselves wrap R `File`s.
+///
+/// Watchers implemented in the consumer/LSP layer are reponsible for populating
+/// and keeping in sync the packages and scripts in these roots (LSP file
+/// watcher for `Workspace`, custom library watcher for `Library`).
+///
+/// The `scripts` and `packages` fields are the salsa-observable signal for "the
+/// set of scripts/packages under this root changed": tracked queries that read
+/// them are invalidated when the watcher updates the corresponding list.
+#[salsa::input(debug)]
+pub struct Root {
+    #[returns(ref)]
+    pub path: UrlId,
+    pub kind: RootKind,
+    /// Top-level R scripts directly under this root. Always empty for
+    /// `Library` roots.
     #[returns(ref)]
     pub scripts: Vec<Script>,
-    /// Workspace packages live in the user's workspace and are authoritative
-    /// over installed packages. We always have full sources for workspace
-    /// packages.
+    /// Packages discovered under this root (workspace packages for
+    /// `Workspace`, installed packages for `Library`).
     #[returns(ref)]
-    pub workspace_packages: Vec<Package>,
-    /// Installed packages live in `.libPaths()`. They start out as stubs (no
-    /// source files) and get updated by the LSP layer as sources become
-    /// available via `oak_sources`.
-    #[returns(ref)]
-    pub installed_packages: Vec<Package>,
+    pub packages: Vec<Package>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RootKind {
+    Workspace,
+    Library,
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub enum SourceNode {
+pub enum FileOwner {
     Script(Script),
     Package(Package),
 }
@@ -38,10 +47,8 @@ pub enum SourceNode {
 /// The set of workspace folders the user has open.
 ///
 /// Populated by the LSP layer from `initialize.workspaceFolders` and
-/// updated on `workspace/didChangeWorkspaceFolders`. Read by
-/// [`File::workspace_root`](crate::File::workspace_root) to find the
-/// containing workspace folder for a given URL, which `DbResolver`
-/// uses as the anchor for relative `source("path")` arguments.
+/// updated on `workspace/didChangeWorkspaceFolders`. Each entry is a
+/// [`Root`] of kind [`RootKind::Workspace`](crate::RootKind::Workspace).
 #[salsa::input]
 pub struct WorkspaceRoots {
     #[returns(ref)]
@@ -50,6 +57,25 @@ pub struct WorkspaceRoots {
 
 impl WorkspaceRoots {
     /// Construct an empty `WorkspaceRoots` with no folders.
+    pub fn empty(db: &dyn Db) -> Self {
+        Self::new(db, vec![])
+    }
+}
+
+/// The set of R libraries (`.libPaths()` entries).
+///
+/// Populated by the library watcher (outside the LSP since libraries live
+/// outside the user's project). Each entry is a [`Root`] of kind
+/// [`RootKind::Library`](crate::RootKind::Library). Order matches R's
+/// `.libPaths()` lookup order.
+#[salsa::input]
+pub struct LibraryRoots {
+    #[returns(ref)]
+    pub roots: Vec<Root>,
+}
+
+impl LibraryRoots {
+    /// Construct an empty `LibraryRoots` with no library directories.
     pub fn empty(db: &dyn Db) -> Self {
         Self::new(db, vec![])
     }
@@ -70,7 +96,7 @@ pub struct Package {
     pub namespace: Namespace,
     // TODO(salsa): adding any `R/` file mutates this Vec and invalidates
     // every tracked query that read it. Future fix derives `Vec<File>`
-    // from a basename spec via `Root.revision` and a `Files` registry.
+    // from a basename spec via per-`Package` `files` and a `Files` registry.
     #[returns(ref)]
     pub collation: Vec<File>,
 }
@@ -81,38 +107,44 @@ pub enum PackageOrigin {
     Installed { version: String, libpath: UrlId },
 }
 
-impl SourceGraph {
-    /// Construct an empty `SourceGraph` with no scripts or packages.
-    pub fn empty(db: &dyn Db) -> Self {
-        Self::new(db, vec![], vec![], vec![])
+/// Look up a `Script` by URL. Walks workspace roots looking for a script
+/// whose file URL matches.
+///
+/// TODO(salsa, PR 8): delete this function. Once `Files` and `File.parent`
+/// land, the only caller (`DbResolver::resolve_source`) inlines as
+/// `db.files().get(db, url).and_then(|f| match f.parent(db) { ... })`.
+pub fn script_by_url(db: &dyn Db, url: &UrlId) -> Option<Script> {
+    for root in db.workspace_roots().roots(db) {
+        if let Some(script) = root.scripts(db).iter().find(|s| s.file(db).url(db) == url) {
+            return Some(*script);
+        }
     }
+    None
 }
 
-#[salsa::tracked]
-impl SourceGraph {
-    /// Look up a `Script` by URL.
-    ///
-    /// Not `#[salsa::tracked]` because `UrlId` isn't indexable without interning.
-    ///
-    /// TODO(salsa): once `Files` and `File.parent: Option<SourceNode>` land,
-    /// the body collapses to O(1) via `db.files().get(url)` plus a match on
-    /// `file.parent(db)`. The walk over `self.scripts(db)` goes away.
-    pub fn script_by_url(self, db: &dyn Db, url: &UrlId) -> Option<Script> {
-        self.scripts(db)
-            .iter()
-            .find(|script| script.file(db).url(db) == url)
-            .copied()
+/// Look up a `Package` by name. Walks workspace roots in declaration
+/// order first (so workspace packages shadow installed packages of the
+/// same name), then library roots in `.libPaths()` order.
+///
+/// Salsa records dependencies only on the roots actually walked: if the
+/// match is in `workspace_roots[0]`, only that root's `packages` field
+/// is read, so adding a same-name package in a lower-precedence library
+/// root won't invalidate the result.
+///
+/// TODO(salsa, PR 8): delete this function. The precedence walk moves
+/// inside `Packages::get(db, name)` on the interner, and callers use
+/// `db.packages().get(db, name)` directly.
+pub fn package_by_name(db: &dyn Db, name: Name<'_>) -> Option<Package> {
+    let text = name.text(db);
+    for root in db.workspace_roots().roots(db) {
+        if let Some(pkg) = root.packages(db).iter().find(|p| p.name(db) == text) {
+            return Some(*pkg);
+        }
     }
-
-    /// Look up a `Package` by name. Workspace packages take precedence over
-    /// installed packages of the same name.
-    #[salsa::tracked]
-    pub fn package_by_name(self, db: &dyn Db, name: Name<'_>) -> Option<Package> {
-        let text = name.text(db);
-        self.workspace_packages(db)
-            .iter()
-            .chain(self.installed_packages(db).iter())
-            .find(|package| package.name(db) == text)
-            .copied()
+    for root in db.library_roots().roots(db) {
+        if let Some(pkg) = root.packages(db).iter().find(|p| p.name(db) == text) {
+            return Some(*pkg);
+        }
     }
+    None
 }

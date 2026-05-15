@@ -6,9 +6,9 @@ use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
+use crate::LibraryRoots;
 use crate::Root;
 use crate::RootKind;
-use crate::SourceGraph;
 use crate::WorkspaceRoots;
 
 pub(super) type Events = Arc<Mutex<Vec<salsa::Event>>>;
@@ -18,8 +18,8 @@ pub(super) type Events = Arc<Mutex<Vec<salsa::Event>>>;
 pub(super) struct TestDb {
     storage: salsa::Storage<Self>,
     events: Events,
-    source_graph: Arc<OnceLock<SourceGraph>>,
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
+    library_roots: Arc<OnceLock<LibraryRoots>>,
 }
 
 impl TestDb {
@@ -34,8 +34,8 @@ impl TestDb {
         Self {
             storage,
             events,
-            source_graph: Arc::new(OnceLock::new()),
             workspace_roots: Arc::new(OnceLock::new()),
+            library_roots: Arc::new(OnceLock::new()),
         }
     }
 
@@ -65,14 +65,16 @@ impl salsa::Database for TestDb {}
 
 #[salsa::db]
 impl Db for TestDb {
-    fn source_graph(&self) -> SourceGraph {
-        *self.source_graph.get_or_init(|| SourceGraph::empty(self))
-    }
-
     fn workspace_roots(&self) -> WorkspaceRoots {
         *self
             .workspace_roots
             .get_or_init(|| WorkspaceRoots::empty(self))
+    }
+
+    fn library_roots(&self) -> LibraryRoots {
+        *self
+            .library_roots
+            .get_or_init(|| LibraryRoots::empty(self))
     }
 }
 
@@ -80,9 +82,26 @@ pub(super) fn file_url(name: &str) -> UrlId {
     UrlId::from_canonical(Url::parse(&format!("file:///{name}")).unwrap())
 }
 
-/// Build a fresh `RootKind::Workspace` `Root` at `path` with revision 0.
-/// Each call allocates a new salsa entity; tests that need to assert
-/// on root identity should retain the returned value.
+/// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each call
+/// allocates a new salsa entity; tests that need to assert on root identity
+/// should retain the returned value.
 pub(super) fn workspace_root(db: &TestDb, path: &str) -> Root {
-    Root::new(db, file_url(path), RootKind::Workspace, 0)
+    Root::new(db, file_url(path), RootKind::Workspace, vec![], vec![])
+}
+
+/// Build a fresh empty `RootKind::Library` `Root` at `path`. Each call
+/// allocates a new salsa entity.
+pub(super) fn library_root(db: &TestDb, path: &str) -> Root {
+    Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
+}
+
+/// Register `scripts` under a fresh workspace root at the URL filesystem
+/// root, and register that root in `WorkspaceRoots`. Used by tests that
+/// need cross-file resolution via `source()` to find their scripts.
+pub(super) fn register_scripts(db: &mut TestDb, scripts: Vec<crate::Script>) -> Root {
+    use salsa::Setter;
+    let root = workspace_root(db, "");
+    root.set_scripts(db).to(scripts);
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    root
 }

@@ -8,7 +8,6 @@ use oak_semantic::use_def_map::UseDefMap;
 
 use crate::parse::OakParse;
 use crate::resolver::DbResolver;
-use crate::root::url_to_root;
 use crate::Db;
 use crate::Root;
 
@@ -95,12 +94,15 @@ impl File {
     /// project root, matching R's runtime semantics (paths resolve against
     /// `getwd()`, typically the project root in an IDE).
     ///
-    /// TODO(salsa): once `File.parent` lands, package files return their
-    /// `PackageOrigin::Workspace { root }` directly; installed-package files
-    /// return `None`. Until then, this is the script-only path.
+    /// TODO(salsa): once `File.owner: Option<FileOwner>` lands, owner
+    /// dispatches reach the Root via the chain `file.owner(db)?.root(db)`
+    /// (works for both `Workspace` and `Library` Roots, the latter for
+    /// installed-package files). This method then becomes the
+    /// workspace-root-only path, useful for `source()` anchoring where
+    /// library roots aren't relevant.
     #[salsa::tracked]
     pub fn workspace_root(self, db: &dyn Db) -> Option<Root> {
-        url_to_root(db, self.url(db))
+        db.root_by_url(self.url(db))
     }
 }
 

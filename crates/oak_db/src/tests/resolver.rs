@@ -4,7 +4,6 @@ use salsa::Setter;
 
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::TestDb;
-use crate::Db;
 use crate::File;
 use crate::Script;
 
@@ -19,8 +18,7 @@ fn cross_file_source_injection() {
     let a = make_script(&db, "a.R", "source(\"b.R\")\n");
     let b = make_script(&db, "b.R", "x <- 1\n");
 
-    let source_graph = db.source_graph();
-    source_graph.set_scripts(&mut db).to(vec![a, b]);
+    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
 
     let index = a.file(&db).semantic_index(&db);
     let file_scope = ScopeId::from(0);
@@ -49,8 +47,7 @@ fn editing_sourced_file_invalidates_caller_index() {
     let a = make_script(&db, "a.R", "source(\"b.R\")\n");
     let b = make_script(&db, "b.R", "x <- 1\n");
 
-    let source_graph = db.source_graph();
-    source_graph.set_scripts(&mut db).to(vec![a, b]);
+    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
 
     let _ = a.file(&db).semantic_index(&db);
     assert_eq!(db.executions("semantic_index"), 2);
@@ -78,8 +75,7 @@ fn source_cycle_terminates_with_empty_index() {
     let a = make_script(&db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
     let b = make_script(&db, "b.R", "source(\"a.R\")\nx_b <- 2\n");
 
-    let source_graph = db.source_graph();
-    source_graph.set_scripts(&mut db).to(vec![a, b]);
+    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
 
     let index_a = a.file(&db).semantic_index(&db);
     let index_b = b.file(&db).semantic_index(&db);
@@ -108,8 +104,7 @@ fn closure_capture_with_source_before_function() {
     );
     let helpers = make_script(&db, "helpers.R", "helper <- 1\n");
 
-    let source_graph = db.source_graph();
-    source_graph.set_scripts(&mut db).to(vec![script, helpers]);
+    crate::tests::test_db::register_scripts(&mut db, vec![script, helpers]);
 
     let index = script.file(&db).semantic_index(&db);
     let file_scope = ScopeId::from(0);
@@ -156,8 +151,7 @@ fn closure_capture_with_source_after_function() {
     );
     let helpers = make_script(&db, "helpers.R", "helper <- 1\n");
 
-    let source_graph = db.source_graph();
-    source_graph.set_scripts(&mut db).to(vec![script, helpers]);
+    crate::tests::test_db::register_scripts(&mut db, vec![script, helpers]);
 
     let index = script.file(&db).semantic_index(&db);
     let fn_scope = ScopeId::from(1);
