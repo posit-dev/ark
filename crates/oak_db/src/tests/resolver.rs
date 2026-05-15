@@ -4,22 +4,38 @@ use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
 
 use crate::tests::test_db::file_url;
+use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
+use crate::Db;
 use crate::File;
+use crate::Root;
 use crate::Script;
 
-fn make_script(db: &TestDb, name: &str, contents: &str) -> Script {
+fn make_script(db: &TestDb, root: Root, name: &str, contents: &str) -> Script {
     let file = File::new(db, file_url(name), contents.to_string());
-    Script::new(db, file)
+    Script::new(db, root, file)
+}
+
+/// Create a workspace root with the given scripts and register it.
+fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<Script>) {
+    let root = workspace_root(db, "");
+    let scripts: Vec<Script> = scripts
+        .iter()
+        .map(|(name, contents)| make_script(db, root, name, contents))
+        .collect();
+    root.set_scripts(db).to(scripts.clone());
+    db.workspace_roots().set_roots(db).to(vec![root]);
+    (root, scripts)
 }
 
 #[test]
 fn test_cross_file_source_injection() {
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
-    let b = make_script(&db, "b.R", "x <- 1\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[("a.R", "source(\"b.R\")\n"), ("b.R", "x <- 1\n")],
+    );
+    let (a, b) = (scripts[0], scripts[1]);
 
     let index = a.file(&db).semantic_index(&db);
     let file_scope = ScopeId::from(0);
@@ -45,10 +61,11 @@ fn test_cross_file_source_injection() {
 #[test]
 fn test_editing_sourced_file_invalidates_caller_index() {
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
-    let b = make_script(&db, "b.R", "x <- 1\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[("a.R", "source(\"b.R\")\n"), ("b.R", "x <- 1\n")],
+    );
+    let (a, b) = (scripts[0], scripts[1]);
 
     let _ = a.file(&db).semantic_index(&db);
     assert_eq!(db.executions("semantic_index"), 2);
@@ -77,10 +94,14 @@ fn test_source_cycle_preserves_local_analysis() {
     // own local definitions but loses the cross-file imports from the
     // cycle partner. The other side completes normally.
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
-    let b = make_script(&db, "b.R", "source(\"a.R\")\nx_b <- 2\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[
+            ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
+            ("b.R", "source(\"a.R\")\nx_b <- 2\n"),
+        ],
+    );
+    let (a, b) = (scripts[0], scripts[1]);
 
     let index_a = a.file(&db).semantic_index(&db);
     let index_b = b.file(&db).semantic_index(&db);
@@ -99,14 +120,14 @@ fn test_closure_capture_with_source_before_function() {
     // inside `f` finds it through the existing enclosing-snapshot
     // machinery, no pre-scan needed.
     let mut db = TestDb::new();
-    let script = make_script(
-        &db,
-        "script.R",
-        "source(\"helpers.R\")\nf <- function() helper\n",
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[
+            ("script.R", "source(\"helpers.R\")\nf <- function() helper\n"),
+            ("helpers.R", "helper <- 1\n"),
+        ],
     );
-    let helpers = make_script(&db, "helpers.R", "helper <- 1\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![script, helpers]);
+    let script = scripts[0];
 
     let index = script.file(&db).semantic_index(&db);
     let file_scope = ScopeId::from(0);
@@ -228,14 +249,14 @@ fn test_closure_capture_with_source_after_function() {
     // scope, neither the symbol table nor the pre-scan knows about it
     // yet, and the snapshot doesn't register.
     let mut db = TestDb::new();
-    let script = make_script(
-        &db,
-        "script.R",
-        "f <- function() helper\nsource(\"helpers.R\")\n",
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[
+            ("script.R", "f <- function() helper\nsource(\"helpers.R\")\n"),
+            ("helpers.R", "helper <- 1\n"),
+        ],
     );
-    let helpers = make_script(&db, "helpers.R", "helper <- 1\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![script, helpers]);
+    let script = scripts[0];
 
     let index = script.file(&db).semantic_index(&db);
     let fn_scope = ScopeId::from(1);
