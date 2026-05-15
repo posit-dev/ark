@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
 use oak_db::LegacyDb;
+use oak_db::SourceGraph;
 use oak_ide::ExternalScope;
 use oak_semantic::library::Library;
 use oak_semantic::scope_layer::default_search_path;
@@ -27,6 +30,7 @@ use crate::lsp::inputs::source_root::SourceRoot;
 #[derive(Clone, Default)]
 pub struct OakDatabase {
     storage: salsa::Storage<Self>,
+    source_graph: Arc<OnceLock<SourceGraph>>,
 }
 
 impl OakDatabase {
@@ -39,7 +43,11 @@ impl OakDatabase {
 impl salsa::Database for OakDatabase {}
 
 #[salsa::db]
-impl oak_db::Db for OakDatabase {}
+impl oak_db::Db for OakDatabase {
+    fn source_graph(&self) -> SourceGraph {
+        *self.source_graph.get_or_init(|| SourceGraph::empty(self))
+    }
+}
 
 impl LegacyDb for WorldState {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
