@@ -11,6 +11,7 @@ use std::sync::Condvar;
 use std::sync::Mutex;
 
 use libr::ptr_R_Busy;
+use libr::ptr_R_ProcessEvents;
 use libr::ptr_R_ReadConsole;
 use libr::ptr_R_ShowMessage;
 use libr::ptr_R_Suicide;
@@ -23,16 +24,14 @@ use libr::R_HomeDir;
 use libr::R_InputHandlers;
 use libr::R_Interactive;
 use libr::R_Outputfile;
-use libr::R_PolledEvents;
 use libr::R_SignalHandlers;
 use libr::R_checkActivity;
 use libr::R_runHandlers;
 use libr::R_running_as_main_program;
-use libr::R_wait_usec;
 use libr::Rf_initialize_R;
 
 use crate::console::r_busy;
-use crate::console::r_polled_events;
+use crate::console::r_process_events;
 use crate::console::r_read_console;
 use crate::console::r_show_message;
 use crate::console::r_suicide;
@@ -77,6 +76,7 @@ pub fn setup_r(args: &Vec<String>) {
         libr::set(ptr_R_ShowMessage, Some(r_show_message));
         libr::set(ptr_R_Busy, Some(r_busy));
         libr::set(ptr_R_Suicide, Some(r_suicide));
+        libr::set(ptr_R_ProcessEvents, Some(r_process_events));
 
         // Install a CleanUp hook for integration tests that test the shutdown process.
         // We confirm that shutdown occurs by waiting in the test until `CLEANUP_SIGNAL`'s
@@ -104,10 +104,6 @@ pub fn setup_r(args: &Vec<String>) {
 
 pub fn run_r() {
     unsafe {
-        // Listen for polled events
-        libr::set(R_wait_usec, 10000);
-        libr::set(R_PolledEvents, Some(r_polled_events));
-
         run_Rmainloop();
     }
 }

@@ -29,7 +29,6 @@ pub mod object;
 pub mod options;
 pub mod parse;
 pub mod parser;
-pub mod polled_events;
 pub mod protect;
 pub mod r;
 pub mod raii;

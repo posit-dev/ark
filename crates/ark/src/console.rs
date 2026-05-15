@@ -129,8 +129,7 @@ use console_filter::ConsoleFilter;
 pub use console_repl::catching_panics;
 pub(crate) use console_repl::console_inputs;
 pub(crate) use console_repl::r_busy;
-#[cfg(unix)]
-pub(crate) use console_repl::r_polled_events;
+pub(crate) use console_repl::r_process_events;
 pub(crate) use console_repl::r_read_console;
 pub(crate) use console_repl::r_show_message;
 pub(crate) use console_repl::r_suicide;
