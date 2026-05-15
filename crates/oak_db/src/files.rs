@@ -40,7 +40,8 @@ pub struct Files {
 }
 
 impl Files {
-    /// Look up the `File` interned at `url`.
+    /// Look up the `File` interned at `url`. See [`crate::Db::file_by_url`]
+    /// for the public entry point.
     ///
     /// Records salsa deps so tracked-query callers re-execute when the
     /// answer changes:
@@ -54,7 +55,11 @@ impl Files {
     /// Non-tracked callers (LSP request handlers, VFS internal logic)
     /// pay the dep-recording cost as a no-op — there's no current
     /// tracked query to attach the dep to.
-    pub fn get(&self, db: &dyn Db, url: &UrlId) -> Option<File> {
+    ///
+    /// Generic over `Db` (rather than taking `&dyn Db`) so it can be
+    /// invoked from `Db` trait default methods, where `&self` is
+    /// `&Self: ?Sized` and doesn't coerce to `&dyn Db`.
+    pub(crate) fn get<DB: Db + ?Sized>(&self, db: &DB, url: &UrlId) -> Option<File> {
         let workspace_roots = db.workspace_roots().roots(db);
         let library_roots = db.library_roots().roots(db);
 
@@ -79,12 +84,10 @@ impl Files {
         self.inner.read().unwrap().get(url).copied()
     }
 
-    /// Look up the `Script` interned at `url`, if any. Returns `None`
-    /// if no file is interned at `url`, if the file has no owner, or
-    /// if the owner is a `Package` (i.e., a file inside a package, not
-    /// a standalone script). Inherits the auto-anchoring of
-    /// [`Files::get`].
-    pub fn get_script(&self, db: &dyn Db, url: &UrlId) -> Option<Script> {
+    /// Look up the `Script` interned at `url`, if any. See
+    /// [`crate::Db::script_by_url`] for the public entry point.
+    /// Inherits the auto-anchoring of [`Files::get`].
+    pub(crate) fn get_script<DB: Db + ?Sized>(&self, db: &DB, url: &UrlId) -> Option<Script> {
         match self.get(db, url)?.owner(db)? {
             FileOwner::Script(s) => Some(s),
             FileOwner::Package(_) => None,

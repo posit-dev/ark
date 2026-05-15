@@ -45,7 +45,7 @@ impl<'db> ImportsResolver for DbResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
         let target_url = resolve_relative_to(&anchor, path)?;
-        let script = self.db.files().get_script(self.db, &target_url)?;
+        let script = self.db.script_by_url(&target_url)?;
         let target = script.file(self.db);
 
         // Reads the target's own `semantic_index`. Salsa records the dep
