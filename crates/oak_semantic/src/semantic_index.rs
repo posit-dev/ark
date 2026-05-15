@@ -41,7 +41,8 @@ define_index!(EnclosingSnapshotId);
 // (all indexed by `ScopeId`) rather than bundled into a single struct, so
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
+#[cfg_attr(feature = "salsa", derive(salsa::Update))]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 

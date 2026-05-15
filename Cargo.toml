@@ -90,6 +90,7 @@ reqwest-middleware = "0.5.1"
 reqwest-retry = "0.9.1"
 rust-embed = "8.11.0"
 rustc-hash = "2.1.2"
+salsa = "0.26.2"
 scraper = "0.26.0"
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
