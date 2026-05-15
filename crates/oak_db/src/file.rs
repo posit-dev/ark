@@ -112,7 +112,7 @@ impl File {
     /// library roots aren't relevant.
     #[salsa::tracked]
     pub fn workspace_root(self, db: &dyn Db) -> Option<Root> {
-        db.root_by_url(self.url(db))
+        crate::root_by_url(db, self.url(db))
     }
 }
 
