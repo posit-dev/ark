@@ -11,7 +11,6 @@ use crate::File;
 use crate::FileOwner;
 use crate::Name;
 use crate::Package;
-use crate::PackageOrigin;
 use crate::Root;
 use crate::Script;
 
@@ -19,29 +18,35 @@ fn name<'db>(db: &'db TestDb, text: &str) -> Name<'db> {
     Name::new(db, text)
 }
 
-fn make_package(db: &TestDb, name: &str, kind: PackageOrigin) -> Package {
-    Package::new(db, name.to_string(), kind, Namespace::default(), Vec::new())
-}
-
 fn make_workspace_package(db: &TestDb, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
-    let pkg = make_package(db, name, PackageOrigin::Workspace { root });
+    let pkg = Package::new(
+        db,
+        root,
+        name.to_string(),
+        None,
+        Namespace::default(),
+        Vec::new(),
+    );
     (root, pkg)
 }
 
 fn make_installed_package(db: &TestDb, name: &str) -> (Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
-    let libpath = root.path(db).clone();
-    let pkg = make_package(db, name, PackageOrigin::Installed {
-        version: "1.0.0".to_string(),
-        libpath,
-    });
+    let pkg = Package::new(
+        db,
+        root,
+        name.to_string(),
+        Some("1.0.0".to_string()),
+        Namespace::default(),
+        Vec::new(),
+    );
     (root, pkg)
 }
 
-fn make_script(db: &TestDb, name: &str) -> Script {
+fn make_script(db: &TestDb, root: Root, name: &str) -> Script {
     let file = File::new(db, file_url(name), String::new());
-    Script::new(db, file)
+    Script::new(db, root, file)
 }
 
 #[test]
@@ -111,7 +116,7 @@ fn source_node_round_trips_through_a_tracked_query() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
     assert_eq!(first(&db), None);
 
-    let script = make_script(&db, "a.R");
+    let script = make_script(&db, root, "a.R");
     root.set_scripts(&mut db).to(vec![script]);
     assert_eq!(first(&db), Some(FileOwner::Script(script)));
 

@@ -9,7 +9,9 @@ use oak_semantic::use_def_map::UseDefMap;
 use crate::parse::OakParse;
 use crate::resolver::DbResolver;
 use crate::Db;
+use crate::Package;
 use crate::Root;
+use crate::Script;
 
 /// A source file tracked by Salsa.
 ///
@@ -25,6 +27,14 @@ pub struct File {
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
+}
+
+/// The entity that owns a [`File`]. Returned by `File::owner()` to return
+/// the standalone script or a package a file is part of.
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub enum FileOwner {
+    Script(Script),
+    Package(Package),
 }
 
 #[salsa::tracked]

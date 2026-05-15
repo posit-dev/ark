@@ -95,13 +95,3 @@ pub(super) fn library_root(db: &TestDb, path: &str) -> Root {
     Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
 }
 
-/// Register `scripts` under a fresh workspace root at the URL filesystem
-/// root, and register that root in `WorkspaceRoots`. Used by tests that
-/// need cross-file resolution via `source()` to find their scripts.
-pub(super) fn register_scripts(db: &mut TestDb, scripts: Vec<crate::Script>) -> Root {
-    use salsa::Setter;
-    let root = workspace_root(db, "");
-    root.set_scripts(db).to(scripts);
-    db.workspace_roots().set_roots(db).to(vec![root]);
-    root
-}

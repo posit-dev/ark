@@ -38,12 +38,6 @@ pub enum RootKind {
     Library,
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub enum FileOwner {
-    Script(Script),
-    Package(Package),
-}
-
 /// The set of workspace folders the user has open.
 ///
 /// Populated by the LSP layer from `initialize.workspaceFolders` and
@@ -83,15 +77,23 @@ impl LibraryRoots {
 
 #[salsa::input(debug)]
 pub struct Script {
+    /// The `Root` this script belongs to. Always [`RootKind::Workspace`].
+    pub root: Root,
     pub file: File,
 }
 
 #[salsa::input(debug)]
 pub struct Package {
+    /// The `Root` this package belongs to. Workspace packages live under
+    /// a [`RootKind::Workspace`] root, installed packages live under a
+    /// [`RootKind::Library`] root. Read `root.kind(db)` to distinguish.
+    pub root: Root,
     #[returns(ref)]
     pub name: String,
+    /// Installed-package version (from `DESCRIPTION`). `None` for
+    /// workspace packages.
     #[returns(ref)]
-    pub kind: PackageOrigin,
+    pub version: Option<String>,
     #[returns(ref)]
     pub namespace: Namespace,
     // TODO(salsa): adding any `R/` file mutates this Vec and invalidates
@@ -99,12 +101,6 @@ pub struct Package {
     // from a basename spec via per-`Package` `files` and a `Files` registry.
     #[returns(ref)]
     pub collation: Vec<File>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum PackageOrigin {
-    Workspace { root: Root },
-    Installed { version: String, libpath: UrlId },
 }
 
 /// Look up a `Script` by URL. Walks workspace roots looking for a script
