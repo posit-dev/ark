@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextSize;
-use oak_db::Db;
+use oak_db::LegacyDb;
 use oak_semantic::external::resolve_external_name;
 use oak_semantic::external::resolve_in_package;
 use oak_semantic::package_definitions::PackageDefinitionVisibility;
@@ -39,7 +39,7 @@ use crate::NavigationTarget;
 /// Returns an empty `Vec` if the offset doesn't point at a known
 /// identifier, or if the symbol cannot be resolved.
 pub fn goto_definition(
-    db: &dyn Db,
+    db: &dyn LegacyDb,
     offset: TextSize,
     file: &Url,
     root: &RSyntaxNode,
@@ -83,7 +83,7 @@ pub fn goto_definition(
 }
 
 fn resolve_use(
-    db: &dyn Db,
+    db: &dyn LegacyDb,
     index: &SemanticIndex,
     scope_id: ScopeId,
     use_id: UseId,
@@ -151,13 +151,13 @@ fn resolve_use(
 /// definitions (e.g., a.R sources b.R sources c.R).
 ///
 /// TODO(salsa): Move to `oak_semantic` once it depends on `oak_db`.
-fn resolve_import(db: &dyn Db, file: &Url, name: &str) -> Option<NavigationTarget> {
+fn resolve_import(db: &dyn LegacyDb, file: &Url, name: &str) -> Option<NavigationTarget> {
     let mut visited = HashSet::new();
     resolve_import_inner(db, file, name, &mut visited)
 }
 
 fn resolve_import_inner(
-    db: &dyn Db,
+    db: &dyn LegacyDb,
     file: &Url,
     name: &str,
     visited: &mut HashSet<(Url, String)>,
@@ -194,7 +194,7 @@ fn resolve_import_inner(
 }
 
 fn resolve_namespace_access(
-    db: &dyn Db,
+    db: &dyn LegacyDb,
     symbol: &str,
     package: &str,
     visibility: PackageDefinitionVisibility,
@@ -206,7 +206,7 @@ fn resolve_namespace_access(
 }
 
 fn resolve_external(
-    db: &dyn Db,
+    db: &dyn LegacyDb,
     symbol: &str,
     scope_chain: &[ScopeLayer],
 ) -> Vec<NavigationTarget> {

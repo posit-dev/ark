@@ -14,5 +14,12 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
-oak_semantic.workspace = true
+aether_parser.workspace = true
+aether_syntax.workspace = true
+biome_rowan.workspace = true
+oak_semantic = { workspace = true, features = ["salsa"] }
+salsa.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+oak_semantic = { workspace = true, features = ["salsa", "testing"] }
