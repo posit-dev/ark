@@ -161,10 +161,11 @@ fn test_sourced_file_library_attaches_in_caller() {
     // scope query against `a` sees the same packages it would see if
     // the `library(foo)` call had appeared directly in `a`.
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
-    let b = make_script(&db, "b.R", "library(foo)\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[("a.R", "source(\"b.R\")\n"), ("b.R", "library(foo)\n")],
+    );
+    let a = scripts[0];
 
     let index = a.file(&db).semantic_index(&db);
     assert!(index.file_attached_packages().contains(&"foo"));
@@ -172,14 +173,13 @@ fn test_sourced_file_library_attaches_in_caller() {
 
 #[test]
 fn test_source_to_unregistered_url_resolves_to_none() {
-    // `a.R` sources `b.R` but `b.R` isn't registered in the source
-    // graph. The `Source` semantic call is still recorded so
-    // diagnostics can flag the unresolved import; no `Import`
-    // definition lands in `a`'s file scope.
+    // `a.R` sources `b.R` but `b.R` isn't registered. The `Source`
+    // semantic call is still recorded so diagnostics can flag the
+    // unresolved import; no `Import` definition lands in `a`'s file
+    // scope.
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a]);
+    let (_, scripts) = setup_workspace(&mut db, &[("a.R", "source(\"b.R\")\n")]);
+    let a = scripts[0];
 
     let index = a.file(&db).semantic_index(&db);
 
@@ -206,10 +206,11 @@ fn test_source_resolves_absolute_path() {
     // `a`'s parent directory. The target URL is reconstructed
     // unambiguously and the registered script at that URL is found.
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"/abs/b.R\")\n");
-    let b = make_script(&db, "abs/b.R", "x <- 1\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a, b]);
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[("a.R", "source(\"/abs/b.R\")\n"), ("abs/b.R", "x <- 1\n")],
+    );
+    let a = scripts[0];
 
     let index = a.file(&db).semantic_index(&db);
     assert!(index.file_exports().contains_key("x"));
@@ -222,11 +223,15 @@ fn test_source_chain_propagates_exports_transitively() {
     // out, so a sees x_a, x_b (forwarded from b), and x_c (forwarded
     // from b which forwarded it from c).
     let mut db = TestDb::new();
-    let a = make_script(&db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
-    let b = make_script(&db, "b.R", "source(\"c.R\")\nx_b <- 2\n");
-    let c = make_script(&db, "c.R", "x_c <- 3\n");
-
-    crate::tests::test_db::register_scripts(&mut db, vec![a, b, c]);
+    let (_, scripts) = setup_workspace(
+        &mut db,
+        &[
+            ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
+            ("b.R", "source(\"c.R\")\nx_b <- 2\n"),
+            ("c.R", "x_c <- 3\n"),
+        ],
+    );
+    let a = scripts[0];
 
     let exports = a.file(&db).semantic_index(&db).file_exports();
     assert!(exports.contains_key("x_a"));

@@ -16,6 +16,7 @@ pub use legacy::semantic_index_with_source_resolver;
 pub use legacy::LegacyDb;
 pub use name::Name;
 pub use source_graph::package_by_name;
+pub use source_graph::root_by_url;
 pub use source_graph::script_by_url;
 pub use source_graph::LibraryRoots;
 pub use source_graph::Package;

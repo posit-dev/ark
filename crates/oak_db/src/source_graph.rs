@@ -103,6 +103,28 @@ pub struct Package {
     pub collation: Vec<File>,
 }
 
+/// Look up the workspace root that contains `url`, longest-prefix among
+/// nested roots.
+///
+/// Returns `None` for non-`file:` URLs and for URLs that don't lie under
+/// any workspace folder. Walks [`WorkspaceRoots`] linearly.
+///
+/// TODO(salsa, PR 8): becomes a `#[salsa::tracked]` function (so each
+/// caller doesn't redo the prefix walk) and likely moves under the
+/// `Files` interner as `Files::root_by_url`.
+pub fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
+    let path = url.to_file_path()?;
+    db.workspace_roots()
+        .roots(db)
+        .iter()
+        .filter_map(|root| {
+            let root_path = root.path(db).to_file_path()?;
+            path.starts_with(&root_path).then_some((root_path, *root))
+        })
+        .max_by_key(|(p, _)| p.components().count())
+        .map(|(_, r)| r)
+}
+
 /// Look up a `Script` by URL. Walks workspace roots looking for a script
 /// whose file URL matches.
 ///
