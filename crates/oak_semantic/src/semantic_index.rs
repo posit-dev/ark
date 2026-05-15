@@ -43,6 +43,7 @@ define_index!(EnclosingSnapshotId);
 // introduced).
 #[derive(Debug)]
 #[cfg_attr(feature = "salsa", derive(salsa::Update))]
+#[cfg_attr(feature = "testing", derive(PartialEq, Eq))]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 
