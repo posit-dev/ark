@@ -1,7 +1,7 @@
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::package_by_name;
+use crate::intern_package;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
@@ -9,18 +9,13 @@ use crate::tests::test_db::TestDb;
 use crate::Db;
 use crate::File;
 use crate::FileOwner;
-use crate::Name;
 use crate::Package;
 use crate::Root;
 use crate::Script;
 
-fn name<'db>(db: &'db TestDb, text: &str) -> Name<'db> {
-    Name::new(db, text)
-}
-
-fn make_workspace_package(db: &TestDb, name: &str) -> (Root, Package) {
+fn make_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
-    let pkg = Package::new(
+    let pkg = intern_package(
         db,
         root,
         name.to_string(),
@@ -29,12 +24,13 @@ fn make_workspace_package(db: &TestDb, name: &str) -> (Root, Package) {
         Vec::new(),
         None,
     );
+    root.set_packages(db).to(vec![pkg]);
     (root, pkg)
 }
 
-fn make_installed_package(db: &TestDb, name: &str) -> (Root, Package) {
+fn make_installed_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
-    let pkg = Package::new(
+    let pkg = intern_package(
         db,
         root,
         name.to_string(),
@@ -43,6 +39,7 @@ fn make_installed_package(db: &TestDb, name: &str) -> (Root, Package) {
         Vec::new(),
         None,
     );
+    root.set_packages(db).to(vec![pkg]);
     (root, pkg)
 }
 
@@ -54,48 +51,41 @@ fn make_script(db: &TestDb, root: Root, name: &str) -> Script {
 #[test]
 fn package_by_name_finds_workspace_package() {
     let mut db = TestDb::new();
-    let (root, pkg) = make_workspace_package(&db, "rlang");
-    root.set_packages(&mut db).to(vec![pkg]);
+    let (root, pkg) = make_workspace_package(&mut db, "rlang");
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
-    assert_eq!(package_by_name(&db, name(&db, "rlang")), Some(pkg));
+    assert_eq!(db.package_by_name("rlang"), Some(pkg));
 }
 
 #[test]
 fn package_by_name_falls_back_to_installed() {
     let mut db = TestDb::new();
-    let (libpath, pkg) = make_installed_package(&db, "dplyr");
-    libpath.set_packages(&mut db).to(vec![pkg]);
+    let (libpath, pkg) = make_installed_package(&mut db, "dplyr");
     db.library_roots().set_roots(&mut db).to(vec![libpath]);
 
-    assert_eq!(package_by_name(&db, name(&db, "dplyr")), Some(pkg));
+    assert_eq!(db.package_by_name("dplyr"), Some(pkg));
 }
 
 #[test]
 fn package_by_name_workspace_shadows_installed() {
     let mut db = TestDb::new();
-    let (workspace, workspace_pkg) = make_workspace_package(&db, "rlang");
-    let (libpath, installed_pkg) = make_installed_package(&db, "rlang");
-    workspace.set_packages(&mut db).to(vec![workspace_pkg]);
-    libpath.set_packages(&mut db).to(vec![installed_pkg]);
+    let (workspace, workspace_pkg) = make_workspace_package(&mut db, "rlang");
+    let (libpath, _installed_pkg) = make_installed_package(&mut db, "rlang");
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
     db.library_roots().set_roots(&mut db).to(vec![libpath]);
 
-    assert_eq!(
-        package_by_name(&db, name(&db, "rlang")),
-        Some(workspace_pkg),
-    );
+    assert_eq!(db.package_by_name("rlang"), Some(workspace_pkg));
 }
 
 #[test]
 fn package_by_name_returns_none_when_absent() {
     let db = TestDb::new();
-    assert_eq!(package_by_name(&db, name(&db, "ggplot2")), None);
+    assert_eq!(db.package_by_name("ggplot2"), None);
 }
 
 #[test]
 fn source_node_round_trips_through_a_tracked_query() {
-    // SourceNode is a plain enum over Salsa input ids; this exercises
+    // `FileOwner` is a plain enum over Salsa input ids; this exercises
     // it as a tracked-query return type, confirming the auto-derived
     // Update / equality machinery works.
     #[salsa::tracked]
@@ -123,8 +113,7 @@ fn source_node_round_trips_through_a_tracked_query() {
     assert_eq!(first(&db), Some(FileOwner::Script(script)));
 
     root.set_scripts(&mut db).to(vec![]);
-    let (pkg_root, package) = make_workspace_package(&db, "rlang");
-    pkg_root.set_packages(&mut db).to(vec![package]);
+    let (pkg_root, package) = make_workspace_package(&mut db, "rlang");
     db.workspace_roots()
         .set_roots(&mut db)
         .to(vec![root, pkg_root]);

@@ -8,6 +8,7 @@ use url::Url;
 use crate::Db;
 use crate::Files;
 use crate::LibraryRoots;
+use crate::Packages;
 use crate::Root;
 use crate::RootKind;
 use crate::WorkspaceRoots;
@@ -20,6 +21,7 @@ pub(super) struct TestDb {
     storage: salsa::Storage<Self>,
     events: Events,
     files: Files,
+    packages: Packages,
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
 }
@@ -37,6 +39,7 @@ impl TestDb {
             storage,
             events,
             files: Files::default(),
+            packages: Packages::default(),
             workspace_roots: Arc::new(OnceLock::new()),
             library_roots: Arc::new(OnceLock::new()),
         }
@@ -70,6 +73,10 @@ impl salsa::Database for TestDb {}
 impl Db for TestDb {
     fn files(&self) -> &Files {
         &self.files
+    }
+
+    fn packages(&self) -> &Packages {
+        &self.packages
     }
 
     fn workspace_roots(&self) -> WorkspaceRoots {
