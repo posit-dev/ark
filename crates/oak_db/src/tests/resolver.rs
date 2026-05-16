@@ -8,23 +8,19 @@ use crate::tests::test_db::file_url;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
-use crate::FileOwner;
+use crate::File;
 use crate::Root;
-use crate::Script;
 
-fn make_script(db: &mut TestDb, root: Root, name: &str, contents: &str) -> Script {
-    let file = intern_file(db, file_url(name), contents.to_string(), None);
-    let script = Script::new(db, root, file);
-    file.set_owner(db).to(Some(FileOwner::Script(script)));
-    script
+fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
+    intern_file(db, file_url(name), contents.to_string(), None)
 }
 
 /// Create a workspace root with the given scripts and register it.
-fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<Script>) {
+fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<File>) {
     let root = workspace_root(db, "");
-    let scripts: Vec<Script> = scripts
+    let scripts: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| make_script(db, root, name, contents))
+        .map(|(name, contents)| make_script(db, name, contents))
         .collect();
     root.set_scripts(db).to(scripts.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -34,13 +30,13 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<Scri
 #[test]
 fn test_cross_file_source_injection() {
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[("a.R", "source(\"b.R\")\n"), ("b.R", "x <- 1\n")],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\n"),
+        ("b.R", "x <- 1\n"),
+    ]);
     let (a, b) = (scripts[0], scripts[1]);
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
     let file_scope = ScopeId::from(0);
 
     let exports = index.file_exports();
@@ -54,7 +50,7 @@ fn test_cross_file_source_injection() {
 
     match import_def.unwrap().1.kind() {
         DefinitionKind::Import { file, name, .. } => {
-            assert_eq!(file, b.file(&db).url(&db).as_url());
+            assert_eq!(file, b.url(&db).as_url());
             assert_eq!(name, "x");
         },
         _ => unreachable!(),
@@ -64,27 +60,25 @@ fn test_cross_file_source_injection() {
 #[test]
 fn test_editing_sourced_file_invalidates_caller_index() {
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[("a.R", "source(\"b.R\")\n"), ("b.R", "x <- 1\n")],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\n"),
+        ("b.R", "x <- 1\n"),
+    ]);
     let (a, b) = (scripts[0], scripts[1]);
 
-    let _ = a.file(&db).semantic_index(&db);
+    let _ = a.semantic_index(&db);
     assert_eq!(db.executions("semantic_index"), 2);
 
     // Add a new top-level definition in `b`. `a` sees `b`'s exports
     // change, so its index must re-run.
-    b.file(&db)
-        .set_contents(&mut db)
-        .to("x <- 1\ny <- 2\n".to_string());
-    let _ = a.file(&db).semantic_index(&db);
+    b.set_contents(&mut db).to("x <- 1\ny <- 2\n".to_string());
+    let _ = a.semantic_index(&db);
     // 4 = 2 initial (a + b) + 2 re-runs (b's parse and index invalidate
     // first via the contents bump, then a's index re-runs because its
     // dep on b's index lost validity).
     assert_eq!(db.executions("semantic_index"), 4);
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
     let exports = index.file_exports();
     assert!(exports.contains_key("x"));
     assert!(exports.contains_key("y"));
@@ -97,17 +91,14 @@ fn test_source_cycle_preserves_local_analysis() {
     // own local definitions but loses the cross-file imports from the
     // cycle partner. The other side completes normally.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
-            ("b.R", "source(\"a.R\")\nx_b <- 2\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
+        ("b.R", "source(\"a.R\")\nx_b <- 2\n"),
+    ]);
     let (a, b) = (scripts[0], scripts[1]);
 
-    let index_a = a.file(&db).semantic_index(&db);
-    let index_b = b.file(&db).semantic_index(&db);
+    let index_a = a.semantic_index(&db);
+    let index_b = b.semantic_index(&db);
 
     // Both files keep their own local binding regardless of which side
     // salsa picks as the cycle break point.
@@ -123,16 +114,16 @@ fn test_closure_capture_with_source_before_function() {
     // inside `f` finds it through the existing enclosing-snapshot
     // machinery, no pre-scan needed.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("script.R", "source(\"helpers.R\")\nf <- function() helper\n"),
-            ("helpers.R", "helper <- 1\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        (
+            "script.R",
+            "source(\"helpers.R\")\nf <- function() helper\n",
+        ),
+        ("helpers.R", "helper <- 1\n"),
+    ]);
     let script = scripts[0];
 
-    let index = script.file(&db).semantic_index(&db);
+    let index = script.semantic_index(&db);
     let file_scope = ScopeId::from(0);
     let fn_scope = ScopeId::from(1);
 
@@ -164,13 +155,13 @@ fn test_sourced_file_library_attaches_in_caller() {
     // scope query against `a` sees the same packages it would see if
     // the `library(foo)` call had appeared directly in `a`.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[("a.R", "source(\"b.R\")\n"), ("b.R", "library(foo)\n")],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\n"),
+        ("b.R", "library(foo)\n"),
+    ]);
     let a = scripts[0];
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
     assert!(index.file_attached_packages().contains(&"foo"));
 }
 
@@ -184,7 +175,7 @@ fn test_source_to_unregistered_url_resolves_to_none() {
     let (_, scripts) = setup_workspace(&mut db, &[("a.R", "source(\"b.R\")\n")]);
     let a = scripts[0];
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
 
     let imports = index
         .definitions(ScopeId::from(0))
@@ -209,13 +200,13 @@ fn test_source_resolves_absolute_path() {
     // `a`'s parent directory. The target URL is reconstructed
     // unambiguously and the registered script at that URL is found.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[("a.R", "source(\"/abs/b.R\")\n"), ("abs/b.R", "x <- 1\n")],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"/abs/b.R\")\n"),
+        ("abs/b.R", "x <- 1\n"),
+    ]);
     let a = scripts[0];
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
     assert!(index.file_exports().contains_key("x"));
 }
 
@@ -226,17 +217,14 @@ fn test_source_chain_propagates_exports_transitively() {
     // out, so a sees x_a, x_b (forwarded from b), and x_c (forwarded
     // from b which forwarded it from c).
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
-            ("b.R", "source(\"c.R\")\nx_b <- 2\n"),
-            ("c.R", "x_c <- 3\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
+        ("b.R", "source(\"c.R\")\nx_b <- 2\n"),
+        ("c.R", "x_c <- 3\n"),
+    ]);
     let a = scripts[0];
 
-    let exports = a.file(&db).semantic_index(&db).file_exports();
+    let exports = a.semantic_index(&db).file_exports();
     assert!(exports.contains_key("x_a"));
     assert!(exports.contains_key("x_b"));
     assert!(exports.contains_key("x_c"));
@@ -257,16 +245,16 @@ fn test_closure_capture_with_source_after_function() {
     // scope, neither the symbol table nor the pre-scan knows about it
     // yet, and the snapshot doesn't register.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("script.R", "f <- function() helper\nsource(\"helpers.R\")\n"),
-            ("helpers.R", "helper <- 1\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        (
+            "script.R",
+            "f <- function() helper\nsource(\"helpers.R\")\n",
+        ),
+        ("helpers.R", "helper <- 1\n"),
+    ]);
     let script = scripts[0];
 
-    let index = script.file(&db).semantic_index(&db);
+    let index = script.semantic_index(&db);
     let fn_scope = ScopeId::from(1);
 
     let use_id = oak_semantic::UseId::from(0);

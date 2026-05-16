@@ -7,8 +7,7 @@ use salsa::Setter;
 
 use crate::Db;
 use crate::File;
-use crate::FileOwner;
-use crate::Script;
+use crate::Package;
 
 /// URL-keyed registry of `File` salsa entities.
 ///
@@ -84,16 +83,6 @@ impl Files {
         self.inner.read().unwrap().get(url).copied()
     }
 
-    /// Look up the `Script` interned at `url`, if any. See
-    /// [`crate::Db::script_by_url`] for the public entry point.
-    /// Inherits the auto-anchoring of [`Files::get`].
-    pub(crate) fn get_script<DB: Db + ?Sized>(&self, db: &DB, url: &UrlId) -> Option<Script> {
-        match self.get(db, url)?.owner(db)? {
-            FileOwner::Script(s) => Some(s),
-            FileOwner::Package(_) => None,
-        }
-    }
-
     /// Insert `file` under `url`. Overwrites any previous entry for
     /// the same URL; the caller is responsible for not creating
     /// duplicate `File` entities. External callers should use
@@ -106,7 +95,7 @@ impl Files {
 /// Upsert a `File` keyed by `url`.
 ///
 /// If `url` is already interned, updates the existing `File`'s
-/// `contents` and `owner` in place and returns it. Otherwise creates
+/// `contents` and `package` in place and returns it. Otherwise creates
 /// a fresh `File::new(...)` entity and inserts it into the interner.
 ///
 /// Replaces direct `File::new(...)` at all call sites. The idempotent
@@ -116,15 +105,15 @@ pub fn intern_file<DB: Db>(
     db: &mut DB,
     url: UrlId,
     contents: String,
-    owner: Option<FileOwner>,
+    package: Option<Package>,
 ) -> File {
     let existing = db.files().get(db, &url);
     if let Some(file) = existing {
         file.set_contents(db).to(contents);
-        file.set_owner(db).to(owner);
+        file.set_package(db).to(package);
         return file;
     }
-    let file = File::new(db, url.clone(), contents, owner);
+    let file = File::new(db, url.clone(), contents, package);
     db.files().intern(url, file);
     file
 }

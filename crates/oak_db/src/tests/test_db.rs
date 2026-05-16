@@ -113,4 +113,3 @@ pub(super) fn workspace_root(db: &TestDb, path: &str) -> Root {
 pub(super) fn library_root(db: &TestDb, path: &str) -> Root {
     Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
 }
-
