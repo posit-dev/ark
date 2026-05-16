@@ -3,6 +3,8 @@ use aether_url::UrlId;
 use crate::File;
 use crate::Files;
 use crate::LibraryRoots;
+use crate::Package;
+use crate::Packages;
 use crate::Script;
 use crate::WorkspaceRoots;
 
@@ -27,6 +29,10 @@ pub trait Db: salsa::Database {
     /// should prefer the lookup methods below.
     fn files(&self) -> &Files;
 
+    /// `(Root, name)` interner of `Package`s. Concrete-db storage
+    /// detail, consumers should prefer the lookup methods below.
+    fn packages(&self) -> &Packages;
+
     /// Look up the `File` interned at `url`, if any.
     ///
     /// Auto-anchors so tracked-query callers re-run when a file is
@@ -43,5 +49,12 @@ pub trait Db: salsa::Database {
     /// [`Self::file_by_url`].
     fn script_by_url(&self, url: &UrlId) -> Option<Script> {
         self.files().get_script(self, url)
+    }
+
+    /// Look up the `Package` named `name`, applying R's precedence:
+    /// workspace packages shadow installed ones; within each group,
+    /// declaration order wins. Anchors lazily on each root walked.
+    fn package_by_name(&self, name: &str) -> Option<Package> {
+        self.packages().get(self, name)
     }
 }

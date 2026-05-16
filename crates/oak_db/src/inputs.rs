@@ -3,7 +3,6 @@ use oak_package_metadata::namespace::Namespace;
 
 use crate::Db;
 use crate::File;
-use crate::Name;
 
 /// Salsa-tracked root directory.
 ///
@@ -133,29 +132,3 @@ pub fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
         .map(|(_, r)| r)
 }
 
-/// Look up a `Package` by name. Walks workspace roots in declaration
-/// order first (so workspace packages shadow installed packages of the
-/// same name), then library roots in `.libPaths()` order.
-///
-/// Salsa records dependencies only on the roots actually walked: if the
-/// match is in `workspace_roots[0]`, only that root's `packages` field
-/// is read, so adding a same-name package in a lower-precedence library
-/// root won't invalidate the result.
-///
-/// TODO(salsa, PR 8): delete this function. The precedence walk moves
-/// inside `Packages::get(db, name)` on the interner, and callers use
-/// `db.packages().get(db, name)` directly.
-pub fn package_by_name(db: &dyn Db, name: Name<'_>) -> Option<Package> {
-    let text = name.text(db);
-    for root in db.workspace_roots().roots(db) {
-        if let Some(pkg) = root.packages(db).iter().find(|p| p.name(db) == text) {
-            return Some(*pkg);
-        }
-    }
-    for root in db.library_roots().roots(db) {
-        if let Some(pkg) = root.packages(db).iter().find(|p| p.name(db) == text) {
-            return Some(*pkg);
-        }
-    }
-    None
-}
