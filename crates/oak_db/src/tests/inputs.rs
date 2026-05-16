@@ -1,6 +1,7 @@
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
+use crate::intern_file;
 use crate::intern_package;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::library_root;
@@ -8,10 +9,8 @@ use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
 use crate::File;
-use crate::FileOwner;
 use crate::Package;
 use crate::Root;
-use crate::Script;
 
 fn make_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
@@ -43,9 +42,8 @@ fn make_installed_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     (root, pkg)
 }
 
-fn make_script(db: &TestDb, root: Root, name: &str) -> Script {
-    let file = File::new(db, file_url(name), String::new(), None);
-    Script::new(db, root, file)
+fn make_script(db: &mut TestDb, name: &str) -> File {
+    intern_file(db, file_url(name), String::new(), None)
 }
 
 #[test]
@@ -84,18 +82,15 @@ fn package_by_name_returns_none_when_absent() {
 }
 
 #[test]
-fn source_node_round_trips_through_a_tracked_query() {
-    // `FileOwner` is a plain enum over Salsa input ids; this exercises
-    // it as a tracked-query return type, confirming the auto-derived
-    // Update / equality machinery works.
+fn root_scripts_round_trips_through_a_tracked_query() {
+    // Exercises `Root.scripts: Vec<File>` as input to a tracked-query
+    // return, confirming the salsa machinery picks up changes to the
+    // scripts list and to which workspace root is registered.
     #[salsa::tracked]
-    fn first(db: &dyn Db) -> Option<FileOwner> {
+    fn first(db: &dyn Db) -> Option<File> {
         for root in db.workspace_roots().roots(db) {
-            if let Some(&script) = root.scripts(db).first() {
-                return Some(FileOwner::Script(script));
-            }
-            if let Some(&package) = root.packages(db).first() {
-                return Some(FileOwner::Package(package));
+            if let Some(&file) = root.scripts(db).first() {
+                return Some(file);
             }
         }
         None
@@ -108,14 +103,10 @@ fn source_node_round_trips_through_a_tracked_query() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
     assert_eq!(first(&db), None);
 
-    let script = make_script(&db, root, "a.R");
-    root.set_scripts(&mut db).to(vec![script]);
-    assert_eq!(first(&db), Some(FileOwner::Script(script)));
+    let file = make_script(&mut db, "a.R");
+    root.set_scripts(&mut db).to(vec![file]);
+    assert_eq!(first(&db), Some(file));
 
     root.set_scripts(&mut db).to(vec![]);
-    let (pkg_root, package) = make_workspace_package(&mut db, "rlang");
-    db.workspace_roots()
-        .set_roots(&mut db)
-        .to(vec![root, pkg_root]);
-    assert_eq!(first(&db), Some(FileOwner::Package(package)));
+    assert_eq!(first(&db), None);
 }

@@ -7,23 +7,19 @@ use crate::tests::test_db::file_url;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
 use crate::Db;
-use crate::FileOwner;
+use crate::File;
 use crate::Root;
-use crate::Script;
 
-fn make_script(db: &mut TestDb, root: Root, name: &str, contents: &str) -> Script {
-    let file = intern_file(db, file_url(name), contents.to_string(), None);
-    let script = Script::new(db, root, file);
-    file.set_owner(db).to(Some(FileOwner::Script(script)));
-    script
+fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
+    intern_file(db, file_url(name), contents.to_string(), None)
 }
 
 /// Create a workspace root with the given scripts and register it.
-fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<Script>) {
+fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<File>) {
     let root = workspace_root(db, "");
-    let scripts: Vec<Script> = scripts
+    let scripts: Vec<File> = scripts
         .iter()
-        .map(|(name, contents)| make_script(db, root, name, contents))
+        .map(|(name, contents)| make_script(db, name, contents))
         .collect();
     root.set_scripts(db).to(scripts.clone());
     db.workspace_roots().set_roots(db).to(vec![root]);
@@ -33,13 +29,13 @@ fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<Scri
 #[test]
 fn cross_file_source_injection() {
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[("a.R", "source(\"b.R\")\n"), ("b.R", "x <- 1\n")],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\n"),
+        ("b.R", "x <- 1\n"),
+    ]);
     let (a, b) = (scripts[0], scripts[1]);
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
     let file_scope = ScopeId::from(0);
 
     let exports = index.file_exports();
@@ -53,7 +49,7 @@ fn cross_file_source_injection() {
 
     match import_def.unwrap().1.kind() {
         DefinitionKind::Import { file, name, .. } => {
-            assert_eq!(file, b.file(&db).url(&db).as_url());
+            assert_eq!(file, b.url(&db).as_url());
             assert_eq!(name, "x");
         },
         _ => unreachable!(),
@@ -63,24 +59,22 @@ fn cross_file_source_injection() {
 #[test]
 fn editing_sourced_file_invalidates_caller_index() {
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[("a.R", "source(\"b.R\")\n"), ("b.R", "x <- 1\n")],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\n"),
+        ("b.R", "x <- 1\n"),
+    ]);
     let (a, b) = (scripts[0], scripts[1]);
 
-    let _ = a.file(&db).semantic_index(&db);
+    let _ = a.semantic_index(&db);
     assert_eq!(db.executions("semantic_index"), 2);
 
     // Add a new top-level definition in `b`. `a` sees `b`'s exports
     // change, so its index must re-run.
-    b.file(&db)
-        .set_contents(&mut db)
-        .to("x <- 1\ny <- 2\n".to_string());
-    let _ = a.file(&db).semantic_index(&db);
+    b.set_contents(&mut db).to("x <- 1\ny <- 2\n".to_string());
+    let _ = a.semantic_index(&db);
     assert!(db.executions("semantic_index") >= 3);
 
-    let index = a.file(&db).semantic_index(&db);
+    let index = a.semantic_index(&db);
     let exports = index.file_exports();
     assert!(exports.contains_key("x"));
     assert!(exports.contains_key("y"));
@@ -92,17 +86,14 @@ fn source_cycle_terminates_with_empty_index() {
     // resolving one side to an empty index (the file scope only, no
     // definitions, no semantic calls).
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
-            ("b.R", "source(\"a.R\")\nx_b <- 2\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("a.R", "source(\"b.R\")\nx_a <- 1\n"),
+        ("b.R", "source(\"a.R\")\nx_b <- 2\n"),
+    ]);
     let (a, b) = (scripts[0], scripts[1]);
 
-    let index_a = a.file(&db).semantic_index(&db);
-    let index_b = b.file(&db).semantic_index(&db);
+    let index_a = a.semantic_index(&db);
+    let index_b = b.semantic_index(&db);
 
     // Each non-empty index has its own top-level binding; the cycling
     // side is the empty cycle_result. We don't pin which side salsa
@@ -121,16 +112,16 @@ fn closure_capture_with_source_before_function() {
     // inside `f` finds it through the existing enclosing-snapshot
     // machinery, no pre-scan needed.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("script.R", "source(\"helpers.R\")\nf <- function() helper\n"),
-            ("helpers.R", "helper <- 1\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        (
+            "script.R",
+            "source(\"helpers.R\")\nf <- function() helper\n",
+        ),
+        ("helpers.R", "helper <- 1\n"),
+    ]);
     let script = scripts[0];
 
-    let index = script.file(&db).semantic_index(&db);
+    let index = script.semantic_index(&db);
     let file_scope = ScopeId::from(0);
     let fn_scope = ScopeId::from(1);
 
@@ -168,16 +159,16 @@ fn closure_capture_with_source_after_function() {
     // scope, neither the symbol table nor the pre-scan knows about it
     // yet, and the snapshot doesn't register.
     let mut db = TestDb::new();
-    let (_, scripts) = setup_workspace(
-        &mut db,
-        &[
-            ("script.R", "f <- function() helper\nsource(\"helpers.R\")\n"),
-            ("helpers.R", "helper <- 1\n"),
-        ],
-    );
+    let (_, scripts) = setup_workspace(&mut db, &[
+        (
+            "script.R",
+            "f <- function() helper\nsource(\"helpers.R\")\n",
+        ),
+        ("helpers.R", "helper <- 1\n"),
+    ]);
     let script = scripts[0];
 
-    let index = script.file(&db).semantic_index(&db);
+    let index = script.semantic_index(&db);
     let fn_scope = ScopeId::from(1);
 
     let use_id = oak_semantic::UseId::from(0);

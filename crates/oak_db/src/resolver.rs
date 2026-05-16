@@ -9,17 +9,18 @@ use url::Url;
 
 use crate::Db;
 use crate::File;
+use crate::RootKind;
 
 /// Salsa-backed [`ImportsResolver`] consumed by the per-file semantic
 /// index builder. One instance per call to [`File::semantic_index`].
 ///
-/// Lookups go through the source graph (`script_by_url`) and through the
-/// target file's own [`File::semantic_index`] (for exported names and
-/// attached packages). Each `source("path")` call records a salsa dep
-/// on the target file's semantic index, not on its parse tree or
-/// contents. That dep is coarse today. `SemanticIndex` is not
-/// `PartialEq`-stable across internal edits (AstPtr ranges shift), so
-/// any edit to a sourced file invalidates this file's index too.
+/// Lookups go through [`Db::file_by_url`] and through the target file's
+/// own [`File::semantic_index`] (for exported names and attached
+/// packages). Each `source("path")` call records a salsa dep on the
+/// target file's semantic index, not on its parse tree or contents.
+/// That dep is coarse today. `SemanticIndex` is not `PartialEq`-stable
+/// across internal edits (`AstPtr` ranges shift), so any edit to a
+/// sourced file invalidates this file's index too.
 ///
 /// TODO(salsa): once `File::exports` lands and `DbResolver` reads
 /// `target.exports(db)` here instead of
@@ -45,8 +46,7 @@ impl<'db> ImportsResolver for DbResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
         let target_url = resolve_relative_to(&anchor, path)?;
-        let script = self.db.script_by_url(&target_url)?;
-        let target = script.file(self.db);
+        let target = self.db.file_by_url(&target_url)?;
 
         // Reads the target's own `semantic_index`. Salsa records the dep
         // edge; cycles in `source()` chains are caught by the cycle_result
@@ -84,7 +84,10 @@ impl<'db> ImportsResolver for DbResolver<'db> {
 /// `setwd()` to the project root, so workspace-root anchoring typically matches
 /// the runtime behaviour.
 fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
-    if let Some(root) = calling_file.workspace_root(db) {
+    if let Some(root) = calling_file
+        .root(db)
+        .filter(|r| r.kind(db) == RootKind::Workspace)
+    {
         return root.path(db).to_file_path();
     }
     let calling_path = calling_file.url(db).to_file_path()?;

@@ -63,9 +63,7 @@ impl oak_db::Db for OakDatabase {
     }
 
     fn library_roots(&self) -> LibraryRoots {
-        *self
-            .library_roots
-            .get_or_init(|| LibraryRoots::empty(self))
+        *self.library_roots.get_or_init(|| LibraryRoots::empty(self))
     }
 }
 

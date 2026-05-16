@@ -11,8 +11,6 @@ use crate::resolver::DbResolver;
 use crate::Db;
 use crate::Package;
 use crate::Root;
-use crate::RootKind;
-use crate::Script;
 
 /// A source file tracked by Salsa.
 ///
@@ -23,25 +21,18 @@ use crate::Script;
 /// The `url` field is a [`UrlId`], so the type system enforces "everything
 /// inside Salsa is a canonical URL".
 ///
-/// `owner` is a back-pointer to the [`FileOwner`] (Script or Package) this
-/// file belongs to. Inverse of `Root.scripts` and `Package.files`, so
-/// queries answering "what owns this file?" don't walk the forward edges.
-/// `None` for files that exist but aren't registered as part of either.
+/// `package` is a back-pointer to the [`Package`] this file belongs to, or
+/// `None` for standalone scripts. Inverse of `Package.files`, so queries
+/// answering "what package owns this file?" don't walk the forward edge.
+/// Files with `package == None` are either standalone scripts under a
+/// workspace root or orphan files not registered anywhere.
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
-    pub owner: Option<FileOwner>,
-}
-
-/// The entity that owns a [`File`]. Returned by `File::owner()` to return
-/// the standalone script or a package a file is part of.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub enum FileOwner {
-    Script(Script),
-    Package(Package),
+    pub package: Option<Package>,
 }
 
 #[salsa::tracked]
@@ -102,31 +93,39 @@ impl File {
         Arc::clone(self.semantic_index(db).use_def_map(scope))
     }
 
-    /// The workspace root containing this file.
+    /// The root containing this file, if any.
     ///
-    /// If the file has a registered [`FileOwner`], dispatches through
-    /// the owner's `root`: workspace-owned files return `Some(root)`,
-    /// library-owned files (installed packages) return `None`. Files
-    /// without an owner fall back to a URL-prefix lookup against
-    /// [`WorkspaceRoots`].
+    /// If the file has a registered [`Package`], dispatches through
+    /// `Package.root`. Otherwise falls back to a URL-prefix lookup
+    /// against [`WorkspaceRoots`] (orphan files live under a workspace
+    /// root or nowhere; library files always have a package).
     ///
-    /// Used by `source()` resolution to anchor relative paths against
-    /// the project root, matching R's runtime semantics (paths resolve
-    /// against `getwd()`, typically the project root in an IDE).
+    /// Callers that need to distinguish workspace from library roots
+    /// inspect `root.kind(db)`.
     #[salsa::tracked]
-    pub fn workspace_root(self, db: &dyn Db) -> Option<Root> {
-        if let Some(owner) = self.owner(db) {
-            let root = match owner {
-                FileOwner::Script(s) => s.root(db),
-                FileOwner::Package(p) => p.root(db),
-            };
-            return match root.kind(db) {
-                RootKind::Workspace => Some(root),
-                RootKind::Library => None,
-            };
+    pub fn root(self, db: &dyn Db) -> Option<Root> {
+        if let Some(pkg) = self.package(db) {
+            return Some(pkg.root(db));
         }
-        crate::root_by_url(db, self.url(db))
+        root_by_url(db, self.url(db))
     }
+}
+
+/// Find the workspace `Root` whose path is the longest-prefix ancestor
+/// of `url`. Returns `None` for non-`file:` URLs and for URLs outside
+/// every workspace folder. Private helper: the only caller is
+/// [`File::root`] (for files without a registered package).
+fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
+    let path = url.to_file_path()?;
+    db.workspace_roots()
+        .roots(db)
+        .iter()
+        .filter_map(|root| {
+            let root_path = root.path(db).to_file_path()?;
+            path.starts_with(&root_path).then_some((root_path, *root))
+        })
+        .max_by_key(|(p, _)| p.components().count())
+        .map(|(_, r)| r)
 }
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {

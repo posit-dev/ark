@@ -6,8 +6,9 @@ use crate::File;
 
 /// Salsa-tracked root directory.
 ///
-/// May contain `Script`s (typically in a Workspace root) and `Package`s (from a
-/// Workspace root or a Library root), which themselves wrap R `File`s.
+/// May contain top-level R scripts (typically in a Workspace root) and
+/// `Package`s (from a Workspace root or a Library root), which themselves
+/// wrap R `File`s.
 ///
 /// Watchers implemented in the consumer/LSP layer are reponsible for populating
 /// and keeping in sync the packages and scripts in these roots (LSP file
@@ -21,10 +22,11 @@ pub struct Root {
     #[returns(ref)]
     pub path: UrlId,
     pub kind: RootKind,
-    /// Top-level R scripts directly under this root. Always empty for
-    /// `Library` roots.
+    /// Top-level R scripts directly under this root. Each entry is a
+    /// `File` with `package(db) == None`. Always empty for `Library`
+    /// roots.
     #[returns(ref)]
-    pub scripts: Vec<Script>,
+    pub scripts: Vec<File>,
     /// Packages discovered under this root (workspace packages for
     /// `Workspace`, installed packages for `Library`).
     #[returns(ref)]
@@ -75,13 +77,6 @@ impl LibraryRoots {
 }
 
 #[salsa::input(debug)]
-pub struct Script {
-    /// The `Root` this script belongs to. Always [`RootKind::Workspace`].
-    pub root: Root,
-    pub file: File,
-}
-
-#[salsa::input(debug)]
 pub struct Package {
     /// The `Root` this package belongs to. Workspace packages live under
     /// a [`RootKind::Workspace`] root, installed packages live under a
@@ -109,26 +104,3 @@ pub struct Package {
     #[returns(ref)]
     pub collation: Option<Vec<String>>,
 }
-
-/// Look up the workspace root that contains `url`, longest-prefix among
-/// nested roots.
-///
-/// Returns `None` for non-`file:` URLs and for URLs that don't lie under
-/// any workspace folder. Walks [`WorkspaceRoots`] linearly.
-///
-/// TODO(salsa, PR 8): becomes a `#[salsa::tracked]` function (so each
-/// caller doesn't redo the prefix walk) and likely moves under the
-/// `Files` interner as `Files::root_by_url`.
-pub fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
-    let path = url.to_file_path()?;
-    db.workspace_roots()
-        .roots(db)
-        .iter()
-        .filter_map(|root| {
-            let root_path = root.path(db).to_file_path()?;
-            path.starts_with(&root_path).then_some((root_path, *root))
-        })
-        .max_by_key(|(p, _)| p.components().count())
-        .map(|(_, r)| r)
-}
-

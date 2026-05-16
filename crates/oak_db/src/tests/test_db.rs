@@ -86,9 +86,7 @@ impl Db for TestDb {
     }
 
     fn library_roots(&self) -> LibraryRoots {
-        *self
-            .library_roots
-            .get_or_init(|| LibraryRoots::empty(self))
+        *self.library_roots.get_or_init(|| LibraryRoots::empty(self))
     }
 }
 
@@ -108,4 +106,3 @@ pub(super) fn workspace_root(db: &TestDb, path: &str) -> Root {
 pub(super) fn library_root(db: &TestDb, path: &str) -> Root {
     Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
 }
-
