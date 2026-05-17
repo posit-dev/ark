@@ -76,6 +76,30 @@ impl LibraryRoots {
     }
 }
 
+/// Files known to the database that aren't anchored to a workspace
+/// or library root.
+///
+/// Holds: untitled buffers, files opened in the editor before the
+/// workspace scanner has placed them, and any file whose URL falls
+/// outside every workspace / library folder. Scanners may move files
+/// out of this bucket into `Root.scripts` or `Package.files` once they
+/// classify them.
+///
+/// Singleton: there is one `OrphanRoot` per concrete database, lazily
+/// initialised by the implementation. The `files` field is what
+/// [`crate::Db::file_by_url`] consults to find unanchored files.
+#[salsa::input]
+pub struct OrphanRoot {
+    #[returns(ref)]
+    pub files: Vec<File>,
+}
+
+impl OrphanRoot {
+    pub fn empty(db: &dyn Db) -> Self {
+        Self::new(db, vec![])
+    }
+}
+
 #[salsa::input(debug)]
 pub struct Package {
     /// The `Root` this package belongs to. Workspace packages live under

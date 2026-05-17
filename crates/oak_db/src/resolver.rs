@@ -7,6 +7,7 @@ use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
 
+use crate::db::file_by_url_query;
 use crate::Db;
 use crate::File;
 use crate::RootKind;
@@ -46,7 +47,11 @@ impl<'db> ImportsResolver for DbResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let anchor = anchor_dir(self.db, self.calling_file)?;
         let target_url = resolve_relative_to(&anchor, path)?;
-        let target = self.db.file_by_url(&target_url)?;
+        // `self.db` is `&dyn Db`, which can't use the `Db::file_by_url`
+        // method (it has a `Self: Sized` bound so the default body can
+        // dispatch to the underlying salsa query). Call the salsa
+        // tracked function directly.
+        let target = file_by_url_query(self.db, &target_url)?;
 
         // Reads the target's own `semantic_index`. Salsa records the dep
         // edge; cycles in `source()` chains are caught by the cycle_result

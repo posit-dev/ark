@@ -26,6 +26,20 @@ use crate::Root;
 /// answering "what package owns this file?" don't walk the forward edge.
 /// Files with `package == None` are either standalone scripts under a
 /// workspace root or orphan files not registered anywhere.
+///
+/// # Placement invariant
+///
+/// `File.package` and the file's physical location in a `Vec<File>` are
+/// expected to agree: a file with `package == Some(pkg)` should live in
+/// `pkg.files`; a file with `package == None` should live in either some
+/// `root.scripts` or `orphan_root().files`. Salsa generates `pub`
+/// `set_url` / `set_contents` / `set_package` setters because field
+/// visibility couples to setter visibility (0.26 doesn't separate
+/// them), but mutating `package` directly leaves the file in its old
+/// bucket and breaks the invariant.
+///
+/// Always route writes through [`crate::Db::set_file`], which keeps
+/// the field and the bucket consistent.
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]

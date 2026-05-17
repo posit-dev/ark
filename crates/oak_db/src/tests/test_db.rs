@@ -1,3 +1,14 @@
+//! Minimal concrete `Db` for query-level unit tests.
+//!
+//! Lives here so `file.rs` tests can exercise `File::parse` /
+//! `File::semantic_index` without depending on `oak_storage`. Provides
+//! the three input accessors (lazy-init `OnceLock`) and a salsa-event
+//! recorder so tests can assert on query execution counts.
+//!
+//! For integration-style tests that need orphan placement, multi-root
+//! lookups, or `set_file` / `set_package` upsert semantics, use
+//! `oak_storage::OakDatabase` in `oak_storage/tests/`.
+
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -6,24 +17,22 @@ use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
-use crate::Files;
 use crate::LibraryRoots;
-use crate::Packages;
+use crate::OrphanRoot;
 use crate::Root;
 use crate::RootKind;
 use crate::WorkspaceRoots;
 
-pub(super) type Events = Arc<Mutex<Vec<salsa::Event>>>;
+type Events = Arc<Mutex<Vec<salsa::Event>>>;
 
 #[salsa::db]
 #[derive(Clone)]
 pub(super) struct TestDb {
     storage: salsa::Storage<Self>,
     events: Events,
-    files: Files,
-    packages: Packages,
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
+    orphan_root: Arc<OnceLock<OrphanRoot>>,
 }
 
 impl TestDb {
@@ -38,10 +47,9 @@ impl TestDb {
         Self {
             storage,
             events,
-            files: Files::default(),
-            packages: Packages::default(),
             workspace_roots: Arc::new(OnceLock::new()),
             library_roots: Arc::new(OnceLock::new()),
+            orphan_root: Arc::new(OnceLock::new()),
         }
     }
 
@@ -71,14 +79,6 @@ impl salsa::Database for TestDb {}
 
 #[salsa::db]
 impl Db for TestDb {
-    fn files(&self) -> &Files {
-        &self.files
-    }
-
-    fn packages(&self) -> &Packages {
-        &self.packages
-    }
-
     fn workspace_roots(&self) -> WorkspaceRoots {
         *self
             .workspace_roots
@@ -88,21 +88,24 @@ impl Db for TestDb {
     fn library_roots(&self) -> LibraryRoots {
         *self.library_roots.get_or_init(|| LibraryRoots::empty(self))
     }
+
+    fn orphan_root(&self) -> OrphanRoot {
+        *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
+    }
 }
 
 pub(super) fn file_url(name: &str) -> UrlId {
     UrlId::from_canonical(Url::parse(&format!("file:///{name}")).unwrap())
 }
 
-/// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each call
-/// allocates a new salsa entity; tests that need to assert on root identity
-/// should retain the returned value.
-pub(super) fn workspace_root(db: &TestDb, path: &str) -> Root {
+/// Build a fresh empty `RootKind::Workspace` `Root` at `path`. Each
+/// call allocates a new salsa entity; tests that need to assert on
+/// root identity should retain the returned value.
+pub(super) fn workspace_root(db: &impl Db, path: &str) -> Root {
     Root::new(db, file_url(path), RootKind::Workspace, vec![], vec![])
 }
 
-/// Build a fresh empty `RootKind::Library` `Root` at `path`. Each call
-/// allocates a new salsa entity.
-pub(super) fn library_root(db: &TestDb, path: &str) -> Root {
+/// Build a fresh empty `RootKind::Library` `Root` at `path`.
+pub(super) fn library_root(db: &impl Db, path: &str) -> Root {
     Root::new(db, file_url(path), RootKind::Library, vec![], vec![])
 }
