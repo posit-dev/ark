@@ -55,11 +55,13 @@ impl File {
     /// index. The privacy reverts to file-local + `cfg(test)` for
     /// tests at that point.
     ///
-    /// Cross-file symbol resolution (`source()` injection, NSE resolution)
-    /// is driven by [`DbResolver`]. `cycle_result` recovers from cyclic
-    /// `source()` chains by returning an empty index for whichever side
-    /// salsa picks to break the cycle. R doesn't allow `A` sources `B`
-    /// sources `A`, so precision loss is acceptable.
+    /// Cross-file symbol resolution (`source()` injection, NSE resolution) is
+    /// driven by [`DbResolver`]. `cycle_result` recovers from cyclic `source()`
+    /// chains: the handler rebuilds the file with `NoopResolver`, which drops
+    /// cross-file resolution. The cycling side keeps its own local analysis
+    /// (scopes, use-def maps, function bodies) with only its source-injected
+    /// imports from the cycle partner missing. TODO(diagnostics): Lint
+    /// `source()` cycles.
     ///
     /// `no_eq` skips salsa's `values_equal` check after recomputation.
     /// Backdating at this level never triggered in practice anyway: `AstPtr`
@@ -88,6 +90,11 @@ fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     oak_semantic::build_index(&parsed.tree(), file.url(db), &mut resolver)
 }
 
-fn semantic_index_cycle_result(_db: &dyn Db, _id: salsa::Id, _file: File) -> SemanticIndex {
-    SemanticIndex::empty()
+fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
+    let parsed = file.parse(db);
+    oak_semantic::build_index(
+        &parsed.tree(),
+        file.url(db),
+        &mut oak_semantic::NoopResolver,
+    )
 }
