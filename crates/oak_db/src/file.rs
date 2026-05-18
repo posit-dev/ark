@@ -91,6 +91,10 @@ fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
+    log::warn!(
+        "Cyclic `source()` Detected at {}. Rebuilding without cross-file resolution.",
+        file.url(db),
+    );
     let parsed = file.parse(db);
     oak_semantic::build_index(
         &parsed.tree(),
