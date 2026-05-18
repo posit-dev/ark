@@ -55,3 +55,23 @@ impl ImportsResolver for NoopResolver {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_noop_resolver_returns_none() {
+        // Contract: `NoopResolver` returns `None` for every input.
+        // The builder's behavior under this contract is exercised by
+        // every builder test that uses the default `index()` helper
+        // (see `tests/builder.rs`), but the contract itself is named
+        // here so a change to the trait method's signature can't
+        // silently break it.
+        let mut resolver = NoopResolver;
+        assert!(resolver.resolve_source("").is_none());
+        assert!(resolver.resolve_source("relative.R").is_none());
+        assert!(resolver.resolve_source("/abs/path.R").is_none());
+        assert!(resolver.resolve_source("../../up.R").is_none());
+    }
+}
