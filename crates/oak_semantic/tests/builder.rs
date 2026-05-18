@@ -11,7 +11,7 @@ use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolFlags;
 use oak_semantic::semantic_index::UseId;
 use oak_semantic::ImportsResolver;
-use oak_semantic::NoopResolver;
+use oak_semantic::NoopImportsResolver;
 use oak_semantic::SourceResolution;
 use url::Url;
 
@@ -25,7 +25,7 @@ fn index(source: &str) -> SemanticIndex {
     build_index(
         &parsed.tree(),
         &Url::parse("file:///test/test.R").unwrap(),
-        &mut NoopResolver,
+        &mut NoopImportsResolver,
     )
 }
 

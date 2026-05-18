@@ -23,10 +23,10 @@ pub struct SourceResolution {
 /// an import, and the builder consults this trait whenever it needs to
 /// know about one. Concrete impls live in their host crate:
 ///
-/// - [`NoopResolver`]: no imports. The builder records local definitions
+/// - [`NoopImportsResolver`]: no imports. The builder records local definitions
 ///   and `source()` call sites but injects no cross-file bindings. Suitable
 ///   for isolated indexing (CLI tools, unit tests).
-/// - `oak_db::DbResolver`: salsa-backed lookup against the source graph.
+/// - `oak_db::SalsaImportsResolver`: salsa-backed lookup against the source graph.
 ///
 /// The trait grows along two axes as new analyses land:
 ///
@@ -48,9 +48,9 @@ pub trait ImportsResolver {
 /// Resolver that returns nothing. The builder skips all cross-file
 /// injection, which is the desired behavior when callers don't have or
 /// don't want cross-file context.
-pub struct NoopResolver;
+pub struct NoopImportsResolver;
 
-impl ImportsResolver for NoopResolver {
+impl ImportsResolver for NoopImportsResolver {
     fn resolve_source(&mut self, _path: &str) -> Option<SourceResolution> {
         None
     }
@@ -61,14 +61,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_noop_resolver_returns_none() {
-        // Contract: `NoopResolver` returns `None` for every input.
+    fn test_noop_imports_resolver_returns_none() {
+        // Contract: `NoopImportsResolver` returns `None` for every input.
         // The builder's behavior under this contract is exercised by
         // every builder test that uses the default `index()` helper
         // (see `tests/builder.rs`), but the contract itself is named
         // here so a change to the trait method's signature can't
         // silently break it.
-        let mut resolver = NoopResolver;
+        let mut resolver = NoopImportsResolver;
         assert!(resolver.resolve_source("").is_none());
         assert!(resolver.resolve_source("relative.R").is_none());
         assert!(resolver.resolve_source("/abs/path.R").is_none());

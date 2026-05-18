@@ -5,7 +5,7 @@ use oak_semantic::semantic_index::DefinitionId;
 use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::UseId;
-use oak_semantic::NoopResolver;
+use oak_semantic::NoopImportsResolver;
 use stdext::assert_not;
 
 fn index(source: &str) -> SemanticIndex {
@@ -13,7 +13,7 @@ fn index(source: &str) -> SemanticIndex {
     build_index(
         &parsed.tree(),
         &url::Url::parse("file:///test/test.R").unwrap(),
-        &mut NoopResolver,
+        &mut NoopImportsResolver,
     )
 }
 
