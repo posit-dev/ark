@@ -1,9 +1,9 @@
 mod db;
 mod file;
+mod imports;
 mod legacy;
 mod name;
 mod parse;
-mod resolver;
 mod source_graph;
 
 #[cfg(test)]
