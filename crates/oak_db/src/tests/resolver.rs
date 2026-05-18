@@ -261,3 +261,62 @@ fn test_closure_capture_with_source_after_function() {
     let symbol = index.uses(fn_scope)[use_id].symbol();
     assert!(index.enclosing_bindings(fn_scope, symbol).is_some());
 }
+
+#[test]
+fn test_source_anchors_relative_to_workspace_root() {
+    // Calling file sits in a subdir of the workspace. `source("b.R")`
+    // anchors against the workspace root, not against the calling
+    // file's directory: the target is `proj/b.R`, not `proj/sub/b.R`.
+    // Matches R's `getwd()` semantics under RStudio / Positron, where
+    // the project root is the working directory.
+    let mut db = TestDb::new();
+    let root = workspace_root(&db, "proj");
+    let a = File::new(
+        &db,
+        file_url("proj/sub/a.R"),
+        "source(\"b.R\")\n".to_string(),
+        None,
+    );
+    let b = File::new(&db, file_url("proj/b.R"), "x <- 1\n".to_string(), None);
+    root.set_scripts(&mut db).to(vec![a, b]);
+    db.workspace_roots().set_roots(&mut db).to(vec![root]);
+
+    let index = a.semantic_index(&db);
+    assert!(index.file_exports().contains_key("x"));
+}
+
+#[test]
+fn test_source_anchors_to_parent_dir_when_no_workspace() {
+    // Calling file isn't under any workspace root, so the anchor
+    // falls back to the file's own parent directory.
+    let mut db = TestDb::new();
+    let a = File::new(
+        &db,
+        file_url("dir/a.R"),
+        "source(\"b.R\")\n".to_string(),
+        None,
+    );
+    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
+    db.orphan_root().set_files(&mut db).to(vec![a, b]);
+
+    let index = a.semantic_index(&db);
+    assert!(index.file_exports().contains_key("x"));
+}
+
+#[test]
+fn test_source_path_with_parent_dir_segments() {
+    // `source("../b.R")` from `dir/sub/a.R` normalises to `dir/b.R`.
+    // Exercises the `..` handling in `normalise_path`.
+    let mut db = TestDb::new();
+    let a = File::new(
+        &db,
+        file_url("dir/sub/a.R"),
+        "source(\"../b.R\")\n".to_string(),
+        None,
+    );
+    let b = File::new(&db, file_url("dir/b.R"), "x <- 1\n".to_string(), None);
+    db.orphan_root().set_files(&mut db).to(vec![a, b]);
+
+    let index = a.semantic_index(&db);
+    assert!(index.file_exports().contains_key("x"));
+}

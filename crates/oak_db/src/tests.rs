@@ -1,3 +1,4 @@
+mod db;
 mod file;
 mod file_root;
 mod inputs;
