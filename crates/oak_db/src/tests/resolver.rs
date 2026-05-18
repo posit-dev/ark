@@ -3,7 +3,6 @@ use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
 
-use crate::intern_file;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::workspace_root;
 use crate::tests::test_db::TestDb;
@@ -12,10 +11,11 @@ use crate::File;
 use crate::Root;
 
 fn make_script(db: &mut TestDb, name: &str, contents: &str) -> File {
-    intern_file(db, file_url(name), contents.to_string(), None)
+    File::new(db, file_url(name), contents.to_string(), None)
 }
 
-/// Create a workspace root with the given scripts and register it.
+/// Build a fresh workspace root, attach the given scripts, register
+/// it on the singleton `WorkspaceRoots` input.
 fn setup_workspace(db: &mut TestDb, scripts: &[(&str, &str)]) -> (Root, Vec<File>) {
     let root = workspace_root(db, "");
     let scripts: Vec<File> = scripts

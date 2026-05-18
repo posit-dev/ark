@@ -26,6 +26,22 @@ use crate::Root;
 /// answering "what package owns this file?" don't walk the forward edge.
 /// Files with `package == None` are either standalone scripts under a
 /// workspace root or orphan files not registered anywhere.
+///
+/// # Placement invariant
+///
+/// `File.package` and the file's physical location in a `Vec<File>` are
+/// expected to agree. A file with `package == Some(pkg)` should live in
+/// `pkg.files`. A file with `package == None` should live in either some
+/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_url`,
+/// `set_contents`, `set_package`) are `pub` because field visibility couples to
+/// setter visibility in salsa but calling `set_package` directly leaves the
+/// file in its old bucket and silently breaks this invariant.
+///
+/// The scanner crate (`oak_scan`) wraps these setters in helpers that
+/// maintain placement (move the file between `pkg.files`,
+/// `root.scripts`, and `orphan_root().files` as `package` changes).
+/// Callers that go around the helpers and use the salsa setters
+/// directly must maintain placement themselves.
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]

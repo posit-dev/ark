@@ -1,20 +1,18 @@
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
 
-use crate::intern_file;
-use crate::intern_package;
 use crate::tests::test_db::file_url;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
-use crate::tests::test_db::TestDb;
 use crate::Db;
 use crate::File;
+use crate::OakDatabase;
 use crate::Package;
 use crate::Root;
 
-fn make_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
+fn make_workspace_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = workspace_root(db, &format!("workspace/{name}"));
-    let pkg = intern_package(
+    let pkg = Package::new(
         db,
         root,
         name.to_string(),
@@ -27,9 +25,9 @@ fn make_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     (root, pkg)
 }
 
-fn make_installed_package(db: &mut TestDb, name: &str) -> (Root, Package) {
+fn make_installed_package(db: &mut OakDatabase, name: &str) -> (Root, Package) {
     let root = library_root(db, &format!("libs/{name}"));
-    let pkg = intern_package(
+    let pkg = Package::new(
         db,
         root,
         name.to_string(),
@@ -42,13 +40,13 @@ fn make_installed_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     (root, pkg)
 }
 
-fn make_script(db: &mut TestDb, name: &str) -> File {
-    intern_file(db, file_url(name), String::new(), None)
+fn make_script(db: &mut OakDatabase, name: &str) -> File {
+    File::new(db, file_url(name), String::new(), None)
 }
 
 #[test]
 fn test_package_by_name_finds_workspace_package() {
-    let mut db = TestDb::new();
+    let mut db = OakDatabase::new();
     let (root, pkg) = make_workspace_package(&mut db, "rlang");
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
@@ -57,7 +55,7 @@ fn test_package_by_name_finds_workspace_package() {
 
 #[test]
 fn test_package_by_name_falls_back_to_installed() {
-    let mut db = TestDb::new();
+    let mut db = OakDatabase::new();
     let (libpath, pkg) = make_installed_package(&mut db, "dplyr");
     db.library_roots().set_roots(&mut db).to(vec![libpath]);
 
@@ -66,7 +64,7 @@ fn test_package_by_name_falls_back_to_installed() {
 
 #[test]
 fn test_package_by_name_workspace_shadows_installed() {
-    let mut db = TestDb::new();
+    let mut db = OakDatabase::new();
     let (workspace, workspace_pkg) = make_workspace_package(&mut db, "rlang");
     let (libpath, _installed_pkg) = make_installed_package(&mut db, "rlang");
     db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
@@ -77,7 +75,7 @@ fn test_package_by_name_workspace_shadows_installed() {
 
 #[test]
 fn test_package_by_name_returns_none_when_absent() {
-    let db = TestDb::new();
+    let db = OakDatabase::new();
     assert_eq!(db.package_by_name("ggplot2"), None);
 }
 
@@ -96,7 +94,7 @@ fn test_root_scripts_round_trips_through_a_tracked_query() {
         None
     }
 
-    let mut db = TestDb::new();
+    let mut db = OakDatabase::new();
     assert_eq!(first(&db), None);
 
     let root = workspace_root(&db, "workspace");
