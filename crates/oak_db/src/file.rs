@@ -7,7 +7,7 @@ use oak_semantic::use_def_map::UseDefMap;
 use url::Url;
 
 use crate::parse::OakParse;
-use crate::resolver::DbResolver;
+use crate::resolver::SalsaImportsResolver;
 use crate::Db;
 
 /// A source file tracked by Salsa.
@@ -46,18 +46,18 @@ impl File {
 
     /// Build this file's `SemanticIndex` from the parse tree.
     ///
-    /// `pub(crate)` so [`DbResolver`] and tests can reach it. External
+    /// `pub(crate)` so [`SalsaImportsResolver`] and tests can reach it. External
     /// consumers should go through the narrow tracked queries below.
     ///
     /// TODO(salsa): tighten back to private once narrow cross-file
     /// queries land (`file_exports`, `file_attached_packages`) and
-    /// `DbResolver::resolve_source` reads those instead of the full
+    /// `SalsaImportsResolver::resolve_source` reads those instead of the full
     /// index. The privacy reverts to file-local + `cfg(test)` for
     /// tests at that point.
     ///
     /// Cross-file symbol resolution (`source()` injection, NSE resolution) is
-    /// driven by [`DbResolver`]. `cycle_result` recovers from cyclic `source()`
-    /// chains: the handler rebuilds the file with `NoopResolver`, which drops
+    /// driven by [`SalsaImportsResolver`]. `cycle_result` recovers from cyclic `source()`
+    /// chains: the handler rebuilds the file with `NoopImportsResolver`, which drops
     /// cross-file resolution. The cycling side keeps its own local analysis
     /// (scopes, use-def maps, function bodies) with only its source-injected
     /// imports from the cycle partner missing. TODO(diagnostics): Lint
@@ -86,7 +86,7 @@ impl File {
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
-    let mut resolver = DbResolver::new(db, file);
+    let mut resolver = SalsaImportsResolver::new(db, file);
     oak_semantic::build_index(&parsed.tree(), file.url(db), &mut resolver)
 }
 
@@ -99,6 +99,6 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
     oak_semantic::build_index(
         &parsed.tree(),
         file.url(db),
-        &mut oak_semantic::NoopResolver,
+        &mut oak_semantic::NoopImportsResolver,
     )
 }

@@ -18,13 +18,13 @@ use crate::File;
 /// `PartialEq`-stable across internal edits (AstPtr ranges shift), so
 /// any edit to a sourced file invalidates this file's index too.
 ///
-/// TODO(salsa): once `File::exports` lands and `DbResolver` reads
+/// TODO(salsa): once `File::exports` lands and `SalsaImportsResolver` reads
 /// `target.exports(db)` here instead of
 /// `target.semantic_index().file_exports()`, the dep moves to a
 /// structurally stable shape (name to `ExportEntry`, no source
 /// ranges). Body-only edits to sourced files stop invalidating
 /// callers, and salsa backdates as the design note advertises.
-pub(crate) struct DbResolver<'db> {
+pub(crate) struct SalsaImportsResolver<'db> {
     db: &'db dyn Db,
     /// The file currently being indexed. The resolver's whole job is to
     /// answer import queries on its behalf. Today the only such query
@@ -32,13 +32,13 @@ pub(crate) struct DbResolver<'db> {
     calling_file: File,
 }
 
-impl<'db> DbResolver<'db> {
+impl<'db> SalsaImportsResolver<'db> {
     pub(crate) fn new(db: &'db dyn Db, calling_file: File) -> Self {
         Self { db, calling_file }
     }
 }
 
-impl<'db> ImportsResolver for DbResolver<'db> {
+impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
         let target_url = resolve_relative_to(self.calling_file.url(self.db), path)?;
         let script = self.db.source_graph().script_by_url(self.db, &target_url)?;

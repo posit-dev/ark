@@ -76,7 +76,7 @@ fn test_editing_sourced_file_invalidates_caller_index() {
 #[test]
 fn test_source_cycle_preserves_local_analysis() {
     // `a` sources `b`, `b` sources `a`. Salsa breaks the cycle by
-    // rebuilding one side with `NoopResolver`, so that side keeps its
+    // rebuilding one side with `NoopImportsResolver`, so that side keeps its
     // own local definitions but loses the cross-file imports from the
     // cycle partner. The other side completes normally.
     let mut db = TestDb::new();

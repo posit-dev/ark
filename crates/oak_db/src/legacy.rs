@@ -28,21 +28,21 @@ pub trait LegacyDb {
 /// `File::semantic_index` tracked query. Once `ark::lsp::state`
 /// switches to consuming the tracked query (or implements its own
 /// [`ImportsResolver`] directly), this function and its private
-/// [`CallbackResolver`] adapter can be deleted.
+/// [`CallbackImportsResolver`] adapter can be deleted.
 pub fn semantic_index_with_source_resolver(
     root: &RRoot,
     file: &Url,
     resolver: impl FnMut(&str) -> Option<SourceResolution>,
 ) -> SemanticIndex {
-    let mut resolver = CallbackResolver(resolver);
+    let mut resolver = CallbackImportsResolver(resolver);
     oak_semantic::build_index(root, file, &mut resolver)
 }
 
-struct CallbackResolver<F>(F)
+struct CallbackImportsResolver<F>(F)
 where
     F: FnMut(&str) -> Option<SourceResolution>;
 
-impl<F> ImportsResolver for CallbackResolver<F>
+impl<F> ImportsResolver for CallbackImportsResolver<F>
 where
     F: FnMut(&str) -> Option<SourceResolution>,
 {

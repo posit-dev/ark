@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 use stdext::result::ResultExt;
 
 use crate::build_index;
-use crate::resolver::NoopResolver;
+use crate::resolver::NoopImportsResolver;
 
 define_index!(FileId);
 
@@ -89,7 +89,7 @@ fn append_definitions(
         return;
     };
 
-    let index = build_index(&parsed.tree(), &file_url, &mut NoopResolver);
+    let index = build_index(&parsed.tree(), &file_url, &mut NoopImportsResolver);
 
     let file_id = files.push(file);
 

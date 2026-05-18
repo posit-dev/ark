@@ -21,7 +21,7 @@ use oak_semantic::scope_layer::ScopeLayer;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::ImportsResolver;
-use oak_semantic::NoopResolver;
+use oak_semantic::NoopImportsResolver;
 use oak_semantic::ScopeId;
 use oak_semantic::SourceResolution;
 use oak_sources::test::TestPackageCache;
@@ -31,7 +31,11 @@ use url::Url;
 fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let index = build_index(&parsed.tree(), &file_url("test.R"), &mut NoopResolver);
+    let index = build_index(
+        &parsed.tree(),
+        &file_url("test.R"),
+        &mut NoopImportsResolver,
+    );
     (root, index)
 }
 
@@ -56,7 +60,7 @@ impl LegacyDb for TestDb {
         // Rebuild from source for tests. We store the source instead.
         self.sources.get(file).map(|source| {
             let parsed = parse(source, RParserOptions::default());
-            build_index(&parsed.tree(), file, &mut NoopResolver)
+            build_index(&parsed.tree(), file, &mut NoopImportsResolver)
         })
     }
     fn library(&self) -> &Library {
@@ -1174,7 +1178,11 @@ fn test_namespace_classify() {
     let source = "dplyr::mutate\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), &mut NoopResolver);
+    let idx = build_index(
+        &parsed.tree(),
+        &file_url("test.R"),
+        &mut NoopImportsResolver,
+    );
 
     // Cursor on `mutate` (offset 7)
     let ident = Identifier::classify(&root, &idx, offset(7));
@@ -1210,7 +1218,11 @@ fn test_namespace_classify_triple_colon() {
     let source = "pkg:::sym\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), &mut NoopResolver);
+    let idx = build_index(
+        &parsed.tree(),
+        &file_url("test.R"),
+        &mut NoopImportsResolver,
+    );
 
     let ident = Identifier::classify(&root, &idx, offset(6));
     assert_eq!(
@@ -1290,7 +1302,11 @@ fn test_namespace_classify_in_call() {
     let source = "foo::bar()\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), &mut NoopResolver);
+    let idx = build_index(
+        &parsed.tree(),
+        &file_url("test.R"),
+        &mut NoopImportsResolver,
+    );
 
     let ident = Identifier::classify(&root, &idx, offset(5));
     assert_eq!(
@@ -1314,7 +1330,11 @@ fn test_namespace_classify_in_extract() {
     let source = "foo::bar$baz\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), &mut NoopResolver);
+    let idx = build_index(
+        &parsed.tree(),
+        &file_url("test.R"),
+        &mut NoopImportsResolver,
+    );
 
     // Cursor on `bar` (offset 5) — inside the RNamespaceExpression
     let ident = Identifier::classify(&root, &idx, offset(5));
@@ -1343,7 +1363,11 @@ fn test_namespace_classify_string_selectors() {
     let source = "\"foo\"::\"bar\"\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), &mut NoopResolver);
+    let idx = build_index(
+        &parsed.tree(),
+        &file_url("test.R"),
+        &mut NoopImportsResolver,
+    );
 
     let ident = Identifier::classify(&root, &idx, offset(7));
     assert_eq!(

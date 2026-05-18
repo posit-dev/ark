@@ -16,7 +16,7 @@ use oak_semantic::package::Package;
 use oak_semantic::scope_layer::file_layers;
 use oak_semantic::scope_layer::package_root_layers;
 use oak_semantic::scope_layer::ScopeLayer;
-use oak_semantic::NoopResolver;
+use oak_semantic::NoopImportsResolver;
 use oak_sources::test::TestPackageCache;
 use stdext::SortedVec;
 use url::Url;
@@ -307,7 +307,7 @@ fn index_source(source: &str) -> oak_semantic::semantic_index::SemanticIndex {
     build_index(
         &parsed.tree(),
         &url::Url::parse("file:///test/test.R").unwrap(),
-        &mut NoopResolver,
+        &mut NoopImportsResolver,
     )
 }
 
