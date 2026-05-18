@@ -6,8 +6,8 @@ use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
 use url::Url;
 
+use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
-use crate::resolver::SalsaImportsResolver;
 use crate::Db;
 
 /// A source file tracked by Salsa.
