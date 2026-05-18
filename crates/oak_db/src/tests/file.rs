@@ -3,7 +3,7 @@ use crate::tests::test_db::TestDb;
 use crate::File;
 
 #[test]
-fn parse_is_cached_across_calls() {
+fn test_parse_is_cached_across_calls() {
     let db = TestDb::new();
     let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
 
@@ -15,7 +15,7 @@ fn parse_is_cached_across_calls() {
 }
 
 #[test]
-fn semantic_index_is_cached_across_calls() {
+fn test_semantic_index_is_cached_across_calls() {
     let db = TestDb::new();
     let file = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
 
@@ -26,7 +26,7 @@ fn semantic_index_is_cached_across_calls() {
 }
 
 #[test]
-fn changing_contents_reparses() {
+fn test_changing_contents_reparses() {
     use salsa::Setter;
 
     let mut db = TestDb::new();
@@ -44,7 +44,7 @@ fn changing_contents_reparses() {
 }
 
 #[test]
-fn semantic_index_matches_oak_semantic() {
+fn test_semantic_index_matches_oak_semantic() {
     let db = TestDb::new();
     let source = "x <- 1\nx\n";
     let url = file_url("a.R");
@@ -59,7 +59,7 @@ fn semantic_index_matches_oak_semantic() {
 }
 
 #[test]
-fn semantic_index_backdates_on_equivalent_reparse() {
+fn test_semantic_index_backdates_on_equivalent_reparse() {
     use salsa::Setter;
 
     let mut db = TestDb::new();
@@ -81,7 +81,7 @@ fn semantic_index_backdates_on_equivalent_reparse() {
 }
 
 #[test]
-fn editing_one_file_does_not_invalidate_another() {
+fn test_editing_one_file_does_not_invalidate_another() {
     use salsa::Setter;
 
     let mut db = TestDb::new();
@@ -108,7 +108,7 @@ fn editing_one_file_does_not_invalidate_another() {
 }
 
 #[test]
-fn distinct_files_have_distinct_semantic_indexes() {
+fn test_distinct_files_have_distinct_semantic_indexes() {
     let db = TestDb::new();
     let file_a = File::new(&db, file_url("a.R"), "x <- 1\n".to_string());
     let file_b = File::new(&db, file_url("b.R"), "x <- 1\n".to_string());

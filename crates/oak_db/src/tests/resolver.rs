@@ -1,5 +1,6 @@
 use oak_semantic::semantic_index::DefinitionKind;
 use oak_semantic::semantic_index::ScopeId;
+use oak_semantic::semantic_index::SemanticCallKind;
 use salsa::Setter;
 
 use crate::tests::test_db::file_url;
@@ -14,7 +15,7 @@ fn make_script(db: &TestDb, name: &str, contents: &str) -> Script {
 }
 
 #[test]
-fn cross_file_source_injection() {
+fn test_cross_file_source_injection() {
     let mut db = TestDb::new();
     let a = make_script(&db, "a.R", "source(\"b.R\")\n");
     let b = make_script(&db, "b.R", "x <- 1\n");
@@ -44,7 +45,7 @@ fn cross_file_source_injection() {
 }
 
 #[test]
-fn editing_sourced_file_invalidates_caller_index() {
+fn test_editing_sourced_file_invalidates_caller_index() {
     let mut db = TestDb::new();
     let a = make_script(&db, "a.R", "source(\"b.R\")\n");
     let b = make_script(&db, "b.R", "x <- 1\n");
@@ -61,7 +62,10 @@ fn editing_sourced_file_invalidates_caller_index() {
         .set_contents(&mut db)
         .to("x <- 1\ny <- 2\n".to_string());
     let _ = a.file(&db).semantic_index(&db);
-    assert!(db.executions("semantic_index") >= 3);
+    // 4 = 2 initial (a + b) + 2 re-runs (b's parse and index invalidate
+    // first via the contents bump, then a's index re-runs because its
+    // dep on b's index lost validity).
+    assert_eq!(db.executions("semantic_index"), 4);
 
     let index = a.file(&db).semantic_index(&db);
     let exports = index.file_exports();
@@ -70,7 +74,7 @@ fn editing_sourced_file_invalidates_caller_index() {
 }
 
 #[test]
-fn source_cycle_preserves_local_analysis() {
+fn test_source_cycle_preserves_local_analysis() {
     // `a` sources `b`, `b` sources `a`. Salsa breaks the cycle by
     // rebuilding one side with `NoopResolver`, so that side keeps its
     // own local definitions but loses the cross-file imports from the
@@ -92,7 +96,7 @@ fn source_cycle_preserves_local_analysis() {
 }
 
 #[test]
-fn closure_capture_with_source_before_function() {
+fn test_closure_capture_with_source_before_function() {
     // source() comes first, so by the time `f`'s body is walked the
     // file-scope symbol table already has `helper` flagged
     // `IS_BOUND` via the injected Import. The free-variable lookup
@@ -135,12 +139,98 @@ fn closure_capture_with_source_before_function() {
 }
 
 #[test]
+fn test_sourced_file_library_attaches_in_caller() {
+    // `b.R` calls `library(foo)`. After `a.R` sources `b.R`, the
+    // resolver carries `foo` into `a`'s attached-packages set, so a
+    // scope query against `a` sees the same packages it would see if
+    // the `library(foo)` call had appeared directly in `a`.
+    let mut db = TestDb::new();
+    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
+    let b = make_script(&db, "b.R", "library(foo)\n");
+
+    let source_graph = db.source_graph();
+    source_graph.set_scripts(&mut db).to(vec![a, b]);
+
+    let index = a.file(&db).semantic_index(&db);
+    assert!(index.file_attached_packages().contains(&"foo"));
+}
+
+#[test]
+fn test_source_to_unregistered_url_resolves_to_none() {
+    // `a.R` sources `b.R` but `b.R` isn't registered in the source
+    // graph. The `Source` semantic call is still recorded so
+    // diagnostics can flag the unresolved import; no `Import`
+    // definition lands in `a`'s file scope.
+    let mut db = TestDb::new();
+    let a = make_script(&db, "a.R", "source(\"b.R\")\n");
+
+    let source_graph = db.source_graph();
+    source_graph.set_scripts(&mut db).to(vec![a]);
+
+    let index = a.file(&db).semantic_index(&db);
+
+    let imports = index
+        .definitions(ScopeId::from(0))
+        .iter()
+        .any(|(_, def)| matches!(def.kind(), DefinitionKind::Import { .. }));
+    assert!(!imports);
+
+    let source_calls: Vec<_> = index
+        .semantic_calls()
+        .iter()
+        .filter_map(|c| match c.kind() {
+            SemanticCallKind::Source { path, resolved } => Some((path.as_str(), resolved)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(source_calls, [("b.R", &None)]);
+}
+
+#[test]
+fn test_source_resolves_absolute_path() {
+    // `source("/abs/b.R")` joins to an absolute path regardless of
+    // `a`'s parent directory. The target URL is reconstructed
+    // unambiguously and the registered script at that URL is found.
+    let mut db = TestDb::new();
+    let a = make_script(&db, "a.R", "source(\"/abs/b.R\")\n");
+    let b = make_script(&db, "abs/b.R", "x <- 1\n");
+
+    let source_graph = db.source_graph();
+    source_graph.set_scripts(&mut db).to(vec![a, b]);
+
+    let index = a.file(&db).semantic_index(&db);
+    assert!(index.file_exports().contains_key("x"));
+}
+
+#[test]
+fn test_source_chain_propagates_exports_transitively() {
+    // a sources b, b sources c, c defines x_c. Each Import is recorded
+    // at its `source()` call site, and `file_exports` walks them all
+    // out, so a sees x_a, x_b (forwarded from b), and x_c (forwarded
+    // from b which forwarded it from c).
+    let mut db = TestDb::new();
+    let a = make_script(&db, "a.R", "source(\"b.R\")\nx_a <- 1\n");
+    let b = make_script(&db, "b.R", "source(\"c.R\")\nx_b <- 2\n");
+    let c = make_script(&db, "c.R", "x_c <- 3\n");
+
+    let source_graph = db.source_graph();
+    source_graph.set_scripts(&mut db).to(vec![a, b, c]);
+
+    let exports = a.file(&db).semantic_index(&db).file_exports();
+    assert!(exports.contains_key("x_a"));
+    assert!(exports.contains_key("x_b"));
+    assert!(exports.contains_key("x_c"));
+}
+
+#[test]
 #[ignore = "known limitation: pre-scan does not yet detect `source()` injection. \
             When source() follows the function definition, the function's free-variable \
             lookup runs before the Import lands in the file scope, so the enclosing \
             snapshot misses it. Fixing this requires extending the pre-scan to consult \
-            the resolver. See 2026-05-13-1610-semantic-index-cross-file.md."]
-fn closure_capture_with_source_after_function() {
+            the resolver for source() / library() targets -- the same extension NSE \
+            scope resolution needs to detect imported NSE call targets that are \
+            brought in by source() / library() later in the file. TODO(nse)"]
+fn test_closure_capture_with_source_after_function() {
     // Function defined first, source() injected after. The walk
     // processes `f`'s body before the source() call, so when
     // `register_enclosing_snapshot` looks up `helper` in the file
