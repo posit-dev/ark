@@ -2024,7 +2024,7 @@ impl Console {
             }
         }
 
-        let finished_task_info = self.handle_task_match(task);
+        let finished_task_info = self.handle_task_inner(task);
 
         if let Some(info) = finished_task_info {
             if info.elapsed() > std::time::Duration::from_millis(50) {
@@ -2036,7 +2036,7 @@ impl Console {
     }
 
     /// Returns start information when the task has been completed
-    fn handle_task_match(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
+    fn handle_task_inner(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
