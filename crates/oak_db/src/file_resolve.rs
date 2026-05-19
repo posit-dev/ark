@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::rc::Rc;
+
 use crate::Db;
 use crate::Definition;
 use crate::ExportEntry;
@@ -20,25 +23,39 @@ impl<'db> File {
     #[salsa::tracked]
     pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Option<Definition<'db>> {
         let mut current_file = self;
-        let mut current_name = name.text(db).to_string();
+        let mut current_name: Rc<str> = Rc::from(name.text(db).as_str());
+
+        // Defensive: cycle through `Import` is prevented upstream by
+        // `exports()`'s `cycle_result` (which returns empty for one cycle
+        // participant). The `Rc<str>` is cheap to clone (refcount bump).
+        let mut visited: HashSet<(File, Rc<str>)> = HashSet::new();
 
         loop {
-            let entry = current_file.exports(db).get(&current_name)?.clone();
+            if !visited.insert((current_file, current_name.clone())) {
+                log::error!(
+                    "Internal error: Cycle through `Import` forwards while resolving \
+                    `{current_name}` in {url}.",
+                    url = current_file.url(db),
+                );
+                return None;
+            }
+
+            let entry = current_file.exports(db).get(current_name.as_ref())?.clone();
             match entry {
                 ExportEntry::Local => {
-                    let range = local_definition_range(current_file, db, &current_name)?;
+                    let range = local_definition_range(current_file, db, current_name.as_ref())?;
                     let file_scope = oak_semantic::semantic_index::ScopeId::from(0);
                     return Some(Definition::new(
                         db,
                         current_file,
                         file_scope,
-                        Name::new(db, current_name.as_str()),
+                        Name::new(db, current_name.as_ref()),
                         range,
                     ));
                 },
                 ExportEntry::Import { file, name } => {
                     current_file = file;
-                    current_name = name;
+                    current_name = Rc::from(name.as_str());
                 },
             }
         }
