@@ -9,7 +9,7 @@ use compact_str::CompactString;
 /// The text is stored as `CompactString` so short identifiers stay inline
 /// (up to 24 bytes on 64-bit, 12 on 32-bit). R symbols and package names
 /// are almost always ASCII and short enough to fit.
-#[salsa::interned]
+#[salsa::interned(debug)]
 pub struct Name<'db> {
     #[returns(ref)]
     pub text: CompactString,

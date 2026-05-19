@@ -34,7 +34,7 @@ fn test_resolve_local_name_lands_on_owning_file() {
 
     let resolution = file.resolve(&db, name(&db, "x")).expect("x should resolve");
     assert_eq!(resolution.file, file);
-    assert_eq!(resolution.name, "x");
+    assert_eq!(resolution.name.text(&db).as_str(), "x");
     // `semantic_index.file_exports()` records the binding's *name*
     // range, just the `x` identifier in `x <- 1`.
     assert_eq!(usize::from(resolution.range.start()), 0);
@@ -64,7 +64,7 @@ fn test_resolve_chases_source_forwarding_to_origin_file() {
         .expect("helper should resolve through source()");
 
     assert_eq!(resolution.file, helpers);
-    assert_eq!(resolution.name, "helper");
+    assert_eq!(resolution.name.text(&db).as_str(), "helper");
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn test_resolve_chases_two_step_source_chain() {
         .expect("deep should chase through mid -> leaf");
 
     assert_eq!(resolution.file, leaf);
-    assert_eq!(resolution.name, "deep");
+    assert_eq!(resolution.name.text(&db).as_str(), "deep");
 }
 
 #[test]

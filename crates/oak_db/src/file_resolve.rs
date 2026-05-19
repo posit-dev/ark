@@ -10,15 +10,15 @@ use crate::Name;
 /// Carries `(File, name, range)`. The range is read from the resolved file's
 /// `semantic_index`. Consumers (goto-def) can navigate directly to
 /// `(file, range)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Resolution {
+#[derive(Debug, Clone, PartialEq, Eq, salsa::Update)]
+pub struct Resolution<'db> {
     pub file: File,
-    pub name: String,
+    pub name: Name<'db>,
     pub range: TextRange,
 }
 
 #[salsa::tracked]
-impl File {
+impl<'db> File {
     /// Resolve `name` against this file's exports.
     ///
     /// Chases `Import` forwarding entries (introduced by `source()`) through
@@ -26,7 +26,7 @@ impl File {
     /// name isn't exported (or only chains through unresolved forwards /
     /// cycles, which `exports` recovers to empty).
     #[salsa::tracked]
-    pub fn resolve(self, db: &dyn Db, name: Name<'_>) -> Option<Resolution> {
+    pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Option<Resolution<'db>> {
         let mut current_file = self;
         let mut current_name = name.text(db).to_string();
 
@@ -37,7 +37,7 @@ impl File {
                     let range = local_definition_range(current_file, db, &current_name)?;
                     return Some(Resolution {
                         file: current_file,
-                        name: current_name,
+                        name: Name::new(db, current_name.as_str()),
                         range,
                     });
                 },
