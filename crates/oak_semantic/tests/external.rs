@@ -307,7 +307,7 @@ fn index_source(source: &str) -> oak_semantic::semantic_index::SemanticIndex {
     build_index(
         &parsed.tree(),
         &url::Url::parse("file:///test/test.R").unwrap(),
-        &mut NoopImportsResolver,
+        NoopImportsResolver,
     )
 }
 

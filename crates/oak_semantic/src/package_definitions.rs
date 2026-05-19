@@ -89,7 +89,7 @@ fn append_definitions(
         return;
     };
 
-    let index = build_index(&parsed.tree(), &file_url, &mut NoopImportsResolver);
+    let index = build_index(&parsed.tree(), &file_url, NoopImportsResolver);
 
     let file_id = files.push(file);
 

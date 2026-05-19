@@ -34,8 +34,8 @@ pub fn semantic_index_with_source_resolver(
     file: &Url,
     resolver: impl FnMut(&str) -> Option<SourceResolution>,
 ) -> SemanticIndex {
-    let mut resolver = CallbackImportsResolver(resolver);
-    oak_semantic::build_index(root, file, &mut resolver)
+    let resolver = CallbackImportsResolver(resolver);
+    oak_semantic::build_index(root, file, resolver)
 }
 
 struct CallbackImportsResolver<F>(F)

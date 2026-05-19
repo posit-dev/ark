@@ -218,7 +218,7 @@ impl Document {
         oak_semantic::build_index(
             &self.parse.tree(),
             file,
-            &mut oak_semantic::NoopImportsResolver,
+            oak_semantic::NoopImportsResolver,
         )
     }
 
