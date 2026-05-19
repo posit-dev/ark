@@ -236,7 +236,6 @@ pub struct Console {
     autoprint_output: String,
 
     /// Channel to send and receive tasks from `QueuedRTask`s
-    tasks_interrupt_rx: Receiver<QueuedRTask>,
     tasks_idle_rx: Receiver<QueuedRTask>,
     tasks_idle_any_rx: Receiver<QueuedRTask>,
     try_idle_rx: Receiver<TryIdleTask>,

@@ -191,3 +191,58 @@ fn test_stdin_readline_during_autoprint() {
 
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+/// `r_task()` calls from non-R threads are intentionally NOT processed while R
+/// is at an input-request prompt (e.g. `readline()` / `menu()`). The task
+/// channels drained inside `run_event_loop()` are gated to top-level and
+/// browser prompts only. A pending `r_task()` waits until R returns to one of
+/// those prompts before running.
+///
+/// The goal of not running tasks at the input request prompt is to avoid too
+/// much reentrancy risk.
+#[test]
+fn test_r_task_does_not_run_at_input_request_prompt() {
+    let frontend = DummyArkFrontend::lock();
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+
+    let code = "readline('prompt>')";
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+
+    let input = frontend.recv_iopub_execute_input();
+    assert_eq!(input.code, code);
+
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, String::from("prompt>"));
+
+    // R is now blocked at the input-request prompt. Issue an `r_task()` from
+    // a worker thread. The closure is trivial, so if tasks were drained here
+    // it would complete near-instantly.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let value = ark::r_task::r_task(|| 42);
+        let _ = tx.send(value);
+    });
+
+    // The task should NOT complete while R is at the input-request prompt.
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_millis(500)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    );
+
+    // Respond to the input-request prompt so R returns to the top-level prompt
+    frontend.send_stdin_input_reply(String::from("hi"));
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Once R is back at the top-level prompt, the queued task should run.
+    let value = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("`r_task()` should run once R returns to a top-level prompt");
+    assert_eq!(value, 42);
+}
