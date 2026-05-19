@@ -2510,13 +2510,12 @@ impl Console {
     /// Also, R itself will call `R_ProcessEvents()` at regular times, like via
     /// `R_CheckUserInterrupt()`.
     ///
-    /// Unix:
+    /// Unix <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/unix/sys-unix.c#L1168-L1181>:
     /// - Calls `ptr_R_ProcessEvents()`, our `process_events()`
     /// - Calls `R_PolledEvents()`, a no-op since we don't set it
     /// - Calls `R_CheckTimeLimits()`
-    /// https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/unix/sys-unix.c#L1168-L1181
     ///
-    /// Windows:
+    /// Windows <https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/gnuwin32/system.c#L123-L158>:
     /// - Calls graphapp's `doevent()` (but we are unsure if you can even use graphapp
     ///   in Ark)
     /// - Calls `R_CheckTimeLimits()`
@@ -2524,7 +2523,6 @@ impl Console {
     ///   for us, since `run_event_loop()` always sets `set_interrupts_pending(false)`.
     /// - Calls `ptr_R_ProcessEvents()`, i.e. `Rp->Callback`, i.e. our `process_events()`
     /// - Calls `R_Tcl_do` (but we are unsure if you can even use tcktk in Ark)
-    /// https://github.com/wch/r-source/blob/bcc8ef90e50c65f143a54b2fde698bb16a135291/src/gnuwin32/system.c#L123-L158
     fn run_process_events() {
         unsafe { R_ProcessEvents() };
     }
