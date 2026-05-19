@@ -10,6 +10,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::time::Duration;
 
 use amalthea::comm::server_comm::ServerStartMessage;
 use amalthea::comm::server_comm::ServerStartedMessage;
@@ -109,6 +110,9 @@ macro_rules! cast_response {
 /// before shutdown occurs. The request returns control to us when the user acknowledges
 /// the message. It doesn't matter if that takes awhile because we shut down right after,
 /// and we've already flipped the `LSP_HAS_CRASHED` global flag.
+///
+/// Bounded by a timeout so a disconnected or non-compliant frontend can't block LSP
+/// shutdown.
 async fn report_crash(client: &Client) {
     let user_message = concat!(
         "The R language server has crashed and has been disabled. ",
@@ -116,14 +120,19 @@ async fn report_crash(client: &Client) {
         "Please report this crash to https://github.com/posit-dev/positron/issues ",
         "with full logs (see https://positron.posit.co/troubleshooting.html#python-and-r-logs)."
     );
-    client
-        .send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
-            typ: MessageType::ERROR,
-            message: String::from(user_message),
-            actions: None,
-        })
-        .await
-        .log_err();
+    let request = client.send_request::<request::ShowMessageRequest>(ShowMessageRequestParams {
+        typ: MessageType::ERROR,
+        message: String::from(user_message),
+        actions: None,
+    });
+    match tokio::time::timeout(Duration::from_secs(5), request).await {
+        Ok(result) => {
+            result.log_err();
+        },
+        Err(_) => {
+            log::warn!("Timed out waiting for frontend to acknowledge LSP crash notification");
+        },
+    }
 }
 
 #[derive(Debug)]
