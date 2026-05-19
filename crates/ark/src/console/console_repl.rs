@@ -375,11 +375,10 @@ impl Console {
             };
         }
 
-        let (tasks_interrupt_rx, tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
+        let (tasks_idle_rx, tasks_idle_any_rx) = r_task::take_receivers();
 
         CONSOLE.set(UnsafeCell::new(Console::new(
             r_home,
-            tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
             comm_event_tx,
@@ -506,9 +505,9 @@ impl Console {
         // integration tests by spawning an async task. The deadlock is caused
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
-        r_task::spawn(RTask::interrupt({
+        r_task::spawn(RTask::idle({
             let dap_clone = console.debug_dap.clone();
-            async move || {
+            async move |_| {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
             }
         }));
@@ -614,7 +613,6 @@ impl Console {
 
     fn new(
         r_home: PathBuf,
-        tasks_interrupt_rx: Receiver<QueuedRTask>,
         tasks_idle_rx: Receiver<QueuedRTask>,
         tasks_idle_any_rx: Receiver<QueuedRTask>,
         comm_event_tx: Sender<CommEvent>,
@@ -649,7 +647,6 @@ impl Console {
             debug_dap: dap,
             debug_is_debugging: false,
             debug_stopped_reason: None,
-            tasks_interrupt_rx,
             tasks_idle_rx,
             tasks_idle_any_rx,
             pending_futures: HashMap::new(),
@@ -757,7 +754,6 @@ impl Console {
             }
             init.set(true);
 
-            let (_, tasks_interrupt_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_rx) = crossbeam::channel::unbounded();
             let (_, tasks_idle_any_rx) = crossbeam::channel::unbounded();
             let (comm_event_tx, _) = crossbeam::channel::unbounded();
@@ -770,7 +766,6 @@ impl Console {
 
             CONSOLE.set(UnsafeCell::new(Console::new(
                 PathBuf::new(),
-                tasks_interrupt_rx,
                 tasks_idle_rx,
                 tasks_idle_any_rx,
                 comm_event_tx,
@@ -853,7 +848,7 @@ impl Console {
         self.active_request.as_ref().map(|req| &req.request)
     }
 
-    // Async messages for the Console. Processed at interrupt time.
+    // Async messages for the Console. Polled at idle time.
     async fn process_console_notifications(
         mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
         dap: Arc<Mutex<Dap>>,
@@ -1070,7 +1065,7 @@ impl Console {
     /// This handles events for:
     /// - Reception of either input replies or execute requests (as determined
     ///   by `wait_for`)
-    /// - Idle-time and interrupt-time tasks
+    /// - Idle-time tasks
     /// - Requests from the frontend (currently only used for establishing UI comm)
     /// - R's activity handlers
     /// - R's `R_ProcessEvents()`
@@ -1087,7 +1082,6 @@ impl Console {
         let r_request_rx = self.r_request_rx.clone();
         let stdin_reply_rx = self.stdin_reply_rx.clone();
         let kernel_request_rx = self.kernel_request_rx.clone();
-        let tasks_interrupt_rx = self.tasks_interrupt_rx.clone();
         let tasks_idle_rx = self.tasks_idle_rx.clone();
         let tasks_idle_any_rx = self.tasks_idle_any_rx.clone();
 
@@ -1116,7 +1110,6 @@ impl Console {
         };
 
         let kernel_request_index = select.recv(&kernel_request_rx);
-        let tasks_interrupt_index = select.recv(&tasks_interrupt_rx);
         let activity_handlers_index = select.recv(&activity_handlers_rx);
         let process_events_index = select.recv(&process_events_rx);
 
@@ -1213,12 +1206,6 @@ impl Console {
                 i if i == kernel_request_index => {
                     let req = oper.recv(&kernel_request_rx).unwrap();
                     self.handle_kernel_request(req);
-                },
-
-                // An interrupt task woke us up
-                i if i == tasks_interrupt_index => {
-                    let task = oper.recv(&tasks_interrupt_rx).unwrap();
-                    self.handle_task_interrupt(task);
                 },
 
                 // An idle task woke us up
@@ -1962,36 +1949,30 @@ impl Console {
         }
     }
 
-    /// Handle a task at interrupt time.
+    /// Handle a task
     ///
-    /// Wrapper around `handle_task()` that does some extra logging to record
-    /// how long a task waited before being picked up by the R or ReadConsole
-    /// event loop.
-    ///
-    /// Since tasks running during interrupt checks block the R thread while
-    /// they are running, they should return very quickly. The log message helps
-    /// monitor excessively long-running tasks.
-    fn handle_task_interrupt(&mut self, mut task: QueuedRTask) {
-        if let Some(start_info) = task.start_info_mut() {
-            // Log excessive waiting before starting task
-            if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
-                start_info.span.in_scope(|| {
-                    tracing::info!(
-                        "{} milliseconds wait before running task.",
-                        start_info.start_time.elapsed().as_millis()
-                    )
-                });
-            }
+    /// The log message helps monitor excessively long-running tasks.
+    fn handle_task(&mut self, mut task: QueuedRTask) {
+        // For Sync tasks (i.e. only `r_task()`s), we want to log excessive waiting,
+        // because we are blocking the calling thread
+        if matches!(task, QueuedRTask::Sync(_)) {
+            if let Some(start_info) = task.start_info_mut() {
+                if start_info.start_time.elapsed() > std::time::Duration::from_millis(50) {
+                    start_info.span.in_scope(|| {
+                        tracing::info!(
+                            "{} milliseconds wait before running task.",
+                            start_info.start_time.elapsed().as_millis()
+                        )
+                    });
+                }
 
-            // Reset timer, next time we'll log how long the task took
-            start_info.start_time = std::time::Instant::now();
+                // Reset timer, next time we'll log how long the task took
+                start_info.start_time = std::time::Instant::now();
+            }
         }
 
-        let finished_task_info = self.handle_task(task);
+        let finished_task_info = self.handle_task_match(task);
 
-        // We only log long task durations in the interrupt case since we expect
-        // idle tasks to take longer. Use the tracing profiler to monitor the
-        // duration of idle tasks.
         if let Some(info) = finished_task_info {
             if info.elapsed() > std::time::Duration::from_millis(50) {
                 info.span.in_scope(|| {
@@ -2002,7 +1983,7 @@ impl Console {
     }
 
     /// Returns start information when the task has been completed
-    fn handle_task(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
+    fn handle_task_match(&mut self, task: QueuedRTask) -> Option<RTaskStartInfo> {
         // Background tasks can't take any user input, so we set R_Interactive
         // to 0 to prevent `readline()` from blocking the task.
         let _interactive = harp::raii::RLocalInteractive::new(false);
@@ -2505,7 +2486,9 @@ impl Console {
     /// `R_ProcessEvents()`, but this happens very irregularly and is dependent on both
     /// base R and other R packages checking this, so we should never rely on that.
     ///
-    /// We should only use this for non-critical side effects / clean up.
+    /// We should only use this for non-critical side effects / clean up. And ideally it
+    /// should not run any R code, because running R code at interrupt time is generally
+    /// unsafe.
     fn process_events(&mut self) {
         // Check stream filter timeout to handle long computations between
         // WriteConsole calls. Timeout means we didn't reach ReadConsole to
