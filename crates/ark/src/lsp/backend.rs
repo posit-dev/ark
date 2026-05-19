@@ -109,9 +109,8 @@ macro_rules! cast_response {
 /// the LSP down, and sending out a fire-and-forget notification often won't get sent out
 /// before shutdown occurs. The request returns control to us when the user acknowledges
 /// the message. It doesn't matter if that takes awhile because we shut down right after,
-/// and we've already flipped the `LSP_HAS_CRASHED` global flag.
-///
-/// Bounded by a timeout so a disconnected or non-compliant frontend can't block LSP
+/// and we've already flipped the `LSP_HAS_CRASHED` global flag, but we do bound it with
+/// a 5 second timeout just in case the user ignores the message entirely, so we can still
 /// shutdown.
 async fn report_crash(client: &Client) {
     let user_message = concat!(
