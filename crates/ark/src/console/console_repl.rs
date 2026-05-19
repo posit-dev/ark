@@ -505,7 +505,10 @@ impl Console {
         // integration tests by spawning an async task. The deadlock is caused
         // by the `block_on()` behaviour in
         // https://github.com/posit-dev/ark/blob/bd827e73/crates/ark/src/r_task.rs#L261.
-        r_task::spawn(RTask::idle({
+        //
+        // Use `idle_any_prompt` so DAP breakpoint invalidation still fires when
+        // the LSP signals a document change while R is paused at `browser()`.
+        r_task::spawn(RTask::idle_any_prompt({
             let dap_clone = console.debug_dap.clone();
             async move |_| {
                 Console::process_console_notifications(console_notification_rx, dap_clone).await
@@ -848,7 +851,8 @@ impl Console {
         self.active_request.as_ref().map(|req| &req.request)
     }
 
-    // Async messages for the Console. Polled at idle time.
+    // Async messages for the Console. Polled at any idle prompt (top-level or
+    // browser) so DAP doc-change handling continues during debug sessions.
     async fn process_console_notifications(
         mut console_notification_rx: AsyncUnboundedReceiver<ConsoleNotification>,
         dap: Arc<Mutex<Dap>>,
