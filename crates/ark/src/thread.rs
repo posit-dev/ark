@@ -86,9 +86,8 @@ impl<T> Drop for RThreadSafe<T> {
         };
 
         // In tests we're already on the R thread, so drop directly.
-        // Going through `spawn_interrupt` would call `block_on` which
-        // panics if we're already inside an executor (e.g. from
-        // `spawn_idle`'s test path).
+        // Going through `r_task::spawn()` would call `block_on()` which
+        // panics if we're already inside an executor.
         if stdext::IS_TESTING {
             drop(shelter);
             return;
