@@ -7,11 +7,15 @@
 
 # `utils::View()` replacement, with exact same arguments
 view_hook <- function(x, title) {
+    # `sys.nframe() == 1` must be evaluated in the hook frame because
+    # `view_hook` adds a frame above `view()`. Gates namespace srcref mutation
+    # in `view_function_info()`, only safe when no user code is on the stack.
     view(
         x = x,
         title = title,
         name = as_label(substitute(x)),
-        env = parent.frame()
+        env = parent.frame(),
+        top_level = sys.nframe() == 1
     )
 }
 
@@ -20,7 +24,13 @@ view_hook <- function(x, title) {
 # the input and if that variable exists in the calling environment. This is used
 # for live updating the objects, if supported (e.g. data frames in the data
 # viewer).
-view <- function(x, title, name = NULL, env = parent.frame()) {
+view <- function(
+    x,
+    title,
+    name = NULL,
+    env = parent.frame(),
+    top_level = sys.nframe() == 1
+) {
     # Derive the name of the object from the expression passed to View()
     name <- name %||% as_label(substitute(x))
     stopifnot(is_string(name))
@@ -49,7 +59,6 @@ view <- function(x, title, name = NULL, env = parent.frame()) {
     }
 
     if (is.function(x)) {
-        top_level <- sys.nframe() == 1
         return(view_function(x, title, var, env, top_level = top_level))
     }
 

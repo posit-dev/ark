@@ -372,22 +372,9 @@ fn test_plot_get_metadata() {
     // [1] "plot(1:10)"
 
     // Verify execution_id matches the msg_id of the execute_request
-    assert!(
-        result.contains(&msg_id),
-        "Metadata should contain execution_id '{msg_id}', got:\n{result}"
-    );
-
-    // Verify code matches
-    assert!(
-        result.contains(code),
-        "Metadata should contain code '{code}', got:\n{result}"
-    );
-
-    // Verify kind is "plot" for base R plots
-    assert!(
-        result.contains("$kind") && result.contains("\"plot\""),
-        "Metadata should contain kind 'plot', got:\n{result}"
-    );
+    assert!(result.contains(&format!("$execution_id\n[1] \"{msg_id}\"")));
+    assert!(result.contains(&format!("$code\n[1] \"{code}\"")));
+    assert!(result.contains("$kind\n[1] \"plot\""));
 }
 
 /// Test that plot metadata includes origin when code_location is provided.
@@ -443,10 +430,7 @@ fn test_plot_get_metadata_with_origin() {
     frontend.recv_shell_execute_reply();
 
     // Verify origin_uri is present in the metadata
-    assert!(
-        result.contains(origin_uri),
-        "Metadata should contain origin_uri '{origin_uri}', got:\n{result}"
-    );
+    assert!(result.contains(&format!("$origin_uri\n[1] \"{origin_uri}\"")));
 }
 
 /// Test that plots are emitted when created inside source().
@@ -585,16 +569,8 @@ fn test_plot_source_context_stacking() {
     frontend.recv_shell_execute_reply();
 
     // The origin_uri should point to file B, not file A
-    assert!(
-        result_b.contains(&file_b.uri_id),
-        "Plot from file B should have origin_uri pointing to file B '{}', got:\n{result_b}",
-        file_b.uri_id,
-    );
-    assert!(
-        !result_b.contains(&file_a.uri_id),
-        "Plot from file B should NOT have origin_uri pointing to file A '{}', got:\n{result_b}",
-        file_a.uri_id,
-    );
+    assert!(result_b.contains(&format!("$origin_uri\n[1] \"{}\"", file_b.uri_id)));
+    assert!(!result_b.contains(&file_a.uri_id));
 
     // Query metadata for the second plot (created by file A)
     let query_a = format!(".ps.graphics.get_metadata('{display_id_a}')");
@@ -606,11 +582,7 @@ fn test_plot_source_context_stacking() {
     frontend.recv_shell_execute_reply();
 
     // The origin_uri should point to file A
-    assert!(
-        result_a.contains(&file_a.uri_id),
-        "Plot from file A should have origin_uri pointing to file A '{}', got:\n{result_a}",
-        file_a.uri_id,
-    );
+    assert!(result_a.contains(&format!("$origin_uri\n[1] \"{}\"", file_a.uri_id)));
 }
 
 /// Test that plots rendered with fig-width/fig-height metadata produce
@@ -696,6 +668,564 @@ fn test_plot_default_size_without_metadata() {
     assert_eq!(width, 800);
     assert_eq!(height, 600);
 
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that a plot created during a `frontend_ready` comm handler works.
+///
+/// Previously this deadlocked because Shell blocked on the comm_msg while
+/// the R thread blocked on the barrier in `CommEvent::Opened`. Now Shell
+/// drains comm events while waiting for the handler to complete.
+///
+/// The UI comm remains visible during its own dispatch (via nested
+/// `RefCell` on the handler), so the plot goes through the Positron
+/// `comm_open` path as usual.
+#[test]
+fn test_plot_during_frontend_ready() {
+    let frontend = DummyArkFrontend::lock();
+    let comm_id = frontend.open_ui_comm();
+
+    // Register a session_init hook that creates a plot.
+    frontend.send_execute_request(
+        "setHook('positron.session_init', function(start_type) plot(1:10))",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Trigger the hook via frontend_ready (an event, not an RPC — no `id` field).
+    let data = serde_json::json!({
+        "method": "frontend_ready",
+        "params": { "start_type": "new" },
+    });
+    frontend.send_shell_comm_msg(String::from(&comm_id), data);
+    frontend.recv_iopub_busy();
+
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    frontend.recv_iopub_idle();
+}
+
+/// Test that a plot created without an active execution context (e.g. from
+/// a task callback that fires between execute requests) has empty metadata.
+///
+/// This exercises the `capture_execution_context` fallback path where no
+/// context was pushed via `graphics_on_execute_request`.
+#[test]
+fn test_plot_without_execution_context_has_empty_metadata() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Spawn an idle task that creates a plot. Idle tasks run during the
+    // event loop between execute requests, so no execution context is
+    // active when the plot is produced.
+    frontend.send_execute_request(
+        r#"invisible(.Call("ps_test_spawn_eval_idle_task", "plot(1:10)"))"#,
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // After the request completes, R re-enters the idle loop. The test
+    // thread is blocked here (not sending new requests), so `select`
+    // picks up the idle task and the display_data arrives promptly.
+    let display_id = frontend.recv_iopub_display_data_id();
+
+    // Query metadata using the display_id from the plot
+    let query_code = format!(".ps.graphics.get_metadata('{display_id}')");
+    frontend.send_execute_request(&query_code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let result = frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // execution_id and code should be empty since the plot was created
+    // outside of any execute request
+    assert!(result.contains("$execution_id\n[1] \"\""));
+    assert!(result.contains("$code\n[1] \"\""));
+}
+
+/// Test that `dev.hold()` suppresses intermediate plot output.
+///
+/// Without hold, each `plot()` call emits a separate `display_data`.
+/// With hold active, intermediate plots are suppressed and only the
+/// final state after `dev.flush()` is emitted.
+#[test]
+fn test_dev_hold_suppresses_intermediate_plots() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Hold, draw two intermediate plots, then flush.
+    // Only the final plot should produce output.
+    let code = r#"
+invisible(dev.hold())
+plot(1:5)
+plot(1:3)
+invisible(dev.flush())
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Test that `dev.hold()` persists across execute requests.
+///
+/// A hold started in one request should suppress output until
+/// `dev.flush()` is called in a subsequent request.
+#[test]
+fn test_dev_hold_across_execute_requests() {
+    let frontend = DummyArkFrontend::lock();
+
+    // Hold and plot without flushing. No display_data should appear.
+    frontend.send_execute_request(
+        "invisible(dev.hold())\nplot(1:5)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Flush in a separate request. The held plot should now appear.
+    frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_display_data();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+// Positron-path plot tests (dynamic plots via comm channels)
+//
+// These tests connect the UI comm to enable the Positron plot path
+// (comm-based dynamic plots) instead of the Jupyter protocol path
+// (display_data / update_display_data).
+//
+// In the Positron path:
+// - New plots open a "positron.plot" comm (via CommEvent::Opened through
+//   Shell, arriving on IOPub after idle).
+// - Plot updates send a comm_msg directly on IOPub (arriving before idle).
+//
+// Regression tests for https://github.com/posit-dev/ark/pull/1100
+
+/// Positron path: a single plot opens a plot comm.
+#[test]
+fn test_positron_simple_plot() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: two plots in a single request each open their own comm.
+#[test]
+fn test_positron_multiple_plots() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    frontend.send_execute_request("plot(1:10)\nplot(2:20)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let open1 = frontend.recv_iopub_comm_open();
+    let open2 = frontend.recv_iopub_comm_open();
+    assert_eq!(open1.target_name, "positron.plot");
+    assert_eq!(open2.target_name, "positron.plot");
+    assert_ne!(open1.comm_id, open2.comm_id);
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `par(mfrow)` creates one plot comm with panel updates.
+///
+/// The first panel opens a plot comm; the second panel sends an update
+/// on the same comm. Plot ID stays the same (no new page).
+#[test]
+fn test_positron_par_multi_panel() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+par(mfrow = c(2, 1))
+plot(1:10)
+id1 <- .ps.internal(current_plot_id())
+plot(2:20)
+id2 <- .ps.internal(current_plot_id())
+stopifnot(id1 == id2)
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    // Panel update arrives after comm_open (barrier ensures ordering)
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, open.comm_id);
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `layout()` + multi-plot works like `par(mfrow)`.
+///
+/// Same as `test_positron_par_multi_panel` but with `layout()` inside a
+/// function call, which exercises a slightly different R code path.
+///
+/// Regression: https://github.com/posit-dev/ark/pull/1100#discussion_r2942816670
+#[test]
+fn test_positron_layout_multi_plot() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+plt2 = function() {
+  layout(matrix(1:2, 2))
+  plot(1, 1)
+  id1 <- .ps.internal(current_plot_id())
+  plot(1, 1)
+  id2 <- .ps.internal(current_plot_id())
+  stopifnot(id1 == id2)
+}
+plt2()
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    // Second panel update arrives after comm_open (barrier ensures ordering)
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, open.comm_id);
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `dev.hold()` suppresses intermediate plot output.
+///
+/// Only the final state after `dev.flush()` produces a plot comm.
+#[test]
+fn test_positron_dev_hold_suppresses() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+invisible(dev.hold())
+plot(1:5)
+plot(1:3)
+invisible(dev.flush())
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Only one plot comm for the final state
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `dev.hold()` persists across execute requests.
+///
+/// A hold started in one request should suppress output until
+/// `dev.flush()` is called in a subsequent request.
+#[test]
+fn test_positron_dev_hold_across_requests() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    // Hold and plot without flushing. No plot comm should open.
+    frontend.send_execute_request(
+        "invisible(dev.hold())\nplot(1:5)",
+        ExecuteRequestOptions::default(),
+    );
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Flush in a separate request. The held plot should now appear.
+    frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: three separate requests each produce a plot comm.
+///
+/// Simulates running different packages (e.g. rpart, sf, rpart) one at a
+/// time, each producing their own plot.
+///
+/// Regression: https://github.com/posit-dev/ark/pull/1100#discussion_r2942842898
+#[test]
+fn test_positron_sequential_plots() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    for i in 1..=3 {
+        let code = format!("plot({i}:10)");
+        frontend.send_execute_request(&code, ExecuteRequestOptions::default());
+        frontend.recv_iopub_busy();
+        frontend.recv_iopub_execute_input();
+        let open = frontend.recv_iopub_comm_open();
+        assert_eq!(open.target_name, "positron.plot");
+        frontend.recv_iopub_ui_prompt_state();
+        frontend.recv_iopub_idle();
+        frontend.recv_shell_execute_reply();
+    }
+}
+
+/// Positron path: switching to `png()` and back preserves our plot.
+///
+/// The png device is separate from the positron device and should not
+/// produce plot comms.
+#[test]
+fn test_positron_graphics_device_swap() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+plot(1:10)
+grDevices::png(tempfile(fileext = ".png"))
+plot(1:20)
+invisible(dev.off())
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    // Only one plot comm for the first plot (on our device)
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: plotting in a loop produces one comm per iteration.
+#[test]
+fn test_positron_loop_plots() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+for (i in 1:3) {
+  plot(i)
+}
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let open1 = frontend.recv_iopub_comm_open();
+    let open2 = frontend.recv_iopub_comm_open();
+    let open3 = frontend.recv_iopub_comm_open();
+    assert_eq!(open1.target_name, "positron.plot");
+    assert_eq!(open2.target_name, "positron.plot");
+    assert_eq!(open3.target_name, "positron.plot");
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `par(mfrow)` with 4 plots in a 3-panel layout.
+///
+/// The first 3 plots fill the layout (1 new + 2 updates on the same comm).
+/// The 4th plot overflows to a new page, opening a second comm.
+#[test]
+fn test_positron_par_overflow_to_new_page() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+par(mfrow = c(3, 1))
+plot(1:3)
+plot(4:6)
+plot(7:9)
+plot(10:12)
+par(mfrow = c(1, 1))
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // First page comm (barrier ensures comm_open arrives before updates)
+    let open1 = frontend.recv_iopub_comm_open();
+    assert_eq!(open1.target_name, "positron.plot");
+
+    // Panels 2 and 3 update the first page
+    let update1 = frontend.recv_iopub_comm_msg();
+    let update2 = frontend.recv_iopub_comm_msg();
+    assert_eq!(update1.comm_id, open1.comm_id);
+    assert_eq!(update2.comm_id, open1.comm_id);
+
+    // Second page comm (4th plot overflows to a new page)
+    let open2 = frontend.recv_iopub_comm_open();
+    assert_eq!(open2.target_name, "positron.plot");
+    assert_ne!(open1.comm_id, open2.comm_id);
+
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `dev.hold()` / `dev.flush()` run one line at a time.
+///
+/// Each line is a separate execute request, simulating interactive use.
+#[test]
+fn test_positron_dev_hold_flush_interactive() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    // Hold
+    frontend.send_execute_request("invisible(dev.hold())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Draw first plot (held, no comm should open)
+    frontend.send_execute_request("plot(1:10)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Draw over it (still held)
+    frontend.send_execute_request("abline(1, 2)", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // Flush - the combined plot should now appear
+    frontend.send_execute_request("invisible(dev.flush())", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    let open = frontend.recv_iopub_comm_open();
+    assert_eq!(open.target_name, "positron.plot");
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `comm_open` arrives while R is still executing.
+///
+/// Uses `readline()` as a synchronisation barrier: R blocks on stdin after
+/// plotting, so receiving `comm_open` before the input request proves the
+/// comm was published mid-execution (not deferred to the cleanup phase).
+#[test]
+fn test_positron_plot_comm_open_during_execution() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let options = ExecuteRequestOptions {
+        allow_stdin: true,
+        ..Default::default()
+    };
+
+    let code = r#"
+for (i in 1:3) plot(i)
+readline("sync>")
+"#;
+    frontend.send_execute_request(code, options);
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // All 3 comm_opens arrive while R is still executing (before readline)
+    let open1 = frontend.recv_iopub_comm_open();
+    let open2 = frontend.recv_iopub_comm_open();
+    let open3 = frontend.recv_iopub_comm_open();
+    assert_eq!(open1.target_name, "positron.plot");
+    assert_eq!(open2.target_name, "positron.plot");
+    assert_eq!(open3.target_name, "positron.plot");
+
+    // R is blocked on readline(), proving the comms arrived mid-execution
+    let prompt = frontend.recv_stdin_input_request();
+    assert_eq!(prompt, "sync>");
+
+    // Unblock R
+    frontend.send_stdin_input_reply(String::from(""));
+
+    // readline() return value
+    frontend.recv_iopub_execute_result();
+    frontend.recv_iopub_ui_prompt_state();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+}
+
+/// Positron path: `layout()` panels share the same plot ID, overflow gets a new one.
+///
+/// Verifies that the second `plot()` call within a 2-panel layout doesn't
+/// trigger a new page (plot ID stays the same), while a third `plot()` that
+/// overflows the layout creates a new page (new plot ID).
+#[test]
+fn test_positron_layout_plot_id_stability() {
+    let frontend = DummyArkFrontend::lock();
+    frontend.open_ui_comm();
+
+    let code = r#"
+layout(matrix(1:2, 2))
+plot(1, 1)
+id1 <- .ps.internal(current_plot_id())
+plot(1, 1)
+id2 <- .ps.internal(current_plot_id())
+plot(1, 1)
+id3 <- .ps.internal(current_plot_id())
+stopifnot(
+    id1 == id2,
+    id2 != id3
+)
+"#;
+    frontend.send_execute_request(code, ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+
+    // First panel opens a plot comm
+    let open1 = frontend.recv_iopub_comm_open();
+    assert_eq!(open1.target_name, "positron.plot");
+
+    // Second panel updates the same comm (no new page)
+    let update = frontend.recv_iopub_comm_msg();
+    assert_eq!(update.comm_id, open1.comm_id);
+
+    // Third plot overflows to a new page
+    let open2 = frontend.recv_iopub_comm_open();
+    assert_eq!(open2.target_name, "positron.plot");
+    assert_ne!(open1.comm_id, open2.comm_id);
+
+    frontend.recv_iopub_ui_prompt_state();
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
 }

@@ -1,12 +1,18 @@
 use std::ops::Range;
+use std::sync::Arc;
 
-use aether_syntax::RSyntaxNode;
+use aether_syntax::RBinaryExpression;
+use aether_syntax::RCall;
+use aether_syntax::RForStatement;
+use aether_syntax::RParameter;
+use biome_rowan::AstPtr;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::range::Ranged;
 use oak_index_vec::define_index;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
+use url::Url;
 
 use crate::use_def_map::Bindings;
 use crate::use_def_map::UseDefMap;
@@ -36,15 +42,16 @@ define_index!(EnclosingSnapshotId);
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
 #[derive(Debug)]
+#[cfg_attr(feature = "salsa", derive(salsa::Update))]
+#[cfg_attr(feature = "testing", derive(PartialEq, Eq))]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 
-    // ty wraps per-scope tables in `Arc` so they can be returned from
-    // individual salsa tracked queries (e.g. `place_table(db, scope) ->
-    // Arc<PlaceTable>`). Salsa compares the returned `Arc` by `Eq` to skip
-    // re-running downstream queries when a scope's table hasn't changed.
-    // We defer that until salsa is introduced.
-    symbol_tables: IndexVec<ScopeId, SymbolTable>,
+    // Heavy per-scope tables are `Arc`-wrapped so narrow tracked queries
+    // (e.g. `symbol_table(db, file, scope) -> Arc<SymbolTable>`) can
+    // return them cheaply, and salsa's storage uses `Arc::ptr_eq` as a
+    // fast path during update comparisons. Matches ty's pattern.
+    symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
 
     // Flat per-scope lists of definition and use sites. These support rename
     // and go-to-definition by letting us find all sites for a given symbol
@@ -61,27 +68,29 @@ pub struct SemanticIndex {
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
 
-    // Per-scope flow-sensitive map from each use site to the set of definitions
-    // that can reach it. Built alongside the other arrays during the tree walk.
-    use_def_maps: IndexVec<ScopeId, UseDefMap>,
+    // Per-scope flow-sensitive map from each use site to the set of
+    // definitions that can reach it. Built alongside the other arrays
+    // during the tree walk. `Arc`-wrapped for fast Salsa comparisons.
+    use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
 
     // For each free variable in a nested scope, maps to the enclosing scope and
     // snapshot where that symbol is bound.
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
 
-    // Scope-chain directives called at top-level, such as `library()` or `require()`.
-    directives: Vec<Directive>,
+    // Cross-file call sites recorded during indexing, such as `library()`
+    // attachments or `source()` injections.
+    semantic_calls: Vec<SemanticCall>,
 }
 
 impl SemanticIndex {
     pub(crate) fn new(
         scopes: IndexVec<ScopeId, Scope>,
-        symbol_tables: IndexVec<ScopeId, SymbolTable>,
+        symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
         definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
-        use_def_maps: IndexVec<ScopeId, UseDefMap>,
+        use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-        directives: Vec<Directive>,
+        semantic_calls: Vec<SemanticCall>,
     ) -> Self {
         Self {
             scopes,
@@ -90,7 +99,7 @@ impl SemanticIndex {
             uses,
             use_def_maps,
             enclosing_snapshots,
-            directives,
+            semantic_calls,
         }
     }
 
@@ -98,7 +107,7 @@ impl SemanticIndex {
         &self.scopes[id]
     }
 
-    pub fn symbols(&self, scope: ScopeId) -> &SymbolTable {
+    pub fn symbols(&self, scope: ScopeId) -> &Arc<SymbolTable> {
         &self.symbol_tables[scope]
     }
 
@@ -110,26 +119,41 @@ impl SemanticIndex {
         &self.uses[scope]
     }
 
-    pub fn use_def_map(&self, scope: ScopeId) -> &UseDefMap {
+    pub fn use_def_map(&self, scope: ScopeId) -> &Arc<UseDefMap> {
         &self.use_def_maps[scope]
     }
 
     /// Top-level definitions exported by this file (definitions in the file scope).
-    pub fn file_exports(&self) -> Vec<(&str, TextRange)> {
+    /// Includes `Import`-kind forwarding definitions from `source()` calls.
+    /// Last definition of each name wins (later assignments shadow earlier ones).
+    pub fn file_exports(&self) -> FxHashMap<&str, TextRange> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
-        self.definitions[file_scope]
+
+        let mut exports = FxHashMap::default();
+        for (_id, def) in self.definitions[file_scope].iter() {
+            let name = symbols.symbol(def.symbol()).name();
+            exports.insert(name, def.range());
+        }
+
+        exports
+    }
+
+    /// Package names from `library()` / `require()` calls in this file.
+    pub fn file_attached_packages(&self) -> Vec<&str> {
+        self.semantic_calls
             .iter()
-            .map(|(_id, def)| {
-                let name = symbols.symbol(def.symbol()).name();
-                (name, def.range())
+            .filter_map(|c| match &c.kind {
+                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Source { .. } => None,
             })
             .collect()
     }
 
-    /// File-level directives (e.g. `library()` calls) recorded during indexing.
-    pub fn file_directives(&self) -> &[Directive] {
-        &self.directives
+    /// Cross-file call sites (`library()`, `source()`, …) recorded
+    /// during indexing.
+    pub fn semantic_calls(&self) -> &[SemanticCall] {
+        &self.semantic_calls
     }
 
     /// Find the innermost scope containing `offset`.
@@ -145,6 +169,23 @@ impl SemanticIndex {
             }
             return (current, &self.scopes[current]);
         }
+    }
+
+    /// Find the definition site at `offset`, if any.
+    pub fn definition_at(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId, &Definition)> {
+        let (scope, _) = self.scope_at(offset);
+
+        // Definitions with empty ranges (e.g. imports) are naturally excluded
+        // here since they can't contain the offset
+        let (id, def) = self.definitions(scope).contains(offset)?;
+        Some((scope, id, def))
+    }
+
+    /// Find the use site at `offset`, if any.
+    pub fn use_at(&self, offset: TextSize) -> Option<(ScopeId, UseId, &Use)> {
+        let (scope, _) = self.scope_at(offset);
+        let (id, use_site) = self.uses(scope).contains(offset)?;
+        Some((scope, id, use_site))
     }
 
     /// Iterate direct child scopes of `scope`.
@@ -234,7 +275,7 @@ pub struct EnclosingSnapshotKey {
 // Currently only `function()` creates a new scope. In the future, constructs
 // like `local()`, `with()`, `within()` may also create scopes (determined
 // by function declarations resolved via salsa queries).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
     pub(crate) kind: ScopeKind,
@@ -277,7 +318,7 @@ impl Ranged for Scope {
 // --- Symbol table (per scope) ---
 
 // Read-only after construction. The builder uses `SymbolTableBuilder`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SymbolTable {
     symbols: IndexVec<SymbolId, Symbol>,
 
@@ -364,7 +405,7 @@ impl std::ops::Deref for SymbolTableBuilder {
 // access like `x.y`). `resolve_symbol()` walks the scope chain looking for a
 // symbol with `IS_BOUND`. Future type inference will look up the symbol's
 // definitions and infer a type from them.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Symbol {
     pub(crate) name: String,
     pub(crate) flags: SymbolFlags,
@@ -443,12 +484,11 @@ impl SymbolFlags {
 // definition without invalidating the definition's identity (file + scope +
 // place) or the UseDefMap.
 //
-// Our definitions don't carry file or scope because they live inside the
-// `SemanticIndex` at a known position (`definitions[scope_id][def_id]`).
-// In ty, `Definition<'db>` is a self-contained salsa tracked struct that
-// carries file + scope + place, because it gets passed around independently
-// to type inference queries and cross-file lookups. We'll add those fields
-// when salsa is introduced.
+// Definitions carry `file` and `scope` so they're self-contained when
+// passed around (e.g., through `DefinitionKind::Import` chains during
+// cross-file goto-definition). This mirrors ty's `Definition<'db>`, a
+// salsa tracked struct that carries file + scope + place for the same
+// reason.
 //
 // Type inference will eventually take a definition as input and inspect
 // the syntax node (via the kind) to determine the type.
@@ -459,19 +499,32 @@ impl SymbolFlags {
 // implicitly declarations (they declare a name as a function with a specific
 // signature). Future `declare()` annotations will also produce pure
 // declarations.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
-    pub(crate) symbol: SymbolId,
     pub(crate) kind: DefinitionKind,
+    /// The file that owns this definition's index.
+    // TODO(salsa): Should become a File.
+    pub(crate) file: Url,
+    /// The scope within the file's index where this definition lives.
+    pub(crate) scope: ScopeId,
+    // TODO(salsa): Should become a PlaceId (like ty's `ScopedPlaceId`).
+    pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefinitionKind {
-    Assignment(RSyntaxNode),
-    SuperAssignment(RSyntaxNode),
-    Parameter(RSyntaxNode),
-    ForVariable(RSyntaxNode),
+    Assignment(AstPtr<RBinaryExpression>),
+    SuperAssignment(AstPtr<RBinaryExpression>),
+    Parameter(AstPtr<RParameter>),
+    ForVariable(AstPtr<RForStatement>),
+    /// A forwarding binding that resolves to a definition in another file.
+    /// Consumers must chase the `file`/`name` chain to reach the actual origin.
+    Import {
+        call: AstPtr<RCall>,
+        file: Url,
+        name: String,
+    },
 }
 
 impl Definition {
@@ -486,6 +539,14 @@ impl Definition {
     pub fn range(&self) -> TextRange {
         self.range
     }
+
+    pub fn file(&self) -> &Url {
+        &self.file
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
+    }
 }
 
 impl Ranged for Definition {
@@ -499,7 +560,7 @@ impl Ranged for Definition {
 // node positions to use IDs). Our flat list serves the same purpose: the
 // `UseDefMap` will reference `UseId` indices into this list to connect each
 // use to its reaching definitions.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Use {
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
@@ -521,27 +582,42 @@ impl Ranged for Use {
     }
 }
 
-/// A file-level directive that affects the scope chain (e.g. `library()` calls).
-#[derive(Debug, Clone)]
-pub struct Directive {
-    pub(crate) kind: DirectiveKind,
-    pub(crate) offset: TextSize,
-}
-
-// TODO: `Source()` directives
+/// A cross-file call site recorded at parse time (`library()`,
+/// `source()`, ...). Different kinds carry different downstream
+/// semantics, see [`SemanticCallKind`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DirectiveKind {
-    /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
-    Attach(String),
+pub struct SemanticCall {
+    pub(crate) kind: SemanticCallKind,
+    pub(crate) offset: TextSize,
+    pub(crate) scope: ScopeId,
 }
 
-impl Directive {
-    pub fn kind(&self) -> &DirectiveKind {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SemanticCallKind {
+    /// `library(pkg)` or `require(pkg)`: attaches a package to the
+    /// search path. Contributes a fallback layer for unbound symbols.
+    Attach { package: String },
+    /// `source("path")`: injects the sourced file's top-level
+    /// bindings into the current scope. Local-scope semantics, not
+    /// search-path semantics.
+    ///
+    /// `resolved` is the canonical URL the resolver mapped `path` to,
+    /// or `None` if no resolver was provided or the resolver couldn't
+    /// resolve the path.
+    Source { path: String, resolved: Option<Url> },
+}
+
+impl SemanticCall {
+    pub fn kind(&self) -> &SemanticCallKind {
         &self.kind
     }
 
     pub fn offset(&self) -> TextSize {
         self.offset
+    }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
     }
 }
 

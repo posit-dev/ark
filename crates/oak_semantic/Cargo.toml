@@ -1,5 +1,5 @@
 [package]
-name = "oak_index"
+name = "oak_semantic"
 version = "0.1.0"
 description = """
 Per-file semantic index for R: scopes, symbols, bindings, and uses.
@@ -12,6 +12,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [features]
+salsa = ["dep:salsa"]
 testing = ["dep:tempfile"]
 
 [lints]
@@ -34,12 +35,16 @@ smallvec.workspace = true
 stdext.workspace = true
 url.workspace = true
 
+[dependencies.salsa]
+workspace = true
+optional = true
+
 [dependencies.tempfile]
 workspace = true
 optional = true
 
 [dev-dependencies]
 assert_matches.workspace = true
-oak_index = { workspace = true, features = ["testing"] }
+oak_semantic = { workspace = true, features = ["testing"] }
 oak_sources = { workspace = true, features = ["testing"] }
 tempfile.workspace = true

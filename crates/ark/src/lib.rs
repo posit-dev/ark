@@ -5,6 +5,10 @@
 //
 //
 
+extern crate self as ark;
+
+pub use ark_macros::register;
+
 pub mod analysis;
 pub mod ark_comm;
 pub mod browser;

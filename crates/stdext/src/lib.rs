@@ -8,6 +8,7 @@
 pub mod all;
 pub mod any;
 pub mod case;
+pub mod cell;
 pub mod event;
 pub mod join;
 pub mod local;
@@ -19,6 +20,7 @@ pub mod spawn;
 pub mod testing;
 pub mod unwrap;
 
+pub use crate::cell::DebugRefCell;
 pub use crate::join::Joined;
 pub use crate::ok::Ok;
 pub use crate::push::Push;

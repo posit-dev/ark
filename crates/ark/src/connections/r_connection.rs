@@ -92,7 +92,7 @@ impl RConnection {
         let comm_open_json = serde_json::to_value(self.metadata.clone())?;
 
         // Notify the frontend that a new connection has been opened.
-        let event = CommEvent::Opened(self.comm.clone(), comm_open_json);
+        let event = CommEvent::Opened(self.comm.clone(), comm_open_json, None);
         self.comm_event_tx.send(event)?;
         Ok(())
     }

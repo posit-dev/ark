@@ -84,7 +84,11 @@ fn append_definitions(
         return;
     }
 
-    let index = semantic_index(&parsed.tree());
+    let Some(file_url) = url::Url::from_file_path(&file).ok() else {
+        return;
+    };
+
+    let index = semantic_index(&parsed.tree(), &file_url);
 
     let file_id = files.push(file);
 

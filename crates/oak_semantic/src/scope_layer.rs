@@ -4,7 +4,7 @@ use biome_rowan::TextRange;
 use oak_package_metadata::namespace::Namespace;
 use url::Url;
 
-use crate::semantic_index::DirectiveKind;
+use crate::semantic_index::SemanticCallKind;
 use crate::semantic_index::SemanticIndex;
 
 /// A layer in the scope chain. Layers are ordered most-local-first; resolution
@@ -27,27 +27,52 @@ pub enum ScopeLayer {
 
 /// Compute the scope layers that a single file contributes to the
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
-/// one `PackageExports` layer per `library()`/`require()` directive.
+/// one `PackageExports` layer per `library()`/`require()` semantic call.
 pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
-    // Last definition of each name wins
-    let mut exports = HashMap::new();
-    for (name, range) in index.file_exports() {
-        exports.insert(name.to_string(), range);
-    }
+    let exports = index
+        .file_exports()
+        .into_iter()
+        .map(|(name, range)| (name.to_string(), range))
+        .collect();
 
     layers.push(ScopeLayer::FileExports { file, exports });
 
-    for directive in index.file_directives() {
-        match directive.kind() {
-            DirectiveKind::Attach(pkg) => {
-                layers.push(ScopeLayer::PackageExports(pkg.clone()));
+    for call in index.semantic_calls() {
+        match call.kind() {
+            SemanticCallKind::Attach { package } => {
+                layers.push(ScopeLayer::PackageExports(package.clone()));
+            },
+            SemanticCallKind::Source { .. } => {
+                // `source()` injects into local scope, not the search path;
+                // not a scope-chain layer.
             },
         }
     }
 
     layers
+}
+
+/// The default R search path for scripts: the default packages that R
+/// attaches on startup, in search order (last attached = searched first).
+pub fn default_search_path() -> Vec<ScopeLayer> {
+    // R's default packages, in reverse attachment order (most recently
+    // attached first). These are always on the search path unless
+    // overridden by `R_DEFAULT_PACKAGES`.
+    let default_packages = [
+        "utils",
+        "stats",
+        "datasets",
+        "methods",
+        "grDevices",
+        "graphics",
+        "base",
+    ];
+    default_packages
+        .into_iter()
+        .map(|pkg| ScopeLayer::PackageExports(pkg.to_string()))
+        .collect()
 }
 
 /// Build the root layers for a package from its NAMESPACE.

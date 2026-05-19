@@ -520,3 +520,20 @@ unsafe extern "C-unwind" fn ps_test_spawn_sleeping_idle_tasks(
 
     Ok(libr::R_NilValue)
 }
+
+/// Spawn an idle task that evaluates an R expression. Used in integration tests.
+#[cfg(debug_assertions)]
+#[harp::register]
+unsafe extern "C-unwind" fn ps_test_spawn_eval_idle_task(code: SEXP) -> anyhow::Result<SEXP> {
+    stdext::assert_testing();
+
+    let code: String = harp::RObject::view(code).try_into()?;
+
+    spawn(RTask::idle(async move |_capture| {
+        if let Err(err) = harp::parse_eval_global(&code) {
+            log::error!("Idle task eval failed: {err:?}");
+        }
+    }));
+
+    Ok(libr::R_NilValue)
+}

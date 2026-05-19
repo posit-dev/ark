@@ -62,7 +62,7 @@ fn open_dummy_connection() -> (socket::comm::CommSocket, Receiver<IOPubMessage>)
         .unwrap();
 
     match msg {
-        CommEvent::Opened(socket, _value) => {
+        CommEvent::Opened(socket, _value, _) => {
             assert_eq!(socket.comm_name, "positron.connection");
             assert_eq!(socket.comm_id, comm_id);
             (socket, iopub_rx)

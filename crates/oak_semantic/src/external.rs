@@ -55,10 +55,10 @@ pub fn resolve_external_name(
             ScopeLayer::PackageImports(names) => {
                 if let Some(pkg) = names.get(name) {
                     if let Some(def) = resolve_in_package(
-                        name,
-                        pkg,
-                        PackageDefinitionVisibility::Exported,
                         library,
+                        pkg,
+                        name,
+                        PackageDefinitionVisibility::Exported,
                     ) {
                         return Some(def);
                     }
@@ -67,7 +67,7 @@ pub fn resolve_external_name(
 
             ScopeLayer::PackageExports(pkg) => {
                 if let Some(def) =
-                    resolve_in_package(name, pkg, PackageDefinitionVisibility::Exported, library)
+                    resolve_in_package(library, pkg, name, PackageDefinitionVisibility::Exported)
                 {
                     return Some(def);
                 }
@@ -80,10 +80,10 @@ pub fn resolve_external_name(
 
 /// Resolve a name in a specific package's exported symbols.
 pub fn resolve_in_package(
-    name: &str,
-    package: &str,
-    visibility: PackageDefinitionVisibility,
     library: &Library,
+    package: &str,
+    name: &str,
+    visibility: PackageDefinitionVisibility,
 ) -> Option<ExternalDefinition> {
     // FIXME: Slow without salsa!
     let package_definitions = library.definitions(package)?;
