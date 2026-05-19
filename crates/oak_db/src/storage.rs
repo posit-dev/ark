@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use crate::Db;
+use crate::DbInputs;
 use crate::LibraryRoots;
 use crate::OrphanRoot;
 use crate::WorkspaceRoots;
 
-/// Concrete Salsa database. The canonical implementation of [`Db`].
+/// Concrete Salsa database.
 ///
 /// Holds singleton `WorkspaceRoots` / `LibraryRoots` / `OrphanRoot`
 /// inputs and lazy-initialises them on first access.
@@ -29,7 +29,7 @@ impl OakDatabase {
 impl salsa::Database for OakDatabase {}
 
 #[salsa::db]
-impl Db for OakDatabase {
+impl DbInputs for OakDatabase {
     fn workspace_roots(&self) -> WorkspaceRoots {
         *self
             .workspace_roots

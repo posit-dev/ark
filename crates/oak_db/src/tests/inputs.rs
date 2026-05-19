@@ -5,6 +5,7 @@ use crate::tests::test_db::file_url;
 use crate::tests::test_db::library_root;
 use crate::tests::test_db::workspace_root;
 use crate::Db;
+use crate::DbInputs;
 use crate::File;
 use crate::OakDatabase;
 use crate::Package;

@@ -17,6 +17,7 @@ use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
+use crate::DbInputs;
 use crate::LibraryRoots;
 use crate::OrphanRoot;
 use crate::Root;
@@ -78,7 +79,7 @@ impl TestDb {
 impl salsa::Database for TestDb {}
 
 #[salsa::db]
-impl Db for TestDb {
+impl DbInputs for TestDb {
     fn workspace_roots(&self) -> WorkspaceRoots {
         *self
             .workspace_roots

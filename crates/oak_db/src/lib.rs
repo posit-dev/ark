@@ -11,6 +11,7 @@ mod storage;
 mod tests;
 
 pub use db::Db;
+pub use db::DbInputs;
 pub use file::File;
 pub use inputs::LibraryRoots;
 pub use inputs::OrphanRoot;

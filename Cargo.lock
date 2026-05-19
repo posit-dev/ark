@@ -2560,8 +2560,10 @@ dependencies = [
  "log",
  "oak_package_metadata",
  "oak_semantic",
+ "ra_ap_query-group-macro",
  "rustc-hash",
  "salsa",
+ "salsa-macros",
  "url",
 ]
 
@@ -2934,6 +2936,17 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "ra_ap_query-group-macro"
+version = "0.0.333"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "db632841b5aad35de146ca3cc5e4ca772933a796d00af31ae88c251e77e2f2ee"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "rand"
