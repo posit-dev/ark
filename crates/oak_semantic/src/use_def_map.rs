@@ -213,7 +213,7 @@ pub struct UseDefMap {
 impl UseDefMap {
     /// An empty use-def map, suitable for a scope with no uses and no
     /// nested-scope snapshots. Used to construct an empty index on
-    /// `source()` cycle recovery.
+    /// `source()` cycle recovery. Sole caller is `SemanticIndex::empty`.
     pub fn empty() -> Self {
         UseDefMapBuilder::new().finish(&IndexVec::new())
     }

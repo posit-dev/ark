@@ -107,6 +107,59 @@ fn test_source_cycle_preserves_local_analysis() {
 }
 
 #[test]
+fn test_library_in_sourced_file_records_attach_call() {
+    // R runtime: `source("helpers.R")` runs every top-level statement
+    // in `helpers.R`, including its `library()` calls. Those attaches
+    // persist in the caller's search path, so `SalsaImportsResolver`
+    // plumbs the sourced file's `file_attached_packages` through
+    // `SourceResolution` and the builder re-records them as `Attach`
+    // semantic calls at the `source()` call's offset.
+    let mut db = TestDb::new();
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("helpers.R", "library(dplyr)\n"),
+        ("analysis.R", "source(\"helpers.R\")\n"),
+    ]);
+    let analysis = scripts[1];
+
+    let index = analysis.semantic_index(&db);
+    let attaches: Vec<&str> = index
+        .semantic_calls()
+        .iter()
+        .filter_map(|c| match c.kind() {
+            SemanticCallKind::Attach { package } => Some(package.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attaches, vec!["dplyr"]);
+}
+
+#[test]
+fn test_library_propagates_transitively_through_source_chains() {
+    // a sources b sources c; c does `library(dplyr)`. Each hop's
+    // `SalsaImportsResolver` pulls the previous file's attaches through
+    // `file_attached_packages`, so `dplyr` ends up recorded as an
+    // attach in `a`'s semantic_index.
+    let mut db = TestDb::new();
+    let (_, scripts) = setup_workspace(&mut db, &[
+        ("c.R", "library(dplyr)\n"),
+        ("b.R", "source(\"c.R\")\n"),
+        ("a.R", "source(\"b.R\")\n"),
+    ]);
+    let a = scripts[2];
+
+    let index = a.semantic_index(&db);
+    let attaches: Vec<&str> = index
+        .semantic_calls()
+        .iter()
+        .filter_map(|c| match c.kind() {
+            SemanticCallKind::Attach { package } => Some(package.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attaches, vec!["dplyr"]);
+}
+
+#[test]
 fn test_closure_capture_with_source_before_function() {
     // source() comes first, so by the time `f`'s body is walked the
     // file-scope symbol table already has `helper` flagged
