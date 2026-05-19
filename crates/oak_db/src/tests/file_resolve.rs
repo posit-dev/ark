@@ -32,13 +32,14 @@ fn test_resolve_local_name_lands_on_owning_file() {
     let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\n")]);
     let file = files[0];
 
-    let resolution = file.resolve(&db, name(&db, "x")).expect("x should resolve");
-    assert_eq!(resolution.file, file);
-    assert_eq!(resolution.name.text(&db).as_str(), "x");
+    let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
+    assert_eq!(def.file(&db), file);
+    assert_eq!(def.name(&db).text(&db).as_str(), "x");
     // `semantic_index.file_exports()` records the binding's *name*
     // range, just the `x` identifier in `x <- 1`.
-    assert_eq!(usize::from(resolution.range.start()), 0);
-    assert_eq!(usize::from(resolution.range.end()), 1);
+    let range = def.range(&db);
+    assert_eq!(usize::from(range.start()), 0);
+    assert_eq!(usize::from(range.end()), 1);
 }
 
 #[test]
@@ -59,12 +60,12 @@ fn test_resolve_chases_source_forwarding_to_origin_file() {
     let helpers = files[0];
     let analysis = files[1];
 
-    let resolution = analysis
+    let def = analysis
         .resolve(&db, name(&db, "helper"))
         .expect("helper should resolve through source()");
 
-    assert_eq!(resolution.file, helpers);
-    assert_eq!(resolution.name.text(&db).as_str(), "helper");
+    assert_eq!(def.file(&db), helpers);
+    assert_eq!(def.name(&db).text(&db).as_str(), "helper");
 }
 
 #[test]
@@ -78,12 +79,12 @@ fn test_resolve_chases_two_step_source_chain() {
     let leaf = files[0];
     let top = files[2];
 
-    let resolution = top
+    let def = top
         .resolve(&db, name(&db, "deep"))
         .expect("deep should chase through mid -> leaf");
 
-    assert_eq!(resolution.file, leaf);
-    assert_eq!(resolution.name.text(&db).as_str(), "deep");
+    assert_eq!(def.file(&db), leaf);
+    assert_eq!(def.name(&db).text(&db).as_str(), "deep");
 }
 
 #[test]
@@ -116,4 +117,42 @@ fn test_resolve_in_cyclic_source_returns_none_without_panicking() {
     // than panicking.
     assert!(a.resolve(&db, name(&db, "a_local")).is_none());
     assert!(b.resolve(&db, name(&db, "b_local")).is_none());
+}
+
+#[test]
+fn test_definition_id_stable_across_body_edits() {
+    // The headline claim of `Definition` being a salsa-tracked entity with
+    // `(file, scope, name)` identity: a body edit that shifts the binding's
+    // source position must produce a `Definition` with the same salsa id.
+    // Only the volatile `range` field changes between revisions; consumers
+    // that depend on identity stay cached.
+    use salsa::plumbing::AsId;
+
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[("w/a.R", "x <- 1\n")]);
+    let file = files[0];
+
+    // Capture the salsa id and range out of the entity before mutating db,
+    // since the `Definition<'db>` borrow conflicts with `set_contents`'s
+    // mutable borrow.
+    let (id1, range1) = {
+        let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
+        (def.as_id(), def.range(&db))
+    };
+
+    // Add a function above `x`, shifting its position downward.
+    file.set_contents(&mut db)
+        .to("f <- function() 2\nx <- 1\n".to_string());
+
+    let (id2, range2) = {
+        let def = file
+            .resolve(&db, name(&db, "x"))
+            .expect("x should still resolve");
+        (def.as_id(), def.range(&db))
+    };
+
+    // Same salsa entity across the edit: identity tuple unchanged.
+    assert_eq!(id1, id2);
+    // Range moved (the binding is now on line 2).
+    assert_ne!(range1, range2);
 }

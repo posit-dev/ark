@@ -1,21 +1,8 @@
-use biome_rowan::TextRange;
-
 use crate::Db;
+use crate::Definition;
 use crate::ExportEntry;
 use crate::File;
 use crate::Name;
-
-/// The result of resolving a name to a concrete definition.
-///
-/// Carries `(File, name, range)`. The range is read from the resolved file's
-/// `semantic_index`. Consumers (goto-def) can navigate directly to
-/// `(file, range)`.
-#[derive(Debug, Clone, PartialEq, Eq, salsa::Update)]
-pub struct Resolution<'db> {
-    pub file: File,
-    pub name: Name<'db>,
-    pub range: TextRange,
-}
 
 #[salsa::tracked]
 impl<'db> File {
@@ -25,8 +12,13 @@ impl<'db> File {
     /// `exports(target_file)` until a `Local` is found. Returns `None` if the
     /// name isn't exported (or only chains through unresolved forwards /
     /// cycles, which `exports` recovers to empty).
+    ///
+    /// The returned `Definition` is keyed by `(file, scope, name)`, so
+    /// downstream queries that only depend on identity stay cached across edits
+    /// that shift the binding's source position. Consumers that need a position
+    /// or range call the `def.range(db)` derived query.
     #[salsa::tracked]
-    pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Option<Resolution<'db>> {
+    pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Option<Definition<'db>> {
         let mut current_file = self;
         let mut current_name = name.text(db).to_string();
 
@@ -35,11 +27,14 @@ impl<'db> File {
             match entry {
                 ExportEntry::Local => {
                     let range = local_definition_range(current_file, db, &current_name)?;
-                    return Some(Resolution {
-                        file: current_file,
-                        name: Name::new(db, current_name.as_str()),
+                    let file_scope = oak_semantic::semantic_index::ScopeId::from(0);
+                    return Some(Definition::new(
+                        db,
+                        current_file,
+                        file_scope,
+                        Name::new(db, current_name.as_str()),
                         range,
-                    });
+                    ));
                 },
                 ExportEntry::Import { file, name } => {
                     current_file = file;
@@ -51,8 +46,8 @@ impl<'db> File {
 }
 
 /// Locate the range of a top-level local definition for `name` in `file`'s
-/// semantic index. Returns `None` if the name doesn't appear (that's defensive,
+/// semantic index. Returns `None` if the name doesn't appear (defensive,
 /// shouldn't happen for a `Local` entry).
-fn local_definition_range(file: File, db: &dyn Db, name: &str) -> Option<TextRange> {
+fn local_definition_range(file: File, db: &dyn Db, name: &str) -> Option<biome_rowan::TextRange> {
     file.semantic_index(db).file_exports().get(name).copied()
 }

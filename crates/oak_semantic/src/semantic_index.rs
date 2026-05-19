@@ -65,7 +65,7 @@ pub struct SemanticIndex {
     // Use-def maps layer on top of these lists. A use-def map tracks which
     // definitions reach each use through control flow, referencing
     // `DefinitionId` and `UseId` indices into these arenas.
-    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
+    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, IndexDefinition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
 
     // Per-scope flow-sensitive map from each use site to the set of
@@ -86,7 +86,7 @@ impl SemanticIndex {
     pub(crate) fn new(
         scopes: IndexVec<ScopeId, Scope>,
         symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
-        definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
+        definitions: IndexVec<ScopeId, IndexVec<DefinitionId, IndexDefinition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
@@ -147,7 +147,7 @@ impl SemanticIndex {
         &self.symbol_tables[scope]
     }
 
-    pub fn definitions(&self, scope: ScopeId) -> &IndexVec<DefinitionId, Definition> {
+    pub fn definitions(&self, scope: ScopeId) -> &IndexVec<DefinitionId, IndexDefinition> {
         &self.definitions[scope]
     }
 
@@ -208,7 +208,10 @@ impl SemanticIndex {
     }
 
     /// Find the definition site at `offset`, if any.
-    pub fn definition_at(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId, &Definition)> {
+    pub fn definition_at(
+        &self,
+        offset: TextSize,
+    ) -> Option<(ScopeId, DefinitionId, &IndexDefinition)> {
         let (scope, _) = self.scope_at(offset);
 
         // Definitions with empty ranges (e.g. imports) are naturally excluded
@@ -536,7 +539,7 @@ impl SymbolFlags {
 // signature). Future `declare()` annotations will also produce pure
 // declarations.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Definition {
+pub struct IndexDefinition {
     pub(crate) kind: DefinitionKind,
     /// The file that owns this definition's index.
     // TODO(salsa): Should become a File.
@@ -563,7 +566,7 @@ pub enum DefinitionKind {
     },
 }
 
-impl Definition {
+impl IndexDefinition {
     pub fn symbol(&self) -> SymbolId {
         self.symbol
     }
@@ -585,7 +588,7 @@ impl Definition {
     }
 }
 
-impl Ranged for Definition {
+impl Ranged for IndexDefinition {
     fn range(&self) -> TextRange {
         self.range()
     }
