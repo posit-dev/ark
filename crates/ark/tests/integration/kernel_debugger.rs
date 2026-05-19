@@ -640,3 +640,32 @@ evalq(base::browser(), env)";
     frontend.recv_iopub_idle();
     assert_eq!(frontend.recv_shell_execute_reply(), input.execution_count);
 }
+
+/// `r_task()` calls from non-R threads must run while R is paused at a `browser()`
+/// prompt. This is whole point of `IDLE_ANY_TASKS`! Without it, requests from the
+/// LSP/DAP/Variables threads would silently hang for the duration of every debug session.
+#[test]
+fn test_browser_with_r_task() {
+    let frontend = DummyArkFrontend::lock();
+
+    frontend.send_execute_request("browser()", ExecuteRequestOptions::default());
+    frontend.recv_iopub_busy();
+    frontend.recv_iopub_execute_input();
+    frontend.recv_iopub_idle();
+    frontend.recv_shell_execute_reply();
+
+    // R is now paused at the browser prompt. Issue an `r_task()` from a worker thread.
+    // `IDLE_ANY_TASKS` should drain at browser prompts, so this completes promptly.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let value = ark::r_task::r_task(|| 42);
+        let _ = tx.send(value);
+    });
+
+    let value = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("`r_task()` should run while R is paused at a `browser()` prompt");
+    assert_eq!(value, 42);
+
+    frontend.execute_request_invisibly("Q");
+}
