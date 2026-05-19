@@ -12,6 +12,10 @@ impl<T: Ord> SortedVec<T> {
         Self { inner: values }
     }
 
+    pub fn into_vec(self) -> Vec<T> {
+        self.inner
+    }
+
     pub fn contains(&self, value: &T) -> bool {
         self.inner.binary_search(value).is_ok()
     }
@@ -30,6 +34,22 @@ impl<T> std::ops::Deref for SortedVec<T> {
 
     fn deref(&self) -> &[T] {
         &self.inner
+    }
+}
+
+impl<T> IntoIterator for SortedVec<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a SortedVec<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.iter()
     }
 }
 

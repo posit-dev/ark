@@ -199,35 +199,35 @@ fn obj_size_tree(
         // Nodes
         // https://github.com/wch/r-source/blob/master/src/include/Rinternals.h#L237-L249
         // All have enough space for three SEXP pointers
-        DOTSXP | LISTSXP | LANGSXP => {
+        DOTSXP | LISTSXP | LANGSXP
             // Needed for DOTSXP
-            if unsafe { x != libr::R_MissingArg } {
-                let mut cons = x;
-                while is_linked_list(cons) {
-                    if cons != x {
-                        size += sizeof_node
-                    }
-                    size += obj_size_tree(
-                        unsafe { libr::TAG(cons) },
-                        base_env,
-                        sizeof_node,
-                        sizeof_vector,
-                        seen,
-                        depth,
-                    );
-                    size += obj_size_tree(
-                        unsafe { libr::CAR(cons) },
-                        base_env,
-                        sizeof_node,
-                        sizeof_vector,
-                        seen,
-                        depth,
-                    );
-                    cons = unsafe { libr::CDR(cons) };
+            if unsafe { x != libr::R_MissingArg } =>
+        {
+            let mut cons = x;
+            while is_linked_list(cons) {
+                if cons != x {
+                    size += sizeof_node
                 }
-                // Handle non-nil CDRs
-                size += obj_size_tree(cons, base_env, sizeof_node, sizeof_vector, seen, depth);
+                size += obj_size_tree(
+                    unsafe { libr::TAG(cons) },
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth,
+                );
+                size += obj_size_tree(
+                    unsafe { libr::CAR(cons) },
+                    base_env,
+                    sizeof_node,
+                    sizeof_vector,
+                    seen,
+                    depth,
+                );
+                cons = unsafe { libr::CDR(cons) };
             }
+            // Handle non-nil CDRs
+            size += obj_size_tree(cons, base_env, sizeof_node, sizeof_vector, seen, depth);
         },
         BCODESXP => {
             size += obj_size_tree(

@@ -51,3 +51,12 @@ jobs:
 
       - name: "Check only workspace dependencies"
         run: python3 ./scripts/check-only-workspace-dependencies.py
+
+  toolchain:
+    name: "Check Rust toolchain version"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Check Rust toolchain version"
+        run: python3 ./scripts/check-rust-toolchain-version.py

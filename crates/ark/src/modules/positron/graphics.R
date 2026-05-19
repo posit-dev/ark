@@ -75,6 +75,10 @@ setHook("before.grid.newpage", action = "replace", function(...) {
     grDevices::deviceIsInteractive(ARK_GRAPHICS_DEVICE_NAME)
 }
 
+current_plot_id <- function() {
+    .ps.Call("ps_graphics_current_plot_id")
+}
+
 # Create a recording of the current plot.
 #
 # This saves the plot's display list, so it can be used to re-render plots as

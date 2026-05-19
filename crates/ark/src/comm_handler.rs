@@ -17,10 +17,10 @@ use crossbeam::channel::Sender;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use stdext::result::ResultExt;
+use stdext::DebugRefCell;
 
 /// Context provided to `CommHandler` methods, giving access to the outgoing
-/// channel and close-request mechanism. In the future, we'll provide access to
-/// more of the Console state, such as the currently active environment.
+/// channel and close-request mechanism.
 #[derive(Debug)]
 pub struct CommHandlerContext {
     pub outgoing_tx: CommOutgoingTx,
@@ -101,7 +101,8 @@ pub enum EnvironmentChanged {
 
 /// A registered comm in the Console's comm table.
 pub(crate) struct ConsoleComm {
-    pub(crate) handler: Box<dyn CommHandler>,
+    pub(crate) comm_id: String,
+    pub(crate) handler: DebugRefCell<Box<dyn CommHandler>>,
     pub(crate) ctx: CommHandlerContext,
 }
 
@@ -125,7 +126,7 @@ pub fn handle_comm_message<Reqs, Reps, Evts>(
             parent_header,
             data,
         } => {
-            let json = dispatch_rpc(comm_name, &data, |req| {
+            let json = dispatch_rpc(comm_name, data, |req| {
                 let _span = tracing::trace_span!("comm handler", name = comm_name, request = ?req)
                     .entered();
                 rpc_handler(req)
@@ -138,7 +139,7 @@ pub fn handle_comm_message<Reqs, Reps, Evts>(
             outgoing_tx.send(response).log_err();
         },
         CommMsg::Data(data) => {
-            dispatch_event(comm_name, &data, |evt| {
+            dispatch_event(comm_name, data, |evt| {
                 let _span =
                     tracing::trace_span!("comm handler", name = comm_name, event = ?evt).entered();
                 event_handler(evt)
@@ -175,7 +176,7 @@ pub fn handle_rpc_request<Reqs, Reps>(
         },
     };
 
-    let json = dispatch_rpc(comm_name, &data, |req| {
+    let json = dispatch_rpc(comm_name, data, |req| {
         let _span =
             tracing::trace_span!("comm handler", name = comm_name, request = ?req).entered();
         request_handler(req)
@@ -191,36 +192,32 @@ pub fn handle_rpc_request<Reqs, Reps>(
 
 fn dispatch_rpc<Reqs, Reps>(
     comm_name: &str,
-    data: &serde_json::Value,
+    data: serde_json::Value,
     handler: impl FnOnce(Reqs) -> anyhow::Result<Reps>,
 ) -> serde_json::Value
 where
     Reqs: DeserializeOwned + Debug,
     Reps: Serialize,
 {
-    match serde_json::from_value::<Reqs>(data.clone()) {
+    match serde_json::from_value::<Reqs>(data) {
         Ok(m) => match handler(m) {
             Ok(reply) => match serde_json::to_value(reply) {
                 Ok(value) => value,
                 Err(err) => {
-                    let message = format!(
-                            "Failed to serialise reply for {comm_name} request: {err} (request: {data})"
-                        );
+                    let message =
+                        format!("Failed to serialise reply for {comm_name} request: {err}");
                     log::warn!("{message}");
                     json_rpc_error(JsonRpcErrorCode::InternalError, message)
                 },
             },
             Err(err) => {
-                let message =
-                    format!("Failed to process {comm_name} request: {err} (request: {data})");
+                let message = format!("Failed to process {comm_name} request: {err}");
                 log::warn!("{message}");
                 json_rpc_error(JsonRpcErrorCode::InternalError, message)
             },
         },
         Err(err) => {
-            let message = format!(
-                "No handler for {comm_name} request (method not found): {err} (request: {data})"
-            );
+            let message = format!("No handler for {comm_name} request (method not found): {err}");
             log::warn!("{message}");
             json_rpc_error(JsonRpcErrorCode::MethodNotFound, message)
         },
@@ -229,17 +226,17 @@ where
 
 fn dispatch_event<Evts>(
     comm_name: &str,
-    data: &serde_json::Value,
+    data: serde_json::Value,
     handler: impl FnOnce(Evts) -> anyhow::Result<()>,
 ) where
     Evts: DeserializeOwned + Debug,
 {
-    match serde_json::from_value::<Evts>(data.clone()) {
+    match serde_json::from_value::<Evts>(data) {
         Ok(event) => {
             handler(event).log_err();
         },
         Err(err) => {
-            log::warn!("Failed to parse {comm_name} event: {err} (data: {data})");
+            log::warn!("Failed to parse {comm_name} event: {err}");
         },
     }
 }

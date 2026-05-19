@@ -19,13 +19,13 @@ The codebase is organized as a Rust workspace containing multiple crates:
 - **harp**: Rust wrappers for R objects and interfaces
 - **libr**: Bindings to R (dynamically loaded using `dlopen`/`LoadLibrary`)
 - **amalthea**: A Rust framework for building Jupyter and Positron kernels
-- **oak_index**: Per-file semantic index for R (scopes, symbols, definitions, uses)
+- **oak_semantic**: Per-file semantic index for R (scopes, symbols, definitions, uses)
 - **echo**: A toy kernel for testing the kernel framework
 - **stdext**: Extensions to Rust's standard library used by the other projects
 
 ### External dependencies (R parser)
 
-The `oak_index` and `ark` crates depend on the R parser from [posit-dev/air](https://github.com/posit-dev/air), pinned by git revision in the workspace `Cargo.toml`. The relevant crates are re-exported under `aether_` prefixes:
+The `oak_semantic` and `ark` crates depend on the R parser from [posit-dev/air](https://github.com/posit-dev/air), pinned by git revision in the workspace `Cargo.toml`. The relevant crates are re-exported under `aether_` prefixes:
 
 - **`aether_syntax`** (`air_r_syntax`): Typed CST nodes (`RIdentifier`, `RBinaryExpression`, `RFunctionDefinition`, etc.), `RSyntaxKind`, `RSyntaxNode`, `RSyntaxToken`.
 - **`aether_parser`** (`air_r_parser`): `parse()` function that produces an `RRoot` CST.

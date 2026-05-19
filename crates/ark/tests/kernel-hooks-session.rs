@@ -14,8 +14,6 @@ fn execute(frontend: &DummyArkFrontend, comm_id: &str, code: &str) {
     frontend.send_execute_request(code, ExecuteRequestOptions::default());
     frontend.recv_iopub_busy();
     frontend.recv_iopub_execute_input();
-    frontend.recv_ui_busy(comm_id, true);
-    frontend.recv_ui_busy(comm_id, false);
     frontend.recv_ui_prompt_state(comm_id);
     frontend.recv_iopub_idle();
     frontend.recv_shell_execute_reply();
@@ -23,7 +21,7 @@ fn execute(frontend: &DummyArkFrontend, comm_id: &str, code: &str) {
 
 /// A "new" session fires session_init hooks with start_type = "new".
 ///
-/// The hook calls `rstudioapi::navigateToFile()`, a fire-and-forget event.
+/// The hook calls `.ps.ui.navigateToFile()`, a fire-and-forget event.
 /// We can't verify the frontend acts on it, but we can verify the
 /// `open_editor` message arrives on the UI comm.
 #[test]
@@ -39,7 +37,7 @@ fn test_session_init_hook_new() {
         &frontend,
         &comm_id,
         &format!(
-            "setHook('positron.session_init', function(start_type) rstudioapi::navigateToFile('{path}'))"
+            "setHook('positron.session_init', function(start_type) .ps.ui.navigateToFile('{path}'))"
         ),
     );
 

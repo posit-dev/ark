@@ -114,11 +114,59 @@ impl ShellHandler for Shell {
     }
 
     /// Handles an ExecuteRequest; "executes" the code by echoing it.
-    async fn handle_execute_request(
+    fn start_execute_request(
         &mut self,
         _originator: Originator,
         req: &ExecuteRequest,
-    ) -> amalthea::Result<ExecuteReply> {
+    ) -> crossbeam::channel::Receiver<amalthea::Result<ExecuteReply>> {
+        let (tx, rx) = crossbeam::channel::bounded(1);
+        let result = self.execute(req);
+        tx.send(result).unwrap();
+        rx
+    }
+
+    /// Handles an introspection request
+    async fn handle_inspect_request(&self, req: &InspectRequest) -> amalthea::Result<InspectReply> {
+        let data = match req.code.as_str() {
+            "err" => {
+                json!({"text/plain": "This generates an error!"})
+            },
+            "teapot" => {
+                json!({"text/plain": "This is clearly a teapot."})
+            },
+            _ => serde_json::Value::Null,
+        };
+        Ok(InspectReply {
+            status: Status::Ok,
+            found: data != serde_json::Value::Null,
+            data,
+            metadata: json!({}),
+        })
+    }
+
+    async fn handle_history_request(
+        &self,
+        _req: &HistoryRequest,
+    ) -> amalthea::Result<HistoryReply> {
+        Ok(HistoryReply {
+            status: Status::Ok,
+            history: vec![],
+        })
+    }
+
+    fn handle_comm_open(
+        &mut self,
+        _target: Comm,
+        _comm: CommSocket,
+        _data: serde_json::Value,
+    ) -> amalthea::Result<(bool, Option<Receiver<()>>)> {
+        // No comms in this toy implementation.
+        Ok((false, None))
+    }
+}
+
+impl Shell {
+    fn execute(&mut self, req: &ExecuteRequest) -> amalthea::Result<ExecuteReply> {
         // Increment counter if we are storing this execution in history
         if req.store_history {
             self.execution_count += 1;
@@ -185,44 +233,5 @@ impl ShellHandler for Shell {
             execution_count: self.execution_count,
             user_expressions: serde_json::Value::Null,
         })
-    }
-
-    /// Handles an introspection request
-    async fn handle_inspect_request(&self, req: &InspectRequest) -> amalthea::Result<InspectReply> {
-        let data = match req.code.as_str() {
-            "err" => {
-                json!({"text/plain": "This generates an error!"})
-            },
-            "teapot" => {
-                json!({"text/plain": "This is clearly a teapot."})
-            },
-            _ => serde_json::Value::Null,
-        };
-        Ok(InspectReply {
-            status: Status::Ok,
-            found: data != serde_json::Value::Null,
-            data,
-            metadata: json!({}),
-        })
-    }
-
-    async fn handle_history_request(
-        &self,
-        _req: &HistoryRequest,
-    ) -> amalthea::Result<HistoryReply> {
-        Ok(HistoryReply {
-            status: Status::Ok,
-            history: vec![],
-        })
-    }
-
-    async fn handle_comm_open(
-        &self,
-        _target: Comm,
-        _comm: CommSocket,
-        _data: serde_json::Value,
-    ) -> amalthea::Result<bool> {
-        // No comms in this toy implementation.
-        Ok(false)
     }
 }

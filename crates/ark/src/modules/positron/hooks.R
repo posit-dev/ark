@@ -6,7 +6,7 @@
 #
 
 initialize_hooks <- function() {
-    rebind("utils", "View", view, namespace = TRUE)
+    rebind("utils", "View", view_hook, namespace = TRUE)
     rebind("base", "debug", new_ark_debug(base::debug), namespace = TRUE)
     rebind(
         "base",
@@ -19,10 +19,14 @@ initialize_hooks <- function() {
         "utils",
         "recover",
         # Keep this wrapped up this way for a better "Called from:" call
-        function(...) ark_recover(),
+        function() ark_recover(),
         namespace = TRUE
     )
     register_getHook_hook()
+
+    if (is_windows()) {
+        rebind("utils", "timestamp", windows_timestamp, namespace = TRUE)
+    }
 }
 
 rebind <- function(pkg, name, value, namespace = FALSE) {
@@ -55,9 +59,23 @@ pkg_bind <- function(pkg, name, value) {
     env <- sprintf("package:%s", pkg)
     env <- as.environment(env)
 
-    if (!exists(name, envir = env, mode = "function", inherits = FALSE)) {
+    fn <- get0(name, envir = env, mode = "function", inherits = FALSE)
+
+    if (is.null(fn)) {
         msg <- sprintf(
             "Can't register hook: function `%s::%s` not found.",
+            pkg,
+            name
+        )
+        stop(msg, call. = FALSE)
+    }
+
+    # Check formals, but if we are wrong, only panic in debug builds.
+    # Not worth it to bring the whole system down for this.
+    # Checked in CI across all supported R versions.
+    if (is_debug_build() && !identical(formals(fn), formals(value))) {
+        msg <- sprintf(
+            "Can't register hook: replacement for `%s::%s` does not have the same arguments.",
             pkg,
             name
         )
@@ -71,8 +89,22 @@ pkg_bind <- function(pkg, name, value) {
 ns_bind <- function(pkg, name, value) {
     ns <- asNamespace(pkg)
 
-    if (!exists(name, envir = ns, mode = "function", inherits = FALSE)) {
+    fn <- get0(name, envir = ns, mode = "function", inherits = FALSE)
+
+    if (is.null(fn)) {
         msg <- sprintf("Can't replace `%s` in the '%s' namespace.", name, pkg)
+        stop(msg, call. = FALSE)
+    }
+
+    # Check formals, but if we are wrong, only panic in debug builds.
+    # Not worth it to bring the whole system down for this.
+    # Checked in CI across all supported R versions.
+    if (is_debug_build() && !identical(formals(fn), formals(value))) {
+        msg <- sprintf(
+            "Can't replace `%s` in the '%s' namespace: replacement does not have the same arguments.",
+            pkg,
+            name
+        )
         stop(msg, call. = FALSE)
     }
 

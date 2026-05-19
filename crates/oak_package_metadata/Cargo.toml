@@ -1,0 +1,33 @@
+[package]
+name = "oak_package_metadata"
+version = "0.1.0"
+description = """
+R package metadata: DESCRIPTION, NAMESPACE, INDEX readers.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+testing = ["dep:tempfile"]
+
+[lints]
+workspace = true
+
+[dependencies]
+aether_parser.workspace = true
+aether_syntax.workspace = true
+biome_rowan.workspace = true
+anyhow.workspace = true
+oak_core.workspace = true
+regex.workspace = true
+stdext.workspace = true
+
+[dependencies.tempfile]
+workspace = true
+optional = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,27 @@
+[package]
+name = "oak_db"
+version = "0.1.0"
+description = """
+Database trait for cross-file queries. Foundation for Salsa integration.
+"""
+
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aether_parser.workspace = true
+aether_syntax.workspace = true
+biome_rowan.workspace = true
+compact_str.workspace = true
+oak_package_metadata.workspace = true
+oak_semantic = { workspace = true, features = ["salsa"] }
+salsa.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+oak_semantic = { workspace = true, features = ["salsa", "testing"] }
