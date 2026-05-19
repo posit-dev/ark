@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
+use oak_semantic::semantic_index::ScopeId;
+
 use crate::Db;
 use crate::Definition;
 use crate::ExportEntry;
@@ -19,7 +21,7 @@ impl<'db> File {
     /// The returned `Definition` is keyed by `(file, scope, name)`, so
     /// downstream queries that only depend on identity stay cached across edits
     /// that shift the binding's source position. Consumers that need a position
-    /// or range call the `def.range(db)` derived query.
+    /// or the bound expression read `def.kind(db)` and project per-variant.
     #[salsa::tracked]
     pub fn resolve(self, db: &'db dyn Db, name: Name<'db>) -> Option<Definition<'db>> {
         let mut current_file = self;
@@ -43,16 +45,25 @@ impl<'db> File {
             let entry = current_file.exports(db).get(current_name.as_ref())?.clone();
             match entry {
                 ExportEntry::Local => {
-                    let range = local_definition_range(current_file, db, current_name.as_ref())?;
-                    let file_scope = oak_semantic::semantic_index::ScopeId::from(0);
+                    // Fetch exports again, this time through the semantic index
+                    // to get the volatile `kind` field that the firewall query
+                    // `File::exports()` doesn't expose.
+                    let kind = current_file
+                        .semantic_index(db)
+                        .file_exports()
+                        .get(current_name.as_ref())
+                        .map(|def| def.kind().clone())?;
+
+                    let file_scope = ScopeId::from(0);
                     return Some(Definition::new(
                         db,
                         current_file,
                         file_scope,
                         Name::new(db, current_name.as_ref()),
-                        range,
+                        kind,
                     ));
                 },
+
                 ExportEntry::Import { file, name } => {
                     current_file = file;
                     current_name = Rc::from(name.as_str());
@@ -60,11 +71,4 @@ impl<'db> File {
             }
         }
     }
-}
-
-/// Locate the range of a top-level local definition for `name` in `file`'s
-/// semantic index. Returns `None` if the name doesn't appear (defensive,
-/// shouldn't happen for a `Local` entry).
-fn local_definition_range(file: File, db: &dyn Db, name: &str) -> Option<biome_rowan::TextRange> {
-    file.semantic_index(db).file_exports().get(name).copied()
 }

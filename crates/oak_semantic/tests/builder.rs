@@ -1516,8 +1516,8 @@ fn test_file_exports_last_def_wins() {
     let exports = index.file_exports();
     assert_eq!(exports.len(), 2);
     // The range should be the second `foo` (offset 9..12)
-    let range = exports.get("foo").unwrap();
-    assert_eq!(range.start(), biome_rowan::TextSize::from(9));
+    let def = exports.get("foo").unwrap();
+    assert_eq!(def.range().start(), biome_rowan::TextSize::from(9));
 }
 
 // --- source() semantic calls: bail paths ---

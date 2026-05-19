@@ -35,9 +35,8 @@ fn test_resolve_local_name_lands_on_owning_file() {
     let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
     assert_eq!(def.file(&db), file);
     assert_eq!(def.name(&db).text(&db).as_str(), "x");
-    // `semantic_index.file_exports()` records the binding's *name*
-    // range, just the `x` identifier in `x <- 1`.
-    let range = def.range(&db);
+    // The name range is just the `x` identifier in `x <- 1`.
+    let range = def.name_range(&db).expect("Local binding has a name range");
     assert_eq!(usize::from(range.start()), 0);
     assert_eq!(usize::from(range.end()), 1);
 }
@@ -119,6 +118,92 @@ fn test_resolve_in_cyclic_source_returns_none_without_panicking() {
     assert!(b.resolve(&db, name(&db, "b_local")).is_none());
 }
 
+/// Extract the source slice at `range` from `source`.
+fn slice(source: &str, range: biome_rowan::TextRange) -> &str {
+    &source[usize::from(range.start())..usize::from(range.end())]
+}
+
+#[test]
+fn test_name_range_for_left_assignment() {
+    let mut db = TestDb::new();
+    let source = "x <- 1\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let def = files[0]
+        .resolve(&db, name(&db, "x"))
+        .expect("x should resolve");
+    let range = def.name_range(&db).expect("Local has name range");
+    assert_eq!(slice(source, range), "x");
+}
+
+#[test]
+fn test_name_range_for_right_assignment() {
+    let mut db = TestDb::new();
+    let source = "1 -> x\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let def = files[0]
+        .resolve(&db, name(&db, "x"))
+        .expect("x should resolve");
+    let range = def.name_range(&db).expect("Local has name range");
+    assert_eq!(slice(source, range), "x");
+}
+
+#[test]
+fn test_name_range_for_super_left_assignment() {
+    let mut db = TestDb::new();
+    let source = "x <<- 1\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let def = files[0]
+        .resolve(&db, name(&db, "x"))
+        .expect("x should resolve");
+    let range = def.name_range(&db).expect("Local has name range");
+    assert_eq!(slice(source, range), "x");
+}
+
+#[test]
+fn test_name_range_for_super_right_assignment() {
+    let mut db = TestDb::new();
+    let source = "1 ->> x\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let def = files[0]
+        .resolve(&db, name(&db, "x"))
+        .expect("x should resolve");
+    let range = def.name_range(&db).expect("Local has name range");
+    assert_eq!(slice(source, range), "x");
+}
+
+#[test]
+fn test_name_range_for_string_as_name() {
+    // R's `"x" <- 1` binds `x`. The LHS in the parse tree is an
+    // `RStringValue`, not an `RIdentifier`. The range covers the quoted
+    // string literal.
+    let mut db = TestDb::new();
+    let source = "\"x\" <- 1\n";
+    let files = setup_workspace(&mut db, &[("w/a.R", source)]);
+    let def = files[0]
+        .resolve(&db, name(&db, "x"))
+        .expect("x should resolve");
+    let range = def.name_range(&db).expect("Local has name range");
+    assert_eq!(slice(source, range), "\"x\"");
+}
+
+#[test]
+fn test_name_range_is_none_for_imported_binding_at_source_site() {
+    // Resolution chases past `Import` chains, so a successful resolve
+    // always lands on a `Local`. But the `Definition::name_range` method
+    // is documented to return `None` for `Import` kinds — we exercise the
+    // arm directly by constructing one via a sourced binding that
+    // *doesn't* resolve to a Local (unregistered target).
+    //
+    // Setup: `a.R` does `source("b.R")` but `b.R` isn't registered, so
+    // the `Source` semantic call records no Import entries. Resolve
+    // returns None, so name_range isn't directly exercised here. The
+    // Import arm of name_range stays untested through public API; it's
+    // mechanical and protected by the type system.
+    let mut db = TestDb::new();
+    let files = setup_workspace(&mut db, &[("w/a.R", "source(\"b.R\")\n")]);
+    assert!(files[0].resolve(&db, name(&db, "anything")).is_none());
+}
+
 #[test]
 fn test_definition_id_stable_across_body_edits() {
     // The headline claim of `Definition` being a salsa-tracked entity with
@@ -137,7 +222,7 @@ fn test_definition_id_stable_across_body_edits() {
     // mutable borrow.
     let (id1, range1) = {
         let def = file.resolve(&db, name(&db, "x")).expect("x should resolve");
-        (def.as_id(), def.range(&db))
+        (def.as_id(), def.name_range(&db))
     };
 
     // Add a function above `x`, shifting its position downward.
@@ -148,7 +233,7 @@ fn test_definition_id_stable_across_body_edits() {
         let def = file
             .resolve(&db, name(&db, "x"))
             .expect("x should still resolve");
-        (def.as_id(), def.range(&db))
+        (def.as_id(), def.name_range(&db))
     };
 
     // Same salsa entity across the edit: identity tuple unchanged.

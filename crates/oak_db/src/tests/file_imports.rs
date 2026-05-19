@@ -98,12 +98,7 @@ fn test_script_attach_produces_package_exports_layer_in_source_order() {
 fn test_script_attach_to_unregistered_package_drops_layer() {
     let db = TestDb::new();
     // No `dplyr` in any library root.
-    let file = File::new(
-        &db,
-        file_url("a.R"),
-        "library(dplyr)\n".to_string(),
-        None,
-    );
+    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string(), None);
 
     let layers = file.imports(&db);
     assert!(layers.is_empty());
@@ -191,12 +186,7 @@ fn test_imports_is_cached_per_file() {
     let mut db = TestDb::new();
     let _ = install_packages(&mut db, &["dplyr"]);
 
-    let file = File::new(
-        &db,
-        file_url("a.R"),
-        "library(dplyr)\n".to_string(),
-        None,
-    );
+    let file = File::new(&db, file_url("a.R"), "library(dplyr)\n".to_string(), None);
     let _ = file.imports(&db);
     let _ = file.imports(&db);
 

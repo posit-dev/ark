@@ -93,7 +93,7 @@ fn append_definitions(
 
     let file_id = files.push(file);
 
-    for (name, range) in index.file_exports() {
+    for (name, def) in index.file_exports() {
         let visibility = if namespace.exports.contains_str(name) {
             PackageDefinitionVisibility::Exported
         } else {
@@ -103,7 +103,7 @@ fn append_definitions(
         let definition = PackageDefinition {
             visibility,
             file_id,
-            range,
+            range: def.range(),
         };
 
         definitions.insert(name.to_string(), definition);

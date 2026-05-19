@@ -34,7 +34,7 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let exports = index
         .file_exports()
         .into_iter()
-        .map(|(name, range)| (name.to_string(), range))
+        .map(|(name, def)| (name.to_string(), def.range()))
         .collect();
 
     layers.push(ScopeLayer::FileExports { file, exports });
