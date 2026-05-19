@@ -9,7 +9,7 @@ pub trait Idx: Copy + fmt::Debug + Eq {
 
 /// A `Vec<V>` indexed by a strongly-typed newtype `I` instead of `usize`,
 /// so that indices from different vectors can't be mixed up.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct IndexVec<I: Idx, V> {
     raw: Vec<V>,
     _phantom: PhantomData<I>,

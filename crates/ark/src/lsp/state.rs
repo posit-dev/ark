@@ -3,18 +3,21 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
-use oak_db::Db;
+use oak_db::LegacyDb;
+use oak_db::SourceGraph;
 use oak_ide::ExternalScope;
-use oak_index::library::Library;
-use oak_index::scope_layer::default_search_path;
-use oak_index::scope_layer::file_layers;
-use oak_index::scope_layer::package_root_layers;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index_with_source_resolver;
-use oak_index::SourceResolution;
+use oak_semantic::library::Library;
+use oak_semantic::scope_layer::default_search_path;
+use oak_semantic::scope_layer::file_layers;
+use oak_semantic::scope_layer::package_root_layers;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index_with_source_resolver;
+use oak_semantic::SourceResolution;
 use stdext::result::ResultExt;
 use url::Url;
 
@@ -22,7 +25,31 @@ use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
 
-impl Db for WorldState {
+/// Concrete Salsa database that owns the storage for all LSP inputs.
+#[salsa::db]
+#[derive(Clone, Default)]
+pub struct OakDatabase {
+    storage: salsa::Storage<Self>,
+    source_graph: Arc<OnceLock<SourceGraph>>,
+}
+
+impl OakDatabase {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+#[salsa::db]
+impl salsa::Database for OakDatabase {}
+
+#[salsa::db]
+impl oak_db::Db for OakDatabase {
+    fn source_graph(&self) -> SourceGraph {
+        *self.source_graph.get_or_init(|| SourceGraph::empty(self))
+    }
+}
+
+impl LegacyDb for WorldState {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
         let doc = self.workspace_document(file)?;
         let source_root = self.source_root(file);
@@ -180,7 +207,7 @@ impl WorldState {
         &self,
         file: &Url,
         doc: &Document,
-        pkg: &oak_index::package::Package,
+        pkg: &oak_semantic::package::Package,
     ) -> (SemanticIndex, ExternalScope) {
         let root_layers = package_root_layers(pkg.namespace());
 
@@ -254,10 +281,10 @@ impl WorldState {
             self.resolve_source(dir, path, &mut stack)
         });
 
-        let directives = index.file_directives().to_vec();
+        let semantic_calls = index.semantic_calls().to_vec();
         (
             index,
-            ExternalScope::search_path(directives, default_search_path()),
+            ExternalScope::search_path(semantic_calls, default_search_path()),
         )
     }
 
@@ -357,7 +384,7 @@ pub(crate) fn workspace_uris(state: &WorldState) -> Vec<Url> {
 #[cfg(test)]
 mod tests {
     use biome_rowan::TextSize;
-    use oak_index::scope_layer::ScopeLayer;
+    use oak_semantic::scope_layer::ScopeLayer;
     use stdext::assert_not;
 
     use super::*;

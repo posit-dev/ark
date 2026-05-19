@@ -7,22 +7,22 @@ use aether_parser::RParserOptions;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_db::Db;
+use oak_db::LegacyDb;
 use oak_ide::goto_definition;
 use oak_ide::ExternalScope;
 use oak_ide::NavigationTarget;
-use oak_index::library::Library;
-use oak_index::package::Package;
-use oak_index::scope_layer::file_layers;
-use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index;
-use oak_index::semantic_index::DirectiveKind;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::semantic_index_with_source_resolver;
-use oak_index::ScopeId;
-use oak_index::SourceResolution;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
+use oak_semantic::library::Library;
+use oak_semantic::package::Package;
+use oak_semantic::scope_layer::file_layers;
+use oak_semantic::scope_layer::ScopeLayer;
+use oak_semantic::semantic_index;
+use oak_semantic::semantic_index::SemanticCallKind;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::semantic_index_with_source_resolver;
+use oak_semantic::ScopeId;
+use oak_semantic::SourceResolution;
 use oak_sources::test::TestPackageCache;
 use stdext::SortedVec;
 use url::Url;
@@ -39,7 +39,7 @@ struct TestDb {
     sources: HashMap<Url, String>,
 }
 
-impl Db for TestDb {
+impl LegacyDb for TestDb {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {
         // Rebuild from source for tests. We store the source instead.
         self.sources.get(file).map(|source| {
@@ -1378,7 +1378,7 @@ fn test_source_directive_resolves_to_sourced_file() {
             })
         });
 
-    let dir_layers = script_idx.file_directives().to_vec();
+    let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1420,10 +1420,11 @@ fn test_source_directive_resolves_nested_library() {
         .map(|name| name.to_string())
         .collect();
     let helpers_packages: Vec<_> = helpers_idx
-        .file_directives()
+        .semantic_calls()
         .iter()
-        .map(|d| match d.kind() {
-            DirectiveKind::Attach(pkg) => pkg.clone(),
+        .filter_map(|c| match c.kind() {
+            SemanticCallKind::Attach { package } => Some(package.clone()),
+            SemanticCallKind::Source { .. } => None,
         })
         .collect();
 
@@ -1451,7 +1452,7 @@ fn test_source_directive_resolves_nested_library() {
             })
         });
 
-    let dir_layers = script_idx.file_directives().to_vec();
+    let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1486,7 +1487,7 @@ fn test_source_directive_resolves_nested_library() {
             })
         });
 
-    let dir_layers = script_idx2.file_directives().to_vec();
+    let dir_layers = script_idx2.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let use_offset = source_with_helper.rfind("helper").unwrap() as u32;
@@ -1549,7 +1550,7 @@ fn test_directive_not_visible_before_call_site() {
             })
         });
 
-    let dir_layers = script_idx.file_directives().to_vec();
+    let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1608,9 +1609,10 @@ fn test_directive_not_visible_before_call_site() {
 
 #[test]
 fn test_directives_in_function_body_are_scoped() {
-    // `library()` inside a function body produces a scoped directive:
-    // visible inside the function but not at file scope.
-    // `source()` without a resolver is still a no-op.
+    // `library()` inside a function body produces a scoped Attach
+    // semantic call: visible inside the function but not at file scope.
+    // The `source()` call is recorded as a Source semantic call,
+    // independent of the legacy resolver path.
     let script_source =
         "f <- function() {\n  source(\"helpers.R\")\n  library(dplyr)\n  mutate\n}\nhelper\nmutate\n";
     let script_url = file_url("script.R");
@@ -1627,13 +1629,21 @@ fn test_directives_in_function_body_are_scoped() {
         sources: HashMap::new(),
     };
 
-    // library() inside f produces a scoped directive
-    let directives = script_idx.file_directives();
-    assert_eq!(directives.len(), 1);
-    assert_eq!(directives[0].kind(), &DirectiveKind::Attach("dplyr".into()));
-    assert_ne!(directives[0].scope(), ScopeId::from(0));
+    // Both source() and library() inside f are recorded as scoped
+    // semantic calls, in source order.
+    let semantic_calls = script_idx.semantic_calls();
+    assert_eq!(semantic_calls.len(), 2);
+    assert_eq!(semantic_calls[0].kind(), &SemanticCallKind::Source {
+        path: "helpers.R".into(),
+        resolved: None,
+    });
+    assert_eq!(semantic_calls[1].kind(), &SemanticCallKind::Attach {
+        package: "dplyr".into()
+    });
+    assert_ne!(semantic_calls[0].scope(), ScopeId::from(0));
+    assert_ne!(semantic_calls[1].scope(), ScopeId::from(0));
 
-    let dir_layers = script_idx.file_directives().to_vec();
+    let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     // `mutate` inside f (after library()) — resolves via scoped dplyr
@@ -1704,7 +1714,7 @@ fn test_source_in_function_body_scoping() {
             })
         });
 
-    let dir_layers = script_idx.file_directives().to_vec();
+    let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let mut sources = HashMap::new();
@@ -1745,7 +1755,7 @@ fn test_source_in_function_body_scoping() {
 }
 
 // TODO(salsa): This tests `resolve_import` which is slated to move to
-// `oak_index`. Move this test alongside it and call `resolve_import` directly
+// `oak_semantic`. Move this test alongside it and call `resolve_import` directly
 // once it becomes pub.
 #[test]
 fn test_resolve_import_last_def_wins() {
@@ -1773,7 +1783,7 @@ fn test_resolve_import_last_def_wins() {
         })
     });
 
-    let dir_layers = script_idx.file_directives().to_vec();
+    let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
 
     let use_offset = script_source.rfind("foo").unwrap() as u32;

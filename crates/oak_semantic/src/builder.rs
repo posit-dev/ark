@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use aether_syntax::AnyRArgumentName;
 use aether_syntax::AnyRExpression;
 use aether_syntax::AnyRParameterName;
@@ -13,6 +15,7 @@ use aether_syntax::RSyntaxKind;
 use aether_syntax::RSyntaxNode;
 use biome_rowan::AstNode;
 use biome_rowan::AstNodeList;
+use biome_rowan::AstPtr;
 use biome_rowan::AstSeparatedList;
 use biome_rowan::SyntaxNodeCast;
 use biome_rowan::TextRange;
@@ -28,13 +31,13 @@ use url::Url;
 use crate::semantic_index::Definition;
 use crate::semantic_index::DefinitionId;
 use crate::semantic_index::DefinitionKind;
-use crate::semantic_index::Directive;
-use crate::semantic_index::DirectiveKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
+use crate::semantic_index::SemanticCall;
+use crate::semantic_index::SemanticCallKind;
 use crate::semantic_index::SemanticIndex;
 use crate::semantic_index::SymbolFlags;
 use crate::semantic_index::SymbolTableBuilder;
@@ -98,7 +101,7 @@ struct SemanticIndexBuilder<'a> {
     current_scope: ScopeId,
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-    directives: Vec<Directive>,
+    semantic_calls: Vec<SemanticCall>,
     file: Url,
     source_resolver: Option<SourceResolver<'a>>,
 }
@@ -140,7 +143,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             current_scope: file_scope,
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
-            directives: Vec::new(),
+            semantic_calls: Vec::new(),
             file,
             source_resolver,
         }
@@ -391,7 +394,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                 // also consider nested scopes as long as they're not lazy (e.g.
                 // function definitions or NSE calls that don't evaluate
                 // immediately.
-                self.collect_directive(call);
+                self.collect_semantic_call(call);
             },
             AnyRExpression::RSubset(subset) => {
                 if let Ok(object) = subset.function() {
@@ -431,7 +434,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         &variable.name_text(),
                         SymbolFlags::IS_BOUND,
-                        DefinitionKind::ForVariable(stmt.syntax().clone()),
+                        DefinitionKind::ForVariable(AstPtr::new(stmt)),
                         variable.syntax().text_trimmed_range(),
                     );
                 }
@@ -637,7 +640,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         &ident.name_text(),
                         flags,
-                        DefinitionKind::Parameter(param.syntax().clone()),
+                        DefinitionKind::Parameter(AstPtr::new(param)),
                         ident.syntax().text_trimmed_range(),
                     );
                 },
@@ -645,7 +648,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         "...",
                         flags,
-                        DefinitionKind::Parameter(param.syntax().clone()),
+                        DefinitionKind::Parameter(AstPtr::new(param)),
                         dots.syntax().text_trimmed_range(),
                     );
                 },
@@ -653,7 +656,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                     self.add_definition(
                         &ddi.syntax().text_trimmed().to_string(),
                         flags,
-                        DefinitionKind::Parameter(param.syntax().clone()),
+                        DefinitionKind::Parameter(AstPtr::new(param)),
                         ddi.syntax().text_trimmed_range(),
                     );
                 },
@@ -692,14 +695,14 @@ impl<'a> SemanticIndexBuilder<'a> {
         if super_assign {
             self.add_super_definition(
                 &name,
-                DefinitionKind::SuperAssignment(op.syntax().clone()),
+                DefinitionKind::SuperAssignment(AstPtr::new(op)),
                 range,
             );
         } else {
             self.add_definition(
                 &name,
                 SymbolFlags::IS_BOUND,
-                DefinitionKind::Assignment(op.syntax().clone()),
+                DefinitionKind::Assignment(AstPtr::new(op)),
                 range,
             );
         }
@@ -714,28 +717,28 @@ impl<'a> SemanticIndexBuilder<'a> {
         }
     }
 
-    fn collect_directive(&mut self, call: &aether_syntax::RCall) {
+    fn collect_semantic_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(AnyRExpression::RIdentifier(ident)) = call.function() else {
             return;
         };
 
         let fn_name = ident.name_text();
         if fn_name == "library" || fn_name == "require" {
-            self.collect_attach_directive(call);
+            self.collect_attach_call(call);
         } else if fn_name == "source" {
-            self.collect_source_directive(call);
+            self.collect_source_call(call);
         }
     }
 
     // ## `library()` / `require()` scoping
     //
     // In R, `library()` always modifies the global search path regardless
-    // of where it's called. Statically, we scope the directive to
+    // of where it's called. Statically, we scope the call to
     // `self.current_scope`: at file scope it's visible everywhere (sequential
     // execution is guaranteed), but inside a function it's only visible
     // within that function and its children, since the function might never
-    // be called. Same reasoning as `source()` directives.
-    fn collect_attach_directive(&mut self, call: &aether_syntax::RCall) {
+    // be called. Same reasoning as `source()` calls.
+    fn collect_attach_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -764,8 +767,8 @@ impl<'a> SemanticIndexBuilder<'a> {
         };
 
         let call_offset = call.syntax().text_trimmed_range().start();
-        self.directives.push(Directive {
-            kind: DirectiveKind::Attach(pkg_name),
+        self.semantic_calls.push(SemanticCall {
+            kind: SemanticCallKind::Attach { package: pkg_name },
             offset: call_offset,
             scope: self.current_scope,
         });
@@ -787,7 +790,7 @@ impl<'a> SemanticIndexBuilder<'a> {
     // global environment. We currently inject into the calling scope
     // regardless to keep the sourcing mechanism simple. A future diagnostic
     // should suggest `local = TRUE` in nested contexts.
-    fn collect_source_directive(&mut self, call: &aether_syntax::RCall) {
+    fn collect_source_call(&mut self, call: &aether_syntax::RCall) {
         let Ok(args) = call.arguments() else {
             return;
         };
@@ -833,8 +836,29 @@ impl<'a> SemanticIndexBuilder<'a> {
         };
 
         let call_offset = call.syntax().text_trimmed_range().start();
+        let resolution = self.resolve_source(&path);
 
-        let Some(resolution) = self.resolve_source(&path) else {
+        // Record every `source()` call site, independent of whether the
+        // resolution was successful. `resolved` pins the canonical URL when
+        // resolution succeeded so reflective queries (diagnostics for
+        // unresolved `source()`, file-dependency views) read the outcome
+        // without re-resolving.
+        self.semantic_calls.push(SemanticCall {
+            kind: SemanticCallKind::Source {
+                path: path.clone(),
+                resolved: resolution.as_ref().map(|r| r.file.clone()),
+            },
+            offset: call_offset,
+            scope: self.current_scope,
+        });
+
+        // Eagerly inject `Import` definitions and transitive `Attach` calls
+        // via the caller-provided resolver callback.
+        //
+        // TODO(salsa): the resolver callback generalises to a
+        // `CrossFileResolver` trait. oak_db will provide a salsa-backed
+        // implementation. The injection logic stays here.
+        let Some(resolution) = resolution else {
             return;
         };
 
@@ -850,7 +874,7 @@ impl<'a> SemanticIndexBuilder<'a> {
                 &name,
                 SymbolFlags::IS_BOUND,
                 DefinitionKind::Import {
-                    call: call.syntax().clone(),
+                    call: AstPtr::new(call),
                     file: file.clone(),
                     name: name.clone(),
                 },
@@ -859,8 +883,8 @@ impl<'a> SemanticIndexBuilder<'a> {
         }
 
         for pkg in resolution.packages {
-            self.directives.push(Directive {
-                kind: DirectiveKind::Attach(pkg),
+            self.semantic_calls.push(SemanticCall {
+                kind: SemanticCallKind::Attach { package: pkg },
                 offset: call_offset,
                 scope: self.current_scope,
             });
@@ -875,12 +899,16 @@ impl<'a> SemanticIndexBuilder<'a> {
     fn finish(mut self) -> SemanticIndex {
         self.scopes[ScopeId::from(0)].descendants.end = self.scopes.next_id();
 
-        let symbol_tables = self.symbol_tables.into_iter().map(|b| b.build()).collect();
+        let symbol_tables = self
+            .symbol_tables
+            .into_iter()
+            .map(|b| Arc::new(b.build()))
+            .collect();
         let use_def_maps: IndexVec<ScopeId, _> = self
             .use_def_maps
             .into_iter()
             .zip(self.uses.iter())
-            .map(|(b, (_, uses))| b.finish(uses))
+            .map(|(b, (_, uses))| Arc::new(b.finish(uses)))
             .collect();
 
         SemanticIndex::new(
@@ -890,7 +918,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             self.uses,
             use_def_maps,
             self.enclosing_snapshots,
-            self.directives,
+            self.semantic_calls,
         )
     }
 }

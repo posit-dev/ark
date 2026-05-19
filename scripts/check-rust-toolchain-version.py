@@ -1,48 +1,24 @@
 #!/usr/bin/env python3
 """
-Checks that the workspace `rust-version` matches the versioned toolchain pinned
-in `rust-toolchain.toml`.
+Checks that the workspace `rust-version` is not newer than the versioned
+toolchain pinned in `rust-toolchain.toml`.
 """
 
 import re
 import sys
 from pathlib import Path
 
+from _toml_utils import find_string_value
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SECTION_RE = re.compile(r"^\[(.+)\]$")
-KEY_VALUE_RE = re.compile(r'^([A-Za-z0-9_-]+)\s*=\s*"([^"]+)"\s*$')
 VERSION_RE = re.compile(r"^\d+(?:\.\d+){1,2}$")
 
 
-def find_string_value(path: Path, section_name: str, key_name: str) -> str | None:
-    current_section = None
-
-    with open(path, encoding="utf-8") as f:
-        for raw_line in f:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            section_match = SECTION_RE.fullmatch(line)
-            if section_match:
-                current_section = section_match.group(1)
-                continue
-
-            if current_section != section_name:
-                continue
-
-            key_value_match = KEY_VALUE_RE.fullmatch(line)
-            if key_value_match and key_value_match.group(1) == key_name:
-                return key_value_match.group(2)
-
-    return None
-
-
-def normalize_version(version: str) -> str:
-    parts = version.split(".")
-    while len(parts) > 2 and parts[-1] == "0":
-        parts.pop()
-    return ".".join(parts)
+def parse_version(version: str) -> tuple[int, int, int]:
+    parts = [int(p) for p in version.split(".")]
+    while len(parts) < 3:
+        parts.append(0)
+    return (parts[0], parts[1], parts[2])
 
 
 def main() -> int:
@@ -68,15 +44,17 @@ def main() -> int:
         )
         return 1
 
-    if normalize_version(rust_version) != normalize_version(channel):
+    if parse_version(rust_version) > parse_version(channel):
         print(
             "error: Cargo.toml `workspace.package.rust-version` "
-            f"({rust_version}) does not match rust-toolchain.toml `toolchain.channel` ({channel})"
+            f"({rust_version}) is newer than rust-toolchain.toml `toolchain.channel` ({channel}). "
+            "The MSRV must not exceed the pinned toolchain."
         )
         return 1
 
     print(
-        "Cargo.toml `workspace.package.rust-version` matches rust-toolchain.toml `toolchain.channel`."
+        f"Cargo.toml `workspace.package.rust-version` ({rust_version}) "
+        f"<= rust-toolchain.toml `toolchain.channel` ({channel})."
     )
     return 0
 

@@ -8,6 +8,8 @@ use oak_package_metadata::namespace::Namespace;
 use stdext::SortedVec;
 
 /// Represents an R package and its metadata relevant for static analysis.
+///
+/// TODO(salsa): Consolidate into `oak_db::Package` and remove after transition.
 #[derive(Clone, Debug)]
 pub struct Package {
     /// Path to the directory that contains `DESCRIPTION`. Can

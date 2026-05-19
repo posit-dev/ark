@@ -28,6 +28,8 @@ jobs:
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: 'false'
 
       - name: Install nextest
         uses: taiki-e/install-action@v2

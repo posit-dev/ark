@@ -7,10 +7,10 @@ use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::syntax_ext::RIdentifierExt;
 use oak_core::syntax_ext::RStringValueExt;
-use oak_index::semantic_index::SemanticIndex;
-use oak_index::DefinitionId;
-use oak_index::ScopeId;
-use oak_index::UseId;
+use oak_semantic::semantic_index::SemanticIndex;
+use oak_semantic::DefinitionId;
+use oak_semantic::ScopeId;
+use oak_semantic::UseId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Identifier {

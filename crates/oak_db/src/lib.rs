@@ -1,15 +1,19 @@
-use oak_index::library::Library;
-use oak_index::semantic_index::SemanticIndex;
-use url::Url;
+mod db;
+mod file;
+mod legacy;
+mod name;
+mod parse;
+mod source_graph;
 
-/// Database trait for cross-file queries.
-///
-/// This will become a Salsa `#[salsa::db]` trait. For now it's a plain
-/// trait that abstracts over how other files' semantic indexes are obtained.
-pub trait Db {
-    /// TODO(salsa): With tracked file inputs this becomes infallible in
-    /// practice. `None` means the file disappeared between index-build
-    /// and query time, which is an edge case, not a normal path.
-    fn semantic_index(&self, file: &Url) -> Option<SemanticIndex>;
-    fn library(&self) -> &Library;
-}
+#[cfg(test)]
+mod tests;
+
+pub use db::Db;
+pub use file::File;
+pub use legacy::LegacyDb;
+pub use name::Name;
+pub use source_graph::Package;
+pub use source_graph::PackageOrigin;
+pub use source_graph::Script;
+pub use source_graph::SourceGraph;
+pub use source_graph::SourceNode;

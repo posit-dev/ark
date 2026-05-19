@@ -4,7 +4,7 @@ use biome_rowan::TextRange;
 use oak_package_metadata::namespace::Namespace;
 use url::Url;
 
-use crate::semantic_index::DirectiveKind;
+use crate::semantic_index::SemanticCallKind;
 use crate::semantic_index::SemanticIndex;
 
 /// A layer in the scope chain. Layers are ordered most-local-first; resolution
@@ -27,7 +27,7 @@ pub enum ScopeLayer {
 
 /// Compute the scope layers that a single file contributes to the
 /// scope chain: one `FileExports` layer from its top-level definitions, plus
-/// one `PackageExports` layer per `library()`/`require()` directive.
+/// one `PackageExports` layer per `library()`/`require()` semantic call.
 pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
@@ -39,10 +39,14 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
 
     layers.push(ScopeLayer::FileExports { file, exports });
 
-    for directive in index.file_directives() {
-        match directive.kind() {
-            DirectiveKind::Attach(pkg) => {
-                layers.push(ScopeLayer::PackageExports(pkg.clone()));
+    for call in index.semantic_calls() {
+        match call.kind() {
+            SemanticCallKind::Attach { package } => {
+                layers.push(ScopeLayer::PackageExports(package.clone()));
+            },
+            SemanticCallKind::Source { .. } => {
+                // `source()` injects into local scope, not the search path;
+                // not a scope-chain layer.
             },
         }
     }

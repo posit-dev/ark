@@ -6,16 +6,16 @@ use aether_parser::RParserOptions;
 use assert_matches::assert_matches;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
-use oak_index::external::resolve_external_name;
-use oak_index::library::Library;
-use oak_index::package::Package;
-use oak_index::scope_layer::file_layers;
-use oak_index::scope_layer::package_root_layers;
-use oak_index::scope_layer::ScopeLayer;
-use oak_index::semantic_index;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Import;
 use oak_package_metadata::namespace::Namespace;
+use oak_semantic::external::resolve_external_name;
+use oak_semantic::library::Library;
+use oak_semantic::package::Package;
+use oak_semantic::scope_layer::file_layers;
+use oak_semantic::scope_layer::package_root_layers;
+use oak_semantic::scope_layer::ScopeLayer;
+use oak_semantic::semantic_index;
 use oak_sources::test::TestPackageCache;
 use stdext::SortedVec;
 use url::Url;
@@ -301,7 +301,7 @@ fn test_resolve_file_exports_last_definition_wins() {
 
 // --- file_layers ---
 
-fn index_source(source: &str) -> oak_index::semantic_index::SemanticIndex {
+fn index_source(source: &str) -> oak_semantic::semantic_index::SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
     semantic_index(
         &parsed.tree(),

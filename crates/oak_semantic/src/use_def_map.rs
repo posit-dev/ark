@@ -197,7 +197,7 @@ use crate::semantic_index::UseId;
 /// Also stores enclosing snapshots: the bindings that lazy nested scopes
 /// (i.e. nested functions) see when they reference a symbol defined in this
 /// scope. Looked up via `SemanticIndex::enclosing_bindings()`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UseDefMap {
     bindings_by_use: IndexVec<UseId, Bindings>,
 

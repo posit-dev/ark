@@ -1,6 +1,11 @@
 use std::ops::Range;
+use std::sync::Arc;
 
-use aether_syntax::RSyntaxNode;
+use aether_syntax::RBinaryExpression;
+use aether_syntax::RCall;
+use aether_syntax::RForStatement;
+use aether_syntax::RParameter;
+use biome_rowan::AstPtr;
 use biome_rowan::TextRange;
 use biome_rowan::TextSize;
 use oak_core::range::Ranged;
@@ -37,15 +42,16 @@ define_index!(EnclosingSnapshotId);
 // that each can be cached and invalidated independently (when salsa is
 // introduced).
 #[derive(Debug)]
+#[cfg_attr(feature = "salsa", derive(salsa::Update))]
+#[cfg_attr(feature = "testing", derive(PartialEq, Eq))]
 pub struct SemanticIndex {
     scopes: IndexVec<ScopeId, Scope>,
 
-    // ty wraps per-scope tables in `Arc` so they can be returned from
-    // individual salsa tracked queries (e.g. `place_table(db, scope) ->
-    // Arc<PlaceTable>`). Salsa compares the returned `Arc` by `Eq` to skip
-    // re-running downstream queries when a scope's table hasn't changed.
-    // We defer that until salsa is introduced.
-    symbol_tables: IndexVec<ScopeId, SymbolTable>,
+    // Heavy per-scope tables are `Arc`-wrapped so narrow tracked queries
+    // (e.g. `symbol_table(db, file, scope) -> Arc<SymbolTable>`) can
+    // return them cheaply, and salsa's storage uses `Arc::ptr_eq` as a
+    // fast path during update comparisons. Matches ty's pattern.
+    symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
 
     // Flat per-scope lists of definition and use sites. These support rename
     // and go-to-definition by letting us find all sites for a given symbol
@@ -62,27 +68,29 @@ pub struct SemanticIndex {
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
 
-    // Per-scope flow-sensitive map from each use site to the set of definitions
-    // that can reach it. Built alongside the other arrays during the tree walk.
-    use_def_maps: IndexVec<ScopeId, UseDefMap>,
+    // Per-scope flow-sensitive map from each use site to the set of
+    // definitions that can reach it. Built alongside the other arrays
+    // during the tree walk. `Arc`-wrapped for fast Salsa comparisons.
+    use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
 
     // For each free variable in a nested scope, maps to the enclosing scope and
     // snapshot where that symbol is bound.
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
 
-    // Scope-chain directives called at top-level, such as `library()` or `require()`.
-    directives: Vec<Directive>,
+    // Cross-file call sites recorded during indexing, such as `library()`
+    // attachments or `source()` injections.
+    semantic_calls: Vec<SemanticCall>,
 }
 
 impl SemanticIndex {
     pub(crate) fn new(
         scopes: IndexVec<ScopeId, Scope>,
-        symbol_tables: IndexVec<ScopeId, SymbolTable>,
+        symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
         definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
-        use_def_maps: IndexVec<ScopeId, UseDefMap>,
+        use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
-        directives: Vec<Directive>,
+        semantic_calls: Vec<SemanticCall>,
     ) -> Self {
         Self {
             scopes,
@@ -91,7 +99,7 @@ impl SemanticIndex {
             uses,
             use_def_maps,
             enclosing_snapshots,
-            directives,
+            semantic_calls,
         }
     }
 
@@ -99,7 +107,7 @@ impl SemanticIndex {
         &self.scopes[id]
     }
 
-    pub fn symbols(&self, scope: ScopeId) -> &SymbolTable {
+    pub fn symbols(&self, scope: ScopeId) -> &Arc<SymbolTable> {
         &self.symbol_tables[scope]
     }
 
@@ -111,7 +119,7 @@ impl SemanticIndex {
         &self.uses[scope]
     }
 
-    pub fn use_def_map(&self, scope: ScopeId) -> &UseDefMap {
+    pub fn use_def_map(&self, scope: ScopeId) -> &Arc<UseDefMap> {
         &self.use_def_maps[scope]
     }
 
@@ -131,19 +139,21 @@ impl SemanticIndex {
         exports
     }
 
-    /// Package names from `library()` / `require()` directives in this file.
+    /// Package names from `library()` / `require()` calls in this file.
     pub fn file_attached_packages(&self) -> Vec<&str> {
-        self.directives
+        self.semantic_calls
             .iter()
-            .map(|d| match &d.kind {
-                DirectiveKind::Attach(pkg) => pkg.as_str(),
+            .filter_map(|c| match &c.kind {
+                SemanticCallKind::Attach { package } => Some(package.as_str()),
+                SemanticCallKind::Source { .. } => None,
             })
             .collect()
     }
 
-    /// File-level directives (e.g. `library()` calls) recorded during indexing.
-    pub fn file_directives(&self) -> &[Directive] {
-        &self.directives
+    /// Cross-file call sites (`library()`, `source()`, …) recorded
+    /// during indexing.
+    pub fn semantic_calls(&self) -> &[SemanticCall] {
+        &self.semantic_calls
     }
 
     /// Find the innermost scope containing `offset`.
@@ -265,7 +275,7 @@ pub struct EnclosingSnapshotKey {
 // Currently only `function()` creates a new scope. In the future, constructs
 // like `local()`, `with()`, `within()` may also create scopes (determined
 // by function declarations resolved via salsa queries).
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Scope {
     pub(crate) parent: Option<ScopeId>,
     pub(crate) kind: ScopeKind,
@@ -308,7 +318,7 @@ impl Ranged for Scope {
 // --- Symbol table (per scope) ---
 
 // Read-only after construction. The builder uses `SymbolTableBuilder`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct SymbolTable {
     symbols: IndexVec<SymbolId, Symbol>,
 
@@ -395,7 +405,7 @@ impl std::ops::Deref for SymbolTableBuilder {
 // access like `x.y`). `resolve_symbol()` walks the scope chain looking for a
 // symbol with `IS_BOUND`. Future type inference will look up the symbol's
 // definitions and infer a type from them.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Symbol {
     pub(crate) name: String,
     pub(crate) flags: SymbolFlags,
@@ -489,7 +499,7 @@ impl SymbolFlags {
 // implicitly declarations (they declare a name as a function with a specific
 // signature). Future `declare()` annotations will also produce pure
 // declarations.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
     /// The file that owns this definition's index.
@@ -502,16 +512,16 @@ pub struct Definition {
     pub(crate) range: TextRange,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefinitionKind {
-    Assignment(RSyntaxNode),
-    SuperAssignment(RSyntaxNode),
-    Parameter(RSyntaxNode),
-    ForVariable(RSyntaxNode),
+    Assignment(AstPtr<RBinaryExpression>),
+    SuperAssignment(AstPtr<RBinaryExpression>),
+    Parameter(AstPtr<RParameter>),
+    ForVariable(AstPtr<RForStatement>),
     /// A forwarding binding that resolves to a definition in another file.
     /// Consumers must chase the `file`/`name` chain to reach the actual origin.
     Import {
-        call: RSyntaxNode,
+        call: AstPtr<RCall>,
         file: Url,
         name: String,
     },
@@ -550,7 +560,7 @@ impl Ranged for Definition {
 // node positions to use IDs). Our flat list serves the same purpose: the
 // `UseDefMap` will reference `UseId` indices into this list to connect each
 // use to its reaching definitions.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Use {
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
@@ -572,22 +582,33 @@ impl Ranged for Use {
     }
 }
 
-/// A directive that affects the file's imports (e.g. `library()` calls).
-#[derive(Debug, Clone)]
-pub struct Directive {
-    pub(crate) kind: DirectiveKind,
+/// A cross-file call site recorded at parse time (`library()`,
+/// `source()`, ...). Different kinds carry different downstream
+/// semantics, see [`SemanticCallKind`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticCall {
+    pub(crate) kind: SemanticCallKind,
     pub(crate) offset: TextSize,
     pub(crate) scope: ScopeId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DirectiveKind {
-    /// `library(pkg)` or `require(pkg)`: attaches a package to the search path.
-    Attach(String),
+pub enum SemanticCallKind {
+    /// `library(pkg)` or `require(pkg)`: attaches a package to the
+    /// search path. Contributes a fallback layer for unbound symbols.
+    Attach { package: String },
+    /// `source("path")`: injects the sourced file's top-level
+    /// bindings into the current scope. Local-scope semantics, not
+    /// search-path semantics.
+    ///
+    /// `resolved` is the canonical URL the resolver mapped `path` to,
+    /// or `None` if no resolver was provided or the resolver couldn't
+    /// resolve the path.
+    Source { path: String, resolved: Option<Url> },
 }
 
-impl Directive {
-    pub fn kind(&self) -> &DirectiveKind {
+impl SemanticCall {
+    pub fn kind(&self) -> &SemanticCallKind {
         &self.kind
     }
 
