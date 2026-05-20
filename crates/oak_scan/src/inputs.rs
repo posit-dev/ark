@@ -66,11 +66,56 @@ pub trait DbScan: Db + DbInputs {
     /// Order in `LibraryRoots.roots` follows `paths`, matching R's
     /// `.libPaths()` precedence.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
+
+    /// Scan each workspace path and register the result under
+    /// `WorkspaceRoots`. Each path becomes a `Workspace` root with
+    /// its discovered packages (`DESCRIPTION` files at any depth,
+    /// honouring `.gitignore`) and top-level R scripts. Existing
+    /// `Root` entities at each path are reused.
+    ///
+    /// TODO(scan): rename to `set_workspace_paths` and adopt the diff-
+    /// based reconciliation pattern that `set_library_paths` uses
+    /// (untouched / scanned / evicted-to-stale).
+    fn scan_workspace_paths(&mut self, paths: &[PathBuf]);
+
+    /// Upsert a file from the VFS. Used by the LSP layer to apply
+    /// `didOpen` / `didChange` content for any URL the editor touches.
+    ///
+    /// If a `File` already exists at this URL, its contents are
+    /// updated. Classification is left as-is: a file the scanner had
+    /// previously placed in a package stays in that package, since
+    /// `didOpen` is a content event, not a reclassification.
+    ///
+    /// If no `File` exists yet, one is created in
+    /// `orphan_root().files`. It stays there until something
+    /// explicitly reclassifies it. Untitled buffers and files outside
+    /// every workspace stay orphan for the session. Files that should
+    /// belong to a workspace scan's output land in their proper
+    /// container when the workspace scanner next runs.
+    fn set_file_contents(&mut self, url: UrlId, contents: String) -> File;
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
     fn set_library_paths(&mut self, paths: &[PathBuf]) {
         crate::library::set_library_paths(self, paths);
+    }
+
+    fn scan_workspace_paths(&mut self, paths: &[PathBuf]) {
+        crate::workspace::scan_workspace_paths(self, paths);
+    }
+
+    fn set_file_contents(&mut self, url: UrlId, contents: String) -> File {
+        if let Some(existing) = self.file_by_url(&url) {
+            existing.set_contents(self).to(contents);
+            return existing;
+        }
+
+        let file = File::new(self, url, contents, None);
+        let orphan = self.orphan_root();
+        let mut files = orphan.files(self).clone();
+        files.push(file);
+        orphan.set_files(self).to(files);
+        file
     }
 }
 
@@ -119,6 +164,12 @@ pub trait RootExt {
     /// Doesn't touch `LibraryRoots` / `WorkspaceRoots`. The caller is
     /// responsible for rebuilding those Vec inputs with `self` excluded.
     fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>);
+
+    /// Replace `self.scripts` with `File` entities for `files`. Same
+    /// identity rules as [`set_package`](Self::set_package): existing
+    /// `File` entities at the given URLs are reused and have their
+    /// `package` field cleared.
+    fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>);
 }
 
 impl RootExt for Root {
@@ -167,6 +218,14 @@ impl RootExt for Root {
 
     fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>) {
         crate::stale::set_root_stale(db, self, editor_owned);
+    }
+
+    fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>) {
+        let scripts: Vec<File> = files
+            .into_iter()
+            .map(|entry| upsert_file(db, None, entry))
+            .collect();
+        self.set_scripts(db).to(scripts);
     }
 }
 

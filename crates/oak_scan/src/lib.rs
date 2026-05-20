@@ -27,6 +27,7 @@ mod library;
 mod lookup;
 mod packages;
 mod stale;
+mod workspace;
 
 #[cfg(test)]
 mod tests;

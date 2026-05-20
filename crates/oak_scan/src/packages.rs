@@ -8,6 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use aether_url::UrlId;
+use ignore::WalkBuilder;
 use oak_package_metadata::description::Description;
 use oak_package_metadata::namespace::Namespace;
 use stdext::result::ResultExt;
@@ -108,4 +109,74 @@ fn scan_r_files(r_dir: &Path) -> Vec<FileEntry> {
 
 fn is_r_file(path: &Path) -> bool {
     path.is_file() && oak_core::is_r_file(path)
+}
+
+/// Walk a workspace root, returning every discovered package and every
+/// top-level R script that isn't inside a package directory.
+///
+/// `DESCRIPTION` files are looked up at any depth, honouring `.gitignore`
+/// and `.ignore` and skipping hidden directories. A package's R/ files
+/// are scoped to `{pkg_dir}/R/*.R`. R files that fall inside any
+/// discovered package directory but outside its `R/` (e.g. tests/,
+/// vignettes/, inst/) are excluded from `scripts`. Everything else with
+/// an `.R` extension becomes a top-level script on the workspace root.
+pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageDescriptor>, Vec<FileEntry>) {
+    let description_dirs = collect_description_dirs(root);
+
+    let packages: Vec<PackageDescriptor> = description_dirs
+        .iter()
+        .filter_map(|dir| read_package(dir))
+        .collect();
+
+    let scripts = collect_scripts(root, &description_dirs);
+
+    (packages, scripts)
+}
+
+/// Walk `root` and return every directory that contains a `DESCRIPTION`
+/// file. Honours `.gitignore` / `.ignore` / hidden-file conventions via
+/// the `ignore` crate's standard filters.
+fn collect_description_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for entry in WalkBuilder::new(root).build().flatten() {
+        let Some(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        if entry.file_name() != "DESCRIPTION" {
+            continue;
+        }
+        if let Some(parent) = entry.path().parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    dirs
+}
+
+/// Collect `*.R` files anywhere under `root` that aren't inside any
+/// package directory. Files inside `pkg_dir/R/` are owned by that
+/// package; files elsewhere in `pkg_dir` (tests/, inst/, etc.) are
+/// skipped entirely to avoid double-registering package-internal R
+/// sources as workspace scripts.
+fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
+    let mut scripts = Vec::new();
+    for entry in WalkBuilder::new(root).build().flatten() {
+        let path = entry.path();
+        if !is_r_file(path) {
+            continue;
+        }
+        if package_dirs.iter().any(|pkg| path.starts_with(pkg)) {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(path) else {
+            continue;
+        };
+        let Ok(url) = UrlId::from_file_path(path) else {
+            continue;
+        };
+        scripts.push(FileEntry { url, contents });
+    }
+    scripts
 }
