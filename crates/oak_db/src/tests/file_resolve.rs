@@ -95,8 +95,11 @@ fn test_resolve_is_cached_across_repeat_calls() {
     let _ = file.resolve(&db, name(&db, "x"));
     let _ = file.resolve(&db, name(&db, "x"));
 
-    // Tracked: the second call hits the salsa cache.
-    assert_eq!(db.executions("resolve"), 1);
+    // Tracked: the second call hits the salsa cache. Match `resolve_(`
+    // (salsa formats database keys as `File::resolve_(Id(...))`, with a
+    // trailing underscore on the method name) so the substring doesn't
+    // also pick up `resolve_export`, the tracked helper.
+    assert_eq!(db.executions("resolve_("), 1);
 }
 
 #[test]
@@ -266,4 +269,85 @@ fn test_definition_id_stable_across_body_edits() {
     assert_eq!(id1, id2);
     // Range moved (the binding is now on line 2).
     assert_ne!(range1, range2);
+}
+
+#[test]
+fn test_resolve_unbound_name_in_package_does_not_cycle() {
+    // Without exports-only sibling chase, A's `resolve` would walk into
+    // B's `resolve`, which would walk back into A via B's imports
+    // (sibling exclusion is per-file), and salsa would panic on the
+    // unbound name. Test that we return None cleanly.
+    let mut db = TestDb::new();
+    let workspace = workspace_root(&db, "w/pkg");
+    let pkg = crate::Package::new(
+        &db,
+        workspace,
+        "pkg".to_string(),
+        None,
+        oak_package_metadata::namespace::Namespace::default(),
+        Vec::new(),
+        None,
+    );
+
+    let a = File::new(
+        &db,
+        file_url("/w/pkg/R/a.R"),
+        "x <- 1\n".to_string(),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_url("/w/pkg/R/b.R"),
+        "y <- 2\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    assert!(a.resolve(&db, name(&db, "nope")).is_none());
+    assert!(b.resolve(&db, name(&db, "nope")).is_none());
+}
+
+#[test]
+fn test_resolve_walks_package_files_for_lazy_lookups() {
+    // `resolve` is the lazy / EOF-state lookup. By the time a function
+    // in `b.R` runs, the whole package has been sourced, so `b.R`'s
+    // function bodies see definitions from any sibling file. Test
+    // directly on `resolve` (not `resolve_at`) to nail down the
+    // imports walk.
+    let mut db = TestDb::new();
+    let workspace = workspace_root(&db, "w/pkg");
+    let pkg = crate::Package::new(
+        &db,
+        workspace,
+        "pkg".to_string(),
+        None,
+        oak_package_metadata::namespace::Namespace::default(),
+        Vec::new(),
+        None,
+    );
+
+    let a = File::new(
+        &db,
+        file_url("/w/pkg/R/a.R"),
+        "shared <- 1\n".to_string(),
+        Some(pkg),
+    );
+    let b = File::new(
+        &db,
+        file_url("/w/pkg/R/b.R"),
+        "use_shared <- function() shared\n".to_string(),
+        Some(pkg),
+    );
+    pkg.set_files(&mut db).to(vec![a, b]);
+    workspace.set_packages(&mut db).to(vec![pkg]);
+    db.workspace_roots().set_roots(&mut db).to(vec![workspace]);
+
+    // `b` has no top-level `shared`, but `a` (a sibling file in the
+    // same package) does. `b.resolve("shared")` should find it via the
+    // imports walk.
+    let def = b.resolve(&db, name(&db, "shared")).expect("should resolve");
+    assert_eq!(def.file(&db), a);
+    assert_eq!(def.name(&db).text(&db).as_str(), "shared");
 }
