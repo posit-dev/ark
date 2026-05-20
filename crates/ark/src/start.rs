@@ -53,12 +53,13 @@ pub fn start_kernel(
 
     if !r_version.is_supported() {
         panic!(
-            "Unsupported R version {}.{}.{}. Ark requires R >= {}.{}.0",
+            "Unsupported R version {}.{}.{}. Ark requires R >= {}.{}.{}",
             r_version.major,
             r_version.minor,
             r_version.patch,
             crate::version::MIN_R_MAJOR,
             crate::version::MIN_R_MINOR,
+            crate::version::MIN_R_PATCH,
         );
     };
 

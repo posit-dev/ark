@@ -18,6 +18,7 @@ use oak_package_metadata::description::Description;
 
 pub const MIN_R_MAJOR: u32 = 4;
 pub const MIN_R_MINOR: u32 = 2;
+pub const MIN_R_PATCH: u32 = 0;
 
 pub struct RVersion {
     // Major version of the R installation
@@ -32,7 +33,7 @@ pub struct RVersion {
 
 impl RVersion {
     pub fn is_supported(&self) -> bool {
-        self.major > MIN_R_MAJOR || (self.major == MIN_R_MAJOR && self.minor >= MIN_R_MINOR)
+        (self.major, self.minor, self.patch) >= (MIN_R_MAJOR, MIN_R_MINOR, MIN_R_PATCH)
     }
 }
 
