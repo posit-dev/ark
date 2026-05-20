@@ -18,6 +18,8 @@ use std::sync::RwLock;
 use anyhow::anyhow;
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
+use oak_db::OakDatabase;
+use oak_scan::DbExt;
 use oak_semantic::library::Library;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::unbounded_channel as tokio_unbounded_channel;
@@ -216,10 +218,13 @@ impl GlobalState {
 
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
+        let mut oak = OakDatabase::new();
+        oak.scan_library_paths(&library_paths);
+
         let library = Library::new(library_paths);
 
         Self {
-            world: WorldState::new(library),
+            world: WorldState::new(library, oak),
             lsp_state,
             client,
             events_tx,

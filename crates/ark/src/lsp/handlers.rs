@@ -197,7 +197,11 @@ pub(crate) fn handle_completion(
     let context = DocumentContext::new(document, point, trigger);
     lsp::log_info!("Completion context: {:#?}", context);
 
-    let completions = r_task(|| provide_completions(&context, state))?;
+    // TODO(oak/completions): Clone so the closure captures by value. `r_task()`
+    // sends the closure across threads, and `&WorldState` isn't `Send` because
+    // `OakDatabase`'s salsa storage keeps thread-local query state.
+    let state = state.clone();
+    let completions = r_task(move || provide_completions(&context, &state))?;
 
     if !completions.is_empty() {
         Ok(Some(CompletionResponse::Array(completions)))

@@ -5,8 +5,11 @@
 //
 //
 
+use std::path::PathBuf;
+
 use aether_url::UrlId;
 use anyhow::anyhow;
+use oak_scan::DbExt;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
@@ -90,10 +93,13 @@ pub(crate) fn initialize(
 
     // Initialize the workspace folders
     let mut folders: Vec<String> = Vec::new();
+    let mut workspace_paths: Vec<PathBuf> = Vec::new();
+
     if let Some(workspace_folders) = params.workspace_folders {
         for folder in workspace_folders.iter() {
             state.workspace.folders.push(folder.uri.clone());
             if let Ok(path) = folder.uri.to_file_path() {
+                workspace_paths.push(path.clone());
                 // Try to load package from this workspace folder and set as
                 // root if found. This means we're dealing with a package
                 // source.
@@ -127,6 +133,9 @@ pub(crate) fn initialize(
             }
         }
     }
+
+    // Drive `WorkspaceRoots` in oak_db from the editor's open folders.
+    state.oak.scan_workspace_paths(&workspace_paths);
 
     // Start first round of indexing
     lsp::main_loop::index_start(folders, state.clone());
@@ -236,6 +245,9 @@ pub(crate) fn did_open(
     lsp_state.parsers.insert(uri.clone(), parser);
     state.documents.insert(uri.clone(), document.clone());
 
+    let url_id = UrlId::from_url(uri.clone());
+    state.oak.set_file_contents(url_id, contents.to_string());
+
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
 
@@ -259,6 +271,10 @@ pub(crate) fn did_change(
         .ok_or(anyhow!("No parser for {uri}"))?;
 
     document.on_did_change(parser, &params);
+
+    let new_contents = document.contents.to_string();
+    let url_id = UrlId::from_url(uri.clone());
+    state.oak.set_file_contents(url_id, new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 

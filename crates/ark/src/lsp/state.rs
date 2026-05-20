@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::anyhow;
+use oak_db::OakDatabase;
 use oak_semantic::library::Library;
 use url::Url;
 
@@ -57,6 +58,9 @@ pub(crate) struct WorldState {
     /// libraries. Lazily populated.
     pub(crate) library: Library,
 
+    /// Salsa input tree for Oak queries.
+    pub(crate) oak: OakDatabase,
+
     pub(crate) config: LspConfig,
 }
 
@@ -66,9 +70,10 @@ pub(crate) struct Workspace {
 }
 
 impl WorldState {
-    pub(crate) fn new(library: Library) -> Self {
+    pub(crate) fn new(library: Library, oak: OakDatabase) -> Self {
         Self {
             library,
+            oak,
             ..Default::default()
         }
     }

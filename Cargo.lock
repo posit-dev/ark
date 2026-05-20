@@ -434,6 +434,7 @@ dependencies = [
  "oak_db",
  "oak_ide",
  "oak_package_metadata",
+ "oak_scan",
  "oak_semantic",
  "oak_sources",
  "once_cell",
