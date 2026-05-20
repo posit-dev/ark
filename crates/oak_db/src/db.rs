@@ -1,5 +1,4 @@
 use aether_url::UrlId;
-use query_group_macro::query_group;
 use rustc_hash::FxHashMap;
 
 use crate::File;
@@ -13,10 +12,10 @@ use crate::WorkspaceRoots;
 /// ([`crate::OakDatabase`], the test db) supplies the three singleton input
 /// handles.
 ///
-/// Kept separate from [`Db`] (the query trait) so the `#[query_group]` macro on
-/// `Db` doesn't try to interpret these accessor methods as salsa inputs.
-/// Mirrors rust-analyzer's `SourceDatabase` / `DefDatabase` split: input
-/// plumbing lives on the base trait, derived queries on the query-group trait.
+/// Kept separate from [`Db`] (the query trait) so input accessors and derived
+/// queries live on different traits. Mirrors rust-analyzer's `SourceDatabase`
+/// / `DefDatabase` split: input plumbing on the base trait, derived queries
+/// on the query trait.
 #[salsa::db]
 pub trait DbInputs: salsa::Database {
     /// Workspace folders opened by the editor.
@@ -32,10 +31,14 @@ pub trait DbInputs: salsa::Database {
 /// Salsa database trait used throughout `oak_db`. Tracked queries take `&dyn
 /// Db`, so query code never names the concrete db type.
 ///
-/// `#[query_group]` generates per-method shims plus a blanket impl covering
-/// both `&dyn Db` and concrete db references, so the method call syntax (e.g.
-/// `db.file_by_url(url)`) works in both contexts.
-#[query_group]
+/// Methods aren't memoized at this level: they delegate to free helpers
+/// (`file_by_url_query` etc.) that walk per-root indices which *are* memoized,
+/// so salsa records dep edges through those.
+///
+/// Each concrete db type provides its own forwarding `impl Db`, which is
+/// what lets `db.file_by_url(url)` work on both `&dyn Db` (via the trait
+/// method) and concrete db references (via the type's impl).
+#[salsa::db]
 pub trait Db: DbInputs {
     /// Look up the `File` interned at `url`, if any.
     ///
@@ -43,16 +46,12 @@ pub trait Db: DbInputs {
     /// then falls back to the orphan bucket. The walk short-circuits
     /// on the first hit, so callers depend only on the index maps
     /// actually visited.
-    #[salsa::invoke(file_by_url_query)]
-    #[salsa::transparent]
     fn file_by_url(&self, url: &UrlId) -> Option<File>;
 
     /// Look up the `Package` named `name`, applying the following precedence:
     /// - Workspace packages shadow installed ones
     /// - Installed packages in an earlier root shadow later ones
     ///   (mirroring `.libPaths()`).
-    #[salsa::invoke(package_by_name_query)]
-    #[salsa::transparent]
     fn package_by_name(&self, name: &str) -> Option<Package>;
 }
 
@@ -62,7 +61,7 @@ pub trait Db: DbInputs {
 /// entity), but every step is: each [`root_url_index`] call returns a
 /// cached map, so adding a file to one root invalidates only that
 /// root's index.
-fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
+pub fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
     for root in db.workspace_roots().roots(db) {
         if let Some(&file) = root_url_index(db, *root).get(url) {
             return Some(file);
@@ -78,7 +77,7 @@ fn file_by_url_query(db: &dyn Db, url: &UrlId) -> Option<File> {
 
 /// Implementation of [`Db::package_by_name`]. Same shape as
 /// [`file_by_url_query`].
-fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
+pub fn package_by_name_query(db: &dyn Db, name: &str) -> Option<Package> {
     for root in db.workspace_roots().roots(db) {
         if let Some(&pkg) = root_package_index(db, *root).get(name) {
             return Some(pkg);

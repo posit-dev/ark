@@ -95,6 +95,17 @@ impl DbInputs for TestDb {
     }
 }
 
+#[salsa::db]
+impl Db for TestDb {
+    fn file_by_url(&self, url: &UrlId) -> Option<crate::File> {
+        crate::db::file_by_url_query(self, url)
+    }
+
+    fn package_by_name(&self, name: &str) -> Option<crate::Package> {
+        crate::db::package_by_name_query(self, name)
+    }
+}
+
 pub(super) fn file_url(name: &str) -> UrlId {
     // `Url::to_file_path` on Windows requires a drive-letter prefix, so
     // synthesize one for tests. Linux is happy with rootless paths.

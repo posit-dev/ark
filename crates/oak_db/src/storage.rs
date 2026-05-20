@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+use crate::Db;
 use crate::DbInputs;
 use crate::LibraryRoots;
 use crate::OrphanRoot;
@@ -42,5 +43,16 @@ impl DbInputs for OakDatabase {
 
     fn orphan_root(&self) -> OrphanRoot {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
+    }
+}
+
+#[salsa::db]
+impl Db for OakDatabase {
+    fn file_by_url(&self, url: &aether_url::UrlId) -> Option<crate::File> {
+        crate::db::file_by_url_query(self, url)
+    }
+
+    fn package_by_name(&self, name: &str) -> Option<crate::Package> {
+        crate::db::package_by_name_query(self, name)
     }
 }
