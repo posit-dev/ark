@@ -32,7 +32,7 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
         children: Some(
             [
                 DocumentSymbol {
-                    name: "Test: foo",
+                    name: "foo",
                     detail: None,
                     kind: Function,
                     tags: None,
@@ -187,7 +187,7 @@ expression: "test_symbol(\"\ntest_that_not('foo', {\n  1\n})\n\n# title ----\n\n
         children: Some(
             [
                 DocumentSymbol {
-                    name: "Test: bar",
+                    name: "bar",
                     detail: None,
                     kind: Function,
                     tags: None,
