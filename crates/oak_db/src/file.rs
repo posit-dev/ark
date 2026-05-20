@@ -50,6 +50,8 @@ pub struct File {
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
+    /// **Placement invariant.** Call this setter only through
+    /// `oak_scan`'s helpers; see the type-level doc above.
     pub package: Option<Package>,
 }
 

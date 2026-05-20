@@ -25,6 +25,12 @@ pub struct Root {
     /// Top-level R scripts directly under this root. Each entry is a
     /// `File` with `package(db) == None`. Always empty for `Library`
     /// roots.
+    ///
+    /// **Placement invariant.** A file present here must have
+    /// `package(db) == None`, and a file with `package == None` must
+    /// live here, in another `Root.scripts`, or in
+    /// `OrphanRoot.files`. Call this setter only through `oak_scan`'s
+    /// helpers, which keep the back-pointer and the container in sync.
     #[returns(ref)]
     pub scripts: Vec<File>,
     /// Packages discovered under this root (workspace packages for
@@ -90,6 +96,9 @@ impl LibraryRoots {
 /// [`crate::Db::file_by_url`] consults to find unanchored files.
 #[salsa::input]
 pub struct OrphanRoot {
+    /// **Placement invariant.** Files here must have `package(db) ==
+    /// None`. Call this setter only through `oak_scan`'s helpers,
+    /// which keep the back-pointer and the container in sync.
     #[returns(ref)]
     pub files: Vec<File>,
 }
@@ -106,6 +115,10 @@ pub struct Package {
     /// a [`RootKind::Workspace`] root, installed packages live under a
     /// [`RootKind::Library`] root. Read `root.kind(db)` to distinguish.
     pub root: Root,
+    // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
+    // method so `db.package_by_name()` and other lookups key on the
+    // interned id rather than the string. Can't store `Name<'db>` on
+    // `Package` directly because salsa inputs are lifetime-free.
     #[returns(ref)]
     pub name: String,
     /// Installed-package version (from `DESCRIPTION`). `None` for
@@ -118,6 +131,11 @@ pub struct Package {
     /// Per-package granularity: adding or removing a file in one
     /// package doesn't invalidate tracked queries reading another
     /// package's files.
+    ///
+    /// **Placement invariant.** A file present here must have
+    /// `package(db) == Some(self)`. Call this setter only through
+    /// `oak_scan`'s helpers, which keep the back-pointer and the
+    /// container in sync.
     #[returns(ref)]
     pub files: Vec<File>,
     /// The basename ordering from `DESCRIPTION`'s `Collate` field, if
