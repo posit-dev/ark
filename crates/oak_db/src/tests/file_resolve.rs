@@ -187,21 +187,47 @@ fn test_name_range_for_string_as_name() {
 }
 
 #[test]
-fn test_name_range_is_none_for_imported_binding_at_source_site() {
-    // Resolution chases past `Import` chains, so a successful resolve
-    // always lands on a `Local`. But the `Definition::name_range` method
-    // is documented to return `None` for `Import` kinds — we exercise the
-    // arm directly by constructing one via a sourced binding that
-    // *doesn't* resolve to a Local (unregistered target).
-    //
-    // Setup: `a.R` does `source("b.R")` but `b.R` isn't registered, so
-    // the `Source` semantic call records no Import entries. Resolve
-    // returns None, so name_range isn't directly exercised here. The
-    // Import arm of name_range stays untested through public API; it's
-    // mechanical and protected by the type system.
+fn test_name_range_returns_none_for_import_kind() {
+    // `File::resolve` chases past every `Import` and only ever returns a
+    // `Local`-kinded `Definition`, so the `Import` arm of `name_range` is
+    // unreachable from the public resolution API. Wrap construction of an
+    // `Import` definition in a tracked helper (salsa requires tracked
+    // structs be created on the query stack) and exercise the arm directly.
+    use aether_syntax::RCall;
+    use biome_rowan::AstNode;
+    use biome_rowan::AstPtr;
+    use oak_semantic::semantic_index::DefinitionKind;
+    use oak_semantic::semantic_index::ScopeId;
+
+    use crate::Db;
+    use crate::Definition;
+
+    #[salsa::tracked]
+    fn build_import_definition<'db>(
+        db: &'db dyn Db,
+        file: File,
+        name: Name<'db>,
+    ) -> Definition<'db> {
+        let parse = file.parse(db);
+        let call = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(RCall::cast)
+            .expect("file must contain a call");
+        let kind = DefinitionKind::Import {
+            call: AstPtr::new(&call),
+            file: file.url(db).as_url().clone(),
+            name: name.text(db).to_string(),
+        };
+        Definition::new(db, file, ScopeId::from(0), name, kind)
+    }
+
     let mut db = TestDb::new();
     let files = setup_workspace(&mut db, &[("w/a.R", "source(\"b.R\")\n")]);
-    assert!(files[0].resolve(&db, name(&db, "anything")).is_none());
+    let def = build_import_definition(&db, files[0], name(&db, "foo"));
+
+    assert!(def.name_range(&db).is_none());
 }
 
 #[test]
