@@ -5,6 +5,7 @@ use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
+use stdext::result::ResultExt;
 
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
@@ -134,12 +135,17 @@ impl File {
 /// every workspace folder. Private helper: the only caller is
 /// [`File::root`] (for files without a registered package).
 fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
-    let path = url.to_file_path()?;
+    // Virtual documents (e.g. untitled scheme) don't have roots
+    if !url.is_file() {
+        return None;
+    }
+
+    let path = url.to_file_path().log_err()?;
     db.workspace_roots()
         .roots(db)
         .iter()
         .filter_map(|root| {
-            let root_path = root.path(db).to_file_path()?;
+            let root_path = root.path(db).to_file_path().log_err()?;
             path.starts_with(&root_path).then_some((root_path, *root))
         })
         .max_by_key(|(p, _)| p.components().count())

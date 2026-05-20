@@ -2563,6 +2563,7 @@ dependencies = [
  "rustc-hash",
  "salsa",
  "salsa-macros",
+ "stdext",
  "url",
 ]
 

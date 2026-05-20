@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use aether_url::UrlId;
 use oak_semantic::ImportsResolver;
 use oak_semantic::SourceResolution;
+use stdext::result::ResultExt;
 use url::Url;
 
 use crate::Db;
@@ -88,9 +89,15 @@ fn anchor_dir(db: &dyn Db, calling_file: File) -> Option<PathBuf> {
         .root(db)
         .filter(|r| r.kind(db) == RootKind::Workspace)
     {
-        return root.path(db).to_file_path();
+        // Workspace roots are file URLs by construction.
+        return root.path(db).to_file_path().log_err();
     }
-    let calling_path = calling_file.url(db).to_file_path()?;
+
+    let url = calling_file.url(db);
+    if !url.is_file() {
+        return None;
+    }
+    let calling_path = url.to_file_path().log_err()?;
     calling_path.parent().map(PathBuf::from)
 }
 

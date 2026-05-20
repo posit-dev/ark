@@ -25,6 +25,7 @@ oak_semantic = { workspace = true, features = ["salsa"] }
 rustc-hash.workspace = true
 salsa.workspace = true
 salsa-macros.workspace = true
+stdext.workspace = true
 url.workspace = true
 
 [dev-dependencies]
