@@ -64,11 +64,16 @@ fn script_imports(file: File, db: &dyn Db) -> Vec<ImportLayer> {
     // them; callers that need offset-based narrowing filter at query
     // time.
     for call in index.semantic_calls() {
-        let SemanticCallKind::Attach { package: name } = call.kind() else {
-            continue;
-        };
-        if let Some(package) = db.package_by_name(name) {
-            layers.push(ImportLayer::PackageExports(package));
+        match call.kind() {
+            SemanticCallKind::Attach { package: name } => {
+                if let Some(package) = db.package_by_name(name) {
+                    layers.push(ImportLayer::PackageExports(package));
+                }
+            },
+            SemanticCallKind::Source { .. } => {
+                // `source()` injects into local scope, not the search path,
+                // so it's not a scope-chain layer.
+            },
         }
     }
 
