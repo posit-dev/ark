@@ -94,7 +94,7 @@ impl<'db> File {
     ///
     /// Not `#[salsa::tracked]` because keying on `(self, offset)` would
     /// balloon the cache. `Definition` creation delegates to the tracked
-    /// [`File::resolve_export()`] and [`File::local_definition()`].
+    /// [`File::resolve_export()`] and [`File::intern_definition()`].
     pub fn resolve_at(self, db: &'db dyn Db, offset: TextSize) -> Option<Definition<'db>> {
         let index = self.semantic_index(db);
         let (use_scope, use_id, _) = index.use_at(offset)?;
@@ -112,7 +112,7 @@ impl<'db> File {
         let file_scope = ScopeId::from(0);
         if let Some((binding_scope, def_id)) = index.resolve(&name, use_scope) {
             if binding_scope != file_scope {
-                return Some(self.local_definition(
+                return Some(self.intern_definition(
                     db,
                     binding_scope,
                     def_id,
@@ -202,10 +202,12 @@ impl<'db> File {
         }
     }
 
-    /// Build the `Definition` for a scoped binding (parameter, local `<-`,
-    /// etc.) identified by `(scope, def_id)` in this file's semantic index.
+    /// Intern the salsa-tracked `Definition` entity for a binding identified
+    /// by `(scope, def_id)` in this file's semantic index. Wraps
+    /// `Definition::new` in a tracked context, which is required to construct
+    /// tracked structs.
     #[salsa::tracked]
-    fn local_definition(
+    fn intern_definition(
         self,
         db: &'db dyn Db,
         scope: ScopeId,
