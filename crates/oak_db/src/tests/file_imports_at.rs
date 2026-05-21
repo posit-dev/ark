@@ -65,7 +65,7 @@ fn attached_packages(layers: &[ImportLayer]) -> Vec<Package> {
     layers
         .iter()
         .filter_map(|layer| match layer {
-            ImportLayer::PackageExports(p) => Some(*p),
+            ImportLayer::Package(p) => Some(*p),
             _ => None,
         })
         .collect()

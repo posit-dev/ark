@@ -31,8 +31,8 @@ impl<'db> File {
     ///    via its own exports chain only (not its full `resolve`). Sibling
     ///    package files would otherwise cycle through each other's
     ///    `imports`, and R's namespace semantics don't transitively include
-    ///    siblings' imports anyway. Package-level layers (`PackageImports`,
-    ///    `PackageExports`) are deferred to PR 4.
+    ///    siblings' imports anyway. Package-level layers (`From`,
+    ///    `Package`) are deferred to PR 4.
     ///
     /// The returned `Definition` is keyed by `(file, scope, name)`, so
     /// downstream queries that only depend on identity stay cached across
@@ -58,11 +58,11 @@ impl<'db> File {
         // files, so "what does sibling B contribute to the namespace?" is
         // exactly "what's in B's exports?". Package-wide NAMESPACE imports
         // and the installed-package search path appear in this file's own
-        // `imports()` directly, as `PackageImports` / `PackageExports`
-        // layers, so finding them does not require walking through siblings.
+        // `imports()` directly, as `From` / `Package` layers, so finding
+        // them does not require walking through siblings.
         //
-        // TODO(sources): consume `PackageImports` and `PackageExports`
-        // layers here. Today resolve only walks `ImportLayer::File`.
+        // TODO(sources): consume `From` and `Package` layers here. Today
+        // resolve only walks `ImportLayer::File`.
         // Requires materializing installed-package files as `oak_db::File`
         // entities first.
         for layer in self.imports(db) {

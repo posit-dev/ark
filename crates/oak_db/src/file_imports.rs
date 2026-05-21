@@ -22,16 +22,17 @@ pub enum ImportLayer {
     /// NAMESPACE `importFrom(pkg, name)` entries. Maps each imported
     /// symbol to its source package by name. Translation to `Package`
     /// happens at resolution time.
-    PackageImports(HashMap<String, String>),
-    /// An attached package's exports. Missing packages are filtered
-    /// out by `imports`.
-    PackageExports(Package),
+    From(HashMap<String, String>),
+    /// A whole package made available, either via NAMESPACE `import(pkg)`,
+    /// `library()` / `require()` calls, or the default R search path.
+    /// Missing packages are filtered out by `imports`.
+    Package(Package),
 }
 
 /// The default R search path: packages always attached at startup, in
 /// the order R's `search()` reports them (last attached = searched
 /// first, so `stats` is highest-priority and `base` is lowest).
-/// Materialised as `PackageExports` layers; packages absent from the
+/// Materialised as `Package` layers; packages absent from the
 /// workspace and library roots drop out (the LSP fills them in later
 /// via `oak_sources`).
 const DEFAULT_SEARCH_PATH: [&str; 7] = [
@@ -159,7 +160,7 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
 fn attach_layer(db: &dyn Db, call: &SemanticCall) -> Option<ImportLayer> {
     match call.kind() {
         SemanticCallKind::Attach { package: name } => {
-            db.package_by_name(name).map(ImportLayer::PackageExports)
+            db.package_by_name(name).map(ImportLayer::Package)
         },
         SemanticCallKind::Source { .. } => {
             // `source()` injects into local scope, not the search path,
@@ -213,8 +214,8 @@ fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer
     layers
 }
 
-/// Push the `PackageImports` layer if the namespace has any `importFrom`
-/// entries. Collects them into a single map from name to source package.
+/// Push the `From` layer if the namespace has any `importFrom` entries.
+/// Collects them into a single map from name to source package.
 fn extend_with_namespace_imports(namespace: &Namespace, layers: &mut Vec<ImportLayer>) {
     if namespace.imports.is_empty() {
         return;
@@ -224,11 +225,11 @@ fn extend_with_namespace_imports(namespace: &Namespace, layers: &mut Vec<ImportL
         .iter()
         .map(|imp| (imp.name.clone(), imp.package.clone()))
         .collect();
-    layers.push(ImportLayer::PackageImports(map));
+    layers.push(ImportLayer::From(map));
 }
 
-/// Push one `PackageExports` layer per `import(pkg)` directive in the
-/// namespace (bulk package imports). Missing packages are silently dropped.
+/// Push one `Package` layer per `import(pkg)` directive in the namespace
+/// (bulk package imports). Missing packages are silently dropped.
 fn extend_with_namespace_package_imports(
     db: &dyn Db,
     namespace: &Namespace,
@@ -236,23 +237,23 @@ fn extend_with_namespace_package_imports(
 ) {
     for pkg_name in &namespace.package_imports {
         if let Some(pkg) = db.package_by_name(pkg_name) {
-            layers.push(ImportLayer::PackageExports(pkg));
+            layers.push(ImportLayer::Package(pkg));
         }
     }
 }
 
-/// Push the `base` package as a `PackageExports` layer. `base` is always
+/// Push the `base` package as a `Package` layer. `base` is always
 /// implicitly available inside a package.
 fn extend_with_base(db: &dyn Db, layers: &mut Vec<ImportLayer>) {
     if let Some(base) = db.package_by_name("base") {
-        layers.push(ImportLayer::PackageExports(base));
+        layers.push(ImportLayer::Package(base));
     }
 }
 
 fn extend_with_default_search_path(db: &dyn Db, layers: &mut Vec<ImportLayer>) {
     for pkg_name in DEFAULT_SEARCH_PATH {
         if let Some(pkg) = db.package_by_name(pkg_name) {
-            layers.push(ImportLayer::PackageExports(pkg));
+            layers.push(ImportLayer::Package(pkg));
         }
     }
 }
