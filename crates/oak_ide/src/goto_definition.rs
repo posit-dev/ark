@@ -38,6 +38,11 @@ use crate::NavigationTarget;
 ///
 /// Returns an empty `Vec` if the offset doesn't point at a known
 /// identifier, or if the symbol cannot be resolved.
+// TODO(salsa): This body is the `LegacyDb`-based implementation. Gets
+// rewritten on top of `oak_db::File::resolve_at`, at which point the
+// helpers below (`resolve_use`, `resolve_import`, `resolve_external`,
+// `resolve_namespace_access`) and the `ExternalScope` parameter all go
+// away.
 pub fn goto_definition(
     db: &dyn LegacyDb,
     offset: TextSize,

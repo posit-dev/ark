@@ -1,11 +1,11 @@
 //! TODO(salsa): Pre-salsa scope-chain implementation. The salsa-tracked
-//! equivalents live in `oak_db::file_imports` (`File::imports` returning
-//! `Vec<ImportLayer>`) and `oak_db::file_resolve` (`File::resolve`).
-//! This module is still used by the legacy `oak_ide::goto_definition`
-//! path. It goes away once the LSP's goto-def handler ports to
-//! `File::resolve(db, ...)`. At that point `ExternalScope`,
-//! `oak_ide::goto_definition`, `ark::lsp::state::file_analysis`, and this
-//! module all go together.
+//! equivalents live in `oak_db::file_imports` (`File::imports` /
+//! `File::imports_at`) and `oak_db::file_resolve` (`File::resolve` /
+//! `File::resolve_at`). This module is still used by the `LegacyDb`-based
+//! body of `oak_ide::goto_definition`. It goes away once that body is
+//! rewritten on top of `File::resolve_at(db, offset)`. At that point
+//! `ExternalScope`, the `LegacyDb` helpers in `oak_ide::goto_definition`,
+//! `ark::lsp::state::file_analysis`, and this module all go together.
 
 use std::collections::HashMap;
 
