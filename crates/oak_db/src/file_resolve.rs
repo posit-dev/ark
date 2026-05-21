@@ -42,8 +42,7 @@ impl<'db> File {
                 return None;
             }
 
-            let entry = current_file.exports(db).get(current_name.as_ref())?.clone();
-            match entry {
+            match current_file.exports(db).get(current_name.as_ref())? {
                 ExportEntry::Local => {
                     // Fetch exports again, this time through the semantic index
                     // to get the volatile `kind` field that the firewall query
@@ -65,7 +64,7 @@ impl<'db> File {
                 },
 
                 ExportEntry::Import { file, name } => {
-                    current_file = file;
+                    current_file = *file;
                     current_name = Rc::from(name.as_str());
                 },
             }

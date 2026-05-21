@@ -52,25 +52,25 @@ impl<'db> Definition<'db> {
         let root = parse.tree().syntax().clone();
 
         let name_node = match self.kind(db) {
-            DefinitionKind::Assignment(bin_ptr) | DefinitionKind::SuperAssignment(bin_ptr) => {
-                let bin = bin_ptr.to_node(&root);
+            DefinitionKind::Assignment(ptr) | DefinitionKind::SuperAssignment(ptr) => {
+                let node = ptr.to_node(&root);
                 // Right-assign (`rhs -> x`, `rhs ->> x`) puts the target on
                 // the right, every other form (`x <- rhs`, `x <<- rhs`,
                 // `x = rhs`) puts it on the left.
-                let target = if is_right_assignment(&bin) {
-                    bin.right().ok()?
+                let target = if is_right_assignment(&node) {
+                    node.right().ok()?
                 } else {
-                    bin.left().ok()?
+                    node.left().ok()?
                 };
                 target.into_syntax()
             },
-            DefinitionKind::Parameter(param_ptr) => {
-                let param = param_ptr.to_node(&root);
-                param.name().ok()?.into_syntax()
+            DefinitionKind::Parameter(ptr) => {
+                let node = ptr.to_node(&root);
+                node.name().ok()?.into_syntax()
             },
-            DefinitionKind::ForVariable(for_ptr) => {
-                let for_stmt = for_ptr.to_node(&root);
-                for_stmt.variable().ok()?.into_syntax()
+            DefinitionKind::ForVariable(ptr) => {
+                let node = ptr.to_node(&root);
+                node.variable().ok()?.into_syntax()
             },
             DefinitionKind::Import { .. } => return None,
         };
@@ -78,8 +78,8 @@ impl<'db> Definition<'db> {
     }
 }
 
-fn is_right_assignment(bin: &RBinaryExpression) -> bool {
-    bin.operator().is_ok_and(|op| {
+fn is_right_assignment(node: &RBinaryExpression) -> bool {
+    node.operator().is_ok_and(|op| {
         matches!(
             op.kind(),
             RSyntaxKind::ASSIGN_RIGHT | RSyntaxKind::SUPER_ASSIGN_RIGHT
