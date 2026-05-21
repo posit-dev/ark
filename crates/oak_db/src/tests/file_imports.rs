@@ -173,12 +173,13 @@ fn test_package_file_emits_namespace_and_collation_layers() {
 
     let _ = rlang;
     assert_eq!(shape, vec![
+        // Collation files first (R's package namespace looks at the
+        // package's own bindings before its imports). Self (b.R) is
+        // excluded: a file's own top-level bindings live in `exports`,
+        // not `imports`.
+        "File(_a.R)".to_string(),
         "PackageImports([(\"abort\", \"rlang\")])".to_string(),
         "PackageExports(rlang)".to_string(),
-        // Other collation files in reverse declaration order (LIFO).
-        // Self (b.R) is excluded. A file's own top-level bindings live
-        // in `exports`, not `imports`.
-        "File(_a.R)".to_string(),
         "PackageExports(base)".to_string(),
     ]);
 }

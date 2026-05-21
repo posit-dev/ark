@@ -139,10 +139,6 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
 
     let mut layers = Vec::new();
 
-    let namespace = package.namespace(db);
-    extend_with_namespace_imports(namespace, &mut layers);
-    extend_with_namespace_package_imports(db, namespace, &mut layers);
-
     // Predecessors only, in LIFO order (latest-sourced first).
     layers.extend(
         files[..file_pos]
@@ -151,6 +147,10 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
             .copied()
             .map(ImportLayer::File),
     );
+
+    let namespace = package.namespace(db);
+    extend_with_namespace_imports(namespace, &mut layers);
+    extend_with_namespace_package_imports(db, namespace, &mut layers);
 
     extend_with_base(db, &mut layers);
     layers
@@ -187,10 +187,6 @@ fn script_imports(file: File, db: &dyn Db) -> Vec<ImportLayer> {
 fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
     let mut layers = Vec::new();
 
-    let namespace = package.namespace(db);
-    extend_with_namespace_imports(namespace, &mut layers);
-    extend_with_namespace_package_imports(db, namespace, &mut layers);
-
     // All package files except self, in LIFO order (latest-sourced first).
     // Self is excluded: a file's own top-level bindings come from `exports`,
     // and including self here would create a cycle in `resolve` for unbound
@@ -208,6 +204,10 @@ fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer
             .filter(|f| *f != file)
             .map(ImportLayer::File),
     );
+
+    let namespace = package.namespace(db);
+    extend_with_namespace_imports(namespace, &mut layers);
+    extend_with_namespace_package_imports(db, namespace, &mut layers);
 
     extend_with_base(db, &mut layers);
     layers
