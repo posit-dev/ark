@@ -222,16 +222,16 @@ fn test_resolve_symbol_in_scope() {
     let inner = ScopeId::from(1);
 
     // `y` resolves in the function scope
-    let (scope, _) = index.resolve_symbol("y", inner).unwrap();
+    let (scope, _) = index.resolve("y", inner).unwrap();
     assert_eq!(scope, inner);
 
     // `x` resolves in the file scope
     let file = ScopeId::from(0);
-    let (scope, _) = index.resolve_symbol("x", inner).unwrap();
+    let (scope, _) = index.resolve("x", inner).unwrap();
     assert_eq!(scope, file);
 
     // `z` doesn't resolve
-    assert!(index.resolve_symbol("z", inner).is_none());
+    assert!(index.resolve("z", inner).is_none());
 }
 
 #[test]
@@ -241,11 +241,11 @@ fn test_resolve_prefers_inner_scope() {
     let fun = ScopeId::from(1);
 
     // From function scope, `x` resolves to the function's own `x`
-    let (scope, _) = index.resolve_symbol("x", fun).unwrap();
+    let (scope, _) = index.resolve("x", fun).unwrap();
     assert_eq!(scope, fun);
 
     // From file scope, `x` resolves to file's `x`
-    let (scope, _) = index.resolve_symbol("x", file).unwrap();
+    let (scope, _) = index.resolve("x", file).unwrap();
     assert_eq!(scope, file);
 }
 
@@ -817,7 +817,7 @@ fn test_super_assignment_not_visible_to_resolve_symbol() {
     assert_eq!(x.flags(), SymbolFlags::IS_SUPER_BOUND);
 
     // `resolve_symbol` finds `x` in the file scope via the extra definition
-    let resolved = index.resolve_symbol("x", fun);
+    let resolved = index.resolve("x", fun);
     assert!(resolved.is_some());
     assert_eq!(resolved.unwrap().0, file);
 }

@@ -211,7 +211,7 @@ impl SemanticIndex {
     /// Returns the scope that owns the binding and the `DefinitionId` of
     /// the first matching [`IndexDefinition`] in that scope (source-order
     /// first), so callers can fetch kind/range without a second lookup.
-    pub fn resolve_symbol(&self, name: &str, scope: ScopeId) -> Option<(ScopeId, DefinitionId)> {
+    pub fn resolve(&self, name: &str, scope: ScopeId) -> Option<(ScopeId, DefinitionId)> {
         for ancestor in self.ancestor_scopes(scope) {
             let Some(symbol_id) = self.symbol_tables[ancestor].id(name) else {
                 continue;
