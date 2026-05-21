@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use aether_url::UrlId;
 use oak_semantic::semantic_index::DefinitionKind;
-use oak_semantic::semantic_index::ScopeId;
 
 use crate::Db;
 use crate::File;
@@ -50,29 +49,19 @@ impl FileExports {
 impl File {
     /// Names this file exports.
     ///
-    /// A walk over `semantic_index().definitions[file_scope]`, in source order.
-    /// The walk respects R's "last assignment wins" semantics because a file's
-    /// index already merges locals and `source()`-injected Imports into the
-    /// arena in source order. `HashMap::insert()` then overwrites per name
-    /// during the walk.
-    ///
-    /// `DefinitionKind::Import { file, name }` maps to `ExportEntry::Import {
-    /// file, name }` via [`Db::file_by_url`]. If the target file isn't interned
-    /// yet, the Import is dropped silently. Expected, since
-    /// [`SalsaImportsResolver`] only injects Imports when `file_by_url`
-    /// resolves the target.
+    /// Delegates the walk to [`SemanticIndex::exports`], then translates
+    /// each `DefinitionKind::Import { file, name }` into
+    /// `ExportEntry::Import { file, name }` via [`Db::file_by_url`]. If
+    /// the target file isn't interned yet, that Import is dropped
+    /// silently. Expected, since [`SalsaImportsResolver`] only injects
+    /// Imports when `file_by_url()` resolves the target.
     ///
     /// `cycle_result` (FallbackImmediate) recovers from cyclic `source()`
     /// chains by returning empty exports for every cycle participant.
     #[salsa::tracked(returns(ref), cycle_result = exports_cycle_result)]
     pub fn exports(self, db: &dyn Db) -> FileExports {
-        let index = self.semantic_index(db);
-        let file_scope = ScopeId::from(0);
-        let symbols = index.symbols(file_scope);
-
         let mut entries: HashMap<String, ExportEntry> = HashMap::new();
-        for (_id, def) in index.definitions(file_scope).iter() {
-            let name = symbols.symbol(def.symbol()).name();
+        for (name, def) in self.semantic_index(db).exports() {
             let entry = match def.kind() {
                 DefinitionKind::Import {
                     file: target_url,
