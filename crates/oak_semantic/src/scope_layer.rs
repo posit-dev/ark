@@ -32,7 +32,7 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
     let exports = index
-        .file_exports()
+        .exports()
         .into_iter()
         .map(|(name, def)| (name.to_string(), def.range()))
         .collect();

@@ -93,7 +93,7 @@ fn append_definitions(
 
     let file_id = files.push(file);
 
-    for (name, def) in index.file_exports() {
+    for (name, def) in index.exports() {
         let visibility = if namespace.exports.contains_str(name) {
             PackageDefinitionVisibility::Exported
         } else {

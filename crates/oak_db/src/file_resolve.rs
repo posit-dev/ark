@@ -50,7 +50,7 @@ impl<'db> File {
                     // `File::exports()` doesn't expose.
                     let kind = current_file
                         .semantic_index(db)
-                        .file_exports()
+                        .exports()
                         .get(current_name.as_ref())
                         .map(|def| def.kind().clone())?;
 

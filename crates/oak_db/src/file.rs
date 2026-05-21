@@ -136,7 +136,7 @@ impl File {
     #[salsa::tracked(returns(ref))]
     pub fn attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
         self.semantic_index(db)
-            .file_attached_packages()
+            .attached_packages()
             .into_iter()
             .map(|s| Name::new(db, s))
             .collect()

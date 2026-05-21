@@ -126,7 +126,7 @@ impl SemanticIndex {
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
     /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn file_exports(&self) -> FxHashMap<&str, &IndexDefinition> {
+    pub fn exports(&self) -> FxHashMap<&str, &IndexDefinition> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
 
@@ -140,7 +140,7 @@ impl SemanticIndex {
     }
 
     /// Package names from `library()` / `require()` calls in this file.
-    pub fn file_attached_packages(&self) -> Vec<&str> {
+    pub fn attached_packages(&self) -> Vec<&str> {
         self.semantic_calls
             .iter()
             .filter_map(|c| match &c.kind {

@@ -39,7 +39,7 @@ fn test_cross_file_source_injection() {
     let index = a.semantic_index(&db);
     let file_scope = ScopeId::from(0);
 
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert!(exports.contains_key("x"));
 
     let import_def = index
@@ -79,7 +79,7 @@ fn test_editing_sourced_file_invalidates_caller_index() {
     assert_eq!(db.executions("semantic_index"), 4);
 
     let index = a.semantic_index(&db);
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert!(exports.contains_key("x"));
     assert!(exports.contains_key("y"));
 }
@@ -102,8 +102,8 @@ fn test_source_cycle_preserves_local_analysis() {
 
     // Both files keep their own local binding regardless of which side
     // salsa picks as the cycle break point.
-    assert!(index_a.file_exports().contains_key("x_a"));
-    assert!(index_b.file_exports().contains_key("x_b"));
+    assert!(index_a.exports().contains_key("x_a"));
+    assert!(index_b.exports().contains_key("x_b"));
 }
 
 #[test]
@@ -215,7 +215,7 @@ fn test_sourced_file_library_attaches_in_caller() {
     let a = scripts[0];
 
     let index = a.semantic_index(&db);
-    assert!(index.file_attached_packages().contains(&"foo"));
+    assert!(index.attached_packages().contains(&"foo"));
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn test_source_resolves_absolute_path() {
     let a = scripts[0];
 
     let index = a.semantic_index(&db);
-    assert!(index.file_exports().contains_key("x"));
+    assert!(index.exports().contains_key("x"));
 }
 
 #[test]
@@ -277,7 +277,7 @@ fn test_source_chain_propagates_exports_transitively() {
     ]);
     let a = scripts[0];
 
-    let exports = a.semantic_index(&db).file_exports();
+    let exports = a.semantic_index(&db).exports();
     assert!(exports.contains_key("x_a"));
     assert!(exports.contains_key("x_b"));
     assert!(exports.contains_key("x_c"));
@@ -335,7 +335,7 @@ fn test_source_anchors_relative_to_workspace_root() {
     db.workspace_roots().set_roots(&mut db).to(vec![root]);
 
     let index = a.semantic_index(&db);
-    assert!(index.file_exports().contains_key("x"));
+    assert!(index.exports().contains_key("x"));
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn test_source_anchors_to_parent_dir_when_no_workspace() {
     db.orphan_root().set_files(&mut db).to(vec![a, b]);
 
     let index = a.semantic_index(&db);
-    assert!(index.file_exports().contains_key("x"));
+    assert!(index.exports().contains_key("x"));
 }
 
 #[test]
@@ -371,5 +371,5 @@ fn test_source_path_with_parent_dir_segments() {
     db.orphan_root().set_files(&mut db).to(vec![a, b]);
 
     let index = a.semantic_index(&db);
-    assert!(index.file_exports().contains_key("x"));
+    assert!(index.exports().contains_key("x"));
 }

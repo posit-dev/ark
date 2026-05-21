@@ -1373,7 +1373,7 @@ fn test_source_directive_resolves_to_sourced_file() {
     let script_url = file_url("script.R");
 
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
@@ -1424,7 +1424,7 @@ fn test_source_directive_resolves_nested_library() {
     let (_helpers_root, helpers_idx) = parse_source(helpers_source);
 
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
@@ -1532,7 +1532,7 @@ fn test_directive_not_visible_before_call_site() {
     )]);
 
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();
@@ -1693,7 +1693,7 @@ fn test_source_in_function_body_scoping() {
     let script_url = file_url("script.R");
 
     let helpers_names: Vec<String> = helpers_idx
-        .file_exports()
+        .exports()
         .keys()
         .map(|name| name.to_string())
         .collect();

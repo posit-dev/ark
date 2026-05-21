@@ -295,13 +295,13 @@ impl WorldState {
             });
 
         let names: Vec<String> = index
-            .file_exports()
+            .exports()
             .keys()
             .map(|name| name.to_string())
             .collect();
 
         let packages: Vec<String> = index
-            .file_attached_packages()
+            .attached_packages()
             .into_iter()
             .map(|s| s.to_string())
             .collect();
