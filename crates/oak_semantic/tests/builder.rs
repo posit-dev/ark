@@ -22,11 +22,7 @@ fn index(source: &str) -> SemanticIndex {
         panic!("source has syntax errors: {source}");
     }
 
-    build_index(
-        &parsed.tree(),
-        &Url::parse("file:///test/test.R").unwrap(),
-        NoopImportsResolver,
-    )
+    build_index(&parsed.tree(), NoopImportsResolver)
 }
 
 fn semantic_call_kinds(index: &SemanticIndex) -> Vec<&SemanticCallKind> {
@@ -52,8 +48,7 @@ fn test_simple_assignment() {
     assert_eq!(sym.flags(), SymbolFlags::IS_BOUND);
 
     assert_eq!(index.definitions(file).len(), 1);
-    let DefinitionKind::Assignment(node) =
-        index.definitions(file)[DefinitionId::from(0)].kind()
+    let DefinitionKind::Assignment(node) = index.definitions(file)[DefinitionId::from(0)].kind()
     else {
         panic!("expected Assignment");
     };
@@ -307,8 +302,7 @@ fn test_for_loop_body() {
     let i = idx.symbols(file).get("i").unwrap();
     assert_eq!(i.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
 
-    let DefinitionKind::ForVariable(node) =
-        idx.definitions(file)[DefinitionId::from(0)].kind()
+    let DefinitionKind::ForVariable(node) = idx.definitions(file)[DefinitionId::from(0)].kind()
     else {
         panic!("expected ForVariable");
     };
@@ -1671,11 +1665,7 @@ fn build_test_index(source: &str, resolver: impl ImportsResolver) -> SemanticInd
     if parsed.has_error() {
         panic!("source has syntax errors: {source}");
     }
-    build_index(
-        &parsed.tree(),
-        &Url::parse("file:///test/test.R").unwrap(),
-        resolver,
-    )
+    build_index(&parsed.tree(), resolver)
 }
 
 fn helper_resolution() -> SourceResolution {
@@ -1719,8 +1709,6 @@ fn test_source_resolver_injects_definitions() {
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
     assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
-    // def.file() is the owning file; the target is in the kind
-    assert_eq!(def.file().as_str(), "file:///test/test.R");
     match def.kind() {
         DefinitionKind::Import { file, name, .. } => {
             assert_eq!(file.as_str(), "file:///test/helpers.R");

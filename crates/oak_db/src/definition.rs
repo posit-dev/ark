@@ -52,8 +52,7 @@ impl<'db> Definition<'db> {
         let root = parse.tree().syntax().clone();
 
         let name_node = match self.kind(db) {
-            DefinitionKind::Assignment(bin_ptr) |
-            DefinitionKind::SuperAssignment(bin_ptr) => {
+            DefinitionKind::Assignment(bin_ptr) | DefinitionKind::SuperAssignment(bin_ptr) => {
                 let bin = bin_ptr.to_node(&root);
                 // Right-assign (`rhs -> x`, `rhs ->> x`) puts the target on
                 // the right, every other form (`x <- rhs`, `x <<- rhs`,

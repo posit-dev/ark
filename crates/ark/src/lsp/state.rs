@@ -30,7 +30,7 @@ impl LegacyDb for WorldState {
         let mut stack = HashSet::new();
         stack.insert(file.clone());
 
-        let index = semantic_index_with_source_resolver(&doc.parse.tree(), file, |path| {
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
             let dir = source_root.as_ref()?;
             self.resolve_source(dir, path, &mut stack)
         });
@@ -204,7 +204,7 @@ impl WorldState {
             });
 
         let Some(file_path) = file.to_file_path().ok() else {
-            return (doc.semantic_index(file), ExternalScope::default());
+            return (doc.semantic_index(), ExternalScope::default());
         };
 
         // Iterate in reverse collation order so later files (which shadow
@@ -227,7 +227,7 @@ impl WorldState {
                 continue;
             };
 
-            let layers = file_layers(uri.clone(), &doc.semantic_index(&uri));
+            let layers = file_layers(uri.clone(), &doc.semantic_index());
             lazy.extend(layers.clone());
             if past_current {
                 top_level.extend(layers);
@@ -238,7 +238,7 @@ impl WorldState {
         lazy.extend(root_layers);
 
         (
-            doc.semantic_index(file),
+            doc.semantic_index(),
             ExternalScope::package(top_level, lazy),
         )
     }
@@ -249,7 +249,7 @@ impl WorldState {
         let mut stack = HashSet::new();
         stack.insert(file.clone());
 
-        let index = semantic_index_with_source_resolver(&doc.parse.tree(), file, |path| {
+        let index = semantic_index_with_source_resolver(&doc.parse.tree(), |path| {
             let dir = source_root.as_ref()?;
             self.resolve_source(dir, path, &mut stack)
         });
@@ -289,10 +289,9 @@ impl WorldState {
         // Build the sourced file's index with a nested resolver so that
         // transitive `source()` calls are also resolved. The base
         // directory stays the same (workspace root) throughout the chain.
-        let index =
-            semantic_index_with_source_resolver(&sourced_doc.parse.tree(), &url, |nested_path| {
-                self.resolve_source(base_dir, nested_path, stack)
-            });
+        let index = semantic_index_with_source_resolver(&sourced_doc.parse.tree(), |nested_path| {
+            self.resolve_source(base_dir, nested_path, stack)
+        });
 
         let names: Vec<String> = index
             .exports()

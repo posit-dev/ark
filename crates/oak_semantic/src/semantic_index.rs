@@ -172,10 +172,7 @@ impl SemanticIndex {
     }
 
     /// Find the definition site at `offset`, if any.
-    pub fn definition_at(
-        &self,
-        offset: TextSize,
-    ) -> Option<(ScopeId, DefinitionId, &Definition)> {
+    pub fn definition_at(&self, offset: TextSize) -> Option<(ScopeId, DefinitionId, &Definition)> {
         let (scope, _) = self.scope_at(offset);
 
         // Definitions with empty ranges (e.g. imports) are naturally excluded
@@ -487,12 +484,6 @@ impl SymbolFlags {
 // definition without invalidating the definition's identity (file + scope +
 // place) or the UseDefMap.
 //
-// Definitions carry `file` and `scope` so they're self-contained when
-// passed around (e.g., through `DefinitionKind::Import` chains during
-// cross-file goto-definition). This mirrors ty's `Definition<'db>`, a
-// salsa tracked struct that carries file + scope + place for the same
-// reason.
-//
 // Type inference will eventually take a definition as input and inspect
 // the syntax node (via the kind) to determine the type.
 //
@@ -505,11 +496,6 @@ impl SymbolFlags {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
-    /// The file that owns this definition's index.
-    // TODO(salsa): Should become a File.
-    pub(crate) file: Url,
-    /// The scope within the file's index where this definition lives.
-    pub(crate) scope: ScopeId,
     // TODO(salsa): Should become a PlaceId (like ty's `ScopedPlaceId`).
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
@@ -541,14 +527,6 @@ impl Definition {
 
     pub fn range(&self) -> TextRange {
         self.range
-    }
-
-    pub fn file(&self) -> &Url {
-        &self.file
-    }
-
-    pub fn scope(&self) -> ScopeId {
-        self.scope
     }
 }
 

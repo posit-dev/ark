@@ -31,7 +31,7 @@ use url::Url;
 fn parse_source(source: &str) -> (RSyntaxNode, SemanticIndex) {
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let index = build_index(&parsed.tree(), &file_url("test.R"), NoopImportsResolver);
+    let index = build_index(&parsed.tree(), NoopImportsResolver);
     (root, index)
 }
 
@@ -56,7 +56,7 @@ impl LegacyDb for TestDb {
         // Rebuild from source for tests. We store the source instead.
         self.sources.get(file).map(|source| {
             let parsed = parse(source, RParserOptions::default());
-            build_index(&parsed.tree(), file, NoopImportsResolver)
+            build_index(&parsed.tree(), NoopImportsResolver)
         })
     }
     fn library(&self) -> &Library {
@@ -1174,7 +1174,7 @@ fn test_namespace_classify() {
     let source = "dplyr::mutate\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), NoopImportsResolver);
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     // Cursor on `mutate` (offset 7)
     let ident = Identifier::classify(&root, &idx, offset(7));
@@ -1210,7 +1210,7 @@ fn test_namespace_classify_triple_colon() {
     let source = "pkg:::sym\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), NoopImportsResolver);
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     let ident = Identifier::classify(&root, &idx, offset(6));
     assert_eq!(
@@ -1290,7 +1290,7 @@ fn test_namespace_classify_in_call() {
     let source = "foo::bar()\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), NoopImportsResolver);
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     let ident = Identifier::classify(&root, &idx, offset(5));
     assert_eq!(
@@ -1314,7 +1314,7 @@ fn test_namespace_classify_in_extract() {
     let source = "foo::bar$baz\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), NoopImportsResolver);
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     // Cursor on `bar` (offset 5) — inside the RNamespaceExpression
     let ident = Identifier::classify(&root, &idx, offset(5));
@@ -1343,7 +1343,7 @@ fn test_namespace_classify_string_selectors() {
     let source = "\"foo\"::\"bar\"\n";
     let parsed = parse(source, RParserOptions::default());
     let root = parsed.syntax();
-    let idx = build_index(&parsed.tree(), &file_url("test.R"), NoopImportsResolver);
+    let idx = build_index(&parsed.tree(), NoopImportsResolver);
 
     let ident = Identifier::classify(&root, &idx, offset(7));
     assert_eq!(
@@ -1385,7 +1385,7 @@ fn test_source_directive_resolves_to_sourced_file() {
         names: helpers_names,
         packages: Vec::new(),
     });
-    let script_idx = build_index(&parsed.tree(), &script_url, resolver);
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1454,7 +1454,7 @@ fn test_source_directive_resolves_nested_library() {
         names: helpers_names.clone(),
         packages: helpers_packages.clone(),
     });
-    let script_idx = build_index(&parsed.tree(), &script_url, resolver);
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1484,7 +1484,7 @@ fn test_source_directive_resolves_nested_library() {
         names: helpers_names,
         packages: helpers_packages,
     });
-    let script_idx2 = build_index(&parsed2.tree(), &script_url, resolver2);
+    let script_idx2 = build_index(&parsed2.tree(), resolver2);
 
     let dir_layers = script_idx2.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1544,7 +1544,7 @@ fn test_directive_not_visible_before_call_site() {
         names: helpers_names,
         packages: Vec::new(),
     });
-    let script_idx = build_index(&parsed.tree(), &script_url, resolver);
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1705,7 +1705,7 @@ fn test_source_in_function_body_scoping() {
         names: helpers_names,
         packages: Vec::new(),
     });
-    let script_idx = build_index(&parsed.tree(), &script_url, resolver);
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());
@@ -1773,7 +1773,7 @@ fn test_resolve_import_last_def_wins() {
         names: vec!["foo".to_string()],
         packages: Vec::new(),
     });
-    let script_idx = build_index(&parsed.tree(), &script_url, resolver);
+    let script_idx = build_index(&parsed.tree(), resolver);
 
     let dir_layers = script_idx.semantic_calls().to_vec();
     let scope = ExternalScope::search_path(dir_layers, Vec::new());

@@ -185,7 +185,7 @@ fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let resolver = SalsaImportsResolver::new(db, file);
-    oak_semantic::build_index(&parsed.tree(), file.url(db).as_url(), resolver)
+    oak_semantic::build_index(&parsed.tree(), resolver)
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
@@ -194,9 +194,5 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
         file.url(db),
     );
     let parsed = file.parse(db);
-    oak_semantic::build_index(
-        &parsed.tree(),
-        file.url(db).as_url(),
-        oak_semantic::NoopImportsResolver,
-    )
+    oak_semantic::build_index(&parsed.tree(), oak_semantic::NoopImportsResolver)
 }
