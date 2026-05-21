@@ -40,9 +40,9 @@ impl<'db> SalsaImportsResolver<'db> {
 
 impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
     fn resolve_source(&mut self, path: &str) -> Option<SourceResolution> {
-        let target_url = resolve_relative_to(self.calling_file.url(self.db), path)?;
-        let script = self.db.source_graph().script_by_url(self.db, &target_url)?;
-        let target = script.file(self.db);
+        let url = resolve_relative_to(self.calling_file.url(self.db), path)?;
+        let script = self.db.source_graph().script_by_url(self.db, &url)?;
+        let file = script.file(self.db);
 
         // Reads the target's own `semantic_index`. Salsa records the dep
         // edge; cycles in `source()` chains are caught by the cycle_result
@@ -52,7 +52,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
         // tracked query lands. Same change moves the cycle handler off
         // `semantic_index` (finer recovery) and makes the dep edge
         // here PartialEq-stable across body-only edits.
-        let index = target.semantic_index(self.db);
+        let index = file.semantic_index(self.db);
 
         let names: Vec<String> = index
             .file_exports()
@@ -66,7 +66,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect();
 
         Some(SourceResolution {
-            url: target_url,
+            url,
             names,
             packages,
         })
