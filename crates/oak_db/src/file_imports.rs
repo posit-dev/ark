@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use biome_rowan::TextSize;
+use oak_package_metadata::namespace::Namespace;
 use oak_semantic::semantic_index::SemanticCall;
 use oak_semantic::semantic_index::SemanticCallKind;
 use oak_semantic::ScopeId;
@@ -136,32 +137,23 @@ fn narrow_package_top_level(file: File, db: &dyn Db, package: Package) -> Vec<Im
         return file.imports(db).clone();
     };
 
-    let imports = file.imports(db);
-    let Some(start) = imports
-        .iter()
-        .position(|l| matches!(l, ImportLayer::File(_)))
-    else {
-        // No File layers in `imports()` for a file that claims package
-        // membership. Either the package has only this file (and self
-        // is excluded from imports, so the File block is empty) or the
-        // populator is inconsistent. Conservative fallback: full
-        // imports.
-        return imports.clone();
-    };
+    let mut layers = Vec::new();
 
-    // `imports()` emits the `files.len() - 1` non-self package entries
-    // in a contiguous File block, in *reverse* order (latest-sourced
-    // first). Successors of this file occupy the first
-    // `(files.len() - 1 - file_pos)` slots of that block; predecessors
-    // occupy the remainder, in LIFO order. For a top-level cursor we
-    // drop the successor prefix and keep predecessors + the surrounding
-    // namespace / base layers.
-    let drop_count = files.len() - 1 - file_pos;
-    imports[..start]
-        .iter()
-        .chain(&imports[start + drop_count..])
-        .cloned()
-        .collect()
+    let namespace = package.namespace(db);
+    extend_with_namespace_imports(namespace, &mut layers);
+    extend_with_namespace_package_imports(db, namespace, &mut layers);
+
+    // Predecessors only, in LIFO order (latest-sourced first).
+    layers.extend(
+        files[..file_pos]
+            .iter()
+            .rev()
+            .copied()
+            .map(ImportLayer::File),
+    );
+
+    extend_with_base(db, &mut layers);
+    layers
 }
 
 fn attach_layer(db: &dyn Db, call: &SemanticCall) -> Option<ImportLayer> {
@@ -194,49 +186,67 @@ fn script_imports(file: File, db: &dyn Db) -> Vec<ImportLayer> {
 
 fn package_imports(file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
     let mut layers = Vec::new();
+
     let namespace = package.namespace(db);
+    extend_with_namespace_imports(namespace, &mut layers);
+    extend_with_namespace_package_imports(db, namespace, &mut layers);
 
-    // NAMESPACE `importFrom(pkg, name)` directives. Collect them into
-    // a single layer that maps each imported symbol name to its source
-    // package.
-    if !namespace.imports.is_empty() {
-        let map: HashMap<String, String> = namespace
-            .imports
+    // All package files except self, in LIFO order (latest-sourced first).
+    // Self is excluded: a file's own top-level bindings come from `exports`,
+    // and including self here would create a cycle in `resolve` for unbound
+    // names.
+    //
+    // TODO(scan): once `oak_scan` orders `Package.files` by the DESCRIPTION
+    // `Collate` field, this iteration becomes collation-ordered directly.
+    // Today `Package.files` is whatever order the scanner produces.
+    layers.extend(
+        package
+            .files(db)
             .iter()
-            .map(|imp| (imp.name.clone(), imp.package.clone()))
-            .collect();
-        layers.push(ImportLayer::PackageImports(map));
-    }
+            .rev()
+            .copied()
+            .filter(|f| *f != file)
+            .map(ImportLayer::File),
+    );
 
-    // NAMESPACE `import(pkg)` directives (bulk package imports).
+    extend_with_base(db, &mut layers);
+    layers
+}
+
+/// Push the `PackageImports` layer if the namespace has any `importFrom`
+/// entries. Collects them into a single map from name to source package.
+fn extend_with_namespace_imports(namespace: &Namespace, layers: &mut Vec<ImportLayer>) {
+    if namespace.imports.is_empty() {
+        return;
+    }
+    let map: HashMap<String, String> = namespace
+        .imports
+        .iter()
+        .map(|imp| (imp.name.clone(), imp.package.clone()))
+        .collect();
+    layers.push(ImportLayer::PackageImports(map));
+}
+
+/// Push one `PackageExports` layer per `import(pkg)` directive in the
+/// namespace (bulk package imports). Missing packages are silently dropped.
+fn extend_with_namespace_package_imports(
+    db: &dyn Db,
+    namespace: &Namespace,
+    layers: &mut Vec<ImportLayer>,
+) {
     for pkg_name in &namespace.package_imports {
         if let Some(pkg) = db.package_by_name(pkg_name) {
             layers.push(ImportLayer::PackageExports(pkg));
         }
     }
+}
 
-    // All files in the package in *reverse* order (LIFO, latest-sourced
-    // first). Self is excluded: a file's own top-level bindings come
-    // from `exports`, and including self here would create a cycle in
-    // `resolve` for unbound names.
-    //
-    // TODO(scan): once `oak_scan` orders `Package.files` by the
-    // DESCRIPTION `Collate` field, this iteration becomes
-    // collation-ordered directly. Today `Package.files` is whatever
-    // order the scanner produces.
-    for &pkg_file in package.files(db).iter().rev() {
-        if pkg_file == file {
-            continue;
-        }
-        layers.push(ImportLayer::File(pkg_file));
-    }
-
-    // `base` is always implicitly available inside a package.
+/// Push the `base` package as a `PackageExports` layer. `base` is always
+/// implicitly available inside a package.
+fn extend_with_base(db: &dyn Db, layers: &mut Vec<ImportLayer>) {
     if let Some(base) = db.package_by_name("base") {
         layers.push(ImportLayer::PackageExports(base));
     }
-
-    layers
 }
 
 fn extend_with_default_search_path(db: &dyn Db, layers: &mut Vec<ImportLayer>) {
