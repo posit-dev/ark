@@ -5,10 +5,13 @@ use oak_semantic::semantic_index::ScopeId;
 use oak_semantic::semantic_index::SemanticIndex;
 use oak_semantic::semantic_index::SymbolTable;
 use oak_semantic::use_def_map::UseDefMap;
+use stdext::result::ResultExt;
 
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
 use crate::Db;
+use crate::Package;
+use crate::Root;
 
 /// A source file tracked by Salsa.
 ///
@@ -18,12 +21,35 @@ use crate::Db;
 ///
 /// The `url` field is a [`UrlId`], so the type system enforces "everything
 /// inside Salsa is a canonical URL".
+///
+/// `package` is a back-pointer to the [`Package`] this file belongs to, or
+/// `None` for standalone scripts. Inverse of `Package.files`, so queries
+/// answering "what package owns this file?" don't walk the forward edge.
+/// Files with `package == None` are either standalone scripts under a
+/// workspace root or orphan files not registered anywhere.
+///
+/// # Placement invariant
+///
+/// `File.package` and the file's physical location in a `Vec<File>` are
+/// expected to agree. A file with `package == Some(pkg)` should live in
+/// `pkg.files`. A file with `package == None` should live in either some
+/// `root.scripts` or `orphan_root().files`. The salsa setters (`set_url`,
+/// `set_contents`, `set_package`) are `pub` because field visibility couples to
+/// setter visibility in salsa but calling `set_package` directly leaves the
+/// file in its old bucket and silently breaks this invariant.
+///
+/// The scanner crate (`oak_scan`) wraps these setters in helpers that
+/// maintain placement (move the file between `pkg.files`,
+/// `root.scripts`, and `orphan_root().files` as `package` changes).
+/// Callers that go around the helpers and use the salsa setters
+/// directly must maintain placement themselves.
 #[salsa::input(debug)]
 pub struct File {
     #[returns(ref)]
     pub url: UrlId,
     #[returns(ref)]
     pub contents: String,
+    pub package: Option<Package>,
 }
 
 #[salsa::tracked]
@@ -85,6 +111,45 @@ impl File {
     pub fn use_def_map(self, db: &dyn Db, scope: ScopeId) -> Arc<UseDefMap> {
         Arc::clone(self.semantic_index(db).use_def_map(scope))
     }
+
+    /// The root containing this file, if any.
+    ///
+    /// If the file has a registered [`Package`], dispatches through
+    /// `Package.root`. Otherwise falls back to a URL-prefix lookup
+    /// against [`WorkspaceRoots`] (orphan files live under a workspace
+    /// root or nowhere; library files always have a package).
+    ///
+    /// Callers that need to distinguish workspace from library roots
+    /// inspect `root.kind(db)`.
+    #[salsa::tracked]
+    pub fn root(self, db: &dyn Db) -> Option<Root> {
+        if let Some(pkg) = self.package(db) {
+            return Some(pkg.root(db));
+        }
+        root_by_url(db, self.url(db))
+    }
+}
+
+/// Find the workspace `Root` whose path is the longest-prefix ancestor
+/// of `url`. Returns `None` for non-`file:` URLs and for URLs outside
+/// every workspace folder. Private helper: the only caller is
+/// [`File::root`] (for files without a registered package).
+fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
+    // Virtual documents (e.g. untitled scheme) don't have roots
+    if !url.is_file() {
+        return None;
+    }
+
+    let path = url.to_file_path().log_err()?;
+    db.workspace_roots()
+        .roots(db)
+        .iter()
+        .filter_map(|root| {
+            let root_path = root.path(db).to_file_path().log_err()?;
+            path.starts_with(&root_path).then_some((root_path, *root))
+        })
+        .max_by_key(|(p, _)| p.components().count())
+        .map(|(_, r)| r)
 }
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {

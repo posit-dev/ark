@@ -3,14 +3,11 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
 
 use anyhow::anyhow;
 use oak_core::file::list_r_files;
 use oak_db::semantic_index_with_source_resolver;
 use oak_db::LegacyDb;
-use oak_db::SourceGraph;
 use oak_ide::ExternalScope;
 use oak_semantic::library::Library;
 use oak_semantic::scope_layer::default_search_path;
@@ -24,30 +21,6 @@ use url::Url;
 use crate::lsp::config::LspConfig;
 use crate::lsp::document::Document;
 use crate::lsp::inputs::source_root::SourceRoot;
-
-/// Concrete Salsa database that owns the storage for all LSP inputs.
-#[salsa::db]
-#[derive(Clone, Default)]
-pub struct OakDatabase {
-    storage: salsa::Storage<Self>,
-    source_graph: Arc<OnceLock<SourceGraph>>,
-}
-
-impl OakDatabase {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[salsa::db]
-impl salsa::Database for OakDatabase {}
-
-#[salsa::db]
-impl oak_db::Db for OakDatabase {
-    fn source_graph(&self) -> SourceGraph {
-        *self.source_graph.get_or_init(|| SourceGraph::empty(self))
-    }
-}
 
 impl LegacyDb for WorldState {
     fn semantic_index(&self, file: &Url) -> Option<SemanticIndex> {

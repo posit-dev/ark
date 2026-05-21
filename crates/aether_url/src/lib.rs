@@ -138,6 +138,26 @@ impl UrlId {
     pub fn as_url(&self) -> &Url {
         &self.0
     }
+
+    /// Whether this URL points at a filesystem file (`file:` scheme).
+    /// Returns `false` for virtual documents like `untitled:` (unsaved
+    /// buffers) and `ark:` (synthesized sources from R). Callers that
+    /// might receive virtual URLs should gate on this before reaching for
+    /// [`Self::to_file_path`].
+    pub fn is_file(&self) -> bool {
+        self.0.scheme() == "file"
+    }
+
+    /// Filesystem path corresponding to this URL.
+    ///
+    /// Errors for non-`file:` URLs (untitled buffers, custom schemes) and
+    /// for `file:` URLs whose path can't be reconstructed (rare). Callers
+    /// that handle virtual documents should check [`Self::is_file`] first.
+    pub fn to_file_path(&self) -> anyhow::Result<std::path::PathBuf> {
+        self.0
+            .to_file_path()
+            .map_err(|()| anyhow::anyhow!("URL has no filesystem path: {}", self.0))
+    }
 }
 
 impl fmt::Display for UrlId {

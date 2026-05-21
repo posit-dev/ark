@@ -1,4 +1,6 @@
+mod db;
 mod file;
+mod file_root;
+mod inputs;
 mod resolver;
-mod source_graph;
 mod test_db;

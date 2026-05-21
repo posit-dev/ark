@@ -2560,7 +2560,10 @@ dependencies = [
  "log",
  "oak_package_metadata",
  "oak_semantic",
+ "rustc-hash",
  "salsa",
+ "salsa-macros",
+ "stdext",
  "url",
 ]
 
