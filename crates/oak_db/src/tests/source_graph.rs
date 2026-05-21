@@ -37,7 +37,7 @@ fn make_script(db: &TestDb, name: &str) -> Script {
 }
 
 #[test]
-fn package_by_name_finds_workspace_package() {
+fn test_package_by_name_finds_workspace_package() {
     let mut db = TestDb::new();
     let pkg = make_package(&db, "rlang", workspace_origin("rlang"));
     let source_graph = db.source_graph();
@@ -50,7 +50,7 @@ fn package_by_name_finds_workspace_package() {
 }
 
 #[test]
-fn package_by_name_falls_back_to_installed() {
+fn test_package_by_name_falls_back_to_installed() {
     let mut db = TestDb::new();
     let pkg = make_package(&db, "dplyr", installed_origin("dplyr"));
     let source_graph = db.source_graph();
@@ -63,7 +63,7 @@ fn package_by_name_falls_back_to_installed() {
 }
 
 #[test]
-fn package_by_name_workspace_shadows_installed() {
+fn test_package_by_name_workspace_shadows_installed() {
     let mut db = TestDb::new();
     let workspace_pkg = make_package(&db, "rlang", workspace_origin("rlang"));
     let installed_pkg = make_package(&db, "rlang", installed_origin("rlang"));
@@ -82,7 +82,7 @@ fn package_by_name_workspace_shadows_installed() {
 }
 
 #[test]
-fn package_by_name_returns_none_when_absent() {
+fn test_package_by_name_returns_none_when_absent() {
     let db = TestDb::new();
     assert_eq!(
         db.source_graph().package_by_name(&db, name(&db, "ggplot2")),
@@ -91,7 +91,7 @@ fn package_by_name_returns_none_when_absent() {
 }
 
 #[test]
-fn script_by_url_finds_registered_script() {
+fn test_script_by_url_finds_registered_script() {
     let mut db = TestDb::new();
     let script = make_script(&db, "analysis.R");
     let source_graph = db.source_graph();
@@ -104,7 +104,7 @@ fn script_by_url_finds_registered_script() {
 }
 
 #[test]
-fn script_by_url_returns_none_for_unknown_url() {
+fn test_script_by_url_returns_none_for_unknown_url() {
     let db = TestDb::new();
     assert_eq!(
         db.source_graph().script_by_url(&db, &file_url("missing.R")),
@@ -113,7 +113,7 @@ fn script_by_url_returns_none_for_unknown_url() {
 }
 
 #[test]
-fn source_node_round_trips_through_a_tracked_query() {
+fn test_source_node_round_trips_through_a_tracked_query() {
     // SourceNode is a plain enum over Salsa input ids; this exercises
     // it as a tracked-query return type, confirming the auto-derived
     // Update / equality machinery works.

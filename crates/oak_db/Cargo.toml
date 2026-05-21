@@ -18,6 +18,7 @@ aether_parser.workspace = true
 aether_syntax.workspace = true
 biome_rowan.workspace = true
 compact_str.workspace = true
+log.workspace = true
 oak_package_metadata.workspace = true
 oak_semantic = { workspace = true, features = ["salsa"] }
 salsa.workspace = true

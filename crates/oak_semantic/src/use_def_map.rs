@@ -211,6 +211,13 @@ pub struct UseDefMap {
 }
 
 impl UseDefMap {
+    /// An empty use-def map, suitable for a scope with no uses and no
+    /// nested-scope snapshots. Used to construct an empty index on
+    /// `source()` cycle recovery.
+    pub fn empty() -> Self {
+        UseDefMapBuilder::new().finish(&IndexVec::new())
+    }
+
     pub fn bindings_at_use(&self, use_id: UseId) -> &Bindings {
         &self.bindings_by_use[use_id]
     }
