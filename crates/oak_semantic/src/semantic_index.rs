@@ -65,7 +65,7 @@ pub struct SemanticIndex {
     // Use-def maps layer on top of these lists. A use-def map tracks which
     // definitions reach each use through control flow, referencing
     // `DefinitionId` and `UseId` indices into these arenas.
-    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, IndexDefinition>>,
+    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
 
     // Per-scope flow-sensitive map from each use site to the set of
@@ -86,7 +86,7 @@ impl SemanticIndex {
     pub(crate) fn new(
         scopes: IndexVec<ScopeId, Scope>,
         symbol_tables: IndexVec<ScopeId, Arc<SymbolTable>>,
-        definitions: IndexVec<ScopeId, IndexVec<DefinitionId, IndexDefinition>>,
+        definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
         uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
         use_def_maps: IndexVec<ScopeId, Arc<UseDefMap>>,
         enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
@@ -111,7 +111,7 @@ impl SemanticIndex {
         &self.symbol_tables[scope]
     }
 
-    pub fn definitions(&self, scope: ScopeId) -> &IndexVec<DefinitionId, IndexDefinition> {
+    pub fn definitions(&self, scope: ScopeId) -> &IndexVec<DefinitionId, Definition> {
         &self.definitions[scope]
     }
 
@@ -126,7 +126,7 @@ impl SemanticIndex {
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
     /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn exports(&self) -> FxHashMap<&str, &IndexDefinition> {
+    pub fn exports(&self) -> FxHashMap<&str, &Definition> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
 
@@ -175,7 +175,7 @@ impl SemanticIndex {
     pub fn definition_at(
         &self,
         offset: TextSize,
-    ) -> Option<(ScopeId, DefinitionId, &IndexDefinition)> {
+    ) -> Option<(ScopeId, DefinitionId, &Definition)> {
         let (scope, _) = self.scope_at(offset);
 
         // Definitions with empty ranges (e.g. imports) are naturally excluded
@@ -503,7 +503,7 @@ impl SymbolFlags {
 // signature). Future `declare()` annotations will also produce pure
 // declarations.
 #[derive(Debug, PartialEq, Eq)]
-pub struct IndexDefinition {
+pub struct Definition {
     pub(crate) kind: DefinitionKind,
     /// The file that owns this definition's index.
     // TODO(salsa): Should become a File.
@@ -530,7 +530,7 @@ pub enum DefinitionKind {
     },
 }
 
-impl IndexDefinition {
+impl Definition {
     pub fn symbol(&self) -> SymbolId {
         self.symbol
     }
@@ -552,7 +552,7 @@ impl IndexDefinition {
     }
 }
 
-impl Ranged for IndexDefinition {
+impl Ranged for Definition {
     fn range(&self) -> TextRange {
         self.range()
     }

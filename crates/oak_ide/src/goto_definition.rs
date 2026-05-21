@@ -103,7 +103,9 @@ fn resolve_use(
             .filter_map(|&def_id| {
                 let def = &index.definitions(scope)[def_id];
                 match def.kind() {
-                    DefinitionKind::Import { file, name, .. } => resolve_import(db, file, name),
+                    DefinitionKind::Import { file, name, .. } => {
+                        resolve_import(db, file, name)
+                    },
                     _ => Some(NavigationTarget {
                         file: def.file().clone(),
                         name: symbol_name.to_string(),

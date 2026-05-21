@@ -52,7 +52,8 @@ fn test_simple_assignment() {
     assert_eq!(sym.flags(), SymbolFlags::IS_BOUND);
 
     assert_eq!(index.definitions(file).len(), 1);
-    let DefinitionKind::Assignment(node) = index.definitions(file)[DefinitionId::from(0)].kind()
+    let DefinitionKind::Assignment(node) =
+        index.definitions(file)[DefinitionId::from(0)].kind()
     else {
         panic!("expected Assignment");
     };
@@ -306,7 +307,8 @@ fn test_for_loop_body() {
     let i = idx.symbols(file).get("i").unwrap();
     assert_eq!(i.flags(), SymbolFlags::IS_BOUND.union(SymbolFlags::IS_USED));
 
-    let DefinitionKind::ForVariable(node) = idx.definitions(file)[DefinitionId::from(0)].kind()
+    let DefinitionKind::ForVariable(node) =
+        idx.definitions(file)[DefinitionId::from(0)].kind()
     else {
         panic!("expected ForVariable");
     };

@@ -5,8 +5,8 @@ use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::semantic_index::DefinitionId;
 use crate::semantic_index::EnclosingSnapshotId;
+use crate::semantic_index::DefinitionId;
 use crate::semantic_index::SymbolId;
 use crate::semantic_index::Use;
 use crate::semantic_index::UseId;
@@ -284,7 +284,10 @@ impl Bindings {
 }
 
 /// Merge two sorted slices into a sorted `SmallVec` with no duplicates.
-fn sorted_union(a: &[DefinitionId], b: &[DefinitionId]) -> SmallVec<[DefinitionId; 2]> {
+fn sorted_union(
+    a: &[DefinitionId],
+    b: &[DefinitionId],
+) -> SmallVec<[DefinitionId; 2]> {
     a.iter()
         .merge_join_by(b.iter(), |a, b| a.cmp(b))
         .map(|either| match either {
@@ -393,7 +396,11 @@ impl UseDefMapBuilder {
     /// immediately (so future uses see it), but uses already recorded
     /// are patched up at finalization time. Used for `<<-` extra
     /// definitions.
-    pub(crate) fn record_deferred_definition(&mut self, symbol_id: SymbolId, def_id: DefinitionId) {
+    pub(crate) fn record_deferred_definition(
+        &mut self,
+        symbol_id: SymbolId,
+        def_id: DefinitionId,
+    ) {
         self.symbol_states[symbol_id].add_definition(def_id);
         self.deferred_defs.push((symbol_id, def_id));
         self.update_enclosing_snapshots(symbol_id, def_id);

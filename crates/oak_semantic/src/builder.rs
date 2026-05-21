@@ -29,11 +29,11 @@ use smallvec::SmallVec;
 use url::Url;
 
 use crate::resolver::ImportsResolver;
-use crate::semantic_index::DefinitionId;
-use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::EnclosingSnapshotId;
 use crate::semantic_index::EnclosingSnapshotKey;
-use crate::semantic_index::IndexDefinition;
+use crate::semantic_index::Definition;
+use crate::semantic_index::DefinitionId;
+use crate::semantic_index::DefinitionKind;
 use crate::semantic_index::Scope;
 use crate::semantic_index::ScopeId;
 use crate::semantic_index::ScopeKind;
@@ -63,7 +63,7 @@ pub fn build_index(root: &RRoot, file: &Url, resolver: impl ImportsResolver) -> 
 struct SemanticIndexBuilder<R: ImportsResolver> {
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
-    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, IndexDefinition>>,
+    definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
     uses: IndexVec<ScopeId, IndexVec<UseId, Use>>,
     use_def_maps: IndexVec<ScopeId, UseDefMapBuilder>,
     current_scope: ScopeId,
@@ -160,7 +160,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         range: TextRange,
     ) {
         let symbol_id = self.symbol_tables[self.current_scope].intern(name, flags);
-        let def_id = self.definitions[self.current_scope].push(IndexDefinition {
+        let def_id = self.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
             kind,
             range,
@@ -182,7 +182,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
     fn add_super_definition(&mut self, name: &str, kind: DefinitionKind, range: TextRange) {
         let symbol_id =
             self.symbol_tables[self.current_scope].intern(name, SymbolFlags::IS_SUPER_BOUND);
-        self.definitions[self.current_scope].push(IndexDefinition {
+        self.definitions[self.current_scope].push(Definition {
             symbol: symbol_id,
             kind: kind.clone(),
             range,
@@ -193,7 +193,7 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
         let target_scope = self.resolve_super_target(name);
 
         let target_symbol = self.symbol_tables[target_scope].intern(name, SymbolFlags::IS_BOUND);
-        let target_def_id = self.definitions[target_scope].push(IndexDefinition {
+        let target_def_id = self.definitions[target_scope].push(Definition {
             symbol: target_symbol,
             kind,
             range,
