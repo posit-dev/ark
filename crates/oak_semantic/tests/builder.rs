@@ -25,7 +25,7 @@ fn index(source: &str) -> SemanticIndex {
     build_index(
         &parsed.tree(),
         &Url::parse("file:///test/test.R").unwrap(),
-        &mut NoopImportsResolver,
+        NoopImportsResolver,
     )
 }
 
@@ -1664,7 +1664,7 @@ fn test_directive_declare_identifier_source_arg_ignored() {
 
 // --- source() with resolver ---
 
-fn build_test_index(source: &str, resolver: &mut dyn ImportsResolver) -> SemanticIndex {
+fn build_test_index(source: &str, resolver: impl ImportsResolver) -> SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
     if parsed.has_error() {
         panic!("source has syntax errors: {source}");
@@ -1706,7 +1706,7 @@ impl ImportsResolver for MapResolver {
 fn test_source_resolver_injects_definitions() {
     // At file scope, source() injects Import definitions into the use-def map.
     let code = "source(\"helpers.R\")\nhelper\n";
-    let index = build_test_index(code, &mut ConstResolver(helper_resolution()));
+    let index = build_test_index(code, ConstResolver(helper_resolution()));
     let file = ScopeId::from(0);
 
     // Use 0 is `source`, use 1 is `helper`
@@ -1735,7 +1735,7 @@ fn test_source_resolver_injects_definitions() {
 #[test]
 fn test_source_resolver_offset_visibility() {
     let code = "helper\nsource(\"helpers.R\")\nhelper\n";
-    let index = build_test_index(code, &mut ConstResolver(helper_resolution()));
+    let index = build_test_index(code, ConstResolver(helper_resolution()));
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
 
@@ -1757,7 +1757,7 @@ fn test_source_resolver_in_function_scope() {
     // source() in a function scope injects Import-kind defs into
     // the function scope's use-def map.
     let code = "f <- function() {\n  source(\"helpers.R\")\n  helper\n}\nhelper\n";
-    let index = build_test_index(code, &mut ConstResolver(helper_resolution()));
+    let index = build_test_index(code, ConstResolver(helper_resolution()));
     let fun = ScopeId::from(1);
     let file = ScopeId::from(0);
 
@@ -1784,7 +1784,7 @@ fn test_source_resolver_packages_become_attach_calls() {
     let code = "source(\"helpers.R\")\n";
     let index = build_test_index(
         code,
-        &mut ConstResolver(SourceResolution {
+        ConstResolver(SourceResolution {
             url: Url::parse("file:///test/helpers.R").unwrap(),
             names: vec![],
             packages: vec!["dplyr".into()],
@@ -1823,7 +1823,7 @@ fn test_source_resolver_later_shadows_earlier() {
         packages: Vec::new(),
     });
 
-    let index = build_test_index(code, &mut MapResolver(resolutions));
+    let index = build_test_index(code, MapResolver(resolutions));
 
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
@@ -1846,7 +1846,7 @@ fn test_source_resolver_local_true_in_function_scope() {
     // `local = TRUE` injects Import definitions into the function
     // scope's use-def map.
     let code = "f <- function() {\n  source(\"helpers.R\", local = TRUE)\n  helper\n}\nhelper\n";
-    let index = build_test_index(code, &mut ConstResolver(helper_resolution()));
+    let index = build_test_index(code, ConstResolver(helper_resolution()));
     let fun = ScopeId::from(1);
     let file = ScopeId::from(0);
 
@@ -1870,7 +1870,7 @@ fn test_source_resolver_local_true_shadows_local_def() {
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\", local = TRUE)\n  foo\n}\n";
     let index = build_test_index(
         code,
-        &mut ConstResolver(SourceResolution {
+        ConstResolver(SourceResolution {
             url: Url::parse("file:///test/helpers.R").unwrap(),
             names: vec!["foo".into()],
             packages: vec![],
@@ -1893,7 +1893,7 @@ fn test_source_resolver_local_false_does_not_shadow_local_def() {
     let code = "f <- function() {\n  foo <- 1\n  source(\"helpers.R\")\n  foo\n}\n";
     let index = build_test_index(
         code,
-        &mut ConstResolver(SourceResolution {
+        ConstResolver(SourceResolution {
             url: Url::parse("file:///test/helpers.R").unwrap(),
             names: vec!["foo".into()],
             packages: vec![],
@@ -1914,7 +1914,7 @@ fn test_source_resolver_local_def_shadowed_by_source() {
     // A local definition followed by source() at file scope:
     // the source() shadows the local def.
     let code = "helper <- 1\nsource(\"helpers.R\")\nhelper\n";
-    let index = build_test_index(code, &mut ConstResolver(helper_resolution()));
+    let index = build_test_index(code, ConstResolver(helper_resolution()));
     let file = ScopeId::from(0);
     let map = index.use_def_map(file);
 

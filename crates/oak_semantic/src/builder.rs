@@ -49,7 +49,7 @@ use crate::use_def_map::UseDefMapBuilder;
 /// Build a [`SemanticIndex`] from a parsed R file with cross-file
 /// information supplied by `resolver`. See [`ImportsResolver`] for the
 /// available impls.
-pub fn build_index(root: &RRoot, file: &Url, resolver: &mut dyn ImportsResolver) -> SemanticIndex {
+pub fn build_index(root: &RRoot, file: &Url, resolver: impl ImportsResolver) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
     let mut builder = SemanticIndexBuilder::new(range, file.clone(), resolver);
     builder.pre_scan_scope(root.syntax());
@@ -60,7 +60,7 @@ pub fn build_index(root: &RRoot, file: &Url, resolver: &mut dyn ImportsResolver)
 // Maintains the preorder allocation invariant on `Scope::descendants`. The
 // parallel arrays are pushed in lockstep so they stay indexed by the same
 // `ScopeId`.
-struct SemanticIndexBuilder<'a> {
+struct SemanticIndexBuilder<R: ImportsResolver> {
     scopes: IndexVec<ScopeId, Scope>,
     symbol_tables: IndexVec<ScopeId, SymbolTableBuilder>,
     definitions: IndexVec<ScopeId, IndexVec<DefinitionId, Definition>>,
@@ -71,11 +71,11 @@ struct SemanticIndexBuilder<'a> {
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
     file: Url,
-    resolver: &'a mut dyn ImportsResolver,
+    resolver: R,
 }
 
-impl<'a> SemanticIndexBuilder<'a> {
-    fn new(range: TextRange, file: Url, resolver: &'a mut dyn ImportsResolver) -> Self {
+impl<R: ImportsResolver> SemanticIndexBuilder<R> {
+    fn new(range: TextRange, file: Url, resolver: R) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();

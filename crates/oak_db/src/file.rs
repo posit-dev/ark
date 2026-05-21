@@ -86,8 +86,8 @@ impl File {
 
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
-    let mut resolver = SalsaImportsResolver::new(db, file);
-    oak_semantic::build_index(&parsed.tree(), file.url(db), &mut resolver)
+    let resolver = SalsaImportsResolver::new(db, file);
+    oak_semantic::build_index(&parsed.tree(), file.url(db), resolver)
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
@@ -99,6 +99,6 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
     oak_semantic::build_index(
         &parsed.tree(),
         file.url(db),
-        &mut oak_semantic::NoopImportsResolver,
+        oak_semantic::NoopImportsResolver,
     )
 }

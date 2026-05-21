@@ -13,7 +13,7 @@ fn index(source: &str) -> SemanticIndex {
     build_index(
         &parsed.tree(),
         &url::Url::parse("file:///test/test.R").unwrap(),
-        &mut NoopImportsResolver,
+        NoopImportsResolver,
     )
 }
 
