@@ -163,7 +163,7 @@ fn test_scan_workspace_honors_gitignore() {
 
 #[test]
 fn test_scan_workspace_preserves_orphan_content_on_promotion() {
-    // VFS opens a URL before any scan -> orphan File with user-edited
+    // Editor opens a URL before any scan -> orphan File with user-edited
     // contents. Later scan classifies it as a workspace script: the new
     // File entity inherits the orphan's contents, not the disk snapshot.
     let tmp = tempfile::tempdir().unwrap();
@@ -171,9 +171,9 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
     fs::write(&r_path, "disk_version <- 1\n").unwrap();
     let mut db = OakDatabase::new();
 
-    // VFS event before any scan.
+    // Editor event before any scan.
     let url = UrlId::from_file_path(&r_path).unwrap();
-    db.set_file_contents(url.clone(), "edited_version <- 2\n".to_string());
+    db.set_editor_contents(url.clone(), "edited_version <- 2\n".to_string());
 
     db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
 
@@ -182,6 +182,9 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
         .expect("script should be findable after scan");
     // The scanner inherited the orphan's edits rather than re-reading disk.
     assert_eq!(file.contents(&db), "edited_version <- 2\n");
+    // The orphan reference is dropped when the file is promoted into a
+    // workspace container.
+    assert!(!db.orphan_root().files(&db).contains(&file));
 }
 
 #[test]
@@ -193,7 +196,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     let mut db = OakDatabase::new();
 
     let url = UrlId::from_file_path(&r_path).unwrap();
-    db.set_file_contents(url.clone(), "edited <- 2\n".to_string());
+    db.set_editor_contents(url.clone(), "edited <- 2\n".to_string());
 
     db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
 
@@ -216,4 +219,85 @@ fn test_scan_multiple_workspace_paths_preserve_order() {
     assert_eq!(roots.len(), 2);
     assert_eq!(roots[0].packages(&db)[0].name(&db), "first");
     assert_eq!(roots[1].packages(&db)[0].name(&db), "second");
+}
+
+#[test]
+fn test_scan_workspace_tolerates_non_package_description() {
+    // A file literally named `DESCRIPTION` that isn't a valid R package
+    // DESCRIPTION (here: missing the required `Package:` field). The
+    // scanner reads it, parsing fails, and the directory is silently
+    // not classified as a package.
+    let tmp = tempfile::tempdir().unwrap();
+    fs::create_dir_all(tmp.path().join("not-a-pkg")).unwrap();
+    fs::write(
+        tmp.path().join("not-a-pkg/DESCRIPTION"),
+        "Title: Some other project\nVersion: 1.0\n",
+    )
+    .unwrap();
+    let mut db = OakDatabase::new();
+
+    db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
+
+    let root = db.workspace_roots().roots(&db)[0];
+    assert!(root.packages(&db).is_empty());
+}
+
+#[test]
+fn test_scan_workspace_dedup_keys_on_description_name_not_folder_name() {
+    // Two directories share the same basename `pkg` but their
+    // DESCRIPTIONs declare different `Package:` values. Both should be
+    // discovered as distinct packages: dedup looks at the DESCRIPTION
+    // field, not the directory name (matching R's own loading model).
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("work").join("pkg"), "foo", &[(
+        "a.R", "x <- 1\n",
+    )]);
+    write_package(&tmp.path().join("fork").join("pkg"), "bar", &[(
+        "b.R", "y <- 2\n",
+    )]);
+    let mut db = OakDatabase::new();
+
+    db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
+
+    let packages = db.workspace_roots().roots(&db)[0].packages(&db).clone();
+    assert_eq!(packages.len(), 2);
+    let mut names: Vec<&str> = packages.iter().map(|p| p.name(&db).as_str()).collect();
+    names.sort();
+    assert_eq!(names, vec!["bar", "foo"]);
+}
+
+#[test]
+fn test_scan_workspace_drops_duplicate_package_names() {
+    // Two DESCRIPTION files in the same workspace declare the same
+    // `Package:` name. The first one (by sorted directory order) wins,
+    // the rest are dropped. Without this dedup, both would collapse
+    // onto the same `Package` entity and clobber each other's files.
+    let tmp = tempfile::tempdir().unwrap();
+    // `aaa-clone` sorts before `bbb-original`, so `aaa-clone` is the
+    // first occurrence and should win regardless of fs walk order.
+    write_package(&tmp.path().join("aaa-clone"), "pkg", &[(
+        "a.R",
+        "from_aaa\n",
+    )]);
+    write_package(&tmp.path().join("bbb-original"), "pkg", &[(
+        "b.R",
+        "from_bbb\n",
+    )]);
+    let mut db = OakDatabase::new();
+
+    db.scan_workspace_paths(&[tmp.path().to_path_buf()]);
+
+    let root = db.workspace_roots().roots(&db)[0];
+    let packages = root.packages(&db).clone();
+    assert_eq!(packages.len(), 1);
+    let pkg = packages[0];
+    assert_eq!(pkg.name(&db), "pkg");
+
+    let files = pkg.files(&db).clone();
+    assert_eq!(files.len(), 1);
+    assert!(files[0]
+        .url(&db)
+        .as_url()
+        .path()
+        .ends_with("aaa-clone/R/a.R"));
 }

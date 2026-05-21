@@ -12,7 +12,7 @@
 //!   `OrphanRoot` has no `packages` field, so an evicted package file
 //!   loses its package association: `file.package` clears to `None` and
 //!   analysis treats it as a standalone script for as long as the
-//!   workspace is removed. If the workspace comes back, `upsert_file`
+//!   workspace is removed. If the workspace comes back, `upsert_root_file`
 //!   finds the same `File` via `OrphanRoot` and re-promotes it into
 //!   `pkg.files`, restoring the package context.
 //!

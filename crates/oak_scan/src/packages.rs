@@ -3,6 +3,7 @@
 //! directory) and the workspace scanner (which walks the workspace tree looking
 //! for `DESCRIPTION` files at any depth).
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -107,38 +108,86 @@ fn scan_r_files(r_dir: &Path) -> Vec<FileEntry> {
         .collect()
 }
 
-fn is_r_file(path: &Path) -> bool {
+pub(crate) fn is_r_file(path: &Path) -> bool {
     path.is_file() && oak_core::is_r_file(path)
+}
+
+/// Read just the package name from `dir/DESCRIPTION`. Cheaper than
+/// [`read_package`] when the caller only needs to look up an existing
+/// `Package` by name.
+pub(crate) fn read_description_name(dir: &Path) -> Option<String> {
+    let text = fs::read_to_string(dir.join("DESCRIPTION")).ok()?;
+    Description::parse(&text).log_err().map(|d| d.name)
 }
 
 /// Walk a workspace root, returning every discovered package and every
 /// top-level R script that isn't inside a package directory.
 ///
-/// `DESCRIPTION` files are looked up at any depth, honouring `.gitignore`
-/// and `.ignore` and skipping hidden directories. A package's R/ files
-/// are scoped to `{pkg_dir}/R/*.R`. R files that fall inside any
-/// discovered package directory but outside its `R/` (e.g. tests/,
-/// vignettes/, inst/) are excluded from `scripts`. Everything else with
-/// an `.R` extension becomes a top-level script on the workspace root.
+/// A package's R/ files are scoped to `{pkg_dir}/R/*.R`. R files that fall
+/// inside any discovered package directory but outside its `R/` (e.g. tests/,
+/// vignettes/, inst/) are excluded from `scripts`. Everything else with an `.R`
+/// extension becomes a top-level script on the workspace root.
+///
+/// TODO(scan): Package-internal R files outside `R/` (tests/, vignettes/,
+/// inst/, data-raw/) are currently dropped on the floor. Plan: add
+/// `Package.scripts: Vec<File>` to oak_db so they get LSP analysis. Placement
+/// invariant becomes "file.package = Some(pkg) -> file in pkg.files OR
+/// pkg.scripts"; `file_by_url` walks both. Later refinement: a `Script::kind`
+/// enum (testthat / vignette / ...) so analyses don't path-match.
+///
+/// If two `DESCRIPTION` files in the workspace declare the same `Package:`
+/// name, the one whose directory sorts first wins and the rest are dropped with
+/// a warn log. See [`dedup_packages_by_name`] for the rationale and the
+/// long-term plan.
 pub(crate) fn scan_workspace(root: &Path) -> (Vec<PackageDescriptor>, Vec<FileEntry>) {
-    let description_dirs = collect_description_dirs(root);
+    let mut description_dirs = collect_description_dirs(root);
+    description_dirs.sort();
 
-    let packages: Vec<PackageDescriptor> = description_dirs
+    let pairs: Vec<(PathBuf, PackageDescriptor)> = description_dirs
         .iter()
-        .filter_map(|dir| read_package(dir))
+        .filter_map(|dir| read_package(dir).map(|pkg| (dir.clone(), pkg)))
         .collect();
 
+    let packages = dedup_packages_by_name(pairs);
     let scripts = collect_scripts(root, &description_dirs);
 
     (packages, scripts)
 }
 
+/// Keep the first occurrence of each `Package:` name, dropping duplicates with
+/// a warn log naming both directories.
+///
+/// `Package` identity in oak is keyed on `(root, name)`, so two same-name
+/// DESCRIPTIONs in one workspace would otherwise collapse into one `Package`
+/// entity with the loser's files clobbering the winner's and the duplicate
+/// appearing twice in `root.packages`. First-wins gives a stable, predictable
+/// outcome at the cost of ignoring one of the two.
+fn dedup_packages_by_name(pairs: Vec<(PathBuf, PackageDescriptor)>) -> Vec<PackageDescriptor> {
+    let mut winners: HashMap<String, PathBuf> = HashMap::new();
+    let mut packages: Vec<PackageDescriptor> = Vec::with_capacity(pairs.len());
+
+    for (dir, pkg) in pairs {
+        if let Some(existing) = winners.get(&pkg.name) {
+            log::warn!(
+                "Duplicate package name `{name}` in workspace: keeping {first}, skipping {dup}",
+                name = pkg.name,
+                first = existing.display(),
+                dup = dir.display(),
+            );
+            continue;
+        }
+        winners.insert(pkg.name.clone(), dir);
+        packages.push(pkg);
+    }
+
+    packages
+}
+
 /// Walk `root` and return every directory that contains a `DESCRIPTION`
-/// file. Honours `.gitignore` / `.ignore` / hidden-file conventions via
-/// the `ignore` crate's standard filters.
+/// file.
 fn collect_description_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    for entry in WalkBuilder::new(root).build().flatten() {
+    for entry in workspace_walker(root).flatten() {
         let Some(file_type) = entry.file_type() else {
             continue;
         };
@@ -155,14 +204,13 @@ fn collect_description_dirs(root: &Path) -> Vec<PathBuf> {
     dirs
 }
 
-/// Collect `*.R` files anywhere under `root` that aren't inside any
-/// package directory. Files inside `pkg_dir/R/` are owned by that
-/// package; files elsewhere in `pkg_dir` (tests/, inst/, etc.) are
-/// skipped entirely to avoid double-registering package-internal R
-/// sources as workspace scripts.
+/// Collect `*.R` files anywhere under `root` that aren't inside any package
+/// directory. Files inside `pkg_dir/R/` are owned by that package; files
+/// elsewhere in `pkg_dir` (tests/, inst/, etc.) are skipped entirely to avoid
+/// double-registering package-internal R sources as workspace scripts.
 fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
     let mut scripts = Vec::new();
-    for entry in WalkBuilder::new(root).build().flatten() {
+    for entry in workspace_walker(root).flatten() {
         let path = entry.path();
         if !is_r_file(path) {
             continue;
@@ -179,4 +227,22 @@ fn collect_scripts(root: &Path, package_dirs: &[PathBuf]) -> Vec<FileEntry> {
         scripts.push(FileEntry { url, contents });
     }
     scripts
+}
+
+/// Build a directory walker for workspace discovery.
+///
+/// Uses the `ignore` crate's default `WalkBuilder`, which honours `.gitignore`
+/// / `.ignore` and skips hidden directories. Matches the ty / Astral / ruff
+/// convention. The concrete payoff for R is `renv/library/` exclusion. Renv
+/// snapshots each installed package with its own `DESCRIPTION` and `R/`, so
+/// walking into them would surface vendored packages and vendored R files as
+/// workspace content.
+///
+/// rust-analyzer takes the opposite approach: walk everything, hardcoded
+/// exclusions for `.git` and `target`. We may want to revisit if the implicit
+/// `.gitignore` filtering surprises users, in which case the natural next step
+/// is an opt-out config (similar to ty's `respect-ignore-files`) and / or a
+/// hardcoded exclusion list.
+fn workspace_walker(root: &Path) -> ignore::Walk {
+    WalkBuilder::new(root).build()
 }

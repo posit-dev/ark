@@ -27,6 +27,7 @@ mod library;
 mod lookup;
 mod packages;
 mod stale;
+mod watch;
 mod workspace;
 
 #[cfg(test)]
@@ -35,3 +36,5 @@ mod tests;
 pub use inputs::DbScan;
 pub use inputs::FileEntry;
 pub use inputs::RootExt;
+pub use watch::FileEvent;
+pub use watch::FileEventKind;

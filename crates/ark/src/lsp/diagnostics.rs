@@ -1130,7 +1130,6 @@ fn check_symbol_in_scope(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-
     use std::sync::Mutex;
     use std::sync::OnceLock;
 

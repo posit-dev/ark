@@ -32,6 +32,9 @@ use crate::lookup::package_by_url;
 use crate::stale::remove_from_stale_files;
 use crate::stale::remove_from_stale_packages;
 use crate::stale::stale_file_by_url;
+use crate::watch;
+use crate::watch::FileEvent;
+use crate::workspace;
 
 /// Description of one R file the scanner wants to register.
 ///
@@ -67,32 +70,51 @@ pub trait DbScan: Db + DbInputs {
     /// `.libPaths()` precedence.
     fn set_library_paths(&mut self, paths: &[PathBuf]);
 
-    /// Scan each workspace path and register the result under
-    /// `WorkspaceRoots`. Each path becomes a `Workspace` root with
-    /// its discovered packages (`DESCRIPTION` files at any depth,
-    /// honouring `.gitignore`) and top-level R scripts. Existing
-    /// `Root` entities at each path are reused.
+    /// Scan each workspace path and register the result under `WorkspaceRoots`.
+    /// Each path becomes a `Workspace` root with its discovered packages
+    /// (`DESCRIPTION` files at any depth, honouring `.gitignore`) and top-level
+    /// R scripts. Existing `Root` entities at each path are reused.
     ///
-    /// TODO(scan): rename to `set_workspace_paths` and adopt the diff-
-    /// based reconciliation pattern that `set_library_paths` uses
-    /// (untouched / scanned / evicted-to-stale).
+    /// TODO(scan): rename to `set_workspace_paths` and adopt the diff-based
+    /// reconciliation pattern that `set_library_paths` uses (untouched /
+    /// scanned / evicted-to-stale).
     fn scan_workspace_paths(&mut self, paths: &[PathBuf]);
 
-    /// Upsert a file from the VFS. Used by the LSP layer to apply
-    /// `didOpen` / `didChange` content for any URL the editor touches.
+    /// Rescan one workspace root. Used as the coarse fallback when
+    /// `DESCRIPTION` events change the package classification of a directory.
+    fn rescan_workspace_root(&mut self, root: Root);
+
+    /// Upsert a file's content. Used by the LSP layer to apply `didOpen` /
+    /// `didChange` content for any URL the editor touches.
     ///
-    /// If a `File` already exists at this URL, its contents are
-    /// updated. Classification is left as-is: a file the scanner had
-    /// previously placed in a package stays in that package, since
-    /// `didOpen` is a content event, not a reclassification.
+    /// If a `File` already exists at this URL, only its contents are updated.
+    /// Classification is left as-is: a file the scanner had previously placed
+    /// in a package stays in that package, since `didOpen` is a content event,
+    /// not a reclassification.
     ///
-    /// If no `File` exists yet, one is created in
-    /// `orphan_root().files`. It stays there until something
-    /// explicitly reclassifies it. Untitled buffers and files outside
-    /// every workspace stay orphan for the session. Files that should
-    /// belong to a workspace scan's output land in their proper
-    /// container when the workspace scanner next runs.
-    fn set_file_contents(&mut self, url: UrlId, contents: String) -> File;
+    /// If no `File` exists yet, one is created in `orphan_root().files`. It
+    /// stays there until another handler reclassifies it. Untitled buffers and
+    /// files that do not belong to any workspace stay orphan for the session.
+    /// Files inside a workspace folder get reclassified the next time the
+    /// workspace scanner runs, at which point the orphan reference is dropped.
+    fn set_editor_contents(&mut self, url: UrlId, contents: String) -> File;
+
+    /// React to a Created or Changed watcher event on an R file. Classifies the
+    /// URL against the current workspace tree and either creates a new `File`
+    /// or updates an existing one's content. Files outside every workspace, or
+    /// inside a package's non-`R/` subdir, are skipped.
+    fn add_watched_file(&mut self, url: UrlId, contents: String);
+
+    /// React to a Deleted watcher event. Unlinks the file from whichever
+    /// container holds it (package files, root scripts, or orphan).
+    fn remove_watched_file(&mut self, url: UrlId);
+
+    /// Apply a batch of file-watcher events. Routes DESCRIPTION events to a
+    /// coarse rescan of the containing workspace root (deduped within the
+    /// batch), and R-file events to per-file add / remove. URLs in `skip` are
+    /// left alone, so callers can defer to an in-memory source of truth (e.g.
+    /// the editor's open buffers).
+    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, skip: &HashSet<UrlId>);
 }
 
 impl<DB: Db + DbInputs> DbScan for DB {
@@ -104,7 +126,11 @@ impl<DB: Db + DbInputs> DbScan for DB {
         crate::workspace::scan_workspace_paths(self, paths);
     }
 
-    fn set_file_contents(&mut self, url: UrlId, contents: String) -> File {
+    fn rescan_workspace_root(&mut self, root: Root) {
+        workspace::rescan_workspace_root(self, root);
+    }
+
+    fn set_editor_contents(&mut self, url: UrlId, contents: String) -> File {
         if let Some(existing) = self.file_by_url(&url) {
             existing.set_contents(self).to(contents);
             return existing;
@@ -112,10 +138,24 @@ impl<DB: Db + DbInputs> DbScan for DB {
 
         let file = File::new(self, url, contents, None);
         let orphan = self.orphan_root();
+
         let mut files = orphan.files(self).clone();
         files.push(file);
         orphan.set_files(self).to(files);
+
         file
+    }
+
+    fn add_watched_file(&mut self, url: UrlId, contents: String) {
+        watch::add_watched_file(self, url, contents);
+    }
+
+    fn remove_watched_file(&mut self, url: UrlId) {
+        watch::remove_watched_file(self, url);
+    }
+
+    fn apply_watcher_events(&mut self, events: Vec<FileEvent>, skip: &HashSet<UrlId>) {
+        watch::apply_watcher_events(self, events, skip);
     }
 }
 
@@ -165,10 +205,9 @@ pub trait RootExt {
     /// responsible for rebuilding those Vec inputs with `self` excluded.
     fn set_stale<DB: Db + DbInputs>(self, db: &mut DB, editor_owned: Option<&HashSet<UrlId>>);
 
-    /// Replace `self.scripts` with `File` entities for `files`. Same
-    /// identity rules as [`set_package`](Self::set_package): existing
-    /// `File` entities at the given URLs are reused and have their
-    /// `package` field cleared.
+    /// Replace `self.scripts` with `File` entities for `files`. Same identity
+    /// rules as [`set_package`](Self::set_package): existing `File` entities at
+    /// the given URLs are reused and have their `package` field cleared.
     fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>);
 }
 
@@ -209,7 +248,7 @@ impl RootExt for Root {
 
         let file_entities: Vec<File> = files
             .into_iter()
-            .map(|entry| upsert_file(db, Some(pkg), entry))
+            .map(|entry| upsert_root_file(db, Some(pkg), entry))
             .collect();
 
         pkg.set_files(db).to(file_entities);
@@ -223,35 +262,53 @@ impl RootExt for Root {
     fn set_workspace_scripts<DB: Db + DbInputs>(self, db: &mut DB, files: Vec<FileEntry>) {
         let scripts: Vec<File> = files
             .into_iter()
-            .map(|entry| upsert_file(db, None, entry))
+            .map(|entry| upsert_root_file(db, None, entry))
             .collect();
         self.set_scripts(db).to(scripts);
     }
 }
 
-fn upsert_file<DB: Db + DbInputs>(db: &mut DB, package: Option<Package>, entry: FileEntry) -> File {
-    if let Some(old) = db.file_by_url(&entry.url) {
-        // Two cleanups before handing the file to the caller, which will place
-        // it in a new container:
+/// Upsert a `File` for `entry`, set its `package` backpointer, and clean up
+/// stale references in old containers.
+///
+/// **Caller invariant.** The caller must atomically place the returned `File`
+/// in some `Root` container (`pkg.files` or `root.scripts`) before returning.
+/// Three callers:
+///
+/// - [`RootExt::set_package`] (both library and workspace scanners)
+/// - [`RootExt::set_workspace_scripts`] (workspace scanner)
+/// - [`watch::add_watched_file`] (watcher dispatch)
+///
+/// The orphan cleanup below relies on this contract. A future caller that
+/// invoked `upsert_root_file()` without then placing the file would leave it
+/// with no container, and `file_by_url()` would return `None`.
+pub(crate) fn upsert_root_file<DB: Db + DbInputs>(
+    db: &mut DB,
+    package: Option<Package>,
+    entry: FileEntry,
+) -> File {
+    if let Some(existing) = db.file_by_url(&entry.url) {
+        // The new container is owned by the caller. What needs active cleanup
+        // is the OLD container:
         //
         // - If the package backpointer changed and the old package was Some,
-        //   the old package's `files` vec still references this file. Drop it,
-        //   otherwise that `Package` would carry a stale entry until its next
-        //   wholesale rescan.
+        //   that package's `files` vec still references this file. Drop it,
+        //   otherwise the old `Package` would carry a stale entry until its
+        //   next wholesale rescan.
         //
-        // - If the file was in `OrphanRoot.files` (typically because the editor
-        //   had it open before a scan classified it), remove it. The placement
-        //   invariant for orphan says `file.package == None`, and we're about
-        //   to set the package.
-        let old_package = old.package(db);
-        old.set_package(db).to(package);
+        // - If the file was in `OrphanRoot.files` (e.g. the editor had it open
+        //   before a scan classified it), drop it. Per the caller invariant
+        //   the file is about to land in a `Root` container, so the orphan
+        //   reference is stale by the time this returns.
+        let old_package = existing.package(db);
+        existing.set_package(db).to(package);
         if old_package != package {
             if let Some(old_pkg) = old_package {
-                remove_from_pkg_files(db, old_pkg, old);
+                remove_from_pkg_files(db, old_pkg, existing);
             }
         }
-        remove_from_orphan(db, old);
-        return old;
+        remove_from_orphan(db, existing);
+        return existing;
     }
 
     if let Some(stale) = stale_file_by_url(db, &entry.url) {

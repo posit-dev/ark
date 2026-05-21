@@ -14,11 +14,14 @@ use tower_lsp::lsp_types::CodeActionResponse;
 use tower_lsp::lsp_types::CompletionItem;
 use tower_lsp::lsp_types::CompletionParams;
 use tower_lsp::lsp_types::CompletionResponse;
+use tower_lsp::lsp_types::DidChangeWatchedFilesRegistrationOptions;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingParams;
 use tower_lsp::lsp_types::DocumentSymbolParams;
 use tower_lsp::lsp_types::DocumentSymbolResponse;
+use tower_lsp::lsp_types::FileSystemWatcher;
 use tower_lsp::lsp_types::FoldingRange;
 use tower_lsp::lsp_types::FoldingRangeParams;
+use tower_lsp::lsp_types::GlobPattern;
 use tower_lsp::lsp_types::GotoDefinitionParams;
 use tower_lsp::lsp_types::GotoDefinitionResponse;
 use tower_lsp::lsp_types::Hover;
@@ -93,6 +96,27 @@ pub(crate) async fn handle_initialized(
 
     // Register capabilities to the client
     let mut regs: Vec<Registration> = vec![];
+
+    // Watch R files and DESCRIPTION across the workspace. The client
+    // sends `workspace/didChangeWatchedFiles` on disk changes that the
+    // editor itself didn't make (git checkouts, external edits, etc.).
+    let watchers = vec![
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.{R,r}".to_string()),
+            kind: None,
+        },
+        FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/DESCRIPTION".to_string()),
+            kind: None,
+        },
+    ];
+    regs.push(Registration {
+        id: uuid::Uuid::new_v4().to_string(),
+        method: String::from("workspace/didChangeWatchedFiles"),
+        register_options: Some(
+            serde_json::to_value(DidChangeWatchedFilesRegistrationOptions { watchers }).unwrap(),
+        ),
+    });
 
     if lsp_state
         .capabilities

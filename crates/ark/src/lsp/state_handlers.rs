@@ -5,11 +5,14 @@
 //
 //
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use aether_url::UrlId;
 use anyhow::anyhow;
 use oak_scan::DbExt;
+use oak_scan::FileEvent;
+use oak_scan::FileEventKind;
 use oak_semantic::package::Package;
 use stdext::result::ResultExt;
 use tower_lsp::lsp_types;
@@ -19,10 +22,12 @@ use tower_lsp::lsp_types::CreateFilesParams;
 use tower_lsp::lsp_types::DeleteFilesParams;
 use tower_lsp::lsp_types::DidChangeConfigurationParams;
 use tower_lsp::lsp_types::DidChangeTextDocumentParams;
+use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
 use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::DidOpenTextDocumentParams;
 use tower_lsp::lsp_types::DocumentOnTypeFormattingOptions;
 use tower_lsp::lsp_types::ExecuteCommandOptions;
+use tower_lsp::lsp_types::FileChangeType;
 use tower_lsp::lsp_types::FileOperationFilter;
 use tower_lsp::lsp_types::FileOperationPattern;
 use tower_lsp::lsp_types::FileOperationPatternKind;
@@ -134,10 +139,8 @@ pub(crate) fn initialize(
         }
     }
 
-    // Drive `WorkspaceRoots` in oak_db from the editor's open folders.
-    state.oak.scan_workspace_paths(&workspace_paths);
-
     // Start first round of indexing
+    state.oak.scan_workspace_paths(&workspace_paths);
     lsp::main_loop::index_start(folders, state.clone());
 
     Ok(InitializeResult {
@@ -246,7 +249,7 @@ pub(crate) fn did_open(
     state.documents.insert(uri.clone(), document.clone());
 
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.set_file_contents(url_id, contents.to_string());
+    state.oak.set_editor_contents(url_id, contents.to_string());
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -274,7 +277,7 @@ pub(crate) fn did_change(
 
     let new_contents = document.contents.to_string();
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.set_file_contents(url_id, new_contents);
+    state.oak.set_editor_contents(url_id, new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
@@ -363,6 +366,40 @@ pub(crate) fn did_rename_files(
         .collect();
 
     lsp::main_loop::index_rename(uri_pairs, state.clone());
+    Ok(())
+}
+
+#[tracing::instrument(level = "info", skip_all)]
+pub(crate) fn did_change_watched_files(
+    params: DidChangeWatchedFilesParams,
+    state: &mut WorldState,
+) -> anyhow::Result<()> {
+    // Editor owns the contents of files it has open: Oak should ignore
+    // disk-side events for those URLs.
+    let editor_owned: HashSet<UrlId> = state
+        .documents
+        .keys()
+        .map(|url| UrlId::from_url(url.clone()))
+        .collect();
+
+    let events: Vec<FileEvent> = params
+        .changes
+        .into_iter()
+        .filter_map(|e| {
+            let kind = match e.typ {
+                FileChangeType::CREATED => FileEventKind::Created,
+                FileChangeType::CHANGED => FileEventKind::Changed,
+                FileChangeType::DELETED => FileEventKind::Deleted,
+                _ => return None,
+            };
+            Some(FileEvent {
+                url: UrlId::from_url(e.uri),
+                kind,
+            })
+        })
+        .collect();
+
+    state.oak.apply_watcher_events(events, &editor_owned);
     Ok(())
 }
 

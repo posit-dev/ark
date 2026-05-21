@@ -1,12 +1,11 @@
 //! Workspace scanner. Drives `WorkspaceRoots` from the editor's open
 //! folders.
 //!
-//! For each workspace path, walks the directory tree (honouring
-//! `.gitignore`), discovers packages via `DESCRIPTION` files at any
-//! depth, and registers them under a `Workspace` root. R files outside
-//! any package directory land in `root.scripts`. Existing `Root`,
-//! `Package`, and `File` entities are reused where possible (see
-//! [`crate::inputs`]).
+//! For each workspace path, walks the directory tree (honouring `.gitignore`),
+//! discovers packages via `DESCRIPTION` files at any depth, and registers them
+//! under a `Workspace` root. R files outside any package directory land in
+//! `root.scripts`. Existing `Root`, `Package`, and `File` entities are reused
+//! where possible (see [`crate::inputs`]).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -54,7 +53,22 @@ fn scan_workspace_path<DB: Db + DbInputs>(
         Some(&r) => r,
         None => Root::new(db, url, RootKind::Workspace, Vec::new(), Vec::new()),
     };
+    rescan_into(db, root, path);
+    Some(root)
+}
 
+/// Re-run the workspace scan against an existing root. Used as the
+/// fallback for events (DESCRIPTION add / remove / edit) that can
+/// change the set of packages under the root.
+pub(crate) fn rescan_workspace_root<DB: Db + DbInputs>(db: &mut DB, root: Root) {
+    let Ok(path) = root.path(db).to_file_path() else {
+        log::warn!("Skipped rescan: root URL is not a file path");
+        return;
+    };
+    rescan_into(db, root, &path);
+}
+
+fn rescan_into<DB: Db + DbInputs>(db: &mut DB, root: Root, path: &Path) {
     let (packages, scripts) = scan_workspace(path);
 
     let package_entities: Vec<Package> = packages
@@ -74,6 +88,4 @@ fn scan_workspace_path<DB: Db + DbInputs>(
 
     root.set_packages(db).to(package_entities);
     root.set_workspace_scripts(db, scripts);
-
-    Some(root)
 }

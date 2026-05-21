@@ -219,7 +219,7 @@ impl GlobalState {
         let library_paths: Vec<PathBuf> = library_paths.into_iter().map(PathBuf::from).collect();
 
         let mut oak = OakDatabase::new();
-        oak.scan_library_paths(&library_paths);
+        oak.set_library_paths(&library_paths);
 
         let library = Library::new(library_paths);
 
@@ -304,8 +304,8 @@ impl GlobalState {
                         LspNotification::DidChangeConfiguration(params) => {
                             state_handlers::did_change_configuration(params, &self.client, &mut self.world).await?;
                         },
-                        LspNotification::DidChangeWatchedFiles(_params) => {
-                            // TODO: Re-index the changed files.
+                        LspNotification::DidChangeWatchedFiles(params) => {
+                            state_handlers::did_change_watched_files(params, &mut self.world)?;
                         },
                         LspNotification::DidOpenTextDocument(params) => {
                             state_handlers::did_open(params, &mut self.lsp_state, &mut self.world)?;
