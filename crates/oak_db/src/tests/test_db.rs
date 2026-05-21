@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
+use aether_url::UrlId;
 use url::Url;
 
 use crate::Db;
@@ -64,12 +65,13 @@ impl Db for TestDb {
     }
 }
 
-pub(super) fn file_url(name: &str) -> Url {
+pub(super) fn file_url(name: &str) -> UrlId {
     // `Url::to_file_path` on Windows requires a drive-letter prefix, so
     // synthesize one for tests. Linux is happy with rootless paths.
-    if cfg!(windows) {
+    let url = if cfg!(windows) {
         Url::parse(&format!("file:///C:/{name}")).unwrap()
     } else {
         Url::parse(&format!("file:///{name}")).unwrap()
-    }
+    };
+    UrlId::from_canonical(url)
 }
