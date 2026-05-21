@@ -4,10 +4,6 @@
 //! `File::semantic_index` without depending on `oak_storage`. Provides
 //! the three input accessors (lazy-init `OnceLock`) and a salsa-event
 //! recorder so tests can assert on query execution counts.
-//!
-//! For integration-style tests that need orphan placement, multi-root
-//! lookups, or `set_file` / `set_package` upsert semantics, use
-//! `oak_storage::OakDatabase` in `oak_storage/tests/`.
 
 use std::sync::Arc;
 use std::sync::Mutex;
