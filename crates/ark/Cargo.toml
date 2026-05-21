@@ -50,6 +50,7 @@ notify.workspace = true
 oak_core.workspace = true
 oak_db.workspace = true
 oak_ide.workspace = true
+oak_package_metadata.workspace = true
 oak_semantic.workspace = true
 oak_sources.workspace = true
 once_cell.workspace = true
