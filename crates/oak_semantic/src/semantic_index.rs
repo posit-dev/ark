@@ -208,17 +208,36 @@ impl SemanticIndex {
     }
 
     /// Resolve a name starting from `scope`, walking up the scope chain.
-    pub fn resolve_symbol(&self, name: &str, scope: ScopeId) -> Option<(ScopeId, SymbolId)> {
+    /// Returns the scope that owns the binding and the `DefinitionId` of
+    /// the first matching [`IndexDefinition`] in that scope (source-order
+    /// first), so callers can fetch kind/range without a second lookup.
+    pub fn resolve(&self, name: &str, scope: ScopeId) -> Option<(ScopeId, DefinitionId)> {
         for ancestor in self.ancestor_scopes(scope) {
-            if let Some(id) = self.symbol_tables[ancestor].id(name) {
-                if self.symbol_tables[ancestor]
-                    .symbol(id)
-                    .flags()
-                    .contains(SymbolFlags::IS_BOUND)
-                {
-                    return Some((ancestor, id));
-                }
+            let Some(symbol_id) = self.symbol_tables[ancestor].id(name) else {
+                continue;
+            };
+            if !self.symbol_tables[ancestor]
+                .symbol(symbol_id)
+                .flags()
+                .contains(SymbolFlags::IS_BOUND)
+            {
+                continue;
             }
+
+            // `IS_BOUND` iff at least one `IndexDefinition` was recorded for
+            // this symbol. The builder maintains this in lockstep, so the
+            // panic below is unreachable.
+            let def_id = match self.definitions[ancestor]
+                .iter()
+                .find_map(|(id, d)| (d.symbol() == symbol_id).then_some(id))
+            {
+                Some(id) => id,
+                None => unreachable!(
+                    "IS_BOUND symbol {name:?} in scope {ancestor:?} has no \
+                    IndexDefinition: oak_semantic builder invariant violated"
+                ),
+            };
+            return Some((ancestor, def_id));
         }
         None
     }

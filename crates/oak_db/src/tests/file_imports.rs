@@ -59,7 +59,7 @@ fn test_script_with_no_attaches_returns_only_default_search_path() {
     let packages: Vec<Package> = layers
         .iter()
         .map(|layer| match layer {
-            ImportLayer::PackageExports(p) => *p,
+            ImportLayer::Package(p) => *p,
             other => panic!("unexpected layer: {other:?}"),
         })
         .collect();
@@ -67,7 +67,7 @@ fn test_script_with_no_attaches_returns_only_default_search_path() {
 }
 
 #[test]
-fn test_script_attach_produces_package_exports_layer_in_source_order() {
+fn test_script_attach_produces_package_exports_layer_in_lifo_order() {
     let mut db = TestDb::new();
     let packages = install_packages(&mut db, &["dplyr", "ggplot2"]);
     let dplyr = packages[0];
@@ -84,14 +84,14 @@ fn test_script_attach_produces_package_exports_layer_in_source_order() {
     let attached: Vec<Package> = layers
         .iter()
         .filter_map(|layer| match layer {
-            ImportLayer::PackageExports(p) => Some(*p),
+            ImportLayer::Package(p) => Some(*p),
             _ => None,
         })
         .collect();
 
-    // dplyr and ggplot2 appear first (in source order), then the
-    // default search path (empty in this setup, no base etc).
-    assert_eq!(attached, vec![dplyr, ggplot2]);
+    // LIFO: latest `library()` call comes first (matching R's runtime
+    // search order). Then the default search path (empty in this setup).
+    assert_eq!(attached, vec![ggplot2, dplyr]);
 }
 
 #[test]
@@ -153,14 +153,14 @@ fn test_package_file_emits_namespace_and_collation_layers() {
     let mut shape = Vec::new();
     for layer in layers {
         match layer {
-            ImportLayer::PackageImports(map) => {
+            ImportLayer::From(map) => {
                 let mut entries: Vec<(String, String)> =
                     map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 entries.sort();
-                shape.push(format!("PackageImports({entries:?})"));
+                shape.push(format!("From({entries:?})"));
             },
-            ImportLayer::PackageExports(p) => {
-                shape.push(format!("PackageExports({})", p.name(&db)));
+            ImportLayer::Package(p) => {
+                shape.push(format!("Package({})", p.name(&db)));
             },
             ImportLayer::File(f) => {
                 shape.push(format!(
@@ -173,11 +173,14 @@ fn test_package_file_emits_namespace_and_collation_layers() {
 
     let _ = rlang;
     assert_eq!(shape, vec![
-        "PackageImports([(\"abort\", \"rlang\")])".to_string(),
-        "PackageExports(rlang)".to_string(),
+        // Collation files first (R's package namespace looks at the
+        // package's own bindings before its imports). Self (b.R) is
+        // excluded: a file's own top-level bindings live in `exports`,
+        // not `imports`.
         "File(_a.R)".to_string(),
-        "File(b.R)".to_string(),
-        "PackageExports(base)".to_string(),
+        "From([(\"abort\", \"rlang\")])".to_string(),
+        "Package(rlang)".to_string(),
+        "Package(base)".to_string(),
     ]);
 }
 
