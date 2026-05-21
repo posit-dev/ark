@@ -814,7 +814,7 @@ impl<'a> SemanticIndexBuilder<'a> {
         self.semantic_calls.push(SemanticCall {
             kind: SemanticCallKind::Source {
                 path: path.clone(),
-                resolved: resolution.as_ref().map(|r| r.file.clone()),
+                resolved: resolution.as_ref().map(|r| r.url.clone()),
             },
             offset: call_offset,
             scope: self.current_scope,
@@ -824,7 +824,7 @@ impl<'a> SemanticIndexBuilder<'a> {
             return;
         };
 
-        let file = resolution.file;
+        let file = resolution.url;
 
         for name in resolution.names {
             // Empty range: R's `source()` imports names implicitly (unlike

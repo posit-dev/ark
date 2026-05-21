@@ -1678,7 +1678,7 @@ fn build_test_index(source: &str, resolver: &mut dyn ImportsResolver) -> Semanti
 
 fn helper_resolution() -> SourceResolution {
     SourceResolution {
-        file: Url::parse("file:///test/helpers.R").unwrap(),
+        url: Url::parse("file:///test/helpers.R").unwrap(),
         names: vec!["helper".into()],
         packages: vec![],
     }
@@ -1785,7 +1785,7 @@ fn test_source_resolver_packages_become_attach_calls() {
     let index = build_test_index(
         code,
         &mut ConstResolver(SourceResolution {
-            file: Url::parse("file:///test/helpers.R").unwrap(),
+            url: Url::parse("file:///test/helpers.R").unwrap(),
             names: vec![],
             packages: vec!["dplyr".into()],
         }),
@@ -1813,12 +1813,12 @@ fn test_source_resolver_later_shadows_earlier() {
 
     let mut resolutions = std::collections::HashMap::new();
     resolutions.insert("a.R".to_string(), SourceResolution {
-        file: a_url.clone(),
+        url: a_url.clone(),
         names: vec!["foo".into()],
         packages: Vec::new(),
     });
     resolutions.insert("b.R".to_string(), SourceResolution {
-        file: b_url.clone(),
+        url: b_url.clone(),
         names: vec!["foo".into()],
         packages: Vec::new(),
     });
@@ -1871,7 +1871,7 @@ fn test_source_resolver_local_true_shadows_local_def() {
     let index = build_test_index(
         code,
         &mut ConstResolver(SourceResolution {
-            file: Url::parse("file:///test/helpers.R").unwrap(),
+            url: Url::parse("file:///test/helpers.R").unwrap(),
             names: vec!["foo".into()],
             packages: vec![],
         }),
@@ -1894,7 +1894,7 @@ fn test_source_resolver_local_false_does_not_shadow_local_def() {
     let index = build_test_index(
         code,
         &mut ConstResolver(SourceResolution {
-            file: Url::parse("file:///test/helpers.R").unwrap(),
+            url: Url::parse("file:///test/helpers.R").unwrap(),
             names: vec!["foo".into()],
             packages: vec![],
         }),

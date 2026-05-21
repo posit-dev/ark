@@ -5,7 +5,7 @@ use url::Url;
 #[derive(Clone)]
 pub struct SourceResolution {
     /// The resolved URL of the sourced file.
-    pub file: Url,
+    pub url: Url,
 
     /// Names of top-level definitions in the sourced file.
     pub names: Vec<String>,

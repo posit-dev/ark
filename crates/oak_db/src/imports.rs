@@ -66,7 +66,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect();
 
         Some(SourceResolution {
-            file: target_url,
+            url: target_url,
             names,
             packages,
         })

@@ -336,7 +336,7 @@ impl WorldState {
         stack.remove(&url);
 
         Some(SourceResolution {
-            file: url,
+            url,
             names,
             packages,
         })

@@ -1405,7 +1405,7 @@ fn test_source_directive_resolves_to_sourced_file() {
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
     let mut resolver = ConstResolver(SourceResolution {
-        file: helpers_url.clone(),
+        url: helpers_url.clone(),
         names: helpers_names,
         packages: Vec::new(),
     });
@@ -1474,7 +1474,7 @@ fn test_source_directive_resolves_nested_library() {
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
     let mut resolver = ConstResolver(SourceResolution {
-        file: helpers_url.clone(),
+        url: helpers_url.clone(),
         names: helpers_names.clone(),
         packages: helpers_packages.clone(),
     });
@@ -1504,7 +1504,7 @@ fn test_source_directive_resolves_nested_library() {
     let parsed2 = parse(source_with_helper, RParserOptions::default());
     let script_root2 = parsed2.syntax();
     let mut resolver2 = ConstResolver(SourceResolution {
-        file: helpers_url.clone(),
+        url: helpers_url.clone(),
         names: helpers_names,
         packages: helpers_packages,
     });
@@ -1564,7 +1564,7 @@ fn test_directive_not_visible_before_call_site() {
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
     let mut resolver = ConstResolver(SourceResolution {
-        file: helpers_url.clone(),
+        url: helpers_url.clone(),
         names: helpers_names,
         packages: Vec::new(),
     });
@@ -1725,7 +1725,7 @@ fn test_source_in_function_body_scoping() {
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
     let mut resolver = ConstResolver(SourceResolution {
-        file: helpers_url.clone(),
+        url: helpers_url.clone(),
         names: helpers_names,
         packages: Vec::new(),
     });
@@ -1793,7 +1793,7 @@ fn test_resolve_import_last_def_wins() {
     let parsed = parse(script_source, RParserOptions::default());
     let script_root = parsed.syntax();
     let mut resolver = ConstResolver(SourceResolution {
-        file: helpers_url.clone(),
+        url: helpers_url.clone(),
         names: vec!["foo".to_string()],
         packages: Vec::new(),
     });
