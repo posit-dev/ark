@@ -1,5 +1,8 @@
 mod db;
 mod file;
+mod file_exports;
+mod file_imports;
+mod file_resolve;
 mod file_root;
 mod inputs;
 mod resolver;

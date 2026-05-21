@@ -31,11 +31,10 @@ pub trait LegacyDb {
 /// [`CallbackImportsResolver`] adapter can be deleted.
 pub fn semantic_index_with_source_resolver(
     root: &RRoot,
-    file: &Url,
     resolver: impl FnMut(&str) -> Option<SourceResolution>,
 ) -> SemanticIndex {
     let resolver = CallbackImportsResolver(resolver);
-    oak_semantic::build_index(root, file, resolver)
+    oak_semantic::build_index(root, resolver)
 }
 
 struct CallbackImportsResolver<F>(F)

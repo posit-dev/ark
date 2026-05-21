@@ -103,47 +103,6 @@ impl SemanticIndex {
         }
     }
 
-    /// An index containing only the file scope at `ScopeId(0)`, no
-    /// symbols, definitions, uses, or semantic calls. Used as the cycle
-    /// recovery value for `source()` chains where one file (transitively)
-    /// sources itself, an illegal user construct.
-    ///
-    /// TODO(salsa): delete once cycle handling moves from
-    /// `File::semantic_index` to `File::exports`. With the cycle path
-    /// running through exports, semantic_index no longer needs an
-    /// empty-recovery value.
-    pub fn empty() -> Self {
-        let mut scopes = IndexVec::new();
-        scopes.push(Scope {
-            parent: None,
-            kind: ScopeKind::File,
-            range: TextRange::default(),
-            descendants: ScopeId::from(1)..ScopeId::from(1),
-        });
-
-        let mut symbol_tables = IndexVec::new();
-        symbol_tables.push(Arc::new(SymbolTable::default()));
-
-        let mut definitions = IndexVec::new();
-        definitions.push(IndexVec::new());
-
-        let mut uses = IndexVec::new();
-        uses.push(IndexVec::new());
-
-        let mut use_def_maps = IndexVec::new();
-        use_def_maps.push(Arc::new(UseDefMap::empty()));
-
-        Self {
-            scopes,
-            symbol_tables,
-            definitions,
-            uses,
-            use_def_maps,
-            enclosing_snapshots: FxHashMap::default(),
-            semantic_calls: Vec::new(),
-        }
-    }
-
     pub fn scope(&self, id: ScopeId) -> &Scope {
         &self.scopes[id]
     }
@@ -167,21 +126,21 @@ impl SemanticIndex {
     /// Top-level definitions exported by this file (definitions in the file scope).
     /// Includes `Import`-kind forwarding definitions from `source()` calls.
     /// Last definition of each name wins (later assignments shadow earlier ones).
-    pub fn file_exports(&self) -> FxHashMap<&str, TextRange> {
+    pub fn exports(&self) -> FxHashMap<&str, &Definition> {
         let file_scope = ScopeId::from(0);
         let symbols = &self.symbol_tables[file_scope];
 
         let mut exports = FxHashMap::default();
         for (_id, def) in self.definitions[file_scope].iter() {
             let name = symbols.symbol(def.symbol()).name();
-            exports.insert(name, def.range());
+            exports.insert(name, def);
         }
 
         exports
     }
 
     /// Package names from `library()` / `require()` calls in this file.
-    pub fn file_attached_packages(&self) -> Vec<&str> {
+    pub fn attached_packages(&self) -> Vec<&str> {
         self.semantic_calls
             .iter()
             .filter_map(|c| match &c.kind {
@@ -525,12 +484,6 @@ impl SymbolFlags {
 // definition without invalidating the definition's identity (file + scope +
 // place) or the UseDefMap.
 //
-// Definitions carry `file` and `scope` so they're self-contained when
-// passed around (e.g., through `DefinitionKind::Import` chains during
-// cross-file goto-definition). This mirrors ty's `Definition<'db>`, a
-// salsa tracked struct that carries file + scope + place for the same
-// reason.
-//
 // Type inference will eventually take a definition as input and inspect
 // the syntax node (via the kind) to determine the type.
 //
@@ -543,11 +496,6 @@ impl SymbolFlags {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definition {
     pub(crate) kind: DefinitionKind,
-    /// The file that owns this definition's index.
-    // TODO(salsa): Should become a File.
-    pub(crate) file: Url,
-    /// The scope within the file's index where this definition lives.
-    pub(crate) scope: ScopeId,
     // TODO(salsa): Should become a PlaceId (like ty's `ScopedPlaceId`).
     pub(crate) symbol: SymbolId,
     pub(crate) range: TextRange,
@@ -579,14 +527,6 @@ impl Definition {
 
     pub fn range(&self) -> TextRange {
         self.range
-    }
-
-    pub fn file(&self) -> &Url {
-        &self.file
-    }
-
-    pub fn scope(&self) -> ScopeId {
-        self.scope
     }
 }
 

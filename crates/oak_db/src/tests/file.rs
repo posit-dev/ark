@@ -61,11 +61,7 @@ fn test_semantic_index_matches_oak_semantic() {
     let via_salsa = file.semantic_index(&db);
 
     let parse = aether_parser::parse(source, aether_parser::RParserOptions::default());
-    let direct = oak_semantic::build_index(
-        &parse.tree(),
-        url.as_url(),
-        oak_semantic::NoopImportsResolver,
-    );
+    let direct = oak_semantic::build_index(&parse.tree(), oak_semantic::NoopImportsResolver);
 
     assert_eq!(via_salsa, &direct);
 }
@@ -116,20 +112,21 @@ fn test_editing_one_file_does_not_invalidate_another() {
 }
 
 #[test]
-fn test_distinct_files_have_distinct_semantic_indexes() {
+fn test_distinct_files_each_get_their_own_cache_entry() {
     let mut db = TestDb::new();
     let file_a = new_file(&mut db, "a.R", "x <- 1\n");
     let file_b = new_file(&mut db, "b.R", "x <- 1\n");
 
-    // Same contents, different `File` inputs: separate cache entries.
+    // Different `File` inputs are distinct salsa entities.
     assert!(file_a != file_b);
 
     let idx_a = file_a.semantic_index(&db);
     let idx_b = file_b.semantic_index(&db);
 
-    // Each index records its own file URL, so they are not structurally
-    // equal even though the source text matches.
-    assert_ne!(*idx_a, *idx_b);
+    // Same contents produce structurally equal indexes (the index doesn't
+    // carry the file URL anymore). Salsa still keys cache entries on the
+    // `File` entity, so both queries actually ran.
+    assert_eq!(*idx_a, *idx_b);
     assert_eq!(db.executions("parse"), 2);
     assert_eq!(db.executions("semantic_index"), 2);
 }

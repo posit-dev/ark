@@ -22,11 +22,7 @@ fn index(source: &str) -> SemanticIndex {
         panic!("source has syntax errors: {source}");
     }
 
-    build_index(
-        &parsed.tree(),
-        &Url::parse("file:///test/test.R").unwrap(),
-        NoopImportsResolver,
-    )
+    build_index(&parsed.tree(), NoopImportsResolver)
 }
 
 fn semantic_call_kinds(index: &SemanticIndex) -> Vec<&SemanticCallKind> {
@@ -1278,7 +1274,7 @@ fn test_assignment_in_for_body() {
 #[test]
 fn test_file_exports_simple() {
     let index = index("x <- 1\ny <- 2");
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert_eq!(exports.len(), 2);
     assert!(exports.contains_key("x"));
     assert!(exports.contains_key("y"));
@@ -1287,7 +1283,7 @@ fn test_file_exports_simple() {
 #[test]
 fn test_file_exports_excludes_nested_definitions() {
     let index = index("f <- function(x) { local_var <- x }");
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert_eq!(exports.len(), 1);
     assert!(exports.contains_key("f"));
 }
@@ -1295,14 +1291,14 @@ fn test_file_exports_excludes_nested_definitions() {
 #[test]
 fn test_file_exports_empty() {
     let index = index("1 + 2");
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert_eq!(exports.len(), 0);
 }
 
 #[test]
 fn test_file_exports_multiple_defs_same_symbol() {
     let index = index("x <- 1\nx <- 2");
-    let exports = index.file_exports();
+    let exports = index.exports();
     // Deduplicates: last definition wins
     assert_eq!(exports.len(), 1);
     assert!(exports.contains_key("x"));
@@ -1513,11 +1509,11 @@ fn test_file_exports_last_def_wins() {
     // When the same name is defined multiple times at file scope,
     // file_exports() returns only the last definition.
     let index = index("foo <- 1\nfoo <- 2\nbar <- 3\n");
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert_eq!(exports.len(), 2);
     // The range should be the second `foo` (offset 9..12)
-    let range = exports.get("foo").unwrap();
-    assert_eq!(range.start(), biome_rowan::TextSize::from(9));
+    let def = exports.get("foo").unwrap();
+    assert_eq!(def.range().start(), biome_rowan::TextSize::from(9));
 }
 
 // --- source() semantic calls: bail paths ---
@@ -1669,11 +1665,7 @@ fn build_test_index(source: &str, resolver: impl ImportsResolver) -> SemanticInd
     if parsed.has_error() {
         panic!("source has syntax errors: {source}");
     }
-    build_index(
-        &parsed.tree(),
-        &Url::parse("file:///test/test.R").unwrap(),
-        resolver,
-    )
+    build_index(&parsed.tree(), resolver)
 }
 
 fn helper_resolution() -> SourceResolution {
@@ -1717,8 +1709,6 @@ fn test_source_resolver_injects_definitions() {
     let def_id = bindings.definitions()[0];
     let def = &index.definitions(file)[def_id];
     assert!(matches!(def.kind(), DefinitionKind::Import { .. }));
-    // def.file() is the owning file; the target is in the kind
-    assert_eq!(def.file().as_str(), "file:///test/test.R");
     match def.kind() {
         DefinitionKind::Import { file, name, .. } => {
             assert_eq!(file.as_str(), "file:///test/helpers.R");
@@ -1728,7 +1718,7 @@ fn test_source_resolver_injects_definitions() {
     }
 
     // file_exports() includes Import-kind definitions
-    let exports = index.file_exports();
+    let exports = index.exports();
     assert!(exports.iter().any(|(name, _)| *name == "helper"));
 }
 

@@ -26,7 +26,6 @@ use oak_index_vec::Idx;
 use oak_index_vec::IndexVec;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use url::Url;
 
 use crate::resolver::ImportsResolver;
 use crate::semantic_index::Definition;
@@ -49,9 +48,9 @@ use crate::use_def_map::UseDefMapBuilder;
 /// Build a [`SemanticIndex`] from a parsed R file with cross-file
 /// information supplied by `resolver`. See [`ImportsResolver`] for the
 /// available impls.
-pub fn build_index(root: &RRoot, file: &Url, resolver: impl ImportsResolver) -> SemanticIndex {
+pub fn build_index(root: &RRoot, resolver: impl ImportsResolver) -> SemanticIndex {
     let range = root.syntax().text_trimmed_range();
-    let mut builder = SemanticIndexBuilder::new(range, file.clone(), resolver);
+    let mut builder = SemanticIndexBuilder::new(range, resolver);
     builder.pre_scan_scope(root.syntax());
     builder.collect_expression_list(&root.expressions());
     builder.finish()
@@ -70,12 +69,11 @@ struct SemanticIndexBuilder<R: ImportsResolver> {
     pre_scans: IndexVec<ScopeId, PreScanScope>,
     enclosing_snapshots: FxHashMap<EnclosingSnapshotKey, (ScopeId, EnclosingSnapshotId)>,
     semantic_calls: Vec<SemanticCall>,
-    file: Url,
     resolver: R,
 }
 
 impl<R: ImportsResolver> SemanticIndexBuilder<R> {
-    fn new(range: TextRange, file: Url, resolver: R) -> Self {
+    fn new(range: TextRange, resolver: R) -> Self {
         let mut scopes = IndexVec::new();
         let mut symbol_tables = IndexVec::new();
         let mut definitions = IndexVec::new();
@@ -112,7 +110,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             pre_scans,
             enclosing_snapshots: FxHashMap::default(),
             semantic_calls: Vec::new(),
-            file,
             resolver,
         }
     }
@@ -164,8 +161,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             symbol: symbol_id,
             kind,
             range,
-            file: self.file.clone(),
-            scope: self.current_scope,
         });
         self.use_def_maps[self.current_scope].ensure_symbol(symbol_id);
         self.use_def_maps[self.current_scope].record_definition(symbol_id, def_id);
@@ -186,8 +181,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             symbol: symbol_id,
             kind: kind.clone(),
             range,
-            file: self.file.clone(),
-            scope: self.current_scope,
         });
 
         let target_scope = self.resolve_super_target(name);
@@ -197,8 +190,6 @@ impl<R: ImportsResolver> SemanticIndexBuilder<R> {
             symbol: target_symbol,
             kind,
             range,
-            file: self.file.clone(),
-            scope: target_scope,
         });
         self.use_def_maps[target_scope].ensure_symbol(target_symbol);
         self.use_def_maps[target_scope].record_deferred_definition(target_symbol, target_def_id);

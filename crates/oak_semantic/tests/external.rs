@@ -304,11 +304,7 @@ fn test_resolve_file_exports_last_definition_wins() {
 
 fn index_source(source: &str) -> oak_semantic::semantic_index::SemanticIndex {
     let parsed = parse(source, RParserOptions::default());
-    build_index(
-        &parsed.tree(),
-        &url::Url::parse("file:///test/test.R").unwrap(),
-        NoopImportsResolver,
-    )
+    build_index(&parsed.tree(), NoopImportsResolver)
 }
 
 #[test]

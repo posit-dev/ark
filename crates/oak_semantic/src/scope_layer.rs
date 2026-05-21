@@ -1,3 +1,12 @@
+//! TODO(salsa): Pre-salsa scope-chain implementation. The salsa-tracked
+//! equivalents live in `oak_db::file_imports` (`File::imports` returning
+//! `Vec<ImportLayer>`) and `oak_db::file_resolve` (`File::resolve`).
+//! This module is still used by the legacy `oak_ide::goto_definition`
+//! path. It goes away once the LSP's goto-def handler ports to
+//! `File::resolve(db, ...)`. At that point `ExternalScope`,
+//! `oak_ide::goto_definition`, `ark::lsp::state::file_analysis`, and this
+//! module all go together.
+
 use std::collections::HashMap;
 
 use biome_rowan::TextRange;
@@ -32,9 +41,9 @@ pub fn file_layers(file: Url, index: &SemanticIndex) -> Vec<ScopeLayer> {
     let mut layers = Vec::new();
 
     let exports = index
-        .file_exports()
+        .exports()
         .into_iter()
-        .map(|(name, range)| (name.to_string(), range))
+        .map(|(name, def)| (name.to_string(), def.range()))
         .collect();
 
     layers.push(ScopeLayer::FileExports { file, exports });

@@ -10,6 +10,7 @@ use stdext::result::ResultExt;
 use crate::imports::SalsaImportsResolver;
 use crate::parse::OakParse;
 use crate::Db;
+use crate::Name;
 use crate::Package;
 use crate::Root;
 
@@ -75,22 +76,37 @@ impl File {
 
     /// Build this file's `SemanticIndex` from the parse tree.
     ///
-    /// `pub(crate)` so [`SalsaImportsResolver`] and tests can reach it. External
-    /// consumers should go through the narrow tracked queries below.
+    /// This is a coarse query that invalidates downstream on every edit
+    /// (`AstPtr` ranges inside `Definition`s shift). External consumers should
+    /// go through the narrow queries: `exports()`, `imports()`, `resolve()`,
+    /// `attached_packages()`, `symbol_table()`, `use_def_map()` to shield
+    /// themselves from edit changes.
     ///
-    /// TODO(salsa): tighten back to private once narrow cross-file
-    /// queries land (`file_exports`, `file_attached_packages`) and
-    /// `SalsaImportsResolver::resolve_source` reads those instead of the full
-    /// index. The privacy reverts to file-local + `cfg(test)` for
-    /// tests at that point.
+    /// Cross-file symbol resolution (`source()` injection, NSE resolution)
+    /// is driven by [`SalsaImportsResolver`].
     ///
-    /// Cross-file symbol resolution (`source()` injection, NSE resolution) is
-    /// driven by [`SalsaImportsResolver`]. `cycle_result` recovers from cyclic `source()`
-    /// chains: the handler rebuilds the file with `NoopImportsResolver`, which drops
-    /// cross-file resolution. The cycling side keeps its own local analysis
-    /// (scopes, use-def maps, function bodies) with only its source-injected
-    /// imports from the cycle partner missing. TODO(diagnostics): Lint
-    /// `source()` cycles.
+    /// `cycle_result` is required because `source()` cycles produce a
+    /// dependency graph through both `semantic_index` and `exports`:
+    /// `semantic_index(A) -> SalsaImportsResolver -> exports(B) ->
+    /// semantic_index(B) -> SalsaImportsResolver -> exports(A) ->
+    /// semantic_index(A)`. Salsa picks one query to break the cycle and
+    /// panics with "set cycle_fn/cycle_initial" unless that query has a
+    /// handler. Both `semantic_index` and the narrow queries (`exports`,
+    /// `imports`, `resolve`) carry their own `cycle_result`.
+    ///
+    /// The two handlers behave differently:
+    ///
+    /// - `semantic_index` (this query, custom rebuild): the cycling
+    ///   side is rebuilt with `NoopImportsResolver`. Cross-file
+    ///   injection drops, but local analysis (scopes, use-def maps,
+    ///   function bodies) is preserved.
+    ///
+    /// - `exports` / `imports` / `resolve` (FallbackImmediate, empty):
+    ///   the cycling side gets an empty fallback for that query.
+    ///
+    /// Which handler fires depends on which query salsa first re-enters.
+    /// R doesn't allow cyclic `source()`, so the asymmetric recovery is
+    /// acceptable. TODO(diagnostics): Lint `source()` cycles.
     ///
     /// `no_eq` skips salsa's `values_equal` check after recomputation.
     /// Backdating at this level never triggered in practice anyway: `AstPtr`
@@ -110,6 +126,20 @@ impl File {
     #[salsa::tracked]
     pub fn use_def_map(self, db: &dyn Db, scope: ScopeId) -> Arc<UseDefMap> {
         Arc::clone(self.semantic_index(db).use_def_map(scope))
+    }
+
+    /// Package names from `library()` / `require()` calls in this file,
+    /// including those propagated transitively through `source()` chains.
+    /// Ordered by call-site position, which preserves R's search-path
+    /// semantics: a later `library(b)` shadows an earlier `library(a)`
+    /// when both export the same name.
+    #[salsa::tracked(returns(ref))]
+    pub fn attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
+        self.semantic_index(db)
+            .attached_packages()
+            .into_iter()
+            .map(|s| Name::new(db, s))
+            .collect()
     }
 
     /// The root containing this file, if any.
@@ -155,7 +185,7 @@ fn root_by_url(db: &dyn Db, url: &UrlId) -> Option<Root> {
 fn build_semantic_index(file: File, db: &dyn Db) -> SemanticIndex {
     let parsed = file.parse(db);
     let resolver = SalsaImportsResolver::new(db, file);
-    oak_semantic::build_index(&parsed.tree(), file.url(db).as_url(), resolver)
+    oak_semantic::build_index(&parsed.tree(), resolver)
 }
 
 fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> SemanticIndex {
@@ -164,9 +194,5 @@ fn semantic_index_cycle_result(db: &dyn Db, _id: salsa::Id, file: File) -> Seman
         file.url(db),
     );
     let parsed = file.parse(db);
-    oak_semantic::build_index(
-        &parsed.tree(),
-        file.url(db).as_url(),
-        oak_semantic::NoopImportsResolver,
-    )
+    oak_semantic::build_index(&parsed.tree(), oak_semantic::NoopImportsResolver)
 }
