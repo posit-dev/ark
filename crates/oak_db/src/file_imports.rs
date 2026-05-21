@@ -50,13 +50,13 @@ impl File {
     #[salsa::tracked(returns(ref))]
     pub fn imports(self, db: &dyn Db) -> Vec<ImportLayer> {
         match self.package(db) {
-            Some(package) => package_layers(self, db, package),
-            None => script_layers(self, db),
+            Some(package) => package_imports(self, db, package),
+            None => script_imports(self, db),
         }
     }
 }
 
-fn script_layers(file: File, db: &dyn Db) -> Vec<ImportLayer> {
+fn script_imports(file: File, db: &dyn Db) -> Vec<ImportLayer> {
     let mut layers = Vec::new();
     let index = file.semantic_index(db);
 
@@ -78,7 +78,7 @@ fn script_layers(file: File, db: &dyn Db) -> Vec<ImportLayer> {
     layers
 }
 
-fn package_layers(_file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
+fn package_imports(_file: File, db: &dyn Db, package: Package) -> Vec<ImportLayer> {
     let mut layers = Vec::new();
     let namespace = package.namespace(db);
 
