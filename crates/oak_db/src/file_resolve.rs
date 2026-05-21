@@ -97,11 +97,10 @@ impl<'db> File {
     /// [`File::resolve_export()`] and [`File::intern_definition()`].
     pub fn resolve_at(self, db: &'db dyn Db, offset: TextSize) -> Option<Definition<'db>> {
         let index = self.semantic_index(db);
-        let (use_scope, use_id, _) = index.use_at(offset)?;
-        let use_symbol = index.uses(use_scope)[use_id].symbol();
+        let (use_scope, _use_id, use_site) = index.use_at(offset)?;
         let name = index
             .symbols(use_scope)
-            .symbol(use_symbol)
+            .symbol(use_site.symbol())
             .name()
             .to_string();
 
@@ -121,8 +120,7 @@ impl<'db> File {
             }
         }
 
-        let (cursor_scope, _) = index.scope_at(offset);
-        let in_function = cursor_scope != file_scope;
+        let in_function = use_scope != file_scope;
         let interned = Name::new(db, name.as_str());
 
         // 2. Function body: In lazy contexts we over-approximate by resolving

@@ -50,9 +50,10 @@ impl File {
     /// unbound in the file's semantic index) can be resolved against these
     /// imports.
     ///
-    /// The last `library()` call comes before the first, and the latest
-    /// collation file before the earliest. The first hit in a forward search
-    /// then matches R's runtime semantics (last attached / latest sourced wins).
+    /// `library()` calls further down the file come earlier in the returned
+    /// `Vec`, and collation files later in the package come earlier too. The
+    /// first hit in a forward search then matches R's runtime semantics (last
+    /// attached / latest sourced wins).
     ///
     /// Offset-independent and stable across cursor moves. Recomputed only when
     /// the file's package membership, NAMESPACE, or this file's semantic calls
@@ -75,11 +76,11 @@ impl File {
     ///   appears relative to the cursor.
     ///
     /// - **Top-level cursor (script)**: only `library()` calls that
-    ///   have run by `offset` (file-scope calls before the cursor).
-    ///   LIFO order, latest-attached comes first.
+    ///   have occurred before `offset`. Most recently attached comes
+    ///   first.
     ///
     /// - **Top-level cursor (package)**: only collation predecessors
-    ///   of this file. LIFO order, latest-sourced predecessor comes
+    ///   of this file. Most recently sourced predecessor comes
     ///   first. The package imports and base namespace come last.
     ///
     /// Plain method rather than `#[salsa::tracked]`. Tracking would key the
