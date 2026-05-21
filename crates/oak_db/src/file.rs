@@ -133,7 +133,7 @@ impl File {
     /// Ordered by call-site position, which preserves R's search-path
     /// semantics: a later `library(b)` shadows an earlier `library(a)`
     /// when both export the same name.
-    #[salsa::tracked]
+    #[salsa::tracked(returns(ref))]
     pub fn attached_packages(self, db: &dyn Db) -> Vec<Name<'_>> {
         self.semantic_index(db)
             .file_attached_packages()

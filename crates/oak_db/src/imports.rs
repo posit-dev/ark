@@ -63,7 +63,7 @@ impl<'db> ImportsResolver for SalsaImportsResolver<'db> {
             .collect();
         let packages: Vec<String> = file
             .attached_packages(self.db)
-            .into_iter()
+            .iter()
             .map(|name| name.text(self.db).to_string())
             .collect();
 
