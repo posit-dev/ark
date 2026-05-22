@@ -281,7 +281,6 @@ fn test_resolve_unbound_name_in_package_does_not_cycle() {
     let workspace = workspace_root(&db, "w/pkg");
     let pkg = crate::Package::new(
         &db,
-        workspace,
         file_url("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,
@@ -321,7 +320,6 @@ fn test_resolve_walks_package_files_for_lazy_lookups() {
     let workspace = workspace_root(&db, "w/pkg");
     let pkg = crate::Package::new(
         &db,
-        workspace,
         file_url("/w/pkg/DESCRIPTION"),
         "pkg".to_string(),
         None,

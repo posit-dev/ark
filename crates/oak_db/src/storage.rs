@@ -65,4 +65,12 @@ impl Db for OakDatabase {
     fn package_by_url(&self, url: &aether_url::UrlId) -> Option<crate::Package> {
         crate::db::package_by_url_query(self, url)
     }
+
+    fn root_by_package(&self, pkg: crate::Package) -> Option<crate::Root> {
+        crate::db::root_by_package_query(self, pkg)
+    }
+
+    fn live_roots(&self) -> &[crate::LiveRoot] {
+        crate::db::live_roots_query(self)
+    }
 }

@@ -28,7 +28,6 @@ use oak_db::Package;
 use oak_db::Root;
 use oak_package_metadata::namespace::Namespace;
 use salsa::Setter;
-use stdext::result::ResultExt;
 
 /// Description of one R file the scanner wants to register.
 ///
@@ -129,31 +128,12 @@ impl RootExt for Root {
         files: Vec<FileEntry>,
         collation: Option<Vec<String>>,
     ) -> Package {
-        // `package_by_url()` covers two cases plus an unusual third:
-        //
-        // - Already in `self.packages` (rescan, common path): `pkg.root ==
-        //   self` so `set_root` is a no-op.
-        //
-        // - In `stale_root.packages` (resurrection after a previous eviction).
-        //   `pkg.root` names the evicted root: `set_root` updates it.
-        //
-        // - In another live root's `packages`. Happens with *nested roots*: the
-        //   frontend opens both `/proj` and `/proj/sub-pkg` as workspace folders,
-        //   both scans walk into `sub-pkg/DESCRIPTION`. This case is distinct
-        //   from nested *packages* inside one root, e.g. a package's `tests/` may
-        //   carry fixture DESCRIPTIONs.
-        //
-        //   Longest-path root wins the backpointer: `/proj/sub-pkg` is the more
-        //   specific home for `sub-pkg/DESCRIPTION` than `/proj` is. The shorter
-        //   root's `packages` vec may still list the package transiently. It
-        //   self-heals on its next scan since `set_packages()` replaces the vec
-        //   wholesale.
+        // `package_by_url()` finds the existing entity whether it's already
+        // in `self.packages` (rescan, common path) or in
+        // `stale_root.packages` (resurrection after a previous eviction).
+        // Either way we reuse the entity and refresh its metadata fields.
         let pkg = match db.package_by_url(&description_url) {
             Some(p) => {
-                let current_root = p.root(db);
-                if current_root != self && root_depth(db, self) >= root_depth(db, current_root) {
-                    p.set_root(db).to(self);
-                }
                 p.set_name(db).to(name);
                 p.set_version(db).to(version);
                 p.set_namespace(db).to(namespace);
@@ -163,7 +143,6 @@ impl RootExt for Root {
             },
             None => Package::new(
                 db,
-                self,
                 description_url,
                 name,
                 version,
@@ -242,17 +221,6 @@ fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let mut files = orphan.files(db).clone();
     files.retain(|f| *f != file);
     orphan.set_files(db).to(files);
-}
-
-/// Number of path components in a root's URL. Used by `set_package` to pick the
-/// longest-path root when nested roots both claim the same DESCRIPTION.
-fn root_depth<DB: Db + DbInputs>(db: &DB, root: Root) -> usize {
-    root.path(db)
-        .to_file_path()
-        .debug_assert_ok("workspace / library root URLs should be file paths")
-        .map(|p| p.components().count())
-        // Fall back to 0 in release builds if root URL is not a file path
-        .unwrap_or(0)
 }
 
 fn remove_from_stale_files<DB: Db + DbInputs>(db: &mut DB, file: File) {

@@ -61,7 +61,6 @@ fn test_set_stale_clears_package_on_editor_owned_package_file() {
     let root = Root::new(&db, file_url("/proj"), RootKind::Workspace, vec![], vec![]);
     let pkg = Package::new(
         &db,
-        root,
         file_url("/proj/DESCRIPTION"),
         "p".to_string(),
         None,

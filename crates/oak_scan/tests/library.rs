@@ -403,7 +403,7 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         None,
     );
     register_package(&mut db, short, p1);
-    assert_eq!(p1.root(&db), short);
+    assert_eq!(db.root_by_package(p1), Some(short));
 
     let p2 = long.set_package(
         &mut db,
@@ -414,9 +414,11 @@ fn test_set_package_longer_root_wins_after_shorter_claims_first() {
         Vec::new(),
         None,
     );
-    // Same entity, re-rooted to the more-specific root.
+    register_package(&mut db, long, p2);
+    // Same entity; now in both roots' `packages`. `root_by_package` prefers
+    // the longer (more specific) root.
     assert_eq!(p1, p2);
-    assert_eq!(p1.root(&db), long);
+    assert_eq!(db.root_by_package(p1), Some(long));
 }
 
 #[test]
@@ -436,7 +438,7 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         None,
     );
     register_package(&mut db, long, p1);
-    assert_eq!(p1.root(&db), long);
+    assert_eq!(db.root_by_package(p1), Some(long));
 
     let p2 = short.set_package(
         &mut db,
@@ -447,9 +449,11 @@ fn test_set_package_shorter_root_does_not_steal_from_longer() {
         Vec::new(),
         None,
     );
-    // Same entity, but the backpointer keeps the longer root.
+    register_package(&mut db, short, p2);
+    // Same entity; now in both roots' `packages`. `root_by_package` keeps the
+    // longer root as the owner.
     assert_eq!(p1, p2);
-    assert_eq!(p1.root(&db), long);
+    assert_eq!(db.root_by_package(p1), Some(long));
 }
 
 #[test]
@@ -497,12 +501,12 @@ fn test_upsert_re_promotes_editor_owned_file_from_orphan() {
 }
 
 #[test]
-fn test_set_package_equal_depth_updates_root() {
-    // Stale resurrection: the previous Root entity at this path was
-    // evicted (so it's no longer in `library_roots`), and a fresh Root
-    // is created at the same path. The resurrected Package's `root`
-    // field still names the old entity, so `set_package` on the new
-    // one must re-root.
+fn test_set_package_stale_resurrection_changes_owning_root() {
+    // Stale resurrection: the previous `Root` entity at this path was
+    // evicted (so it's no longer in `library_roots`), and a fresh `Root`
+    // is created at the same path. The resurrected `Package` ends up in
+    // the new root's `packages` vec, and `root_by_package` reports the new
+    // root accordingly.
     let mut db = OakDatabase::new();
     let old = empty_library_root(&db, "/lib");
     let new = empty_library_root(&db, "/lib");
@@ -518,11 +522,14 @@ fn test_set_package_equal_depth_updates_root() {
         Vec::new(),
         None,
     );
+    register_package(&mut db, old, p1);
+    assert_eq!(db.root_by_package(p1), Some(old));
+
     // Simulate eviction: drop `old` from `library_roots` and move the
     // package into `stale_root.packages`.
     db.stale_root().set_packages(&mut db).to(vec![p1]);
     db.library_roots().set_roots(&mut db).to(vec![]);
-    assert_eq!(p1.root(&db), old);
+    assert_eq!(db.root_by_package(p1), None);
 
     let p2 = new.set_package(
         &mut db,
@@ -533,6 +540,7 @@ fn test_set_package_equal_depth_updates_root() {
         Vec::new(),
         None,
     );
+    register_package(&mut db, new, p2);
     assert_eq!(p1, p2);
-    assert_eq!(p1.root(&db), new);
+    assert_eq!(db.root_by_package(p1), Some(new));
 }

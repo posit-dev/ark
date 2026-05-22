@@ -146,17 +146,22 @@ impl File {
 
     /// The root containing this file, if any.
     ///
-    /// If the file has a registered [`Package`], dispatches through
-    /// `Package.root`. Otherwise falls back to a URL-prefix lookup
-    /// against [`WorkspaceRoots`] (orphan files live under a workspace
-    /// root or nowhere; library files always have a package).
+    /// If the file has a registered [`Package`], asks the db which live
+    /// root holds it via [`Db::root_by_package`]. Otherwise falls back to a
+    /// URL-prefix lookup against [`WorkspaceRoots`] (orphan files live
+    /// under a workspace root or nowhere). Library files normally have
+    /// a package; the `root_by_package` branch covers them too.
+    ///
+    /// Returns `None` if the file's package was evicted to
+    /// [`StaleRoot`] (no live root contains it), or if the file is in
+    /// orphan and the URL falls outside every workspace folder.
     ///
     /// Callers that need to distinguish workspace from library roots
     /// inspect `root.kind(db)`.
     #[salsa::tracked]
     pub fn root(self, db: &dyn Db) -> Option<Root> {
         if let Some(pkg) = self.package(db) {
-            return Some(pkg.root(db));
+            return db.root_by_package(pkg);
         }
         root_by_url(db, self.url(db))
     }

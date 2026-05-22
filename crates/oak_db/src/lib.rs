@@ -22,6 +22,7 @@ pub use file_exports::ExportEntry;
 pub use file_exports::FileExports;
 pub use file_imports::ImportLayer;
 pub use inputs::LibraryRoots;
+pub use inputs::LiveRoot;
 pub use inputs::OrphanRoot;
 pub use inputs::Package;
 pub use inputs::Root;
