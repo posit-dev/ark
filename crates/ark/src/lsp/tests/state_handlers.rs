@@ -4,6 +4,7 @@
 //! regression in either the translation step or the state.documents → skip set
 //! conversion.
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
@@ -14,17 +15,23 @@ use oak_db::DbInputs;
 use oak_scan::DbExt;
 use tower_lsp::lsp_types::DidChangeWatchedFilesParams;
 use tower_lsp::lsp_types::DidChangeWorkspaceFoldersParams;
+use tower_lsp::lsp_types::DidCloseTextDocumentParams;
 use tower_lsp::lsp_types::FileChangeType;
 use tower_lsp::lsp_types::FileEvent;
 use tower_lsp::lsp_types::InitializeParams;
+use tower_lsp::lsp_types::TextDocumentIdentifier;
 use tower_lsp::lsp_types::WorkspaceFolder;
 use tower_lsp::lsp_types::WorkspaceFoldersChangeEvent;
 use url::Url;
 
+use crate::lsp::capabilities::Capabilities;
 use crate::lsp::document::Document;
+use crate::lsp::main_loop::init_aux_for_test;
+use crate::lsp::main_loop::LspState;
 use crate::lsp::state::WorldState;
 use crate::lsp::state_handlers::did_change_watched_files;
 use crate::lsp::state_handlers::did_change_workspace_folders;
+use crate::lsp::state_handlers::did_close;
 use crate::lsp::state_handlers::effective_workspace_uris;
 
 fn write_package(dir: &Path, name: &str, r_files: &[(&str, &str)]) {
@@ -153,7 +160,7 @@ fn test_r_file_changed_for_editor_open_file_is_skipped() {
     let url_id = UrlId::from_url(url.clone());
     state
         .oak
-        .set_editor_contents(url_id.clone(), "editor_v2\n".to_string());
+        .upsert_editor(url_id.clone(), "editor_v2\n".to_string());
 
     // Now disk-side `Changed` fires with stale disk content.
     fs::write(&path, "disk_v3\n").unwrap();
@@ -245,7 +252,7 @@ fn test_r_file_deleted_for_editor_open_file_is_skipped() {
     let url_id = UrlId::from_url(url.clone());
     state
         .oak
-        .set_editor_contents(url_id.clone(), "editor_v2\n".to_string());
+        .upsert_editor(url_id.clone(), "editor_v2\n".to_string());
 
     fs::remove_file(&path).unwrap();
     let params = DidChangeWatchedFilesParams {
@@ -479,7 +486,7 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
         .insert(url.clone(), Document::new("editor <- 2\n", None));
     state
         .oak
-        .set_editor_contents(url_id.clone(), "editor <- 2\n".to_string());
+        .upsert_editor(url_id.clone(), "editor <- 2\n".to_string());
 
     let file_before = state.oak.file_by_url(&url_id).unwrap();
 
@@ -515,4 +522,56 @@ fn test_did_change_workspace_folders_preserves_open_buffer_across_churn() {
         .orphan_root()
         .files(&state.oak)
         .contains(&after_readd));
+}
+
+#[test]
+fn test_did_close_releases_orphan_file_to_stale() {
+    // End-to-end: open buffer → remove its workspace folder (file goes
+    // to orphan, editor-owned) → close → file leaves orphan, lands in
+    // stale. Without the `close_editor` hook in `did_close`, the file
+    // would zombie in orphan with the editor's last content.
+    init_aux_for_test();
+
+    let tmp = tempfile::tempdir().unwrap();
+    write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);
+    let mut state = workspace_state(tmp.path());
+    let mut lsp_state = LspState {
+        parsers: HashMap::new(),
+        capabilities: Capabilities::default(),
+        console_notification_tx: tokio::sync::mpsc::unbounded_channel().0,
+    };
+
+    let r_path = tmp.path().join("pkg/R/a.R");
+    let url = Url::from_file_path(&r_path).unwrap();
+    let url_id = UrlId::from_url(url.clone());
+
+    // Simulate `didOpen` via state mutation (matches the rest of the file's
+    // pattern).
+    state
+        .documents
+        .insert(url.clone(), Document::new("edited\n", None));
+    lsp_state
+        .parsers
+        .insert(url.clone(), tree_sitter::Parser::new());
+    state
+        .oak
+        .upsert_editor(url_id.clone(), "edited\n".to_string());
+
+    // Remove the workspace folder; file goes to orphan (editor-owned).
+    did_change_workspace_folders(
+        folders_change(vec![], vec![folder_for(tmp.path())]),
+        &mut state,
+    )
+    .unwrap();
+    let file = state.oak.file_by_url(&url_id).unwrap();
+    assert!(state.oak.orphan_root().files(&state.oak).contains(&file));
+
+    // Now close the buffer. File should move from orphan to stale.
+    let params = DidCloseTextDocumentParams {
+        text_document: TextDocumentIdentifier { uri: url.clone() },
+    };
+    did_close(params, &mut lsp_state, &mut state).unwrap();
+
+    assert!(!state.oak.orphan_root().files(&state.oak).contains(&file));
+    assert!(state.oak.stale_root().files(&state.oak).contains(&file));
 }

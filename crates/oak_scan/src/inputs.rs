@@ -90,20 +90,38 @@ pub trait DbScan: Db + DbInputs {
     /// `DESCRIPTION` events change the package classification of a directory.
     fn rescan_workspace_root(&mut self, root: Root);
 
-    /// Upsert a file's content. Used by the LSP layer to apply `didOpen` /
-    /// `didChange` content for any URL the editor touches.
+    /// Upsert the editor's view of a file. Used by the LSP layer to apply
+    /// `didOpen` / `didChange` content for any URL the editor touches.
     ///
-    /// If a `File` already exists at this URL, only its contents are updated.
-    /// Classification is left as-is: a file the scanner had previously placed
-    /// in a package stays in that package, since `didOpen` is a content event,
-    /// not a reclassification.
+    /// If a `File` already exists at this URL (in a live root or orphan),
+    /// only its contents are updated. Classification is left as-is: a file
+    /// the scanner had previously placed in a package stays in that package
+    /// (`didOpen` is a content event, not a reclassification).
     ///
-    /// If no `File` exists yet, one is created in `orphan_root().files`. It
-    /// stays there until another handler reclassifies it. Untitled buffers and
-    /// files that do not belong to any workspace stay orphan for the session.
-    /// Files inside a workspace folder get reclassified the next time the
-    /// workspace scanner runs, at which point the orphan reference is dropped.
-    fn set_editor_contents(&mut self, url: UrlId, contents: String) -> File;
+    /// If no live `File` exists but one is in [`StaleRoot`] from a prior
+    /// [`Self::close_editor`], it gets resurrected into `orphan_root` with
+    /// the new content. This ways, reopening a previously-closed buffer reuses
+    /// the same `File` input entity in the Salsa cache.
+    ///
+    /// If no `File` exists at all, one is created in `orphan_root().files`.
+    /// It stays there until another handler reclassifies it. Untitled
+    /// buffers and files outside every workspace stay orphan for the
+    /// session. Files inside a workspace folder get reclassified the next
+    /// time the workspace scanner runs.
+    fn upsert_editor(&mut self, url: UrlId, contents: String) -> File;
+
+    /// Mark the editor as no longer holding a buffer for this URL.
+    ///
+    /// If the file lives in [`OrphanRoot`] (placed there by
+    /// [`Self::upsert_editor`] because the URL didn't belong to a live root, or
+    /// by `set_workspace_paths()` eviction routing for an open buffer in a
+    /// removed workspace), it gets moved to [`StaleRoot`]. Future
+    /// [`Self::upsert_editor`] for the same URL resurrects the entity from
+    /// stale instead of minting a fresh one.
+    ///
+    /// If the file is in a live workspace / library container, the call is a
+    /// no-op.
+    fn close_editor(&mut self, url: &UrlId);
 
     /// React to a Created or Changed watcher event on an R file. Classifies the
     /// URL against the current workspace tree and either creates a new `File`
@@ -136,20 +154,48 @@ impl<DB: Db + DbInputs> DbScan for DB {
         workspace::rescan_workspace_root(self, root);
     }
 
-    fn set_editor_contents(&mut self, url: UrlId, contents: String) -> File {
+    fn upsert_editor(&mut self, url: UrlId, contents: String) -> File {
         if let Some(existing) = self.file_by_url(&url) {
             existing.set_contents(self).to(contents);
             return existing;
         }
 
+        // Resurrect a previously-closed buffer from stale. The didOpen
+        // content overwrites whatever the stale entity carried.
+        if let Some(stale) = stale_file_by_url(self, &url) {
+            stale.set_contents(self).to(contents);
+            stale.set_package(self).to(None);
+            remove_from_stale_files(self, stale);
+            add_to_orphan_files(self, stale);
+            return stale;
+        }
+
         let file = File::new(self, url, contents, None);
-        let orphan = self.orphan_root();
-
-        let mut files = orphan.files(self).clone();
-        files.push(file);
-        orphan.set_files(self).to(files);
-
+        add_to_orphan_files(self, file);
         file
+    }
+
+    fn close_editor(&mut self, url: &UrlId) {
+        let Some(file) = self.file_by_url(url) else {
+            return;
+        };
+
+        let orphan = self.orphan_root();
+        if !orphan.files(self).contains(&file) {
+            // A workspace or library root holds it
+            return;
+        }
+        // If the opened editor was in the orphan root, the file is now stale
+        // and unreachable. Move it to the stale root.
+
+        let mut orphan_files = orphan.files(self).clone();
+        orphan_files.retain(|f| *f != file);
+        orphan.set_files(self).to(orphan_files);
+
+        let stale = self.stale_root();
+        let mut stale_files = stale.files(self).clone();
+        stale_files.push(file);
+        stale.set_files(self).to(stale_files);
     }
 
     fn add_watched_file(&mut self, url: UrlId, contents: String) {
@@ -347,4 +393,13 @@ fn remove_from_orphan<DB: Db + DbInputs>(db: &mut DB, file: File) {
     let mut files = orphan.files(db).clone();
     files.retain(|f| *f != file);
     orphan.set_files(db).to(files);
+}
+
+fn add_to_orphan_files<DB: Db + DbInputs>(db: &mut DB, file: File) {
+    let orphan = db.orphan_root();
+    let mut files = orphan.files(db).clone();
+    if !files.contains(&file) {
+        files.push(file);
+        orphan.set_files(db).to(files);
+    }
 }

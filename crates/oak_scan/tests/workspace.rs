@@ -194,7 +194,7 @@ fn test_scan_workspace_preserves_orphan_content_on_promotion() {
 
     // Editor event before any scan.
     let url = UrlId::from_file_path(&r_path).unwrap();
-    db.set_editor_contents(url.clone(), "edited_version <- 2\n".to_string());
+    db.upsert_editor(url.clone(), "edited_version <- 2\n".to_string());
 
     db.set_workspace_paths(
         &[tmp.path().to_path_buf()],
@@ -220,7 +220,7 @@ fn test_scan_workspace_preserves_package_file_content_on_promotion() {
     let mut db = OakDatabase::new();
 
     let url = UrlId::from_file_path(&r_path).unwrap();
-    db.set_editor_contents(url.clone(), "edited <- 2\n".to_string());
+    db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
 
     db.set_workspace_paths(
         &[tmp.path().to_path_buf()],
@@ -392,7 +392,7 @@ fn test_set_workspace_paths_preserves_editor_owned_file_across_churn() {
 
     // Editor opens the file; subsequent `set_workspace_paths` calls
     // treat it as editor-owned.
-    db.set_editor_contents(url.clone(), "edited <- 2\n".to_string());
+    db.upsert_editor(url.clone(), "edited <- 2\n".to_string());
     let editor_owned: HashSet<UrlId> = [url.clone()].into_iter().collect();
 
     // Workspace folder removed. File routes to orphan, package goes to stale.
@@ -444,8 +444,9 @@ fn test_set_workspace_paths_unchanged_path_preserves_root_and_package_identity()
     // Repeated calls with the same paths don't churn entities: the existing
     // `Root` is reused (no fs walk), and any `Package` salsa caches stay
     // warm. The watcher is the path for in-folder updates.
-    use salsa::plumbing::AsId;
     use std::collections::HashSet;
+
+    use salsa::plumbing::AsId;
 
     let tmp = tempfile::tempdir().unwrap();
     write_package(&tmp.path().join("pkg"), "pkg", &[("a.R", "x <- 1\n")]);

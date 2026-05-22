@@ -359,7 +359,7 @@ fn test_apply_watcher_events_skip_set_blocks_r_file_event() {
 
     // Driver "owns" this URL (the editor has it open).
     let url = UrlId::from_file_path(&path).unwrap();
-    db.set_editor_contents(url.clone(), "editor_v2\n".to_string());
+    db.upsert_editor(url.clone(), "editor_v2\n".to_string());
 
     let mut skip = HashSet::new();
     skip.insert(url.clone());

@@ -273,7 +273,7 @@ pub(crate) fn did_open(
     state.documents.insert(uri.clone(), document.clone());
 
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.set_editor_contents(url_id, contents.to_string());
+    state.oak.upsert_editor(url_id, contents.to_string());
 
     // NOTE: Do we need to call `update_config()` here?
     // update_config(vec![uri]).await;
@@ -301,7 +301,7 @@ pub(crate) fn did_change(
 
     let new_contents = document.contents.to_string();
     let url_id = UrlId::from_url(uri.clone());
-    state.oak.set_editor_contents(url_id, new_contents);
+    state.oak.upsert_editor(url_id, new_contents);
 
     lsp::main_loop::index_update(vec![uri.clone()], state.clone());
 
@@ -336,6 +336,9 @@ pub(crate) fn did_close(
         .parsers
         .remove(&uri)
         .ok_or(anyhow!("Failed to remove parser for URI: {uri}"))?;
+
+    let url_id = UrlId::from_url(uri.clone());
+    state.oak.close_editor(&url_id);
 
     lsp::log_info!("did_close(): closed document with URI: '{uri}'.");
 
