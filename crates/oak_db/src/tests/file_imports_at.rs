@@ -29,6 +29,7 @@ fn install_packages(db: &mut TestDb, names: &[&str]) -> Vec<Package> {
         let pkg = Package::new(
             db,
             root,
+            file_url(&format!("libs/{name}/DESCRIPTION")),
             name.to_string(),
             Some("1.0.0".to_string()),
             Namespace::default(),
@@ -50,6 +51,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> Package {
     let pkg = Package::new(
         db,
         root,
+        file_url(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
         None,
         Namespace::default(),

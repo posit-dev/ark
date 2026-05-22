@@ -109,12 +109,65 @@ impl OrphanRoot {
     }
 }
 
+/// Files and packages from workspace or library roots that were removed
+/// during a `set_*_paths` call.
+///
+/// Salsa doesn't garbage-collect entities, so dropping a `Root` doesn't
+/// free its `File` and `Package` entities. They'd just leak. Instead we
+/// move them here and consult this bucket on the next `set_*_paths`,
+/// reusing entities by URL when their paths come back. This matters for
+/// agent / multi-repo workflows where the same workspace folder gets
+/// added and removed repeatedly across a session.
+///
+/// **Not consulted by analysis.** `Db::file_by_url` and
+/// `Db::package_by_name` walk workspace / library roots and (for files)
+/// `OrphanRoot` only. Entities in `StaleRoot` are invisible to
+/// completions, goto-def, etc. — they correspond to folders the user
+/// has explicitly removed.
+///
+/// **Consulted by scanners.** `Db::package_by_url` walks live roots
+/// then falls back to stale. Scanner upsert helpers do the same for
+/// files. On reuse, the entity is moved out of stale back into a live
+/// container.
+///
+/// Singleton like `OrphanRoot`. The `files` and `packages` fields are
+/// independent: a stale file's `package` may still point at a stale
+/// package, and that's fine. Both are invisible to analysis until one
+/// of them gets pulled back into a live container.
+#[salsa::input]
+pub struct StaleRoot {
+    #[returns(ref)]
+    pub files: Vec<File>,
+    #[returns(ref)]
+    pub packages: Vec<Package>,
+}
+
+impl StaleRoot {
+    pub fn empty(db: &dyn Db) -> Self {
+        Self::new(db, vec![], vec![])
+    }
+}
+
 #[salsa::input(debug)]
 pub struct Package {
     /// The `Root` this package belongs to. Workspace packages live under
     /// a [`RootKind::Workspace`] root, installed packages live under a
     /// [`RootKind::Library`] root. Read `root.kind(db)` to distinguish.
+    ///
+    /// TODO(scan): redundant with `description_url` + the live-graph
+    /// containment (which `Root.packages` holds this `Package`).
+    /// Consider removing alongside workspace eviction. `File::root`
+    /// would dispatch via URL-prefix matching across workspace and
+    /// library roots instead of through this backpointer, and the
+    /// stale-backpointer-after-eviction case goes away.
     pub root: Root,
+    /// URL of the package's `DESCRIPTION` file. Stable identity across
+    /// rescans and workspace / library churn: scanners look up an
+    /// existing `Package` by this URL before creating a new one (see
+    /// `Db::package_by_url()`). Two packages with the same `Package:`
+    /// name can coexist on disk and the URL distinguishes them.
+    #[returns(ref)]
+    pub description_url: UrlId,
     // TODO(salsa): Expose a tracked `name_interned(db) -> Name<'db>`
     // method so `db.package_by_name()` and other lookups key on the
     // interned id rather than the string. Can't store `Name<'db>` on

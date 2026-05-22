@@ -25,6 +25,10 @@
 mod inputs;
 mod library;
 mod packages;
+mod stale;
+
+#[cfg(test)]
+mod tests;
 
 pub use inputs::DbExt;
 pub use inputs::FileEntry;

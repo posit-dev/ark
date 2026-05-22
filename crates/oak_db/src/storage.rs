@@ -5,12 +5,13 @@ use crate::Db;
 use crate::DbInputs;
 use crate::LibraryRoots;
 use crate::OrphanRoot;
+use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 /// Concrete Salsa database.
 ///
-/// Holds singleton `WorkspaceRoots` / `LibraryRoots` / `OrphanRoot`
-/// inputs and lazy-initialises them on first access.
+/// Holds singleton `WorkspaceRoots` / `LibraryRoots` / `OrphanRoot` /
+/// `StaleRoot` inputs and lazy-initialises them on first access.
 #[salsa::db]
 #[derive(Clone, Default)]
 pub struct OakDatabase {
@@ -18,6 +19,7 @@ pub struct OakDatabase {
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
+    stale_root: Arc<OnceLock<StaleRoot>>,
 }
 
 impl OakDatabase {
@@ -44,6 +46,10 @@ impl DbInputs for OakDatabase {
     fn orphan_root(&self) -> OrphanRoot {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
     }
+
+    fn stale_root(&self) -> StaleRoot {
+        *self.stale_root.get_or_init(|| StaleRoot::empty(self))
+    }
 }
 
 #[salsa::db]
@@ -54,5 +60,9 @@ impl Db for OakDatabase {
 
     fn package_by_name(&self, name: &str) -> Option<crate::Package> {
         crate::db::package_by_name_query(self, name)
+    }
+
+    fn package_by_url(&self, url: &aether_url::UrlId) -> Option<crate::Package> {
+        crate::db::package_by_url_query(self, url)
     }
 }

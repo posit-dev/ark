@@ -41,6 +41,7 @@ fn install_workspace_package(db: &mut TestDb, name: &str) -> (Root, Package) {
     let pkg = Package::new(
         db,
         root,
+        file_url(&format!("workspace/{name}/DESCRIPTION")),
         name.to_string(),
         None,
         Namespace::default(),

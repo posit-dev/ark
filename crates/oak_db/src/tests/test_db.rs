@@ -18,6 +18,7 @@ use crate::LibraryRoots;
 use crate::OrphanRoot;
 use crate::Root;
 use crate::RootKind;
+use crate::StaleRoot;
 use crate::WorkspaceRoots;
 
 type Events = Arc<Mutex<Vec<salsa::Event>>>;
@@ -30,6 +31,7 @@ pub(super) struct TestDb {
     workspace_roots: Arc<OnceLock<WorkspaceRoots>>,
     library_roots: Arc<OnceLock<LibraryRoots>>,
     orphan_root: Arc<OnceLock<OrphanRoot>>,
+    stale_root: Arc<OnceLock<StaleRoot>>,
 }
 
 impl TestDb {
@@ -47,6 +49,7 @@ impl TestDb {
             workspace_roots: Arc::new(OnceLock::new()),
             library_roots: Arc::new(OnceLock::new()),
             orphan_root: Arc::new(OnceLock::new()),
+            stale_root: Arc::new(OnceLock::new()),
         }
     }
 
@@ -89,6 +92,10 @@ impl DbInputs for TestDb {
     fn orphan_root(&self) -> OrphanRoot {
         *self.orphan_root.get_or_init(|| OrphanRoot::empty(self))
     }
+
+    fn stale_root(&self) -> StaleRoot {
+        *self.stale_root.get_or_init(|| StaleRoot::empty(self))
+    }
 }
 
 #[salsa::db]
@@ -99,6 +106,10 @@ impl Db for TestDb {
 
     fn package_by_name(&self, name: &str) -> Option<crate::Package> {
         crate::db::package_by_name_query(self, name)
+    }
+
+    fn package_by_url(&self, url: &UrlId) -> Option<crate::Package> {
+        crate::db::package_by_url_query(self, url)
     }
 }
 
